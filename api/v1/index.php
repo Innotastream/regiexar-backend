@@ -2,10 +2,15 @@
 
 declare(strict_types=1);
 
-const XAR_API_ORIGIN = 'https://regie-xar-tsaroth.fr';
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
+const XAR_SESSION_SECONDS = 43200;
+const XAR_LOGIN_MAX_ATTEMPTS = 8;
+const XAR_LOGIN_WINDOW_SECONDS = 900;
+const XAR_LOGIN_LOCK_SECONDS = 60;
 
-function sendJson(int $status, array $payload, bool $headOnly = false): never
+date_default_timezone_set('UTC');
+
+function sendJson(int $status, array $payload, bool $headOnly = false, array $extraHeaders = []): never
 {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
@@ -15,10 +20,31 @@ function sendJson(int $status, array $payload, bool $headOnly = false): never
     header('Referrer-Policy: no-referrer');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
     header('Content-Security-Policy: default-src \'none\'; frame-ancestors \'none\'');
+    foreach ($extraHeaders as $name => $value) {
+        header((string) $name . ': ' . (string) $value, true);
+    }
     if (!$headOnly) {
         echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
     exit;
+}
+
+function sendError(int $status, string $message, string $code = ''): never
+{
+    sendJson($status, [
+        'ok' => false,
+        'error' => $message,
+        ...($code !== '' ? ['code' => $code] : []),
+    ]);
+}
+
+function requireMethod(string $actual, array $allowed): void
+{
+    if (in_array($actual, $allowed, true)) {
+        return;
+    }
+    header('Allow: ' . implode(', ', $allowed));
+    sendError(405, 'Méthode refusée.', 'method_not_allowed');
 }
 
 function requestIsSecure(): bool
@@ -35,6 +61,12 @@ function requestHost(): string
 {
     $host = strtolower(trim((string) ($_SERVER['HTTP_HOST'] ?? '')));
     return preg_replace('/:\d+$/', '', $host) ?? '';
+}
+
+function requestRoute(): string
+{
+    $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+    return rtrim($path, '/') ?: '/';
 }
 
 function privateConfigPath(): ?string
@@ -80,6 +112,9 @@ function privateConfig(): ?array
             'username' => $username,
             'password' => $password,
         ],
+        'security' => [
+            'bootstrap_token_hash' => trim((string) getenv('XAR_REGIE_BOOTSTRAP_TOKEN_HASH')),
+        ],
     ];
 }
 
@@ -97,63 +132,601 @@ function databaseConnection(array $configuration): PDO
         throw new RuntimeException('configuration_required');
     }
 
-    return new PDO($dsn, $username, $password, [
+    $connection = new PDO($dsn, $username, $password, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
         PDO::ATTR_TIMEOUT => 5,
     ]);
+    $connection->exec("SET time_zone = '+00:00'");
+    return $connection;
+}
+
+function readJsonBody(int $maximumBytes = 16384): array
+{
+    $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($declared > $maximumBytes) {
+        sendError(413, 'Requête trop volumineuse.', 'payload_too_large');
+    }
+    $raw = file_get_contents('php://input', false, null, 0, $maximumBytes + 1);
+    if ($raw === false) {
+        sendError(400, 'Requête illisible.', 'invalid_request');
+    }
+    if (strlen($raw) > $maximumBytes) {
+        sendError(413, 'Requête trop volumineuse.', 'payload_too_large');
+    }
+    if ($raw === '') {
+        return [];
+    }
+    try {
+        $payload = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        sendError(400, 'JSON invalide.', 'invalid_json');
+    }
+    if (!is_array($payload)) {
+        sendError(400, 'Requête invalide.', 'invalid_request');
+    }
+    return $payload;
+}
+
+function textLength(string $value): int
+{
+    return function_exists('mb_strlen') ? mb_strlen($value, 'UTF-8') : strlen($value);
+}
+
+function cleanText(mixed $value, int $maximum, string $label): string
+{
+    $text = trim((string) $value);
+    if ($text === '' || textLength($text) > $maximum || preg_match('/[\x00\r\n]/u', $text) === 1) {
+        throw new InvalidArgumentException($label . ' invalide.');
+    }
+    return $text;
+}
+
+function normalizeUsername(mixed $value): array
+{
+    $username = cleanText($value, 64, 'Identifiant');
+    if (preg_match('/^[\p{L}\p{N}][\p{L}\p{N}._-]{2,63}$/u', $username) !== 1) {
+        throw new InvalidArgumentException('L’identifiant doit contenir 3 à 64 lettres, chiffres, points, tirets ou tirets bas.');
+    }
+    if (class_exists('Normalizer')) {
+        $normalized = Normalizer::normalize($username, Normalizer::FORM_KC);
+        if (is_string($normalized)) {
+            $username = $normalized;
+        }
+    }
+    $key = function_exists('mb_strtolower') ? mb_strtolower($username, 'UTF-8') : strtolower($username);
+    return [$username, $key];
+}
+
+function validatedPassword(mixed $value): string
+{
+    $password = (string) $value;
+    $length = textLength($password);
+    if ($length < 10 || $length > 256 || preg_match('/[\x00\r\n]/u', $password) === 1) {
+        throw new InvalidArgumentException('Le mot de passe doit contenir entre 10 et 256 caractères.');
+    }
+    return $password;
+}
+
+function hashPassword(string $password): string
+{
+    $algorithm = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
+    $options = $algorithm === PASSWORD_ARGON2ID
+        ? ['memory_cost' => 32768, 'time_cost' => 3, 'threads' => 1]
+        : ['cost' => 12];
+    $verifier = password_hash($password, $algorithm, $options);
+    if (!is_string($verifier) || $verifier === '') {
+        throw new RuntimeException('password_hash_failed');
+    }
+    return $verifier;
+}
+
+function randomToken(int $bytes = 32): string
+{
+    return rtrim(strtr(base64_encode(random_bytes($bytes)), '+/', '-_'), '=');
+}
+
+function utcAfter(int $seconds): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+        ->modify('+' . $seconds . ' seconds')
+        ->format('Y-m-d H:i:s.v');
+}
+
+function sessionCookie(string $token, int $maximumAge = XAR_SESSION_SECONDS): string
+{
+    return 'xar_session=' . rawurlencode($token)
+        . '; Path=/api/v1; Max-Age=' . max(0, $maximumAge)
+        . '; Secure; HttpOnly; SameSite=Strict';
+}
+
+function requestSessionToken(): string
+{
+    $token = trim((string) ($_SERVER['HTTP_X_XAR_SESSION'] ?? ''));
+    if ($token === '') {
+        $authorization = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''));
+        if (preg_match('/^Bearer\s+([A-Za-z0-9_-]+)$/i', $authorization, $match) === 1) {
+            $token = $match[1];
+        }
+    }
+    if ($token === '') {
+        $token = trim((string) ($_COOKIE['xar_session'] ?? ''));
+    }
+    return preg_match('/^[A-Za-z0-9_-]{43}$/', $token) === 1 ? $token : '';
+}
+
+function tokenHash(string $token): string
+{
+    return hash('sha256', $token, true);
+}
+
+function publicAccount(array $account, string $effectiveMode): array
+{
+    return [
+        'id' => (string) $account['id'],
+        'username' => (string) $account['username'],
+        'displayName' => (string) $account['display_name'],
+        'role' => $effectiveMode,
+        'permanentRole' => (string) $account['permanent_role'],
+    ];
+}
+
+function createSession(PDO $connection, array $account, string $effectiveMode): array
+{
+    $mode = $effectiveMode === 'gm' ? 'gm' : 'player';
+    if ($mode === 'gm' && (string) $account['permanent_role'] !== 'gm') {
+        throw new RuntimeException('gm_role_required');
+    }
+    $token = randomToken();
+    $statement = $connection->prepare(
+        'INSERT INTO auth_sessions '
+        . '(token_hash, account_id, effective_mode, auth_revision, expires_at) '
+        . 'VALUES (:token_hash, :account_id, :effective_mode, :auth_revision, :expires_at)'
+    );
+    $statement->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
+    $statement->bindValue(':account_id', (string) $account['id']);
+    $statement->bindValue(':effective_mode', $mode);
+    $statement->bindValue(':auth_revision', (int) $account['auth_revision'], PDO::PARAM_INT);
+    $statement->bindValue(':expires_at', utcAfter(XAR_SESSION_SECONDS));
+    $statement->execute();
+    return ['token' => $token, 'mode' => $mode];
+}
+
+function deleteSession(PDO $connection, string $token): void
+{
+    if ($token === '') {
+        return;
+    }
+    $statement = $connection->prepare('DELETE FROM auth_sessions WHERE token_hash = :token_hash');
+    $statement->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
+    $statement->execute();
+}
+
+function resolveSession(PDO $connection, string $token, bool $touch = true): ?array
+{
+    if ($token === '') {
+        return null;
+    }
+    $statement = $connection->prepare(
+        'SELECT a.id, a.username, a.display_name, a.permanent_role, a.auth_revision, a.revoked_at, '
+        . 's.effective_mode, s.auth_revision AS session_auth_revision '
+        . 'FROM auth_sessions s JOIN accounts a ON a.id = s.account_id '
+        . 'WHERE s.token_hash = :token_hash AND s.expires_at > UTC_TIMESTAMP(3) LIMIT 1'
+    );
+    $statement->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
+    $statement->execute();
+    $identity = $statement->fetch();
+    if (!is_array($identity)) {
+        return null;
+    }
+    $valid = $identity['revoked_at'] === null
+        && (int) $identity['auth_revision'] === (int) $identity['session_auth_revision']
+        && ((string) $identity['effective_mode'] !== 'gm' || (string) $identity['permanent_role'] === 'gm');
+    if (!$valid) {
+        deleteSession($connection, $token);
+        return null;
+    }
+    if ($touch) {
+        $update = $connection->prepare(
+            'UPDATE auth_sessions SET last_seen_at = UTC_TIMESTAMP(3), expires_at = :expires_at '
+            . 'WHERE token_hash = :token_hash'
+        );
+        $update->bindValue(':expires_at', utcAfter(XAR_SESSION_SECONDS));
+        $update->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
+        $update->execute();
+    }
+    return $identity;
+}
+
+function rateBucket(string $usernameKey): string
+{
+    $remote = trim((string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+    return hash('sha256', $remote . "\0" . $usernameKey, true);
+}
+
+function dateTimestamp(mixed $value): int
+{
+    if (!is_string($value) || $value === '') {
+        return 0;
+    }
+    try {
+        return (new DateTimeImmutable($value, new DateTimeZone('UTC')))->getTimestamp();
+    } catch (Throwable) {
+        return 0;
+    }
+}
+
+function assertRateAvailable(PDO $connection, string $bucket): void
+{
+    $statement = $connection->prepare('SELECT locked_until FROM auth_rate_limits WHERE bucket_hash = :bucket_hash');
+    $statement->bindValue(':bucket_hash', $bucket, PDO::PARAM_LOB);
+    $statement->execute();
+    $row = $statement->fetch();
+    $lockedUntil = is_array($row) ? dateTimestamp($row['locked_until'] ?? null) : 0;
+    if ($lockedUntil > time()) {
+        $seconds = max(1, $lockedUntil - time());
+        sendJson(429, [
+            'ok' => false,
+            'error' => 'Trop de tentatives. Réessayez dans quelques instants.',
+            'code' => 'rate_limited',
+        ], false, ['Retry-After' => (string) $seconds]);
+    }
+}
+
+function recordRateFailure(PDO $connection, string $bucket): void
+{
+    $connection->beginTransaction();
+    try {
+        $select = $connection->prepare(
+            'SELECT attempts, window_started_at FROM auth_rate_limits '
+            . 'WHERE bucket_hash = :bucket_hash FOR UPDATE'
+        );
+        $select->bindValue(':bucket_hash', $bucket, PDO::PARAM_LOB);
+        $select->execute();
+        $row = $select->fetch();
+        $windowExpired = !is_array($row)
+            || dateTimestamp($row['window_started_at'] ?? null) < time() - XAR_LOGIN_WINDOW_SECONDS;
+        $attempts = $windowExpired ? 1 : ((int) $row['attempts'] + 1);
+        $lockedUntil = null;
+        if ($attempts >= XAR_LOGIN_MAX_ATTEMPTS) {
+            $attempts = 0;
+            $lockedUntil = utcAfter(XAR_LOGIN_LOCK_SECONDS);
+        }
+
+        if (!is_array($row)) {
+            $insert = $connection->prepare(
+                'INSERT INTO auth_rate_limits '
+                . '(bucket_hash, attempts, window_started_at, locked_until) '
+                . 'VALUES (:bucket_hash, :attempts, UTC_TIMESTAMP(3), :locked_until)'
+            );
+            $insert->bindValue(':bucket_hash', $bucket, PDO::PARAM_LOB);
+            $insert->bindValue(':attempts', $attempts, PDO::PARAM_INT);
+            $insert->bindValue(':locked_until', $lockedUntil);
+            $insert->execute();
+        } else {
+            $update = $connection->prepare(
+                'UPDATE auth_rate_limits SET attempts = :attempts, '
+                . 'window_started_at = IF(:window_expired = 1, UTC_TIMESTAMP(3), window_started_at), '
+                . 'locked_until = :locked_until WHERE bucket_hash = :bucket_hash'
+            );
+            $update->bindValue(':attempts', $attempts, PDO::PARAM_INT);
+            $update->bindValue(':window_expired', $windowExpired ? 1 : 0, PDO::PARAM_INT);
+            $update->bindValue(':locked_until', $lockedUntil);
+            $update->bindValue(':bucket_hash', $bucket, PDO::PARAM_LOB);
+            $update->execute();
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+}
+
+function clearRateFailures(PDO $connection, string $bucket): void
+{
+    $statement = $connection->prepare('DELETE FROM auth_rate_limits WHERE bucket_hash = :bucket_hash');
+    $statement->bindValue(':bucket_hash', $bucket, PDO::PARAM_LOB);
+    $statement->execute();
+}
+
+function findAccount(PDO $connection, string $usernameKey): ?array
+{
+    $statement = $connection->prepare(
+        'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+        . 'FROM accounts WHERE username_key = :username_key LIMIT 1'
+    );
+    $statement->execute([':username_key' => $usernameKey]);
+    $account = $statement->fetch();
+    return is_array($account) ? $account : null;
+}
+
+function authenticateAccount(PDO $connection, mixed $username, mixed $password, string $scope): array
+{
+    try {
+        [, $usernameKey] = normalizeUsername($username);
+        $passwordText = validatedPassword($password);
+    } catch (InvalidArgumentException) {
+        $usernameKey = 'invalid';
+        $passwordText = str_repeat('x', 10);
+    }
+
+    $bucket = rateBucket($usernameKey);
+    assertRateAvailable($connection, $bucket);
+    $account = findAccount($connection, $usernameKey);
+    $verifier = is_array($account)
+        ? (string) $account['password_verifier']
+        : '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
+    $passwordMatches = password_verify($passwordText, $verifier);
+    $allowed = is_array($account)
+        && $account['revoked_at'] === null
+        && $passwordMatches
+        && ($scope !== 'gm' || (string) $account['permanent_role'] === 'gm');
+    if (!$allowed) {
+        recordRateFailure($connection, $bucket);
+        sendError(403, 'Identifiant ou mot de passe incorrect.', 'invalid_credentials');
+    }
+    clearRateFailures($connection, $bucket);
+    return $account;
+}
+
+function cleanupAuthentication(PDO $connection): void
+{
+    try {
+        if (random_int(1, 50) !== 1) {
+            return;
+        }
+        $connection->exec('DELETE FROM live_connections WHERE expires_at <= UTC_TIMESTAMP(3)');
+        $connection->exec('DELETE FROM auth_sessions WHERE expires_at <= UTC_TIMESTAMP(3)');
+        $connection->exec(
+            'DELETE FROM auth_rate_limits WHERE updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
+        );
+    } catch (Throwable $error) {
+        error_log('[xar-regie-api] authentication cleanup failed: ' . get_class($error));
+    }
+}
+
+function bootstrapTokenHash(array $configuration): string
+{
+    $security = $configuration['security'] ?? null;
+    if (!is_array($security)) {
+        return '';
+    }
+    $hash = strtolower(trim((string) ($security['bootstrap_token_hash'] ?? '')));
+    return preg_match('/^[a-f0-9]{64}$/', $hash) === 1 ? $hash : '';
+}
+
+function bootstrapFirstAccount(PDO $connection, array $configuration): never
+{
+    $payload = readJsonBody();
+    $providedToken = trim((string) ($payload['bootstrapToken'] ?? ''));
+    $expectedHash = bootstrapTokenHash($configuration);
+    if ($expectedHash === '' || strlen($providedToken) < 20 || strlen($providedToken) > 256
+        || !hash_equals($expectedHash, hash('sha256', $providedToken))) {
+        sendError(403, 'Initialisation refusée.', 'bootstrap_refused');
+    }
+
+    try {
+        [$username, $usernameKey] = normalizeUsername($payload['username'] ?? '');
+        $displayName = cleanText($payload['displayName'] ?? $username, 96, 'Nom affiché');
+        $password = validatedPassword($payload['password'] ?? '');
+    } catch (InvalidArgumentException $error) {
+        sendError(400, $error->getMessage(), 'invalid_account');
+    }
+
+    $connection->beginTransaction();
+    try {
+        $existing = $connection->query('SELECT id FROM accounts LIMIT 1 FOR UPDATE')->fetch();
+        if (is_array($existing)) {
+            $connection->rollBack();
+            sendError(409, 'La Régie possède déjà un compte.', 'already_initialized');
+        }
+        $accountId = 'usr_' . randomToken(12);
+        $insert = $connection->prepare(
+            'INSERT INTO accounts '
+            . '(id, username, username_key, display_name, permanent_role, password_verifier) '
+            . 'VALUES (:id, :username, :username_key, :display_name, \'gm\', :password_verifier)'
+        );
+        $insert->execute([
+            ':id' => $accountId,
+            ':username' => $username,
+            ':username_key' => $usernameKey,
+            ':display_name' => $displayName,
+            ':password_verifier' => hashPassword($password),
+        ]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+
+    $account = findAccount($connection, $usernameKey);
+    if (!is_array($account)) {
+        throw new RuntimeException('bootstrap_account_missing');
+    }
+    $session = createSession($connection, $account, 'gm');
+    sendJson(201, [
+        'ok' => true,
+        'account' => publicAccount($account, 'gm'),
+        'sessionToken' => $session['token'],
+        'expiresInSeconds' => XAR_SESSION_SECONDS,
+    ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
 }
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
-if (!in_array($method, ['GET', 'HEAD'], true)) {
-    header('Allow: GET, HEAD');
-    sendJson(405, ['status' => 'method_not_allowed']);
-}
 
 if (!requestIsSecure()) {
-    sendJson(426, ['status' => 'https_required'], $headOnly);
+    sendJson(426, ['ok' => false, 'error' => 'HTTPS requis.', 'code' => 'https_required'], $headOnly);
 }
-
 if (requestHost() !== XAR_API_HOST) {
-    sendJson(421, ['status' => 'host_rejected'], $headOnly);
+    sendJson(421, ['ok' => false, 'error' => 'Hôte refusé.', 'code' => 'host_rejected'], $headOnly);
 }
 
-$path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
-$route = rtrim($path, '/');
+$route = requestRoute();
 if ($route === '/api/v1') {
+    requireMethod($method, ['GET', 'HEAD']);
     sendJson(200, [
         'status' => 'ok',
         'service' => 'xar-tsaroth-regie',
         'api' => 'v1',
     ], $headOnly);
-}
-
-if ($route !== '/api/v1/health') {
-    sendJson(404, ['status' => 'not_found'], $headOnly);
 }
 
 $configuration = privateConfig();
 if ($configuration === null) {
-    sendJson(503, ['status' => 'unavailable', 'code' => 'configuration_required'], $headOnly);
+    sendJson(503, [
+        'ok' => false,
+        'status' => 'unavailable',
+        'code' => 'configuration_required',
+    ], $headOnly);
 }
 
 try {
     $connection = databaseConnection($configuration);
-    $statement = $connection->query('SELECT 1');
-    if ($statement === false || (int) $statement->fetchColumn() !== 1) {
-        throw new RuntimeException('database_unreachable');
-    }
-    sendJson(200, [
-        'status' => 'ok',
-        'service' => 'xar-tsaroth-regie',
-        'api' => 'v1',
-    ], $headOnly);
 } catch (Throwable $error) {
-    error_log('[xar-regie-api] database health check failed: ' . get_class($error));
+    error_log('[xar-regie-api] database connection failed: ' . get_class($error));
     $code = $error instanceof RuntimeException && $error->getMessage() === 'configuration_required'
         ? 'configuration_required'
         : 'database_unreachable';
-    sendJson(503, ['status' => 'unavailable', 'code' => $code], $headOnly);
+    sendJson(503, ['ok' => false, 'status' => 'unavailable', 'code' => $code], $headOnly);
 }
+
+if ($route === '/api/v1/health') {
+    requireMethod($method, ['GET', 'HEAD']);
+    try {
+        $statement = $connection->query('SELECT 1');
+        if ($statement === false || (int) $statement->fetchColumn() !== 1) {
+            throw new RuntimeException('database_unreachable');
+        }
+        sendJson(200, [
+            'status' => 'ok',
+            'service' => 'xar-tsaroth-regie',
+            'api' => 'v1',
+        ], $headOnly);
+    } catch (Throwable $error) {
+        error_log('[xar-regie-api] database health check failed: ' . get_class($error));
+        sendJson(503, ['ok' => false, 'status' => 'unavailable', 'code' => 'database_unreachable'], $headOnly);
+    }
+}
+
+try {
+    cleanupAuthentication($connection);
+
+    if ($route === '/api/v1/auth/bootstrap') {
+        requireMethod($method, ['POST']);
+        bootstrapFirstAccount($connection, $configuration);
+    }
+
+    if ($route === '/api/v1/auth/login') {
+        requireMethod($method, ['POST']);
+        $payload = readJsonBody();
+        $scope = ($payload['scope'] ?? '') === 'gm' ? 'gm' : 'player';
+        $account = authenticateAccount(
+            $connection,
+            $payload['username'] ?? '',
+            $payload['password'] ?? '',
+            $scope
+        );
+        $session = createSession($connection, $account, $scope);
+        sendJson(200, [
+            'ok' => true,
+            'account' => publicAccount($account, $scope),
+            'sessionToken' => $session['token'],
+            'expiresInSeconds' => XAR_SESSION_SECONDS,
+        ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
+    }
+
+    if ($route === '/api/v1/auth/me') {
+        requireMethod($method, ['GET', 'HEAD']);
+        $token = requestSessionToken();
+        $identity = resolveSession($connection, $token);
+        if (!is_array($identity)) {
+            sendJson(401, ['ok' => false, 'error' => 'Connexion requise.', 'code' => 'authentication_required'], $headOnly);
+        }
+        sendJson(200, [
+            'ok' => true,
+            'account' => publicAccount($identity, (string) $identity['effective_mode']),
+        ], $headOnly);
+    }
+
+    if ($route === '/api/v1/auth/logout') {
+        requireMethod($method, ['POST']);
+        deleteSession($connection, requestSessionToken());
+        sendJson(200, ['ok' => true], false, ['Set-Cookie' => sessionCookie('', 0)]);
+    }
+
+    if ($route === '/api/v1/auth/password') {
+        requireMethod($method, ['POST']);
+        $token = requestSessionToken();
+        $identity = resolveSession($connection, $token, false);
+        if (!is_array($identity)) {
+            sendError(401, 'Connexion requise.', 'authentication_required');
+        }
+        $payload = readJsonBody();
+        try {
+            $currentPassword = validatedPassword($payload['currentPassword'] ?? '');
+            $newPassword = validatedPassword($payload['newPassword'] ?? '');
+        } catch (InvalidArgumentException $error) {
+            sendError(400, $error->getMessage(), 'invalid_password');
+        }
+
+        $connection->beginTransaction();
+        try {
+            $select = $connection->prepare(
+                'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+                . 'FROM accounts WHERE id = :id FOR UPDATE'
+            );
+            $select->execute([':id' => (string) $identity['id']]);
+            $account = $select->fetch();
+            if (!is_array($account) || $account['revoked_at'] !== null
+                || !password_verify($currentPassword, (string) $account['password_verifier'])) {
+                $connection->rollBack();
+                sendError(403, 'Le mot de passe actuel est incorrect.', 'invalid_current_password');
+            }
+            if (password_verify($newPassword, (string) $account['password_verifier'])) {
+                $connection->rollBack();
+                sendError(400, 'Le nouveau mot de passe doit être différent de l’ancien.', 'password_unchanged');
+            }
+            $update = $connection->prepare(
+                'UPDATE accounts SET password_verifier = :password_verifier, '
+                . 'auth_revision = auth_revision + 1 WHERE id = :id'
+            );
+            $update->execute([
+                ':password_verifier' => hashPassword($newPassword),
+                ':id' => (string) $account['id'],
+            ]);
+            $deleteSessions = $connection->prepare('DELETE FROM auth_sessions WHERE account_id = :account_id');
+            $deleteSessions->execute([':account_id' => (string) $account['id']]);
+            $connection->commit();
+        } catch (Throwable $error) {
+            if ($connection->inTransaction()) {
+                $connection->rollBack();
+            }
+            throw $error;
+        }
+
+        [, $updatedUsernameKey] = normalizeUsername($account['username']);
+        $updated = findAccount($connection, $updatedUsernameKey);
+        if (!is_array($updated)) {
+            throw new RuntimeException('updated_account_missing');
+        }
+        $mode = (string) $identity['effective_mode'];
+        $session = createSession($connection, $updated, $mode);
+        sendJson(200, [
+            'ok' => true,
+            'account' => publicAccount($updated, $mode),
+            'sessionToken' => $session['token'],
+            'expiresInSeconds' => XAR_SESSION_SECONDS,
+        ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
+    }
+} catch (Throwable $error) {
+    error_log('[xar-regie-api] authentication request failed: ' . get_class($error));
+    sendError(503, 'Service momentanément indisponible.', 'service_unavailable');
+}
+
+sendJson(404, ['ok' => false, 'error' => 'Route inconnue.', 'code' => 'not_found'], $headOnly);
