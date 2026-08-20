@@ -1,6 +1,6 @@
 # Backend OVH — autorité en ligne de la Régie
 
-Ce dossier contient le serveur hébergé 0.6.2 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
+Ce dossier contient le serveur hébergé 0.6.3 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
 
 ## Périmètre
 
@@ -42,9 +42,9 @@ Le fichier réel `regie-private/config.php` ne doit jamais entrer dans Git, un Z
 
 ## Schéma initial MySQL
 
-La migration `migrations/001_initial_schema.sql` crée les tables cœur : comptes, sessions authentifiées, état applicatif, fiches et connexions réellement ouvertes. `migrations/002_auth_rate_limits.sql` ajoute seulement les compteurs temporaires anti-bruteforce. Les jetons de session sont stockés exclusivement sous forme de condensat SHA-256. Le niveau permanent reste dans `accounts.permanent_role` et le mode effectif de chaque connexion dans `auth_sessions.effective_mode`.
+La migration `migrations/001_initial_schema.sql` crée les tables cœur : comptes, sessions authentifiées, état applicatif, fiches et connexions réellement ouvertes. `migrations/002_auth_rate_limits.sql` ajoute seulement les compteurs temporaires anti-bruteforce. Les jetons de session sont stockés exclusivement sous forme de condensat SHA-256. Le niveau permanent reste dans `accounts.permanent_role` et le mode effectif de chaque connexion dans `auth_sessions.effective_mode`. Le backend refuse qu’une ancienne application remplace un état portant un schéma plus récent ; les commandes ciblées conservent le schéma courant.
 
-Les migrations sont rejouables sans suppression métier ni écrasement. À partir du schéma 3 déjà initialisé, le backend 0.6.2 applique lui-même les versions 4 et 5 sous un verrou MySQL lors de sa première requête : aucune nouvelle manipulation phpMyAdmin n’est nécessaire. Les colonnes sont détectées dans `information_schema` avant leur création pour rester compatibles avec MySQL et reprendre un essai partiel. La migration 005 conserve la session historique la plus récente, pose l’index unique avant de retirer l’ancien index requis par la clé étrangère, puis impose l’unicité SQL par compte. Elles ne migrent aucune donnée locale et ne créent aucun compte.
+Les migrations sont rejouables sans suppression métier ni écrasement. À partir du schéma 3 déjà initialisé, le backend 0.6.3 applique lui-même les versions 4 et 5 sous un verrou MySQL lors de sa première requête : aucune nouvelle manipulation phpMyAdmin n’est nécessaire. Les colonnes sont détectées dans `information_schema` avant leur création pour rester compatibles avec MySQL et reprendre un essai partiel. La migration 005 conserve la session historique la plus récente, pose l’index unique avant de retirer l’ancien index requis par la clé étrangère, puis impose l’unicité SQL par compte. Elles ne migrent aucune donnée locale et ne créent aucun compte.
 
 ## Initialisation du premier MJ
 

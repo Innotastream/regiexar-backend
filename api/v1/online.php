@@ -370,6 +370,16 @@ function storeApplicationState(PDO $connection, array $identity, array $state, ?
     try {
         $current = applicationStateRecord($connection, true);
         $currentRevision = (int) ($current['revision'] ?? 0);
+        $currentSchemaVersion = (int) ($current['schemaVersion'] ?? 0);
+        if ($currentSchemaVersion > 0 && $schemaVersion < $currentSchemaVersion) {
+            $connection->rollBack();
+            sendJson(409, [
+                'ok' => false,
+                'error' => 'Cette table utilise un schéma plus récent. Mettez la Régie à jour avant de la modifier.',
+                'code' => 'schema_downgrade',
+                'requiredSchemaVersion' => $currentSchemaVersion,
+            ]);
+        }
         if ($expectedRevision !== null && $expectedRevision !== $currentRevision) {
             $connection->rollBack();
             sendJson(409, [
