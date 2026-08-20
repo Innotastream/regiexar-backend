@@ -151,6 +151,16 @@ function schemaIndexExists(PDO $connection, string $table, string $index, bool $
     return (int) $statement->fetchColumn() > 0;
 }
 
+function schemaColumnExists(PDO $connection, string $table, string $column): bool
+{
+    $statement = $connection->prepare(
+        'SELECT COUNT(*) FROM information_schema.columns '
+        . 'WHERE table_schema = DATABASE() AND table_name = :table_name AND column_name = :column_name'
+    );
+    $statement->execute([':table_name' => $table, ':column_name' => $column]);
+    return (int) $statement->fetchColumn() > 0;
+}
+
 function ensureCurrentSchema(PDO $connection): void
 {
     $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v5', 15)");
@@ -166,10 +176,12 @@ function ensureCurrentSchema(PDO $connection): void
         }
 
         if ($version < 4) {
-            $connection->exec(
-                'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS '
-                . 'can_administrate TINYINT(1) NOT NULL DEFAULT 0 AFTER permanent_role'
-            );
+            if (!schemaColumnExists($connection, 'accounts', 'can_administrate')) {
+                $connection->exec(
+                    'ALTER TABLE accounts ADD COLUMN '
+                    . 'can_administrate TINYINT(1) NOT NULL DEFAULT 0 AFTER permanent_role'
+                );
+            }
             $connection->exec(
                 "UPDATE accounts SET can_administrate = 1 WHERE id = ("
                 . "SELECT founder.id FROM (SELECT id FROM accounts WHERE permanent_role = 'gm' "
@@ -215,11 +227,16 @@ function ensureCurrentSchema(PDO $connection): void
         }
 
         if ($version < 5) {
-            $connection->exec(
-                'ALTER TABLE accounts '
-                . 'ADD COLUMN IF NOT EXISTS takeover_requested_at DATETIME(3) NULL AFTER revoked_at, '
-                . 'ADD COLUMN IF NOT EXISTS takeover_request_id BINARY(16) NULL AFTER takeover_requested_at'
-            );
+            if (!schemaColumnExists($connection, 'accounts', 'takeover_requested_at')) {
+                $connection->exec(
+                    'ALTER TABLE accounts ADD COLUMN takeover_requested_at DATETIME(3) NULL AFTER revoked_at'
+                );
+            }
+            if (!schemaColumnExists($connection, 'accounts', 'takeover_request_id')) {
+                $connection->exec(
+                    'ALTER TABLE accounts ADD COLUMN takeover_request_id BINARY(16) NULL AFTER takeover_requested_at'
+                );
+            }
             $connection->exec(
                 'DELETE older FROM auth_sessions AS older JOIN auth_sessions AS newer '
                 . 'ON newer.account_id = older.account_id AND (newer.created_at > older.created_at '
