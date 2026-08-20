@@ -225,11 +225,11 @@ function ensureCurrentSchema(PDO $connection): void
                 . 'ON newer.account_id = older.account_id AND (newer.created_at > older.created_at '
                 . 'OR (newer.created_at = older.created_at AND HEX(newer.token_hash) > HEX(older.token_hash)))'
             );
-            if (schemaIndexExists($connection, 'auth_sessions', 'idx_auth_sessions_account')) {
-                $connection->exec('ALTER TABLE auth_sessions DROP INDEX idx_auth_sessions_account');
-            }
             if (!schemaIndexExists($connection, 'auth_sessions', 'uq_auth_sessions_account', true)) {
                 $connection->exec('ALTER TABLE auth_sessions ADD UNIQUE KEY uq_auth_sessions_account (account_id)');
+            }
+            if (schemaIndexExists($connection, 'auth_sessions', 'idx_auth_sessions_account')) {
+                $connection->exec('ALTER TABLE auth_sessions DROP INDEX idx_auth_sessions_account');
             }
             $connection->exec(
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
