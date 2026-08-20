@@ -458,7 +458,7 @@ function authenticateAccount(PDO $connection, mixed $username, mixed $password, 
     $account = findAccount($connection, $usernameKey);
     $verifier = is_array($account)
         ? (string) $account['password_verifier']
-        : '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
+        : hashPassword(randomToken());
     $passwordMatches = password_verify($passwordText, $verifier);
     $allowed = is_array($account)
         && $account['revoked_at'] === null
