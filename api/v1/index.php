@@ -112,9 +112,6 @@ function privateConfig(): ?array
             'username' => $username,
             'password' => $password,
         ],
-        'security' => [
-            'bootstrap_token_hash' => trim((string) getenv('XAR_REGIE_BOOTSTRAP_TOKEN_HASH')),
-        ],
     ];
 }
 
@@ -483,30 +480,37 @@ function cleanupAuthentication(PDO $connection): void
         $connection->exec(
             'DELETE FROM auth_rate_limits WHERE updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
         );
+        $connection->exec(
+            'DELETE FROM bootstrap_tokens WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+            . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
+        );
     } catch (Throwable $error) {
         error_log('[xar-regie-api] authentication cleanup failed: ' . get_class($error));
     }
 }
 
-function bootstrapTokenHash(array $configuration): string
-{
-    $security = $configuration['security'] ?? null;
-    if (!is_array($security)) {
-        return '';
-    }
-    $hash = strtolower(trim((string) ($security['bootstrap_token_hash'] ?? '')));
-    return preg_match('/^[a-f0-9]{64}$/', $hash) === 1 ? $hash : '';
-}
-
-function bootstrapFirstAccount(PDO $connection, array $configuration): never
+function bootstrapFirstAccount(PDO $connection): never
 {
     $payload = readJsonBody();
     $providedToken = trim((string) ($payload['bootstrapToken'] ?? ''));
-    $expectedHash = bootstrapTokenHash($configuration);
-    if ($expectedHash === '' || strlen($providedToken) < 20 || strlen($providedToken) > 256
-        || !hash_equals($expectedHash, hash('sha256', $providedToken))) {
+    $bucket = rateBucket('bootstrap');
+    assertRateAvailable($connection, $bucket);
+    if (preg_match('/^[A-Za-z0-9_-]{43}$/', $providedToken) !== 1) {
+        recordRateFailure($connection, $bucket);
         sendError(403, 'Initialisation refusée.', 'bootstrap_refused');
     }
+    $providedHash = tokenHash($providedToken);
+    $tokenLookup = $connection->prepare(
+        'SELECT expires_at FROM bootstrap_tokens WHERE token_hash = :token_hash '
+        . 'AND consumed_at IS NULL AND expires_at > UTC_TIMESTAMP(3) LIMIT 1'
+    );
+    $tokenLookup->bindValue(':token_hash', $providedHash, PDO::PARAM_LOB);
+    $tokenLookup->execute();
+    if (!is_array($tokenLookup->fetch())) {
+        recordRateFailure($connection, $bucket);
+        sendError(403, 'Initialisation refusée.', 'bootstrap_refused');
+    }
+    clearRateFailures($connection, $bucket);
 
     try {
         [$username, $usernameKey] = normalizeUsername($payload['username'] ?? '');
@@ -518,6 +522,18 @@ function bootstrapFirstAccount(PDO $connection, array $configuration): never
 
     $connection->beginTransaction();
     try {
+        $tokenLock = $connection->prepare(
+            'SELECT expires_at, consumed_at FROM bootstrap_tokens '
+            . 'WHERE token_hash = :token_hash FOR UPDATE'
+        );
+        $tokenLock->bindValue(':token_hash', $providedHash, PDO::PARAM_LOB);
+        $tokenLock->execute();
+        $tokenRow = $tokenLock->fetch();
+        if (!is_array($tokenRow) || $tokenRow['consumed_at'] !== null
+            || dateTimestamp($tokenRow['expires_at'] ?? null) <= time()) {
+            $connection->rollBack();
+            sendError(403, 'Initialisation refusée.', 'bootstrap_refused');
+        }
         $existing = $connection->query('SELECT id FROM accounts LIMIT 1 FOR UPDATE')->fetch();
         if (is_array($existing)) {
             $connection->rollBack();
@@ -536,6 +552,11 @@ function bootstrapFirstAccount(PDO $connection, array $configuration): never
             ':display_name' => $displayName,
             ':password_verifier' => hashPassword($password),
         ]);
+        $consume = $connection->prepare(
+            'UPDATE bootstrap_tokens SET consumed_at = UTC_TIMESTAMP(3) WHERE token_hash = :token_hash'
+        );
+        $consume->bindValue(':token_hash', $providedHash, PDO::PARAM_LOB);
+        $consume->execute();
         $connection->commit();
     } catch (Throwable $error) {
         if ($connection->inTransaction()) {
@@ -619,7 +640,7 @@ try {
 
     if ($route === '/api/v1/auth/bootstrap') {
         requireMethod($method, ['POST']);
-        bootstrapFirstAccount($connection, $configuration);
+        bootstrapFirstAccount($connection);
     }
 
     if ($route === '/api/v1/auth/login') {

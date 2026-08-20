@@ -5,6 +5,7 @@ RewriteEngine On
 RewriteCond %{HTTPS} !=on
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=308,L,NE]
 
+RewriteRule ^initialisation/?$ initialisation.php [QSA,L]
 RewriteRule ^api/v1(?:/.*)?$ api/v1/index.php [QSA,L]
 
 <FilesMatch "(^\.|(?:config|secret|environment)\.php$|\.(?:sql|ini|log)$)">
