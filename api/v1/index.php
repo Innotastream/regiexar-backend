@@ -440,6 +440,190 @@ function findAccount(PDO $connection, string $usernameKey): ?array
     return is_array($account) ? $account : null;
 }
 
+function managedAccount(array $account): array
+{
+    return [
+        'id' => (string) $account['id'],
+        'username' => (string) $account['username'],
+        'displayName' => (string) $account['display_name'],
+        'role' => (string) $account['permanent_role'],
+        'revoked' => $account['revoked_at'] !== null,
+    ];
+}
+
+function requireGmIdentity(PDO $connection): array
+{
+    $identity = resolveSession($connection, requestSessionToken());
+    if (!is_array($identity)) {
+        sendError(401, 'Connexion requise.', 'authentication_required');
+    }
+    if ((string) $identity['effective_mode'] !== 'gm' || (string) $identity['permanent_role'] !== 'gm') {
+        sendError(403, 'Cette action est réservée à une session MJ.', 'gm_required');
+    }
+    return $identity;
+}
+
+function listManagedAccounts(PDO $connection): array
+{
+    $statement = $connection->query(
+        'SELECT id, username, display_name, permanent_role, revoked_at '
+        . 'FROM accounts ORDER BY display_name, username'
+    );
+    $accounts = $statement === false ? [] : $statement->fetchAll();
+    return array_map(static fn (array $account): array => managedAccount($account), $accounts);
+}
+
+function createManagedAccount(PDO $connection): never
+{
+    requireGmIdentity($connection);
+    $payload = readJsonBody();
+    try {
+        [$username, $usernameKey] = normalizeUsername($payload['username'] ?? '');
+        $displayName = cleanText($payload['displayName'] ?? $username, 96, 'Nom affiché');
+        $password = validatedPassword($payload['password'] ?? '');
+    } catch (InvalidArgumentException $error) {
+        sendError(400, $error->getMessage(), 'invalid_account');
+    }
+    $requestedRole = $payload['role'] ?? 'player';
+    if (!in_array($requestedRole, ['player', 'gm'], true)) {
+        sendError(400, 'Niveau de compte invalide.', 'invalid_account');
+    }
+    $role = (string) $requestedRole;
+    if (findAccount($connection, $usernameKey) !== null) {
+        sendError(409, 'Cet identifiant existe déjà.', 'username_exists');
+    }
+
+    $accountId = 'usr_' . randomToken(12);
+    try {
+        $insert = $connection->prepare(
+            'INSERT INTO accounts '
+            . '(id, username, username_key, display_name, permanent_role, password_verifier) '
+            . 'VALUES (:id, :username, :username_key, :display_name, :permanent_role, :password_verifier)'
+        );
+        $insert->execute([
+            ':id' => $accountId,
+            ':username' => $username,
+            ':username_key' => $usernameKey,
+            ':display_name' => $displayName,
+            ':permanent_role' => $role,
+            ':password_verifier' => hashPassword($password),
+        ]);
+    } catch (PDOException $error) {
+        if ((string) $error->getCode() === '23000') {
+            sendError(409, 'Cet identifiant existe déjà.', 'username_exists');
+        }
+        throw $error;
+    }
+    $created = findAccount($connection, $usernameKey);
+    if (!is_array($created)) {
+        throw new RuntimeException('created_account_missing');
+    }
+    sendJson(201, ['ok' => true, 'account' => managedAccount($created)]);
+}
+
+function updateManagedAccount(PDO $connection): never
+{
+    $manager = requireGmIdentity($connection);
+    $payload = readJsonBody();
+    $accountId = trim((string) ($payload['id'] ?? ''));
+    if (preg_match('/^[A-Za-z0-9_-]{8,128}$/', $accountId) !== 1) {
+        sendError(400, 'Référence de compte invalide.', 'invalid_account');
+    }
+
+    $connection->beginTransaction();
+    try {
+        $select = $connection->prepare(
+            'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+            . 'FROM accounts WHERE id = :id FOR UPDATE'
+        );
+        $select->execute([':id' => $accountId]);
+        $account = $select->fetch();
+        if (!is_array($account)) {
+            $connection->rollBack();
+            sendError(404, 'Compte introuvable.', 'account_not_found');
+        }
+
+        $displayName = (string) $account['display_name'];
+        $role = (string) $account['permanent_role'];
+        $revoked = $account['revoked_at'] !== null;
+        $passwordVerifier = (string) $account['password_verifier'];
+        try {
+            if (array_key_exists('displayName', $payload)) {
+                $displayName = cleanText($payload['displayName'], 96, 'Nom affiché');
+            }
+            if (array_key_exists('role', $payload)) {
+                if (!in_array($payload['role'], ['player', 'gm'], true)) {
+                    throw new InvalidArgumentException('Niveau de compte invalide.');
+                }
+                $role = (string) $payload['role'];
+            }
+            if (array_key_exists('revoked', $payload)) {
+                if (!is_bool($payload['revoked'])) {
+                    throw new InvalidArgumentException('État de révocation invalide.');
+                }
+                $revoked = $payload['revoked'];
+            }
+            if (array_key_exists('password', $payload) && (string) $payload['password'] !== '') {
+                $passwordVerifier = hashPassword(validatedPassword($payload['password']));
+            }
+        } catch (InvalidArgumentException $error) {
+            $connection->rollBack();
+            sendError(400, $error->getMessage(), 'invalid_account');
+        }
+
+        $isSelf = (string) $manager['id'] === $accountId;
+        if ($isSelf && ($role !== 'gm' || $revoked)) {
+            $connection->rollBack();
+            sendError(409, 'Le compte MJ connecté ne peut pas se retirer son propre accès.', 'self_lockout');
+        }
+        $removesActiveGm = (string) $account['permanent_role'] === 'gm'
+            && $account['revoked_at'] === null
+            && ($role !== 'gm' || $revoked);
+        if ($removesActiveGm) {
+            $activeGmCount = (int) $connection->query(
+                "SELECT COUNT(*) FROM accounts WHERE permanent_role = 'gm' AND revoked_at IS NULL"
+            )->fetchColumn();
+            if ($activeGmCount <= 1) {
+                $connection->rollBack();
+                sendError(409, 'La Régie doit conserver au moins un compte MJ actif.', 'last_gm_required');
+            }
+        }
+
+        $update = $connection->prepare(
+            'UPDATE accounts SET display_name = :display_name, permanent_role = :permanent_role, '
+            . 'password_verifier = :password_verifier, revoked_at = :revoked_at, '
+            . 'auth_revision = auth_revision + 1 WHERE id = :id'
+        );
+        $update->execute([
+            ':display_name' => $displayName,
+            ':permanent_role' => $role,
+            ':password_verifier' => $passwordVerifier,
+            ':revoked_at' => $revoked
+                ? (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s.v')
+                : null,
+            ':id' => $accountId,
+        ]);
+        $deleteSessions = $connection->prepare('DELETE FROM auth_sessions WHERE account_id = :account_id');
+        $deleteSessions->execute([':account_id' => $accountId]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+
+    $updated = $connection->prepare(
+        'SELECT id, username, display_name, permanent_role, revoked_at FROM accounts WHERE id = :id'
+    );
+    $updated->execute([':id' => $accountId]);
+    $account = $updated->fetch();
+    if (!is_array($account)) {
+        throw new RuntimeException('updated_account_missing');
+    }
+    sendJson(200, ['ok' => true, 'account' => managedAccount($account)]);
+}
+
 function authenticateAccount(PDO $connection, mixed $username, mixed $password, string $scope): array
 {
     try {
@@ -744,6 +928,20 @@ try {
             'sessionToken' => $session['token'],
             'expiresInSeconds' => XAR_SESSION_SECONDS,
         ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
+    }
+
+    if ($route === '/api/v1/accounts') {
+        if ($method === 'GET' || $method === 'HEAD') {
+            requireGmIdentity($connection);
+            sendJson(200, ['ok' => true, 'accounts' => listManagedAccounts($connection)], $headOnly);
+        }
+        if ($method === 'POST') {
+            createManagedAccount($connection);
+        }
+        if ($method === 'PATCH') {
+            updateManagedAccount($connection);
+        }
+        requireMethod($method, ['GET', 'HEAD', 'POST', 'PATCH']);
     }
 } catch (Throwable $error) {
     error_log('[xar-regie-api] authentication request failed: ' . get_class($error));
