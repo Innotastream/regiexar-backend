@@ -7,6 +7,7 @@ const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
 const XAR_LOGIN_LOCK_SECONDS = 60;
+const XAR_LOGIN_TAKEOVER_WAIT_MICROSECONDS = 10000000;
 
 date_default_timezone_set('UTC');
 
@@ -139,6 +140,111 @@ function databaseConnection(array $configuration): PDO
     return $connection;
 }
 
+function schemaIndexExists(PDO $connection, string $table, string $index, bool $uniqueOnly = false): bool
+{
+    $statement = $connection->prepare(
+        'SELECT COUNT(*) FROM information_schema.statistics '
+        . 'WHERE table_schema = DATABASE() AND table_name = :table_name AND index_name = :index_name'
+        . ($uniqueOnly ? ' AND non_unique = 0' : '')
+    );
+    $statement->execute([':table_name' => $table, ':index_name' => $index]);
+    return (int) $statement->fetchColumn() > 0;
+}
+
+function ensureCurrentSchema(PDO $connection): void
+{
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v5', 15)");
+    $lock->execute();
+    if ((int) $lock->fetchColumn() !== 1) {
+        throw new RuntimeException('schema_lock_unavailable');
+    }
+
+    try {
+        $version = (int) $connection->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
+        if ($version < 3) {
+            throw new RuntimeException('schema_initialization_required');
+        }
+
+        if ($version < 4) {
+            $connection->exec(
+                'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS '
+                . 'can_administrate TINYINT(1) NOT NULL DEFAULT 0 AFTER permanent_role'
+            );
+            $connection->exec(
+                "UPDATE accounts SET can_administrate = 1 WHERE id = ("
+                . "SELECT founder.id FROM (SELECT id FROM accounts WHERE permanent_role = 'gm' "
+                . 'AND revoked_at IS NULL ORDER BY created_at, id LIMIT 1) AS founder) '
+                . 'AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM accounts '
+                . 'WHERE can_administrate = 1 AND revoked_at IS NULL LIMIT 1) AS existing_administrator)'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS regie_settings ('
+                . 'singleton_id TINYINT UNSIGNED NOT NULL DEFAULT 1, revision BIGINT UNSIGNED NOT NULL DEFAULT 0, '
+                . 'public_payload JSON NOT NULL, encrypted_secrets MEDIUMBLOB NULL, secret_nonce VARBINARY(12) NULL, '
+                . 'secret_tag VARBINARY(16) NULL, updated_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (singleton_id), CONSTRAINT fk_regie_settings_account FOREIGN KEY (updated_by_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE SET NULL, CONSTRAINT chk_regie_settings_singleton CHECK (singleton_id = 1)'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                "INSERT INTO regie_settings (singleton_id, revision, public_payload) "
+                . "SELECT 1, 0, JSON_OBJECT('discord', JSON_OBJECT('images', JSON_OBJECT('enabled', FALSE), "
+                . "'dice', JSON_OBJECT('enabled', FALSE), 'journal', JSON_OBJECT('enabled', FALSE))) "
+                . 'WHERE NOT EXISTS (SELECT 1 FROM regie_settings WHERE singleton_id = 1)'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS media_objects ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'stored_name VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, original_name VARCHAR(180) NOT NULL, '
+                . 'content_type VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, byte_size BIGINT UNSIGNED NOT NULL, '
+                . 'sha256 BINARY(32) NOT NULL, uploaded_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'public_slug VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, published_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (id), '
+                . 'UNIQUE KEY uq_media_objects_stored_name (stored_name), UNIQUE KEY uq_media_objects_public_slug (public_slug), '
+                . 'KEY idx_media_objects_created (created_at), CONSTRAINT fk_media_objects_account '
+                . 'FOREIGN KEY (uploaded_by_account_id) REFERENCES accounts (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(4, 'online_application_authority', 'ece289ba6248debb317c61093162961784f892886eb677b7353d136f9c3258f2')"
+            );
+            $version = 4;
+        }
+
+        if ($version < 5) {
+            $connection->exec(
+                'ALTER TABLE accounts '
+                . 'ADD COLUMN IF NOT EXISTS takeover_requested_at DATETIME(3) NULL AFTER revoked_at, '
+                . 'ADD COLUMN IF NOT EXISTS takeover_request_id BINARY(16) NULL AFTER takeover_requested_at'
+            );
+            $connection->exec(
+                'DELETE older FROM auth_sessions AS older JOIN auth_sessions AS newer '
+                . 'ON newer.account_id = older.account_id AND (newer.created_at > older.created_at '
+                . 'OR (newer.created_at = older.created_at AND HEX(newer.token_hash) > HEX(older.token_hash)))'
+            );
+            if (schemaIndexExists($connection, 'auth_sessions', 'idx_auth_sessions_account')) {
+                $connection->exec('ALTER TABLE auth_sessions DROP INDEX idx_auth_sessions_account');
+            }
+            if (!schemaIndexExists($connection, 'auth_sessions', 'uq_auth_sessions_account', true)) {
+                $connection->exec('ALTER TABLE auth_sessions ADD UNIQUE KEY uq_auth_sessions_account (account_id)');
+            }
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(5, 'single_active_session_handoff', 'f591dc307331c40a92a4f1f678b700e95499670dd64df68cbd1ee5decd4791d8')"
+            );
+        }
+    } finally {
+        try {
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v5')");
+        } catch (Throwable) {
+            // La fermeture de la connexion libère aussi ce verrou de maintenance.
+        }
+    }
+}
+
 function readJsonBody(int $maximumBytes = 16384): array
 {
     $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
@@ -266,6 +372,7 @@ function publicAccount(array $account, string $effectiveMode): array
         'displayName' => (string) $account['display_name'],
         'role' => $effectiveMode,
         'permanentRole' => (string) $account['permanent_role'],
+        'canAdministrate' => (bool) ($account['can_administrate'] ?? false),
     ];
 }
 
@@ -290,6 +397,81 @@ function createSession(PDO $connection, array $account, string $effectiveMode): 
     return ['token' => $token, 'mode' => $mode];
 }
 
+function createExclusiveSession(PDO $connection, array $account, string $effectiveMode): array
+{
+    $mode = $effectiveMode === 'gm' ? 'gm' : 'player';
+    if ($mode === 'gm' && (string) $account['permanent_role'] !== 'gm') {
+        throw new RuntimeException('gm_role_required');
+    }
+    $accountId = (string) $account['id'];
+    $lockName = 'xar-login-' . substr(hash('sha256', $accountId), 0, 48);
+    $lock = $connection->prepare('SELECT GET_LOCK(:lock_name, 12)');
+    $lock->execute([':lock_name' => $lockName]);
+    if ((int) $lock->fetchColumn() !== 1) {
+        throw new RuntimeException('login_lock_timeout');
+    }
+
+    try {
+        $active = $connection->prepare(
+            'SELECT COUNT(*) FROM auth_sessions WHERE account_id = :account_id '
+            . 'AND expires_at > UTC_TIMESTAMP(3)'
+        );
+        $active->execute([':account_id' => $accountId]);
+        if ((int) $active->fetchColumn() > 0) {
+            $takeover = $connection->prepare(
+                'UPDATE accounts SET takeover_requested_at = UTC_TIMESTAMP(3), takeover_request_id = :request_id '
+                . 'WHERE id = :id'
+            );
+            $takeover->bindValue(':request_id', random_bytes(16), PDO::PARAM_LOB);
+            $takeover->bindValue(':id', $accountId);
+            $takeover->execute();
+
+            $deadline = hrtime(true) + (XAR_LOGIN_TAKEOVER_WAIT_MICROSECONDS * 1000);
+            do {
+                usleep(250000);
+                $active->execute([':account_id' => $accountId]);
+                if ((int) $active->fetchColumn() === 0) {
+                    break;
+                }
+            } while (hrtime(true) < $deadline);
+        }
+
+        $connection->beginTransaction();
+        try {
+            $select = $connection->prepare(
+                'SELECT id, username, display_name, permanent_role, can_administrate, password_verifier, '
+                . 'auth_revision, revoked_at FROM accounts WHERE id = :id FOR UPDATE'
+            );
+            $select->execute([':id' => $accountId]);
+            $current = $select->fetch();
+            if (!is_array($current) || $current['revoked_at'] !== null
+                || (int) $current['auth_revision'] !== (int) $account['auth_revision']) {
+                throw new RuntimeException('account_changed_during_login');
+            }
+            $delete = $connection->prepare('DELETE FROM auth_sessions WHERE account_id = :account_id');
+            $delete->execute([':account_id' => $accountId]);
+            $clear = $connection->prepare(
+                'UPDATE accounts SET takeover_requested_at = NULL, takeover_request_id = NULL WHERE id = :id'
+            );
+            $clear->execute([':id' => $accountId]);
+            $session = createSession($connection, $current, $mode);
+            $connection->commit();
+            return ['account' => $current, 'session' => $session];
+        } catch (Throwable $error) {
+            if ($connection->inTransaction()) {
+                $connection->rollBack();
+            }
+            throw $error;
+        }
+    } finally {
+        try {
+            $release = $connection->prepare('SELECT RELEASE_LOCK(:lock_name)');
+            $release->execute([':lock_name' => $lockName]);
+        } catch (Throwable) {
+        }
+    }
+}
+
 function deleteSession(PDO $connection, string $token): void
 {
     if ($token === '') {
@@ -306,7 +488,8 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
         return null;
     }
     $statement = $connection->prepare(
-        'SELECT a.id, a.username, a.display_name, a.permanent_role, a.auth_revision, a.revoked_at, '
+        'SELECT a.id, a.username, a.display_name, a.permanent_role, a.can_administrate, a.auth_revision, a.revoked_at, '
+        . 'a.takeover_requested_at, a.takeover_request_id, '
         . 's.effective_mode, s.auth_revision AS session_auth_revision '
         . 'FROM auth_sessions s JOIN accounts a ON a.id = s.account_id '
         . 'WHERE s.token_hash = :token_hash AND s.expires_at > UTC_TIMESTAMP(3) LIMIT 1'
@@ -432,7 +615,7 @@ function clearRateFailures(PDO $connection, string $bucket): void
 function findAccount(PDO $connection, string $usernameKey): ?array
 {
     $statement = $connection->prepare(
-        'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+        'SELECT id, username, display_name, permanent_role, can_administrate, password_verifier, auth_revision, revoked_at '
         . 'FROM accounts WHERE username_key = :username_key LIMIT 1'
     );
     $statement->execute([':username_key' => $usernameKey]);
@@ -447,6 +630,7 @@ function managedAccount(array $account): array
         'username' => (string) $account['username'],
         'displayName' => (string) $account['display_name'],
         'role' => (string) $account['permanent_role'],
+        'canAdministrate' => (bool) ($account['can_administrate'] ?? false),
         'revoked' => $account['revoked_at'] !== null,
     ];
 }
@@ -463,10 +647,19 @@ function requireGmIdentity(PDO $connection): array
     return $identity;
 }
 
+function requireAdministratorIdentity(PDO $connection): array
+{
+    $identity = requireGmIdentity($connection);
+    if (!(bool) ($identity['can_administrate'] ?? false)) {
+        sendError(403, 'Cette action est réservée à un administrateur de la Régie.', 'administrator_required');
+    }
+    return $identity;
+}
+
 function listManagedAccounts(PDO $connection): array
 {
     $statement = $connection->query(
-        'SELECT id, username, display_name, permanent_role, revoked_at '
+        'SELECT id, username, display_name, permanent_role, can_administrate, revoked_at '
         . 'FROM accounts ORDER BY display_name, username'
     );
     $accounts = $statement === false ? [] : $statement->fetchAll();
@@ -475,7 +668,7 @@ function listManagedAccounts(PDO $connection): array
 
 function createManagedAccount(PDO $connection): never
 {
-    requireGmIdentity($connection);
+    requireAdministratorIdentity($connection);
     $payload = readJsonBody();
     try {
         [$username, $usernameKey] = normalizeUsername($payload['username'] ?? '');
@@ -489,6 +682,10 @@ function createManagedAccount(PDO $connection): never
         sendError(400, 'Niveau de compte invalide.', 'invalid_account');
     }
     $role = (string) $requestedRole;
+    $canAdministrate = ($payload['canAdministrate'] ?? false) === true;
+    if ($canAdministrate && $role !== 'gm') {
+        sendError(400, 'Un administrateur doit posséder le niveau MJ.', 'invalid_account');
+    }
     if (findAccount($connection, $usernameKey) !== null) {
         sendError(409, 'Cet identifiant existe déjà.', 'username_exists');
     }
@@ -497,8 +694,8 @@ function createManagedAccount(PDO $connection): never
     try {
         $insert = $connection->prepare(
             'INSERT INTO accounts '
-            . '(id, username, username_key, display_name, permanent_role, password_verifier) '
-            . 'VALUES (:id, :username, :username_key, :display_name, :permanent_role, :password_verifier)'
+            . '(id, username, username_key, display_name, permanent_role, can_administrate, password_verifier) '
+            . 'VALUES (:id, :username, :username_key, :display_name, :permanent_role, :can_administrate, :password_verifier)'
         );
         $insert->execute([
             ':id' => $accountId,
@@ -506,6 +703,7 @@ function createManagedAccount(PDO $connection): never
             ':username_key' => $usernameKey,
             ':display_name' => $displayName,
             ':permanent_role' => $role,
+            ':can_administrate' => $canAdministrate ? 1 : 0,
             ':password_verifier' => hashPassword($password),
         ]);
     } catch (PDOException $error) {
@@ -523,7 +721,7 @@ function createManagedAccount(PDO $connection): never
 
 function updateManagedAccount(PDO $connection): never
 {
-    $manager = requireGmIdentity($connection);
+    $manager = requireAdministratorIdentity($connection);
     $payload = readJsonBody();
     $accountId = trim((string) ($payload['id'] ?? ''));
     if (preg_match('/^[A-Za-z0-9_-]{8,128}$/', $accountId) !== 1) {
@@ -533,7 +731,7 @@ function updateManagedAccount(PDO $connection): never
     $connection->beginTransaction();
     try {
         $select = $connection->prepare(
-            'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+            'SELECT id, username, display_name, permanent_role, can_administrate, password_verifier, auth_revision, revoked_at '
             . 'FROM accounts WHERE id = :id FOR UPDATE'
         );
         $select->execute([':id' => $accountId]);
@@ -545,6 +743,7 @@ function updateManagedAccount(PDO $connection): never
 
         $displayName = (string) $account['display_name'];
         $role = (string) $account['permanent_role'];
+        $canAdministrate = (bool) $account['can_administrate'];
         $revoked = $account['revoked_at'] !== null;
         $passwordVerifier = (string) $account['password_verifier'];
         try {
@@ -563,6 +762,12 @@ function updateManagedAccount(PDO $connection): never
                 }
                 $revoked = $payload['revoked'];
             }
+            if (array_key_exists('canAdministrate', $payload)) {
+                if (!is_bool($payload['canAdministrate'])) {
+                    throw new InvalidArgumentException('Droit d’administration invalide.');
+                }
+                $canAdministrate = $payload['canAdministrate'];
+            }
             if (array_key_exists('password', $payload) && (string) $payload['password'] !== '') {
                 $passwordVerifier = hashPassword(validatedPassword($payload['password']));
             }
@@ -572,31 +777,49 @@ function updateManagedAccount(PDO $connection): never
         }
 
         $isSelf = (string) $manager['id'] === $accountId;
-        if ($isSelf && ($role !== 'gm' || $revoked)) {
+        if ($canAdministrate && $role !== 'gm') {
             $connection->rollBack();
-            sendError(409, 'Le compte MJ connecté ne peut pas se retirer son propre accès.', 'self_lockout');
+            sendError(400, 'Un administrateur doit posséder le niveau MJ.', 'invalid_account');
+        }
+        if ($isSelf && ($role !== 'gm' || !$canAdministrate || $revoked)) {
+            $connection->rollBack();
+            sendError(409, 'L’administrateur connecté ne peut pas se retirer son propre accès.', 'self_lockout');
         }
         $removesActiveGm = (string) $account['permanent_role'] === 'gm'
             && $account['revoked_at'] === null
             && ($role !== 'gm' || $revoked);
         if ($removesActiveGm) {
-            $activeGmCount = (int) $connection->query(
-                "SELECT COUNT(*) FROM accounts WHERE permanent_role = 'gm' AND revoked_at IS NULL"
-            )->fetchColumn();
-            if ($activeGmCount <= 1) {
+            $activeGms = $connection->query(
+                "SELECT id FROM accounts WHERE permanent_role = 'gm' AND revoked_at IS NULL FOR UPDATE"
+            )->fetchAll();
+            if (count($activeGms) <= 1) {
                 $connection->rollBack();
                 sendError(409, 'La Régie doit conserver au moins un compte MJ actif.', 'last_gm_required');
             }
         }
 
+        $removesActiveAdministrator = (bool) $account['can_administrate']
+            && $account['revoked_at'] === null
+            && (!$canAdministrate || $revoked || $role !== 'gm');
+        if ($removesActiveAdministrator) {
+            $administrators = $connection->query(
+                "SELECT id FROM accounts WHERE permanent_role = 'gm' AND can_administrate = 1 AND revoked_at IS NULL FOR UPDATE"
+            )->fetchAll();
+            if (count($administrators) <= 1) {
+                $connection->rollBack();
+                sendError(409, 'La Régie doit conserver au moins un administrateur actif.', 'last_administrator_required');
+            }
+        }
+
         $update = $connection->prepare(
-            'UPDATE accounts SET display_name = :display_name, permanent_role = :permanent_role, '
+            'UPDATE accounts SET display_name = :display_name, permanent_role = :permanent_role, can_administrate = :can_administrate, '
             . 'password_verifier = :password_verifier, revoked_at = :revoked_at, '
             . 'auth_revision = auth_revision + 1 WHERE id = :id'
         );
         $update->execute([
             ':display_name' => $displayName,
             ':permanent_role' => $role,
+            ':can_administrate' => $canAdministrate ? 1 : 0,
             ':password_verifier' => $passwordVerifier,
             ':revoked_at' => $revoked
                 ? (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s.v')
@@ -614,7 +837,7 @@ function updateManagedAccount(PDO $connection): never
     }
 
     $updated = $connection->prepare(
-        'SELECT id, username, display_name, permanent_role, revoked_at FROM accounts WHERE id = :id'
+        'SELECT id, username, display_name, permanent_role, can_administrate, revoked_at FROM accounts WHERE id = :id'
     );
     $updated->execute([':id' => $accountId]);
     $account = $updated->fetch();
@@ -726,8 +949,8 @@ function bootstrapFirstAccount(PDO $connection): never
         $accountId = 'usr_' . randomToken(12);
         $insert = $connection->prepare(
             'INSERT INTO accounts '
-            . '(id, username, username_key, display_name, permanent_role, password_verifier) '
-            . 'VALUES (:id, :username, :username_key, :display_name, \'gm\', :password_verifier)'
+            . '(id, username, username_key, display_name, permanent_role, can_administrate, password_verifier) '
+            . 'VALUES (:id, :username, :username_key, :display_name, \'gm\', 1, :password_verifier)'
         );
         $insert->execute([
             ':id' => $accountId,
@@ -762,6 +985,8 @@ function bootstrapFirstAccount(PDO $connection): never
     ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
 }
 
+require_once __DIR__ . '/online.php';
+
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
 
@@ -793,6 +1018,7 @@ if ($configuration === null) {
 
 try {
     $connection = databaseConnection($configuration);
+    ensureCurrentSchema($connection);
 } catch (Throwable $error) {
     error_log('[xar-regie-api] database connection failed: ' . get_class($error));
     $code = $error instanceof RuntimeException && $error->getMessage() === 'configuration_required'
@@ -837,7 +1063,9 @@ try {
             $payload['password'] ?? '',
             $scope
         );
-        $session = createSession($connection, $account, $scope);
+        $exclusive = createExclusiveSession($connection, $account, $scope);
+        $account = $exclusive['account'];
+        $session = $exclusive['session'];
         sendJson(200, [
             'ok' => true,
             'account' => publicAccount($account, $scope),
@@ -883,7 +1111,7 @@ try {
         $connection->beginTransaction();
         try {
             $select = $connection->prepare(
-                'SELECT id, username, display_name, permanent_role, password_verifier, auth_revision, revoked_at '
+                'SELECT id, username, display_name, permanent_role, can_administrate, password_verifier, auth_revision, revoked_at '
                 . 'FROM accounts WHERE id = :id FOR UPDATE'
             );
             $select->execute([':id' => (string) $identity['id']]);
@@ -921,7 +1149,9 @@ try {
             throw new RuntimeException('updated_account_missing');
         }
         $mode = (string) $identity['effective_mode'];
-        $session = createSession($connection, $updated, $mode);
+        $exclusive = createExclusiveSession($connection, $updated, $mode);
+        $updated = $exclusive['account'];
+        $session = $exclusive['session'];
         sendJson(200, [
             'ok' => true,
             'account' => publicAccount($updated, $mode),
@@ -932,7 +1162,7 @@ try {
 
     if ($route === '/api/v1/accounts') {
         if ($method === 'GET' || $method === 'HEAD') {
-            requireGmIdentity($connection);
+            requireAdministratorIdentity($connection);
             sendJson(200, ['ok' => true, 'accounts' => listManagedAccounts($connection)], $headOnly);
         }
         if ($method === 'POST') {
@@ -943,6 +1173,8 @@ try {
         }
         requireMethod($method, ['GET', 'HEAD', 'POST', 'PATCH']);
     }
+
+    handleOnlineRoute($connection, $configuration, $route, $method, $headOnly);
 } catch (Throwable $error) {
     error_log('[xar-regie-api] authentication request failed: ' . get_class($error));
     sendError(503, 'Service momentanément indisponible.', 'service_unavailable');
