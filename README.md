@@ -1,11 +1,12 @@
 # Backend OVH — autorité en ligne de la Régie
 
-Ce dossier contient le serveur hébergé 0.6.3 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
+Ce dossier contient le serveur hébergé 0.6.4 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
 
 ## Périmètre
 
 - racine publique OVH : `regie` ;
 - API : `https://regie-xar-tsaroth.fr/api/v1/` ;
+- politique de confidentialité publique : `https://regie-xar-tsaroth.fr/confidentialite` ;
 - test HTTPS + MySQL : `GET /api/v1/health` ;
 - authentification : `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` ;
 - changement de mot de passe : `POST /api/v1/auth/password` ;
@@ -30,6 +31,7 @@ Ce dossier contient le serveur hébergé 0.6.3 de la Régie. MySQL fait autorit�
 racine SFTP
 ├── regie/
 │   ├── .htaccess
+│   ├── confidentialite.html
 │   ├── index.php
 │   └── api/v1/index.php
 └── regie-private/
@@ -73,6 +75,7 @@ Le mot de passe doit être saisi directement dans OVH. Il ne doit jamais être c
 ## Résultats attendus
 
 - `/` répond par une page neutre et ne liste aucun fichier ;
+- `/confidentialite` répond par la politique publique de la Régie ;
 - `/api/v1/health` répond `503 configuration_required` tant que la configuration privée ou les variables OVH manquent ;
 - une fois la configuration installée, la même route répond `200` et `status: ok` si MySQL est joignable ;
 - sans session, `/api/v1/auth/me` répond `401` sans révéler d’information de compte ;
