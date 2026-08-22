@@ -853,6 +853,104 @@ function commandOnlineState(PDO $connection): never
             $state['mapPings'] = array_slice(array_values(array_filter($state['mapPings'] ?? [], static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now)), -19);
             $state['mapPings'][] = $ping;
             $result['ping'] = $ping;
+        } elseif ($command === 'token.roll') {
+            $tokens = is_array($state['map']['tokens'] ?? null) ? $state['map']['tokens'] : [];
+            $tokenIndex = findEntryIndex($tokens, (string) ($arguments['tokenId'] ?? ''));
+            if ($tokenIndex < 0 || ($tokens[$tokenIndex]['controllerPlayerId'] ?? null) !== $accountId
+                || ($tokens[$tokenIndex]['hidden'] ?? false) === true) {
+                $connection->rollBack();
+                sendError(403, 'Ce token ne vous appartient pas.', 'token_forbidden');
+            }
+            $token = $tokens[$tokenIndex];
+            $kind = in_array(($arguments['kind'] ?? ''), ['stat', 'initiative', 'damage', 'custom'], true)
+                ? (string) $arguments['kind']
+                : 'custom';
+            $label = 'Test personnalisé';
+            $formula = '1d100';
+            if ($kind === 'stat') {
+                $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
+                $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
+                if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
+                    $connection->rollBack();
+                    sendError(404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');
+                }
+                $value = (int) $stats[$statIndex]['value'];
+                $label = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
+                $formula = '1d100' . ($value >= 0 ? '+' : '') . $value;
+            } elseif ($kind === 'initiative') {
+                $bonus = is_numeric($token['initiativeBonus'] ?? null) ? (int) $token['initiativeBonus'] : 0;
+                $label = 'Initiative';
+                $formula = '1d100' . ($bonus >= 0 ? '+' : '') . $bonus;
+            } elseif ($kind === 'damage') {
+                $label = 'Dégâts';
+                $formula = substr(str_replace(' ', '', (string) ($token['damageDice'] ?? '')), 0, 80);
+                if ($formula === '') {
+                    $connection->rollBack();
+                    sendError(400, 'Les dégâts de ce token ne sont pas renseignés.', 'token_damage_missing');
+                }
+            } else {
+                $label = substr(trim((string) ($arguments['label'] ?? 'Test personnalisé')), 0, 120);
+                $formula = substr(str_replace(' ', '', (string) ($arguments['formula'] ?? '1d100')), 0, 80);
+                if ($label === '') {
+                    $connection->rollBack();
+                    sendError(400, 'Donnez un intitulé au jet.', 'invalid_roll_label');
+                }
+            }
+            try {
+                $rolled = onlineRollFormula($formula);
+            } catch (InvalidArgumentException $error) {
+                $connection->rollBack();
+                sendError(400, $error->getMessage(), 'invalid_roll');
+            }
+            $roll = [
+                'id' => randomToken(12),
+                'label' => $label,
+                'characterName' => substr((string) ($token['name'] ?? 'Token'), 0, 120),
+                'formula' => $rolled['formula'],
+                'total' => $rolled['total'],
+                'breakdown' => $rolled['breakdown'],
+                'visibility' => 'public',
+                'revealed' => true,
+                'rollerName' => (string) $identity['display_name'],
+                'rollerRole' => 'player',
+                'createdAt' => gmdate('c'),
+            ];
+            $state['rolls'] = is_array($state['rolls'] ?? null) ? $state['rolls'] : [];
+            array_unshift($state['rolls'], $roll);
+            $state['rolls'] = array_slice($state['rolls'], 0, 100);
+            $initiativeUpdated = false;
+            if ($kind === 'initiative' && ($state['tacticalSync']['paused'] ?? false) !== true) {
+                $tokens[$tokenIndex]['initiative'] = $rolled['total'];
+                $tokens[$tokenIndex]['_updatedAt'] = (int) floor(microtime(true) * 1000);
+                $state['map']['tokens'] = $tokens;
+                $initiative = is_array($state['initiative'] ?? null) ? $state['initiative'] : [];
+                $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
+                $currentTokenId = ($initiative['active'] ?? false) === true
+                    ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null)
+                    : null;
+                $order = array_values(array_filter($order, static fn (mixed $tokenId): bool =>
+                    findEntryIndex($tokens, (string) $tokenId) >= 0
+                ));
+                if (!in_array($token['id'], $order, true)) {
+                    $order[] = $token['id'];
+                }
+                usort($order, static function (mixed $leftId, mixed $rightId) use ($tokens): int {
+                    $leftIndex = findEntryIndex($tokens, (string) $leftId);
+                    $rightIndex = findEntryIndex($tokens, (string) $rightId);
+                    $left = $leftIndex >= 0 ? ($tokens[$leftIndex]['initiative'] ?? -1) : -1;
+                    $right = $rightIndex >= 0 ? ($tokens[$rightIndex]['initiative'] ?? -1) : -1;
+                    return (int) $right <=> (int) $left;
+                });
+                $initiative['order'] = $order;
+                $initiative['currentIndex'] = $currentTokenId !== null && in_array($currentTokenId, $order, true)
+                    ? (int) array_search($currentTokenId, $order, true)
+                    : 0;
+                $initiative['_updatedAt'] = (int) floor(microtime(true) * 1000);
+                $state['initiative'] = $initiative;
+                $initiativeUpdated = true;
+            }
+            $result['roll'] = $roll;
+            $result['initiativeUpdated'] = $initiativeUpdated;
         } elseif ($command === 'roll') {
             $characters = is_array($state['characters'] ?? null) ? $state['characters'] : [];
             $characterIndex = findEntryIndex($characters, (string) ($arguments['characterId'] ?? ''));
@@ -1149,6 +1247,7 @@ function mediaExtension(string $contentType): string
 function uploadOnlineMedia(PDO $connection): never
 {
     $identity = requireIdentity($connection);
+    @set_time_limit(900);
     $contentType = strtolower(trim(explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? 'application/octet-stream'))[0]));
     $extension = mediaExtension($contentType);
     if ($extension === '' || (!str_starts_with($contentType, 'audio/') && !str_starts_with($contentType, 'image/'))) {

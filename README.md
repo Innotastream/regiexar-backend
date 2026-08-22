@@ -1,6 +1,6 @@
 # Backend OVH — autorité en ligne de la Régie
 
-Ce dossier contient le serveur hébergé 0.6.4 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
+Ce dossier contient le serveur hébergé 0.6.5 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
 
 ## Périmètre
 
@@ -11,7 +11,7 @@ Ce dossier contient le serveur hébergé 0.6.4 de la Régie. MySQL fait autorit�
 - authentification : `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` ;
 - changement de mot de passe : `POST /api/v1/auth/password` ;
 - comptes : `GET`, `POST` et `PATCH /api/v1/accounts`, réservés à un administrateur connecté en mode MJ ;
-- état partagé : `GET` et `PUT /api/v1/state`, commandes Joueur validées par `POST /api/v1/state/command` ;
+- état partagé : `GET` et `PUT /api/v1/state`, commandes Joueur et jets de tokens validés par `POST /api/v1/state/command` ;
 - présences réelles : `/api/v1/connections` et `/api/v1/events` ;
 - réglages chiffrés : `/api/v1/settings` et `/api/v1/bridge-settings` ;
 - médias privés : `/api/v1/media` ; publication d’image : `POST /api/v1/media/{id}/publish` ;
