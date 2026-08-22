@@ -8,6 +8,7 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: no-referrer');
 header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
 
 ?><!doctype html>
 <html lang="fr">
@@ -31,5 +32,4 @@ header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
   </main>
 </body>
 </html>
-
 

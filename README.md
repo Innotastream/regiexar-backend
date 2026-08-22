@@ -1,6 +1,6 @@
 # Backend OVH — autorité en ligne de la Régie
 
-Ce dossier contient le serveur hébergé 0.6.6 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
+Ce dossier contient le serveur hébergé 0.6.7 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
 
 ## Périmètre
 
@@ -12,7 +12,7 @@ Ce dossier contient le serveur hébergé 0.6.6 de la Régie. MySQL fait autorit�
 - changement de mot de passe : `POST /api/v1/auth/password` ;
 - comptes : `GET`, `POST` et `PATCH /api/v1/accounts`, réservés à un administrateur connecté en mode MJ ;
 - état partagé : `GET` et `PUT /api/v1/state`, commandes Joueur et jets de tokens validés par `POST /api/v1/state/command` ;
-- présences réelles : `/api/v1/connections` et `/api/v1/events` ;
+- présences et changements en temps réel : `/api/v1/connections` et flux SSE `/api/v1/events/stream` ;
 - réglages chiffrés : `/api/v1/settings` et `/api/v1/bridge-settings` ;
 - médias privés : `/api/v1/media` ; publication d’image : `POST /api/v1/media/{id}/publish` ;
 - galerie administrateur : `GET /api/v1/shared-media` ; page publique non indexée : `/share/{code}` ;
@@ -62,8 +62,8 @@ L’application envoie `X-Xar-Client-Version` sur chaque requête en ligne. Le r
 
 ```php
 'client' => [
-    'minimumVersion' => '1.14.14',
-    'latestVersion' => '1.14.14',
+    'minimumVersion' => '1.15.0',
+    'latestVersion' => '1.15.0',
     'enforce' => false,
 ],
 ```
@@ -72,7 +72,7 @@ L’application envoie `X-Xar-Client-Version` sur chaque requête en ligne. Le r
 
 ## Budget réseau
 
-Les gros corps JSON peuvent être reçus avec `Content-Encoding: gzip`, avec contrôle de taille avant et après décompression. `PUT /api/v1/state?compact=1` renvoie uniquement la révision enregistrée. `GET /api/v1/events?presence=0` permet de surveiller les révisions sans refaire la requête de présence ; l’application continue de demander cette présence périodiquement. Apache compresse les réponses textuelles quand `mod_deflate` est disponible, sans appliquer ce traitement aux médias audio ou image.
+Les gros corps JSON peuvent être reçus avec `Content-Encoding: gzip`, avec contrôle de taille avant et après décompression. `PUT /api/v1/state?compact=1` renvoie uniquement la révision enregistrée. Le flux SSE authentifié `/api/v1/events/stream` pousse les révisions, présences, reprises de session et battements de vie ; il est volontairement borné puis reconnecté afin de rester compatible avec PHP-FPM/OVH. L’ancien endpoint JSON reste disponible pour compatibilité, mais la 1.15.0 ne le sonde plus en boucle. Apache compresse les réponses textuelles quand `mod_deflate` est disponible, sans appliquer ce traitement aux médias audio ou image.
 
 ## Création des comptes joueurs
 

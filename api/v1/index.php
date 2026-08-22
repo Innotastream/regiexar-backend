@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
+const XAR_BACKEND_VERSION = '0.6.7';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -1081,6 +1082,7 @@ if ($route === '/api/v1') {
         'status' => 'ok',
         'service' => 'xar-tsaroth-regie',
         'api' => 'v1',
+        'version' => XAR_BACKEND_VERSION,
     ], $headOnly);
 }
 
@@ -1115,6 +1117,8 @@ if ($route === '/api/v1/health') {
             'status' => 'ok',
             'service' => 'xar-tsaroth-regie',
             'api' => 'v1',
+            'version' => XAR_BACKEND_VERSION,
+            'clientPolicy' => clientPolicy($configuration),
         ], $headOnly);
     } catch (Throwable $error) {
         error_log('[xar-regie-api] database health check failed: ' . get_class($error));
@@ -1123,6 +1127,9 @@ if ($route === '/api/v1/health') {
 }
 
 try {
+    if ($route !== '/api/v1/auth/logout') {
+        requireSupportedClient($configuration);
+    }
     cleanupAuthentication($connection);
 
     if ($route === '/api/v1/auth/bootstrap') {
@@ -1132,7 +1139,6 @@ try {
 
     if ($route === '/api/v1/auth/login') {
         requireMethod($method, ['POST']);
-        requireSupportedClient($configuration);
         $payload = readJsonBody();
         $scope = ($payload['scope'] ?? '') === 'gm' ? 'gm' : 'player';
         $account = authenticateAccount(

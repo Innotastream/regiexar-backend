@@ -360,11 +360,57 @@ function stripForbiddenPlayerData(mixed $value, int $depth = 0): mixed
     return $clean;
 }
 
+function normalizePersistedImageReference(mixed $value): ?string
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    $reference = trim((string) $value);
+    if ($reference === '' || strlen($reference) > 2_000_000 || preg_match('/[\x00\r\n]/', $reference) === 1) {
+        return null;
+    }
+    if (preg_match('#^/media/[A-Za-z0-9_-]{24}$#', $reference) === 1) {
+        return $reference;
+    }
+    if (preg_match('#^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$#i', $reference) === 1) {
+        return $reference;
+    }
+    if (strlen($reference) > 2048) {
+        return null;
+    }
+    $parts = parse_url($reference);
+    if (!is_array($parts) || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+        || strtolower((string) ($parts['host'] ?? '')) !== 'regie-xar-tsaroth.fr' || isset($parts['port'])
+        || isset($parts['user']) || isset($parts['pass'])) {
+        return null;
+    }
+    return $reference;
+}
+
+function sanitizeStateImageReferences(mixed $value, ?string $field = null, int $depth = 0): mixed
+{
+    if ($depth > 64) {
+        return null;
+    }
+    if ($field === 'portrait' || $field === 'image' || $field === 'background') {
+        return normalizePersistedImageReference($value);
+    }
+    if (!is_array($value)) {
+        return $value;
+    }
+    $sanitized = [];
+    foreach ($value as $key => $child) {
+        $sanitized[$key] = sanitizeStateImageReferences($child, is_string($key) ? $key : null, $depth + 1);
+    }
+    return $sanitized;
+}
+
 function storeApplicationState(PDO $connection, array $identity, array $state, ?int $expectedRevision = null): array
 {
     if (stateContainsForbiddenSecret($state)) {
         sendError(400, 'L’état partagé contient une donnée secrète interdite.', 'secret_in_state');
     }
+    $state = sanitizeStateImageReferences($state);
     $schemaVersion = max(1, (int) ($state['schemaVersion'] ?? 1));
     $connection->beginTransaction();
     try {
@@ -569,7 +615,7 @@ function readOnlineState(PDO $connection, bool $headOnly = false): never
     if (!is_array($record) || $record['state'] === []) {
         sendJson(200, ['ok' => true, 'state' => null, 'revision' => 0, 'presence' => $presence], $headOnly);
     }
-    $state = $record['state'];
+    $state = sanitizeStateImageReferences($record['state']);
     $state['revision'] = $record['revision'];
     $visible = (string) $identity['effective_mode'] === 'gm'
         ? $state
@@ -722,7 +768,20 @@ function playerCharacterPatch(array $current, array $patch): array
     ];
     foreach ($allowed as $key) {
         if (array_key_exists($key, $patch)) {
-            $current[$key] = stripForbiddenPlayerData($patch[$key]);
+            if ($key === 'portrait') {
+                $current[$key] = normalizePersistedImageReference($patch[$key]);
+            } elseif ($key === 'linkedTokens') {
+                $linked = stripForbiddenPlayerData($patch[$key]);
+                $current[$key] = is_array($linked) ? array_map(static function (mixed $entry): mixed {
+                    if (!is_array($entry)) {
+                        return $entry;
+                    }
+                    $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
+                    return $entry;
+                }, array_slice($linked, 0, 200)) : [];
+            } else {
+                $current[$key] = stripForbiddenPlayerData($patch[$key]);
+            }
         }
     }
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
@@ -1109,6 +1168,7 @@ function commandOnlineState(PDO $connection): never
             $connection->rollBack();
             sendError(400, 'La modification contient une donnée secrète interdite.', 'secret_in_state');
         }
+        $state = sanitizeStateImageReferences($state);
         $nextRevision = (int) $record['revision'] + 1;
         $state['revision'] = $nextRevision;
         $state['updatedAt'] = gmdate('c');
@@ -1210,6 +1270,133 @@ function onlineEvents(PDO $connection, bool $headOnly = false): never
         ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
         'takeoverRequested' => $takeoverAt >= time() - 30,
     ], $headOnly);
+}
+
+function writeOnlineEvent(string $event, array $payload): void
+{
+    echo 'event: ' . $event . "\n";
+    echo 'data: ' . json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n\n";
+    @flush();
+}
+
+function refreshOnlineConnectionRecord(PDO $connection, string $rawId, string $tokenHash): bool
+{
+    $statement = $connection->prepare(
+        'UPDATE live_connections SET last_seen_at = UTC_TIMESTAMP(3), expires_at = :expires_at '
+        . 'WHERE connection_id = :connection_id AND session_token_hash = :token_hash'
+    );
+    $statement->bindValue(':expires_at', utcAfter(XAR_CONNECTION_SECONDS));
+    $statement->bindValue(':connection_id', $rawId, PDO::PARAM_LOB);
+    $statement->bindValue(':token_hash', $tokenHash, PDO::PARAM_LOB);
+    $statement->execute();
+    if ($statement->rowCount() === 1) {
+        return true;
+    }
+    // MySQL peut annoncer zéro ligne modifiée lorsque deux touches tombent dans
+    // la même milliseconde. Vérifier alors l’existence évite un faux 404 au
+    // moment où le client ouvre immédiatement son flux après la connexion.
+    $exists = $connection->prepare(
+        'SELECT 1 FROM live_connections WHERE connection_id = :connection_id '
+        . 'AND session_token_hash = :token_hash LIMIT 1'
+    );
+    $exists->bindValue(':connection_id', $rawId, PDO::PARAM_LOB);
+    $exists->bindValue(':token_hash', $tokenHash, PDO::PARAM_LOB);
+    $exists->execute();
+    return $exists->fetchColumn() !== false;
+}
+
+function streamOnlineEvents(PDO $connection): never
+{
+    requireMethod(strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET']);
+    $token = requestSessionToken();
+    $identity = resolveSession($connection, $token);
+    if (!is_array($identity)) {
+        sendError(401, 'Connexion requise.', 'authentication_required');
+    }
+    $connectionId = trim((string) ($_GET['connectionId'] ?? ''));
+    $rawId = connectionRawId($connectionId);
+    $tokenHash = tokenHash($token);
+    if (!refreshOnlineConnectionRecord($connection, $rawId, $tokenHash)) {
+        sendError(404, 'Connexion expirée.', 'connection_expired');
+    }
+    $knownRevision = max(0, (int) ($_GET['revision'] ?? 0));
+    $record = applicationStateRecord($connection);
+    $currentRevision = (int) ($record['revision'] ?? 0);
+    $presence = liveOnlinePresence($connection);
+    $presenceFingerprint = hash('sha256', json_encode($presence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+    @ini_set('zlib.output_compression', '0');
+    @set_time_limit(25);
+    while (ob_get_level() > 0) {
+        @ob_end_clean();
+    }
+    header('Content-Type: text/event-stream; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, no-transform');
+    header('Connection: keep-alive');
+    header('X-Accel-Buffering: no');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
+
+    writeOnlineEvent('revision', ['revision' => $currentRevision]);
+    writeOnlineEvent('presence', ['presence' => $presence]);
+    $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
+    if ($takeoverAt >= time() - 30) {
+        writeOnlineEvent('session-takeover', ['reason' => 'new-login']);
+    }
+    writeOnlineEvent('heartbeat', ['at' => (int) floor(microtime(true) * 1000)]);
+    $knownRevision = $currentRevision;
+
+    $startedAt = microtime(true);
+    $nextPresenceAt = $startedAt + 4.0;
+    $nextIdentityAt = $startedAt + 4.0;
+    $nextConnectionTouchAt = $startedAt + 10.0;
+    $nextHeartbeatAt = $startedAt + 10.0;
+    $revisionStatement = $connection->prepare('SELECT revision FROM application_state WHERE singleton_id = 1');
+    while (!connection_aborted() && microtime(true) - $startedAt < 20.0) {
+        usleep(500000);
+        $now = microtime(true);
+        $revisionStatement->execute();
+        $nextRevision = (int) ($revisionStatement->fetchColumn() ?: 0);
+        if ($nextRevision !== $knownRevision) {
+            $knownRevision = $nextRevision;
+            writeOnlineEvent('revision', ['revision' => $knownRevision]);
+        }
+        if ($now >= $nextPresenceAt) {
+            $nextPresenceAt = $now + 4.0;
+            $nextPresence = liveOnlinePresence($connection);
+            $nextFingerprint = hash('sha256', json_encode($nextPresence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            if (!hash_equals($presenceFingerprint, $nextFingerprint)) {
+                $presenceFingerprint = $nextFingerprint;
+                writeOnlineEvent('presence', ['presence' => $nextPresence]);
+            }
+        }
+        if ($now >= $nextIdentityAt) {
+            $nextIdentityAt = $now + 4.0;
+            $identity = resolveSession($connection, $token, false);
+            if (!is_array($identity)) {
+                writeOnlineEvent('session-replaced', ['reason' => 'new-login']);
+                break;
+            }
+            $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
+            if ($takeoverAt >= time() - 30) {
+                writeOnlineEvent('session-takeover', ['reason' => 'new-login']);
+                break;
+            }
+        }
+        if ($now >= $nextConnectionTouchAt) {
+            $nextConnectionTouchAt = $now + 10.0;
+            if (!refreshOnlineConnectionRecord($connection, $rawId, $tokenHash)) {
+                writeOnlineEvent('session-replaced', ['reason' => 'connection-expired']);
+                break;
+            }
+        }
+        if ($now >= $nextHeartbeatAt) {
+            $nextHeartbeatAt = $now + 10.0;
+            writeOnlineEvent('heartbeat', ['at' => (int) floor($now * 1000)]);
+        }
+    }
+    writeOnlineEvent('reconnect', ['afterMilliseconds' => 100]);
+    exit;
 }
 
 function privateMediaDirectory(): string
@@ -1696,6 +1883,9 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
     if ($route === '/api/v1/events') {
         requireMethod($method, ['GET', 'HEAD']);
         onlineEvents($connection, $headOnly);
+    }
+    if ($route === '/api/v1/events/stream') {
+        streamOnlineEvents($connection);
     }
     if ($route === '/api/v1/media') {
         if ($method === 'POST') {
