@@ -116,6 +116,46 @@ function privateConfig(): ?array
     ];
 }
 
+function clientPolicy(array $configuration): array
+{
+    $configured = $configuration['client'] ?? [];
+    $configured = is_array($configured) ? $configured : [];
+    $minimumVersion = trim((string) ($configured['minimumVersion'] ?? ''));
+    $latestVersion = trim((string) ($configured['latestVersion'] ?? $minimumVersion));
+    $validVersion = static fn (string $value): bool => preg_match('/^\d+\.\d+\.\d+$/', $value) === 1;
+    $enforce = ($configured['enforce'] ?? false) === true;
+    if ($enforce && (!$validVersion($minimumVersion) || ($latestVersion !== '' && !$validVersion($latestVersion)))) {
+        sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');
+    }
+    return [
+        'enforce' => $enforce && $validVersion($minimumVersion),
+        'minimumVersion' => $validVersion($minimumVersion) ? $minimumVersion : '',
+        'latestVersion' => $validVersion($latestVersion) ? $latestVersion : $minimumVersion,
+        'storeId' => '9N5N5M67N704',
+    ];
+}
+
+function requireSupportedClient(array $configuration): void
+{
+    $policy = clientPolicy($configuration);
+    if ($policy['enforce'] !== true) {
+        return;
+    }
+    $provided = trim((string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? ''));
+    if (preg_match('/^\d+\.\d+\.\d+$/', $provided) === 1
+        && version_compare($provided, (string) $policy['minimumVersion'], '>=')) {
+        return;
+    }
+    sendJson(426, [
+        'ok' => false,
+        'error' => 'Cette version de Xar-Tsaroth Régie n’est plus compatible. Installez la mise à jour depuis le Microsoft Store.',
+        'code' => 'client_update_required',
+        'minimumVersion' => $policy['minimumVersion'],
+        'latestVersion' => $policy['latestVersion'],
+        'storeId' => $policy['storeId'],
+    ]);
+}
+
 function databaseConnection(array $configuration): PDO
 {
     $database = $configuration['database'] ?? null;
@@ -264,6 +304,13 @@ function ensureCurrentSchema(PDO $connection): void
 
 function readJsonBody(int $maximumBytes = 16384): array
 {
+    $contentEncoding = strtolower(trim((string) ($_SERVER['HTTP_CONTENT_ENCODING'] ?? $_SERVER['CONTENT_ENCODING'] ?? 'identity')));
+    if ($contentEncoding === '') {
+        $contentEncoding = 'identity';
+    }
+    if (!in_array($contentEncoding, ['identity', 'gzip'], true)) {
+        sendError(415, 'Encodage de requête non pris en charge.', 'unsupported_content_encoding');
+    }
     $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
     if ($declared > $maximumBytes) {
         sendError(413, 'Requête trop volumineuse.', 'payload_too_large');
@@ -274,6 +321,19 @@ function readJsonBody(int $maximumBytes = 16384): array
     }
     if (strlen($raw) > $maximumBytes) {
         sendError(413, 'Requête trop volumineuse.', 'payload_too_large');
+    }
+    if ($contentEncoding === 'gzip') {
+        if (!function_exists('gzdecode')) {
+            sendError(415, 'Compression gzip indisponible sur ce serveur.', 'gzip_unavailable');
+        }
+        $decoded = gzdecode($raw, $maximumBytes + 1);
+        if ($decoded === false) {
+            sendError(400, 'Corps gzip invalide.', 'invalid_gzip');
+        }
+        if (strlen($decoded) > $maximumBytes) {
+            sendError(413, 'Requête décompressée trop volumineuse.', 'payload_too_large');
+        }
+        $raw = $decoded;
     }
     if ($raw === '') {
         return [];
@@ -1072,6 +1132,7 @@ try {
 
     if ($route === '/api/v1/auth/login') {
         requireMethod($method, ['POST']);
+        requireSupportedClient($configuration);
         $payload = readJsonBody();
         $scope = ($payload['scope'] ?? '') === 'gm' ? 'gm' : 'player';
         $account = authenticateAccount(

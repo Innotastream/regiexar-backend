@@ -587,7 +587,12 @@ function replaceOnlineState(PDO $connection): never
     }
     $expected = array_key_exists('expectedRevision', $payload) ? (int) $payload['expectedRevision'] : null;
     $stored = storeApplicationState($connection, $identity, $state, $expected);
-    sendJson(200, ['ok' => true, 'state' => $stored, 'revision' => (int) $stored['revision']]);
+    $compact = (string) ($_GET['compact'] ?? '') === '1';
+    sendJson(200, [
+        'ok' => true,
+        ...(!$compact ? ['state' => $stored] : []),
+        'revision' => (int) $stored['revision'],
+    ]);
 }
 
 function findEntryIndex(array $entries, string $id): int
@@ -1198,10 +1203,11 @@ function onlineEvents(PDO $connection, bool $headOnly = false): never
     $identity = requireIdentity($connection);
     $record = applicationStateRecord($connection);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
+    $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     sendJson(200, [
         'ok' => true,
         'revision' => (int) ($record['revision'] ?? 0),
-        'presence' => liveOnlinePresence($connection),
+        ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
         'takeoverRequested' => $takeoverAt >= time() - 30,
     ], $headOnly);
 }

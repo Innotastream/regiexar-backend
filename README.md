@@ -1,6 +1,6 @@
 # Backend OVH — autorité en ligne de la Régie
 
-Ce dossier contient le serveur hébergé 0.6.5 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
+Ce dossier contient le serveur hébergé 0.6.6 de la Régie. MySQL fait autorité pour les comptes, droits, réglages, scènes, synchronisation, présences et références de médias. Le PC conserve uniquement les fiches personnelles et les préférences de dossiers qui n’ont de sens que sur cet ordinateur.
 
 ## Périmètre
 
@@ -55,6 +55,24 @@ L’initialisation n’est possible que si `accounts` est vide et si la requête
 Les nouveaux vérificateurs de mot de passe utilisent Argon2id lorsque PHP le fournit, avec repli sur l’algorithme sûr par défaut de PHP. Un changement de mot de passe augmente `auth_revision` et invalide toutes les sessions précédentes. Un compte MJ connecté en mode Joueur reçoit strictement le mode Joueur.
 
 Un login acquiert un verrou MySQL propre au compte. Si une session existe, l’API lui signale le transfert et attend sa sauvegarde/déconnexion ; elle supprime ensuite tout ancien jeton et crée le nouveau dans la même transaction. Une contrainte unique sur `auth_sessions.account_id` interdit aussi tout doublon en cas de concurrence.
+
+## Version cliente minimale
+
+L’application envoie `X-Xar-Client-Version` sur chaque requête en ligne. Le refus des anciennes versions se configure uniquement dans le fichier privé, jamais dans Git :
+
+```php
+'client' => [
+    'minimumVersion' => '1.14.14',
+    'latestVersion' => '1.14.14',
+    'enforce' => false,
+],
+```
+
+`enforce` doit rester à `false` tant que la version minimale n’est pas effectivement disponible dans Microsoft Store. Après sa publication, le passage manuel à `true` refuse à la connexion toute version absente, invalide ou inférieure avec HTTP `426 client_update_required`. La santé de l’API et les sessions déjà ouvertes ne sont pas coupées par cette préparation.
+
+## Budget réseau
+
+Les gros corps JSON peuvent être reçus avec `Content-Encoding: gzip`, avec contrôle de taille avant et après décompression. `PUT /api/v1/state?compact=1` renvoie uniquement la révision enregistrée. `GET /api/v1/events?presence=0` permet de surveiller les révisions sans refaire la requête de présence ; l’application continue de demander cette présence périodiquement. Apache compresse les réponses textuelles quand `mod_deflate` est disponible, sans appliquer ce traitement aux médias audio ou image.
 
 ## Création des comptes joueurs
 

@@ -10,6 +10,10 @@ RewriteRule ^confidentialite/?$ confidentialite.html [L]
 RewriteRule ^api/v1(?:/.*)?$ api/v1/index.php [QSA,L]
 RewriteRule ^share/[A-Za-z0-9_-]{22}(?:/image)?/?$ api/v1/index.php [QSA,L]
 
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE application/json text/html text/css text/javascript application/javascript image/svg+xml
+</IfModule>
+
 <FilesMatch "(^\.|(?:config|secret|environment)\.php$|\.(?:sql|ini|log)$)">
   Require all denied
 </FilesMatch>
