@@ -5,6 +5,8 @@ RewriteEngine On
 RewriteCond %{HTTPS} !=on
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=308,L,NE]
 
+RewriteRule ^(?:tests|\.github)(?:/|$) - [F,L]
+
 RewriteRule ^initialisation/?$ initialisation.php [QSA,L]
 RewriteRule ^recuperation/?$ recuperation.php [QSA,L]
 RewriteRule ^confidentialite/?$ confidentialite.html [L]
@@ -15,7 +17,7 @@ RewriteRule ^share/[A-Za-z0-9_-]{22}(?:/image)?/?$ api/v1/index.php [QSA,L]
   AddOutputFilterByType DEFLATE application/json text/html text/css text/javascript application/javascript image/svg+xml
 </IfModule>
 
-<FilesMatch "(^\.|(?:config|secret|environment)\.php$|\.(?:sql|ini|log)$)">
+<FilesMatch "(^\.|(?:config|secret|environment)\.php$|\.(?:sql|ini|log|md)$)">
   Require all denied
 </FilesMatch>
 

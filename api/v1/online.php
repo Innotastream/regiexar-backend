@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 const XAR_CONNECTION_SECONDS = 45;
-const XAR_STATE_MAXIMUM_BYTES = 64 * 1024 * 1024;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
 
 function requireIdentity(PDO $connection): array
@@ -31,13 +30,49 @@ function jsonColumn(mixed $value, array $fallback = []): array
     }
 }
 
-function settingsEncryptionKey(array $configuration): string
+function decodeSettingsEncryptionKey(mixed $value): string
+{
+    $encoded = trim((string) $value);
+    if (preg_match('/^[a-fA-F0-9]{64}$/D', $encoded) === 1) {
+        $decoded = hex2bin($encoded);
+        return is_string($decoded) ? $decoded : '';
+    }
+    $decoded = base64_decode($encoded, true);
+    return is_string($decoded) && strlen($decoded) === 32 ? $decoded : '';
+}
+
+function configuredSettingsEncryptionKey(array $configuration): string
+{
+    return decodeSettingsEncryptionKey($configuration['security']['settingsEncryptionKey'] ?? '');
+}
+
+function requireWritableSettingsEncryption(array $configuration): void
+{
+    if (strlen(configuredSettingsEncryptionKey($configuration)) !== 32) {
+        sendError(
+            503,
+            'La clé privée de chiffrement des réglages doit être configurée avant cette écriture.',
+            'settings_encryption_key_required'
+        );
+    }
+}
+
+function previousSettingsEncryptionKeys(array $configuration): array
+{
+    $values = $configuration['security']['previousSettingsEncryptionKeys'] ?? [];
+    if (!is_array($values)) {
+        return [];
+    }
+    return array_values(array_filter(
+        array_map(static fn (mixed $value): string => decodeSettingsEncryptionKey($value), array_slice($values, 0, 4)),
+        static fn (string $key): bool => strlen($key) === 32
+    ));
+}
+
+function legacySettingsEncryptionKey(array $configuration): string
 {
     $password = (string) ($configuration['database']['password'] ?? '');
-    if ($password === '') {
-        throw new RuntimeException('settings_key_unavailable');
-    }
-    return hash_hkdf('sha256', $password, 32, 'xar-tsaroth-regie-settings-v1');
+    return $password === '' ? '' : hash_hkdf('sha256', $password, 32, 'xar-tsaroth-regie-settings-v1');
 }
 
 function decryptSettingsSecrets(array $configuration, ?array $record): array
@@ -45,29 +80,40 @@ function decryptSettingsSecrets(array $configuration, ?array $record): array
     if (!is_array($record) || empty($record['encrypted_secrets'])) {
         return [];
     }
-    $plain = openssl_decrypt(
-        (string) $record['encrypted_secrets'],
-        'aes-256-gcm',
-        settingsEncryptionKey($configuration),
-        OPENSSL_RAW_DATA,
-        (string) ($record['secret_nonce'] ?? ''),
-        (string) ($record['secret_tag'] ?? '')
-    );
-    if (!is_string($plain)) {
-        throw new RuntimeException('settings_decryption_failed');
+    $keys = array_values(array_unique(array_filter([
+        configuredSettingsEncryptionKey($configuration),
+        ...previousSettingsEncryptionKeys($configuration),
+        legacySettingsEncryptionKey($configuration),
+    ], static fn (string $key): bool => strlen($key) === 32)));
+    foreach ($keys as $key) {
+        $plain = openssl_decrypt(
+            (string) $record['encrypted_secrets'],
+            'aes-256-gcm',
+            $key,
+            OPENSSL_RAW_DATA,
+            (string) ($record['secret_nonce'] ?? ''),
+            (string) ($record['secret_tag'] ?? '')
+        );
+        if (is_string($plain)) {
+            return jsonColumn($plain);
+        }
     }
-    return jsonColumn($plain);
+    throw new RuntimeException('settings_decryption_failed');
 }
 
 function encryptSettingsSecrets(array $configuration, array $secrets): array
 {
     $nonce = random_bytes(12);
     $tag = '';
+    $key = configuredSettingsEncryptionKey($configuration);
+    if (strlen($key) !== 32) {
+        throw new RuntimeException('settings_encryption_key_required');
+    }
     $plain = json_encode($secrets, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     $ciphertext = openssl_encrypt(
         $plain,
         'aes-256-gcm',
-        settingsEncryptionKey($configuration),
+        $key,
         OPENSSL_RAW_DATA,
         $nonce,
         $tag
@@ -160,6 +206,7 @@ function readOnlineSettings(PDO $connection, array $configuration): array
 function updateOnlineSettings(PDO $connection, array $configuration): never
 {
     $identity = requireAdministratorIdentity($connection);
+    requireWritableSettingsEncryption($configuration);
     $payload = readJsonBody(65536);
     $connection->beginTransaction();
     try {
@@ -257,6 +304,7 @@ function readBridgeSettings(PDO $connection, array $configuration, array $identi
     if (preg_match('/^[a-f0-9]{64}$/', $current['pairingToken']) === 1) {
         return $current;
     }
+    requireWritableSettingsEncryption($configuration);
     $connection->beginTransaction();
     try {
         $record = settingsRecord($connection, true) ?? ['revision' => 0, 'public_payload' => '{}'];
@@ -278,6 +326,7 @@ function readBridgeSettings(PDO $connection, array $configuration, array $identi
 function updateBridgeSettings(PDO $connection, array $configuration): never
 {
     $identity = requireGmIdentity($connection);
+    requireWritableSettingsEncryption($configuration);
     $payload = readJsonBody(65536);
     try {
         $conversations = cleanBridgeConversations($payload['conversations'] ?? []);
@@ -306,7 +355,7 @@ function updateBridgeSettings(PDO $connection, array $configuration): never
     sendJson(200, ['ok' => true, 'bridge' => bridgeSettingsPayload(['public_payload' => $public], $secrets)]);
 }
 
-function applicationStateRecord(PDO $connection, bool $forUpdate = false): ?array
+function legacyApplicationStateRecord(PDO $connection, bool $forUpdate = false): ?array
 {
     $statement = $connection->query(
         'SELECT schema_version, revision, payload FROM application_state WHERE singleton_id = 1'
@@ -332,7 +381,7 @@ function stateContainsForbiddenSecret(mixed $value, int $depth = 0): bool
         return false;
     }
     foreach ($value as $key => $child) {
-        if (is_string($key) && preg_match('/^(?:password|passwordVerifier|sessionToken|accessToken|token|webhook|apiKey|secretKey|privateKey)$/i', $key) === 1) {
+        if (is_string($key) && preg_match('/^(?:password|passwordVerifier|sessionToken|accessToken|refreshToken|pairingToken|authenticationToken|webhook(?:Url)?|apiKey|clientSecret|secretKey|privateKey)$/i', $key) === 1) {
             return true;
         }
         if (stateContainsForbiddenSecret($child, $depth + 1)) {
@@ -352,7 +401,7 @@ function stripForbiddenPlayerData(mixed $value, int $depth = 0): mixed
     }
     $clean = [];
     foreach ($value as $key => $child) {
-        if (is_string($key) && preg_match('/^(?:secret|gmNotes|password|passwordVerifier|sessionToken|accessToken|token|webhook|apiKey|secretKey|privateKey)$/i', $key) === 1) {
+        if (is_string($key) && preg_match('/^(?:secret|gmNotes|password|passwordVerifier|sessionToken|accessToken|refreshToken|pairingToken|authenticationToken|webhook(?:Url)?|apiKey|clientSecret|secretKey|privateKey)$/i', $key) === 1) {
             continue;
         }
         $clean[$key] = stripForbiddenPlayerData($child, $depth + 1);
@@ -403,68 +452,6 @@ function sanitizeStateImageReferences(mixed $value, ?string $field = null, int $
         $sanitized[$key] = sanitizeStateImageReferences($child, is_string($key) ? $key : null, $depth + 1);
     }
     return $sanitized;
-}
-
-function storeApplicationState(PDO $connection, array $identity, array $state, ?int $expectedRevision = null): array
-{
-    if (stateContainsForbiddenSecret($state)) {
-        sendError(400, 'L’état partagé contient une donnée secrète interdite.', 'secret_in_state');
-    }
-    $state = sanitizeStateImageReferences($state);
-    $schemaVersion = max(1, (int) ($state['schemaVersion'] ?? 1));
-    $connection->beginTransaction();
-    try {
-        $current = applicationStateRecord($connection, true);
-        $currentRevision = (int) ($current['revision'] ?? 0);
-        $currentSchemaVersion = (int) ($current['schemaVersion'] ?? 0);
-        if ($currentSchemaVersion > 0 && $schemaVersion < $currentSchemaVersion) {
-            $connection->rollBack();
-            sendJson(409, [
-                'ok' => false,
-                'error' => 'Cette table utilise un schéma plus récent. Mettez la Régie à jour avant de la modifier.',
-                'code' => 'schema_downgrade',
-                'requiredSchemaVersion' => $currentSchemaVersion,
-            ]);
-        }
-        if ($expectedRevision !== null && $expectedRevision !== $currentRevision) {
-            $connection->rollBack();
-            sendJson(409, [
-                'ok' => false,
-                'error' => 'L’état en ligne a changé. Rechargez la table avant de renvoyer cette modification.',
-                'code' => 'revision_conflict',
-                'revision' => $currentRevision,
-            ]);
-        }
-        $nextRevision = $currentRevision + 1;
-        $state['schemaVersion'] = $schemaVersion;
-        $state['revision'] = $nextRevision;
-        $state['updatedAt'] = gmdate('c');
-        $encoded = json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        if (strlen($encoded) > XAR_STATE_MAXIMUM_BYTES) {
-            $connection->rollBack();
-            sendError(413, 'L’état partagé dépasse 64 Mo. Importez les médias séparément.', 'state_too_large');
-        }
-        $statement = $connection->prepare(
-            'INSERT INTO application_state '
-            . '(singleton_id, schema_version, revision, payload, updated_by_account_id) '
-            . 'VALUES (1, :schema_version, :revision, :payload, :updated_by) '
-            . 'ON DUPLICATE KEY UPDATE schema_version = VALUES(schema_version), revision = VALUES(revision), '
-            . 'payload = VALUES(payload), updated_by_account_id = VALUES(updated_by_account_id)'
-        );
-        $statement->execute([
-            ':schema_version' => $schemaVersion,
-            ':revision' => $nextRevision,
-            ':payload' => $encoded,
-            ':updated_by' => (string) $identity['id'],
-        ]);
-        $connection->commit();
-        return $state;
-    } catch (Throwable $error) {
-        if ($connection->inTransaction()) {
-            $connection->rollBack();
-        }
-        throw $error;
-    }
 }
 
 function visibleCharacter(array $character): array
@@ -588,6 +575,11 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         'myPlayer' => ['id' => $accountId, 'name' => (string) $identity['display_name'], 'role' => 'player'],
         'preferences' => $preferences,
         'myCharacters' => $myCharacters,
+        'characterTombstones' => array_values(array_filter(
+            is_array($fullState['characterTombstones'] ?? null) ? $fullState['characterTombstones'] : [],
+            static fn (mixed $entry): bool => is_array($entry)
+                && (!isset($entry['ownerPlayerId']) || (string) $entry['ownerPlayerId'] === $accountId)
+        )),
         'tacticalLocked' => $paused,
         'playerMovementMode' => $active ? 'combat' : 'free',
         'map' => $map,
@@ -610,7 +602,9 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
 function readOnlineState(PDO $connection, bool $headOnly = false): never
 {
     $identity = requireIdentity($connection);
-    $record = applicationStateRecord($connection);
+    $record = (string) $identity['effective_mode'] === 'gm'
+        ? domainApplicationStateRecord($connection)
+        : playerApplicationStateRecord($connection);
     $presence = liveOnlinePresence($connection);
     if (!is_array($record) || $record['state'] === []) {
         sendJson(200, ['ok' => true, 'state' => null, 'revision' => 0, 'presence' => $presence], $headOnly);
@@ -623,21 +617,16 @@ function readOnlineState(PDO $connection, bool $headOnly = false): never
     sendJson(200, ['ok' => true, 'state' => $visible, 'revision' => $record['revision'], 'presence' => $presence], $headOnly);
 }
 
-function replaceOnlineState(PDO $connection): never
+function rejectLegacyOnlineState(PDO $connection): never
 {
-    $identity = requireGmIdentity($connection);
-    $payload = readJsonBody(XAR_STATE_MAXIMUM_BYTES);
-    $state = $payload['state'] ?? null;
-    if (!is_array($state)) {
-        sendError(400, 'État partagé invalide.', 'invalid_state');
-    }
-    $expected = array_key_exists('expectedRevision', $payload) ? (int) $payload['expectedRevision'] : null;
-    $stored = storeApplicationState($connection, $identity, $state, $expected);
-    $compact = (string) ($_GET['compact'] ?? '') === '1';
-    sendJson(200, [
-        'ok' => true,
-        ...(!$compact ? ['state' => $stored] : []),
-        'revision' => (int) $stored['revision'],
+    requireGmIdentity($connection);
+    sendJson(426, [
+        'ok' => false,
+        'error' => 'Cette version bêta utilise encore l’ancien état global. Installez la Régie 1.16 depuis Microsoft Store.',
+        'code' => 'domain_client_required',
+        'minimumVersion' => '1.16.0',
+        'latestVersion' => '1.16.0',
+        'storeId' => '9N5N5M67N704',
     ]);
 }
 
@@ -664,86 +653,6 @@ function rosterAliases(array $identity): array
     return array_values(array_unique($aliases));
 }
 
-function ensureOnlinePlayerIdentity(array &$state, array $identity): void
-{
-    $accountId = (string) $identity['id'];
-    $state['players'] = is_array($state['players'] ?? null) ? $state['players'] : [];
-    if (findEntryIndex($state['players'], $accountId) >= 0) {
-        return;
-    }
-    $aliases = rosterAliases($identity);
-    $pendingIndex = -1;
-    foreach ($state['players'] as $index => $player) {
-        if (!is_array($player)) {
-            continue;
-        }
-        $name = strtolower(trim((string) ($player['name'] ?? '')));
-        $id = strtolower(trim((string) ($player['id'] ?? '')));
-        foreach ($aliases as $alias) {
-            if ($name === $alias || $id === 'player-' . preg_replace('/[^a-z0-9]+/', '-', $alias)) {
-                $pendingIndex = (int) $index;
-                break 2;
-            }
-        }
-    }
-    if ($pendingIndex < 0) {
-        $state['players'][] = [
-            'id' => $accountId,
-            'name' => (string) $identity['display_name'],
-            '_updatedAt' => (int) floor(microtime(true) * 1000),
-        ];
-        return;
-    }
-
-    $oldId = (string) ($state['players'][$pendingIndex]['id'] ?? '');
-    $state['players'][$pendingIndex]['id'] = $accountId;
-    $state['players'][$pendingIndex]['_updatedAt'] = (int) floor(microtime(true) * 1000);
-    if (is_array($state['characters'] ?? null)) {
-        foreach ($state['characters'] as &$character) {
-            if (is_array($character) && ($character['ownerPlayerId'] ?? null) === $oldId) {
-                $character['ownerPlayerId'] = $accountId;
-                $character['_updatedAt'] = (int) floor(microtime(true) * 1000);
-            }
-        }
-        unset($character);
-    }
-    if (is_array($state['actionTimers'] ?? null)) {
-        foreach ($state['actionTimers'] as &$timer) {
-            if (is_array($timer) && ($timer['ownerPlayerId'] ?? null) === $oldId) {
-                $timer['ownerPlayerId'] = $accountId;
-                $timer['updatedAt'] = gmdate('c');
-            }
-        }
-        unset($timer);
-    }
-    $rekeyMap = static function (mixed &$map) use ($oldId, $accountId): void {
-        if (!is_array($map) || !is_array($map['tokens'] ?? null)) {
-            return;
-        }
-        foreach ($map['tokens'] as &$token) {
-            if (is_array($token) && ($token['controllerPlayerId'] ?? null) === $oldId) {
-                $token['controllerPlayerId'] = $accountId;
-                $token['_updatedAt'] = (int) floor(microtime(true) * 1000);
-            }
-        }
-        unset($token);
-    };
-    if (array_key_exists('map', $state)) {
-        $rekeyMap($state['map']);
-    }
-    if (is_array($state['tacticalSync'] ?? null) && array_key_exists('publishedMap', $state['tacticalSync'])) {
-        $rekeyMap($state['tacticalSync']['publishedMap']);
-    }
-    if (is_array($state['scenes'] ?? null)) {
-        foreach ($state['scenes'] as &$scene) {
-            if (is_array($scene) && is_array($scene['combat'] ?? null) && array_key_exists('map', $scene['combat'])) {
-                $rekeyMap($scene['combat']['map']);
-            }
-        }
-        unset($scene);
-    }
-}
-
 function cleanPlayerCharacter(array $character, string $accountId): array
 {
     $character = playerCharacterPatch([], $character);
@@ -764,7 +673,7 @@ function playerCharacterPatch(array $current, array $patch): array
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'fatigue', 'morale',
         'armor', 'speed', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'weaponText',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
-        'shortcuts', 'linkedTokens', 'characterSchema', 'characterSchemaVersion',
+        'shortcuts', 'linkedTokens',
     ];
     foreach ($allowed as $key) {
         if (array_key_exists($key, $patch)) {
@@ -784,6 +693,8 @@ function playerCharacterPatch(array $current, array $patch): array
             }
         }
     }
+    $current['characterSchema'] = 'xar-tsaroth.character-sheet';
+    $current['characterSchemaVersion'] = 2;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
@@ -822,121 +733,497 @@ function onlineRollFormula(string $formula): array
     return ['total' => $total, 'breakdown' => implode(' ', $parts), 'formula' => $normalized];
 }
 
+function rejectOnlineCommand(PDO $connection, int $status, string $message, string $code): never
+{
+    if ($connection->inTransaction()) {
+        $connection->rollBack();
+    }
+    sendError($status, $message, $code);
+}
+
+function queueOnlineDomainUpsert(array &$pending, array $records, string $key, mixed $payload): void
+{
+    $prepared = prepareApplicationDomainUpsert($key, $payload, $records[$key] ?? null);
+    if ($prepared !== null) {
+        $pending[$key] = $prepared;
+    }
+}
+
+function queueOnlineDomainDelete(array &$pending, array $records, string $key): void
+{
+    $prepared = prepareApplicationDomainDelete($key, $records[$key] ?? null);
+    if ($prepared !== null) {
+        $pending[$key] = $prepared;
+    }
+}
+
+function onlineActiveSceneId(array $table): string
+{
+    $sceneId = (string) ($table['activeSceneId'] ?? '');
+    return validApplicationDomainKey('scene:' . $sceneId) ? $sceneId : '';
+}
+
+function onlineTokenDomainKey(string $sceneId, mixed $tokenId): string
+{
+    $key = 'token:' . $sceneId . ':' . trim((string) $tokenId);
+    return validApplicationDomainKey($key) ? $key : '';
+}
+
+function onlineSceneTokenRecords(PDO $connection, string $sceneId, array $records = []): array
+{
+    $indexKey = 'token-index:' . $sceneId;
+    if (!isset($records[$indexKey])) {
+        $records = array_replace($records, applicationDomainRecords($connection, [$indexKey]));
+    }
+    $index = applicationDomainPayload($records, $indexKey, ['order' => []]);
+    $keys = [];
+    foreach (is_array($index['order'] ?? null) ? $index['order'] : [] as $tokenId) {
+        $key = onlineTokenDomainKey($sceneId, $tokenId);
+        if ($key !== '' && !isset($records[$key])) {
+            $keys[] = $key;
+        }
+    }
+    return $keys === [] ? $records : array_replace($records, applicationDomainRecords($connection, $keys));
+}
+
+function removeOnlineTokenIdsFromInitiative(array $initiative, array $tokenIds): array
+{
+    $removed = array_fill_keys(array_map('strval', $tokenIds), true);
+    if ($removed === []) {
+        return $initiative;
+    }
+    $order = is_array($initiative['order'] ?? null) ? array_values($initiative['order']) : [];
+    $currentIndex = max(0, (int) ($initiative['currentIndex'] ?? 0));
+    $currentId = isset($order[$currentIndex]) ? (string) $order[$currentIndex] : '';
+    $nextOrder = array_values(array_filter(
+        $order,
+        static fn (mixed $id): bool => !isset($removed[(string) $id])
+    ));
+    if ($nextOrder === $order) {
+        return $initiative;
+    }
+    $initiative['order'] = $nextOrder;
+    if ($nextOrder === []) {
+        $initiative['currentIndex'] = 0;
+        $initiative['active'] = false;
+        $initiative['turnsStarted'] = false;
+    } else {
+        $survivingIndex = $currentId !== '' ? array_search($currentId, $nextOrder, true) : false;
+        $initiative['currentIndex'] = $survivingIndex === false
+            ? min($currentIndex, count($nextOrder) - 1)
+            : (int) $survivingIndex;
+    }
+    $initiative['_updatedAt'] = (int) floor(microtime(true) * 1000);
+    return $initiative;
+}
+
+function removeOnlineCharacterFromCombat(array $combat, string $characterId, array $knownTokenIds = []): array
+{
+    $map = is_array($combat['map'] ?? null) ? $combat['map'] : [];
+    $tokens = is_array($map['tokens'] ?? null) ? $map['tokens'] : [];
+    $removed = array_fill_keys(array_map('strval', $knownTokenIds), true);
+    $retained = [];
+    foreach ($tokens as $token) {
+        if (!is_array($token)) {
+            continue;
+        }
+        $tokenId = (string) ($token['id'] ?? '');
+        if ((string) ($token['characterId'] ?? '') === $characterId || isset($removed[$tokenId])) {
+            if ($tokenId !== '') {
+                $removed[$tokenId] = true;
+            }
+            continue;
+        }
+        $retained[] = $token;
+    }
+    if ($retained !== $tokens) {
+        $map['tokens'] = $retained;
+        $combat['map'] = $map;
+    }
+    if (is_array($combat['initiative'] ?? null) && $removed !== []) {
+        $combat['initiative'] = removeOnlineTokenIdsFromInitiative($combat['initiative'], array_keys($removed));
+    }
+    return $combat;
+}
+
+function sortedOnlineInitiativeOrder(array $order, array $records, string $sceneId): array
+{
+    $prepared = [];
+    foreach ($order as $tokenId) {
+        $id = (string) $tokenId;
+        $key = onlineTokenDomainKey($sceneId, $id);
+        if ($key === '' || !isset($records[$key]) || isset($prepared[$id])) {
+            continue;
+        }
+        $prepared[$id] = count($prepared);
+    }
+    $ids = array_keys($prepared);
+    usort($ids, static function (string $leftId, string $rightId) use ($records, $sceneId, $prepared): int {
+        $left = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $leftId));
+        $right = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $rightId));
+        $initiative = (int) ($right['initiative'] ?? -1) <=> (int) ($left['initiative'] ?? -1);
+        return $initiative !== 0 ? $initiative : $prepared[$leftId] <=> $prepared[$rightId];
+    });
+    return $ids;
+}
+
+function synchronizeOnlineCharacterToken(array $token, array $character): array
+{
+    $updatedAt = (int) ($character['_updatedAt'] ?? floor(microtime(true) * 1000));
+    $linkedId = (string) ($token['linkedTokenId'] ?? '');
+    if ($linkedId !== '') {
+        $linked = null;
+        foreach (is_array($character['linkedTokens'] ?? null) ? $character['linkedTokens'] : [] as $entry) {
+            if (is_array($entry) && (string) ($entry['id'] ?? '') === $linkedId) {
+                $linked = $entry;
+                break;
+            }
+        }
+        if ($linked === null) {
+            return $token;
+        }
+        foreach (['name', 'color', 'image', 'size'] as $key) {
+            if (array_key_exists($key, $linked)) {
+                $token[$key] = $linked[$key];
+            }
+        }
+        $token['controllerPlayerId'] = $character['ownerPlayerId'] ?? null;
+        $token['_updatedAt'] = $updatedAt;
+        return $token;
+    }
+    if (($token['followCharacter'] ?? true) === false) {
+        return $token;
+    }
+    if (trim((string) ($character['name'] ?? '')) !== '') {
+        $token['name'] = (string) $character['name'];
+    }
+    if (trim((string) ($character['color'] ?? '')) !== '') {
+        $token['color'] = (string) $character['color'];
+    }
+    if (($character['portrait'] ?? null) !== null) {
+        $token['image'] = $character['portrait'];
+    }
+    $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+    foreach (['hp', 'maxHp', 'mana', 'maxMana'] as $key) {
+        if (is_numeric($resources[$key] ?? null)) {
+            $token[$key] = (float) $resources[$key];
+        }
+    }
+    foreach (['armor', 'speed', 'initiativeBonus'] as $key) {
+        if (is_numeric($character[$key] ?? null)) {
+            $token[$key] = (float) $character[$key];
+        }
+    }
+    if (is_array($character['stats'] ?? null)) {
+        $labels = [
+            'force' => 'Force', 'dexterity' => 'Dextérité', 'agility' => 'Agilité',
+            'spiritSocial' => 'Esprit / Social', 'intelligence' => 'Intelligence',
+            'instinct' => 'Instinct / Perception',
+        ];
+        $token['stats'] = [];
+        foreach ($character['stats'] as $key => $value) {
+            $token['stats'][] = [
+                'id' => 'character-stat-' . (string) $key,
+                'label' => $labels[(string) $key] ?? (string) $key,
+                'value' => (string) $value,
+            ];
+        }
+    }
+    $token['_updatedAt'] = $updatedAt;
+    return $token;
+}
+
+function onlineRollEntry(array $identity, array $rolled, string $label, string $characterName): array
+{
+    return [
+        'id' => randomToken(12),
+        'label' => substr($label, 0, 120),
+        'characterName' => substr($characterName, 0, 120),
+        'formula' => $rolled['formula'],
+        'total' => $rolled['total'],
+        'breakdown' => $rolled['breakdown'],
+        'visibility' => 'public',
+        'revealed' => true,
+        'rollerName' => (string) $identity['display_name'],
+        'rollerRole' => 'player',
+        'createdAt' => gmdate('c'),
+    ];
+}
+
 function commandOnlineState(PDO $connection): never
 {
     $identity = requireIdentity($connection);
-    $payload = readJsonBody(10 * 1024 * 1024);
-    $command = (string) ($payload['command'] ?? '');
-    $arguments = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
+    $body = readJsonBody(2 * 1024 * 1024);
+    $command = trim((string) ($body['command'] ?? ''));
+    $arguments = is_array($body['payload'] ?? null) ? $body['payload'] : [];
     $accountId = (string) $identity['id'];
     $isGm = (string) $identity['effective_mode'] === 'gm' && (string) $identity['permanent_role'] === 'gm';
+    ensureDomainStoreInitialized($connection);
     $connection->beginTransaction();
     try {
-        $record = applicationStateRecord($connection, true);
-        if (!is_array($record) || $record['state'] === []) {
-            $connection->rollBack();
-            sendError(409, 'Aucune table en ligne n’a encore été ouverte par un MJ.', 'state_missing');
+        $clock = domainClockRecord($connection, true);
+        $records = applicationDomainRecords($connection, ['table']);
+        if (!isset($records['table'])) {
+            rejectOnlineCommand($connection, 409, 'Aucune table en ligne n’a encore été ouverte par un MJ.', 'state_missing');
         }
-        $state = $record['state'];
+        $table = applicationDomainPayload($records, 'table');
+        $sceneId = onlineActiveSceneId($table);
+        $pending = [];
         $result = [];
+
         if ($command === 'ensure-player') {
-            ensureOnlinePlayerIdentity($state, $identity);
+            $records = applicationDomainRecords($connection);
+            $roster = applicationDomainPayload($records, 'roster', [
+                'players' => [], 'characterOrder' => [], 'playerPreferences' => [],
+                'playerTombstones' => [], 'characterTombstones' => [],
+            ]);
+            $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
+            if (findEntryIndex($players, $accountId) < 0) {
+                if (count($players) >= 1000) {
+                    rejectOnlineCommand($connection, 409, 'La table a atteint sa limite de joueurs.', 'player_limit');
+                }
+                $aliases = rosterAliases($identity);
+                $pendingIndex = -1;
+                foreach ($players as $index => $player) {
+                    if (!is_array($player)) {
+                        continue;
+                    }
+                    $name = strtolower(trim((string) ($player['name'] ?? '')));
+                    $id = strtolower(trim((string) ($player['id'] ?? '')));
+                    foreach ($aliases as $alias) {
+                        if ($name === $alias || $id === 'player-' . preg_replace('/[^a-z0-9]+/', '-', $alias)) {
+                            $pendingIndex = (int) $index;
+                            break 2;
+                        }
+                    }
+                }
+                $now = (int) floor(microtime(true) * 1000);
+                if ($pendingIndex < 0) {
+                    $players[] = ['id' => $accountId, 'name' => (string) $identity['display_name'], '_updatedAt' => $now];
+                } else {
+                    $oldId = (string) ($players[$pendingIndex]['id'] ?? '');
+                    $players[$pendingIndex]['id'] = $accountId;
+                    $players[$pendingIndex]['_updatedAt'] = $now;
+                    $preferences = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
+                    if ($oldId !== '' && isset($preferences[$oldId]) && !isset($preferences[$accountId])) {
+                        $preferences[$accountId] = $preferences[$oldId];
+                    }
+                    if ($oldId !== '') {
+                        unset($preferences[$oldId]);
+                    }
+                    $roster['playerPreferences'] = $preferences;
+                    foreach (['playerTombstones', 'characterTombstones'] as $listKey) {
+                        if (!is_array($roster[$listKey] ?? null)) {
+                            continue;
+                        }
+                        foreach ($roster[$listKey] as &$entry) {
+                            if (!is_array($entry)) {
+                                continue;
+                            }
+                            if (($entry['ownerPlayerId'] ?? null) === $oldId) {
+                                $entry['ownerPlayerId'] = $accountId;
+                            }
+                            if ($listKey === 'playerTombstones' && ($entry['id'] ?? null) === $oldId) {
+                                $entry['id'] = $accountId;
+                            }
+                        }
+                        unset($entry);
+                    }
+                    foreach ($records as $key => $record) {
+                        if (str_starts_with($key, 'character:')) {
+                            $payload = applicationDomainPayload($records, $key);
+                            if (($payload['ownerPlayerId'] ?? null) === $oldId) {
+                                $payload['ownerPlayerId'] = $accountId;
+                                $payload['_updatedAt'] = $now;
+                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+                            }
+                        } elseif (str_starts_with($key, 'token:')) {
+                            $payload = applicationDomainPayload($records, $key);
+                            if (($payload['controllerPlayerId'] ?? null) === $oldId) {
+                                $payload['controllerPlayerId'] = $accountId;
+                                $payload['_updatedAt'] = $now;
+                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+                            }
+                        } elseif (str_starts_with($key, 'presentation:')) {
+                            $payload = applicationDomainPayload($records, $key);
+                            if (!is_array($payload['map']['tokens'] ?? null)) {
+                                continue;
+                            }
+                            $changed = false;
+                            foreach ($payload['map']['tokens'] as &$token) {
+                                if (is_array($token) && ($token['controllerPlayerId'] ?? null) === $oldId) {
+                                    $token['controllerPlayerId'] = $accountId;
+                                    $token['_updatedAt'] = $now;
+                                    $changed = true;
+                                }
+                            }
+                            unset($token);
+                            if ($changed) {
+                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+                            }
+                        }
+                    }
+                    $activity = applicationDomainPayload($records, 'activity');
+                    $activityChanged = false;
+                    foreach (is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [] as $index => $timer) {
+                        if (is_array($timer) && ($timer['ownerPlayerId'] ?? null) === $oldId) {
+                            $activity['actionTimers'][$index]['ownerPlayerId'] = $accountId;
+                            $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
+                            $activityChanged = true;
+                        }
+                    }
+                    if ($activityChanged) {
+                        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                    }
+                }
+                $roster['players'] = $players;
+                queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
+            }
         } elseif ($command === 'preferences.update') {
-            $state['playerPreferences'] = is_array($state['playerPreferences'] ?? null) ? $state['playerPreferences'] : [];
-            $currentPreferences = is_array($state['playerPreferences'][$accountId] ?? null)
-                ? $state['playerPreferences'][$accountId]
+            $records = array_replace($records, applicationDomainRecords($connection, ['roster']));
+            $roster = applicationDomainPayload($records, 'roster');
+            $preferences = is_array($roster['playerPreferences'][$accountId] ?? null)
+                ? $roster['playerPreferences'][$accountId]
                 : [];
             foreach (['musicMuted', 'ambienceMuted'] as $key) {
                 if (array_key_exists($key, $arguments) && is_bool($arguments[$key])) {
-                    $currentPreferences[$key] = $arguments[$key];
+                    $preferences[$key] = $arguments[$key];
                 }
             }
             if (array_key_exists('activePage', $arguments)) {
-                $currentPreferences['activePage'] = $arguments['activePage'] === 'characters' ? 'characters' : 'map';
+                $preferences['activePage'] = $arguments['activePage'] === 'characters' ? 'characters' : 'map';
             }
-            $state['playerPreferences'][$accountId] = [
-                'musicMuted' => ($currentPreferences['musicMuted'] ?? false) === true,
-                'ambienceMuted' => ($currentPreferences['ambienceMuted'] ?? false) === true,
-                'activePage' => ($currentPreferences['activePage'] ?? '') === 'characters' ? 'characters' : 'map',
+            $preferences = [
+                'musicMuted' => ($preferences['musicMuted'] ?? false) === true,
+                'ambienceMuted' => ($preferences['ambienceMuted'] ?? false) === true,
+                'activePage' => ($preferences['activePage'] ?? '') === 'characters' ? 'characters' : 'map',
             ];
-            $result['preferences'] = $state['playerPreferences'][$accountId];
+            $roster['playerPreferences'] = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
+            $roster['playerPreferences'][$accountId] = $preferences;
+            queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
+            $result['preferences'] = $preferences;
         } elseif ($command === 'character.create') {
-            $state['characters'] = is_array($state['characters'] ?? null) ? $state['characters'] : [];
             $character = cleanPlayerCharacter(is_array($arguments['character'] ?? null) ? $arguments['character'] : [], $accountId);
-            if (findEntryIndex($state['characters'], (string) $character['id']) >= 0) {
-                $connection->rollBack();
-                sendError(409, 'Cette fiche existe déjà.', 'character_exists');
+            $characterKey = 'character:' . (string) $character['id'];
+            if (!validApplicationDomainKey($characterKey)) {
+                rejectOnlineCommand($connection, 400, 'Identifiant de fiche invalide.', 'invalid_character');
             }
-            $state['characters'][] = $character;
-            $result['character'] = visibleCharacter($character);
-        } elseif ($command === 'character.patch') {
-            $state['characters'] = is_array($state['characters'] ?? null) ? $state['characters'] : [];
-            $index = findEntryIndex($state['characters'], (string) ($arguments['characterId'] ?? ''));
-            if ($index < 0 || ($state['characters'][$index]['ownerPlayerId'] ?? null) !== $accountId) {
-                $connection->rollBack();
-                sendError(403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
-            }
-            $state['characters'][$index] = playerCharacterPatch($state['characters'][$index], is_array($arguments['patch'] ?? null) ? $arguments['patch'] : []);
-            $result['character'] = visibleCharacter($state['characters'][$index]);
-        } elseif ($command === 'token.move') {
-            $tokens = is_array($state['map']['tokens'] ?? null) ? $state['map']['tokens'] : [];
-            $index = findEntryIndex($tokens, (string) ($arguments['tokenId'] ?? ''));
-            if ($index < 0 || ($tokens[$index]['controllerPlayerId'] ?? null) !== $accountId || ($tokens[$index]['hidden'] ?? false) === true) {
-                $connection->rollBack();
-                sendError(403, 'Déplacement refusé.', 'token_forbidden');
-            }
-            if (($state['tacticalSync']['paused'] ?? false) === true) {
-                $connection->rollBack();
-                sendError(423, 'La table est temporairement verrouillée.', 'table_locked');
-            }
-            if (($state['initiative']['active'] ?? false) === true) {
-                $order = $state['initiative']['order'] ?? [];
-                $activeId = $order[(int) ($state['initiative']['currentIndex'] ?? 0)] ?? null;
-                if ($activeId !== ($tokens[$index]['id'] ?? null)) {
-                    $connection->rollBack();
-                    sendError(403, 'Ce n’est pas le tour de ce token.', 'turn_required');
+            $records = array_replace($records, applicationDomainRecords($connection, ['roster', $characterKey]));
+            $roster = applicationDomainPayload($records, 'roster');
+            foreach (is_array($roster['characterTombstones'] ?? null) ? $roster['characterTombstones'] : [] as $entry) {
+                if (is_array($entry) && (string) ($entry['id'] ?? '') === (string) $character['id']) {
+                    rejectOnlineCommand($connection, 409, 'Cette fiche a été supprimée par un administrateur et ne peut pas être recréée automatiquement.', 'character_deleted');
                 }
             }
-            $tokens[$index]['x'] = max(0.0, min(100.0, (float) ($arguments['x'] ?? $tokens[$index]['x'] ?? 50)));
-            $tokens[$index]['y'] = max(0.0, min(100.0, (float) ($arguments['y'] ?? $tokens[$index]['y'] ?? 50)));
-            $tokens[$index]['_movedAt'] = (int) floor(microtime(true) * 1000);
-            $state['map']['tokens'] = $tokens;
-            $result['token'] = $tokens[$index];
+            if (isset($records[$characterKey])) {
+                rejectOnlineCommand($connection, 409, 'Cette fiche existe déjà.', 'character_exists');
+            }
+            $order = is_array($roster['characterOrder'] ?? null) ? $roster['characterOrder'] : [];
+            if (!in_array($character['id'], $order, true)) {
+                if (count($order) >= 1000) {
+                    rejectOnlineCommand($connection, 409, 'Ce compte a atteint la limite de fiches de la table.', 'character_limit');
+                }
+                $order[] = $character['id'];
+            }
+            $roster['characterOrder'] = $order;
+            queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
+            queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
+            $result['character'] = visibleCharacter($character);
+        } elseif ($command === 'character.patch') {
+            $characterId = trim((string) ($arguments['characterId'] ?? ''));
+            $characterKey = 'character:' . $characterId;
+            if (!validApplicationDomainKey($characterKey)) {
+                rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
+            }
+            $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+            $character = applicationDomainPayload($records, $characterKey);
+            if ($character === [] || ($character['ownerPlayerId'] ?? null) !== $accountId) {
+                rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
+            }
+            $patch = is_array($arguments['patch'] ?? null) ? $arguments['patch'] : [];
+            $character = playerCharacterPatch($character, $patch);
+            queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
+            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armor', 'speed', 'stats', 'initiativeBonus', 'linkedTokens'];
+            if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {
+                $tokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
+                $records = array_replace($records, $tokenRecords);
+                foreach ($tokenRecords as $tokenKey => $record) {
+                    $token = synchronizeOnlineCharacterToken(applicationDomainPayload($records, $tokenKey), $character);
+                    queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+                }
+            }
+            $result['character'] = visibleCharacter($character);
+        } elseif ($command === 'token.move') {
+            if (($table['tacticalSync']['paused'] ?? false) === true) {
+                rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
+            }
+            if ($sceneId === '') {
+                rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
+            }
+            $tokenKey = onlineTokenDomainKey($sceneId, $arguments['tokenId'] ?? '');
+            $initiativeKey = 'initiative:' . $sceneId;
+            $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey]));
+            $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+            if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+                rejectOnlineCommand($connection, 403, 'Déplacement refusé.', 'token_forbidden');
+            }
+            $initiative = applicationDomainPayload($records, $initiativeKey);
+            if (($initiative['active'] ?? false) === true) {
+                $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
+                $activeId = $order[(int) ($initiative['currentIndex'] ?? 0)] ?? null;
+                if ($activeId !== ($token['id'] ?? null)) {
+                    rejectOnlineCommand($connection, 403, 'Ce n’est pas le tour de ce token.', 'turn_required');
+                }
+            }
+            $x = is_numeric($arguments['x'] ?? null) ? (float) $arguments['x'] : (float) ($token['x'] ?? 50);
+            $y = is_numeric($arguments['y'] ?? null) ? (float) $arguments['y'] : (float) ($token['y'] ?? 50);
+            $token['x'] = max(0.0, min(100.0, is_finite($x) ? $x : 50.0));
+            $token['y'] = max(0.0, min(100.0, is_finite($y) ? $y : 50.0));
+            $token['_movedAt'] = (int) floor(microtime(true) * 1000);
+            queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+            $result['token'] = $token;
         } elseif ($command === 'ping') {
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+            $activity = applicationDomainPayload($records, 'activity');
             $now = (int) floor(microtime(true) * 1000);
             $ping = [
                 'id' => 'ping-' . randomToken(9),
                 'x' => max(0.0, min(100.0, (float) ($arguments['x'] ?? 50))),
                 'y' => max(0.0, min(100.0, (float) ($arguments['y'] ?? 50))),
-                'sceneId' => $state['activeSceneId'] ?? null,
+                'sceneId' => $sceneId !== '' ? $sceneId : null,
                 'createdAt' => $now,
                 'expiresAt' => $now + 4200,
                 'author' => (string) $identity['display_name'],
                 'color' => '#8d72cb',
             ];
-            $state['mapPings'] = array_slice(array_values(array_filter($state['mapPings'] ?? [], static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now)), -19);
-            $state['mapPings'][] = $ping;
+            $pings = array_values(array_filter(
+                is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
+                static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+            ));
+            $activity['mapPings'] = [...array_slice($pings, -19), $ping];
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['ping'] = $ping;
         } elseif ($command === 'token.roll') {
-            $tokens = is_array($state['map']['tokens'] ?? null) ? $state['map']['tokens'] : [];
-            $tokenIndex = findEntryIndex($tokens, (string) ($arguments['tokenId'] ?? ''));
-            if ($tokenIndex < 0 || ($tokens[$tokenIndex]['controllerPlayerId'] ?? null) !== $accountId
-                || ($tokens[$tokenIndex]['hidden'] ?? false) === true) {
-                $connection->rollBack();
-                sendError(403, 'Ce token ne vous appartient pas.', 'token_forbidden');
+            if ($sceneId === '') {
+                rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
             }
-            $token = $tokens[$tokenIndex];
+            $tokenKey = onlineTokenDomainKey($sceneId, $arguments['tokenId'] ?? '');
+            $initiativeKey = 'initiative:' . $sceneId;
+            $indexKey = 'token-index:' . $sceneId;
+            $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity']));
+            $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+            if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+                rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
+            }
             $kind = in_array(($arguments['kind'] ?? ''), ['stat', 'initiative', 'damage', 'custom'], true)
-                ? (string) $arguments['kind']
-                : 'custom';
+                ? (string) $arguments['kind'] : 'custom';
             $label = 'Test personnalisé';
             $formula = '1d100';
             if ($kind === 'stat') {
                 $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
                 $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
                 if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
-                    $connection->rollBack();
-                    sendError(404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');
+                    rejectOnlineCommand($connection, 404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');
                 }
                 $value = (int) $stats[$statIndex]['value'];
                 $label = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
@@ -949,88 +1236,68 @@ function commandOnlineState(PDO $connection): never
                 $label = 'Dégâts';
                 $formula = substr(str_replace(' ', '', (string) ($token['damageDice'] ?? '')), 0, 80);
                 if ($formula === '') {
-                    $connection->rollBack();
-                    sendError(400, 'Les dégâts de ce token ne sont pas renseignés.', 'token_damage_missing');
+                    rejectOnlineCommand($connection, 400, 'Les dégâts de ce token ne sont pas renseignés.', 'token_damage_missing');
                 }
             } else {
                 $label = substr(trim((string) ($arguments['label'] ?? 'Test personnalisé')), 0, 120);
                 $formula = substr(str_replace(' ', '', (string) ($arguments['formula'] ?? '1d100')), 0, 80);
                 if ($label === '') {
-                    $connection->rollBack();
-                    sendError(400, 'Donnez un intitulé au jet.', 'invalid_roll_label');
+                    rejectOnlineCommand($connection, 400, 'Donnez un intitulé au jet.', 'invalid_roll_label');
                 }
             }
             try {
                 $rolled = onlineRollFormula($formula);
             } catch (InvalidArgumentException $error) {
-                $connection->rollBack();
-                sendError(400, $error->getMessage(), 'invalid_roll');
+                rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
-            $roll = [
-                'id' => randomToken(12),
-                'label' => $label,
-                'characterName' => substr((string) ($token['name'] ?? 'Token'), 0, 120),
-                'formula' => $rolled['formula'],
-                'total' => $rolled['total'],
-                'breakdown' => $rolled['breakdown'],
-                'visibility' => 'public',
-                'revealed' => true,
-                'rollerName' => (string) $identity['display_name'],
-                'rollerRole' => 'player',
-                'createdAt' => gmdate('c'),
-            ];
-            $state['rolls'] = is_array($state['rolls'] ?? null) ? $state['rolls'] : [];
-            array_unshift($state['rolls'], $roll);
-            $state['rolls'] = array_slice($state['rolls'], 0, 100);
+            $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'));
+            $activity = applicationDomainPayload($records, 'activity');
+            $rolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
+            array_unshift($rolls, $roll);
+            $activity['rolls'] = array_slice($rolls, 0, 100);
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $initiativeUpdated = false;
-            if ($kind === 'initiative' && ($state['tacticalSync']['paused'] ?? false) !== true) {
-                $tokens[$tokenIndex]['initiative'] = $rolled['total'];
-                $tokens[$tokenIndex]['_updatedAt'] = (int) floor(microtime(true) * 1000);
-                $state['map']['tokens'] = $tokens;
-                $initiative = is_array($state['initiative'] ?? null) ? $state['initiative'] : [];
+            if ($kind === 'initiative' && ($table['tacticalSync']['paused'] ?? false) !== true) {
+                $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+                $token['initiative'] = $rolled['total'];
+                $token['_updatedAt'] = (int) floor(microtime(true) * 1000);
+                $recordsForSort = $records;
+                $recordsForSort[$tokenKey] = [...($records[$tokenKey] ?? []), 'payload' => $token];
+                $initiative = applicationDomainPayload($records, $initiativeKey);
                 $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
                 $currentTokenId = ($initiative['active'] ?? false) === true
-                    ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null)
-                    : null;
-                $order = array_values(array_filter($order, static fn (mixed $tokenId): bool =>
-                    findEntryIndex($tokens, (string) $tokenId) >= 0
-                ));
+                    ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
                 if (!in_array($token['id'], $order, true)) {
                     $order[] = $token['id'];
                 }
-                usort($order, static function (mixed $leftId, mixed $rightId) use ($tokens): int {
-                    $leftIndex = findEntryIndex($tokens, (string) $leftId);
-                    $rightIndex = findEntryIndex($tokens, (string) $rightId);
-                    $left = $leftIndex >= 0 ? ($tokens[$leftIndex]['initiative'] ?? -1) : -1;
-                    $right = $rightIndex >= 0 ? ($tokens[$rightIndex]['initiative'] ?? -1) : -1;
-                    return (int) $right <=> (int) $left;
-                });
+                $order = sortedOnlineInitiativeOrder($order, $recordsForSort, $sceneId);
                 $initiative['order'] = $order;
                 $initiative['currentIndex'] = $currentTokenId !== null && in_array($currentTokenId, $order, true)
-                    ? (int) array_search($currentTokenId, $order, true)
-                    : 0;
+                    ? (int) array_search($currentTokenId, $order, true) : 0;
                 $initiative['_updatedAt'] = (int) floor(microtime(true) * 1000);
-                $state['initiative'] = $initiative;
+                queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+                queueOnlineDomainUpsert($pending, $records, $initiativeKey, $initiative);
                 $initiativeUpdated = true;
             }
             $result['roll'] = $roll;
             $result['initiativeUpdated'] = $initiativeUpdated;
         } elseif ($command === 'roll') {
-            $characters = is_array($state['characters'] ?? null) ? $state['characters'] : [];
-            $characterIndex = findEntryIndex($characters, (string) ($arguments['characterId'] ?? ''));
-            if ($characterIndex < 0 || ($characters[$characterIndex]['ownerPlayerId'] ?? null) !== $accountId) {
-                $connection->rollBack();
-                sendError(403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+            $characterId = trim((string) ($arguments['characterId'] ?? ''));
+            $characterKey = 'character:' . $characterId;
+            if (!validApplicationDomainKey($characterKey)) {
+                rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
             }
-            $shortcutIndex = findEntryIndex(
-                is_array($characters[$characterIndex]['shortcuts'] ?? null) ? $characters[$characterIndex]['shortcuts'] : [],
-                (string) ($arguments['shortcutId'] ?? '')
-            );
+            $records = array_replace($records, applicationDomainRecords($connection, [$characterKey, 'activity']));
+            $character = applicationDomainPayload($records, $characterKey);
+            if ($character === [] || ($character['ownerPlayerId'] ?? null) !== $accountId) {
+                rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+            }
+            $shortcuts = is_array($character['shortcuts'] ?? null) ? $character['shortcuts'] : [];
+            $shortcutIndex = findEntryIndex($shortcuts, (string) ($arguments['shortcutId'] ?? ''));
             if ($shortcutIndex < 0) {
-                $connection->rollBack();
-                sendError(404, 'Raccourci de jet introuvable.', 'shortcut_missing');
+                rejectOnlineCommand($connection, 404, 'Raccourci de jet introuvable.', 'shortcut_missing');
             }
-            $shortcut = $characters[$characterIndex]['shortcuts'][$shortcutIndex];
+            $shortcut = $shortcuts[$shortcutIndex];
             $kind = (string) ($shortcut['kind'] ?? 'roll');
             $formula = (string) ($shortcut['formula'] ?? '1d100');
             if ($kind !== 'damage' && preg_match('/d[eé]g[aâ]ts?|dommages?|damage/i', (string) ($shortcut['label'] ?? '')) !== 1) {
@@ -1042,153 +1309,280 @@ function commandOnlineState(PDO $connection): never
             try {
                 $rolled = onlineRollFormula($formula);
             } catch (InvalidArgumentException $error) {
-                $connection->rollBack();
-                sendError(400, $error->getMessage(), 'invalid_roll');
+                rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
-            $roll = [
-                'id' => randomToken(12),
-                'label' => substr((string) ($shortcut['label'] ?? 'Jet'), 0, 120),
-                'characterName' => substr((string) ($characters[$characterIndex]['name'] ?? 'Personnage'), 0, 120),
-                'formula' => $rolled['formula'],
-                'total' => $rolled['total'],
-                'breakdown' => $rolled['breakdown'],
-                'visibility' => 'public',
-                'revealed' => true,
-                'rollerName' => (string) $identity['display_name'],
-                'rollerRole' => 'player',
-                'createdAt' => gmdate('c'),
-            ];
-            $state['rolls'] = is_array($state['rolls'] ?? null) ? $state['rolls'] : [];
-            array_unshift($state['rolls'], $roll);
-            $state['rolls'] = array_slice($state['rolls'], 0, 100);
+            $roll = onlineRollEntry(
+                $identity,
+                $rolled,
+                (string) ($shortcut['label'] ?? 'Jet'),
+                (string) ($character['name'] ?? 'Personnage')
+            );
+            $activity = applicationDomainPayload($records, 'activity');
+            $rolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
+            array_unshift($rolls, $roll);
+            $activity['rolls'] = array_slice($rolls, 0, 100);
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $initiativeUpdated = false;
-            if ($kind === 'initiative' && ($state['tacticalSync']['paused'] ?? false) !== true) {
-                $tokens = is_array($state['map']['tokens'] ?? null) ? $state['map']['tokens'] : [];
-                foreach ($tokens as $tokenIndex => $token) {
-                    if (($token['characterId'] ?? null) !== ($characters[$characterIndex]['id'] ?? null)
-                        || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+            if ($kind === 'initiative' && $sceneId !== '' && ($table['tacticalSync']['paused'] ?? false) !== true) {
+                $initiativeKey = 'initiative:' . $sceneId;
+                $indexKey = 'token-index:' . $sceneId;
+                $records = array_replace($records, applicationDomainRecords($connection, [$initiativeKey, $indexKey]));
+                $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+                $controlledTokenKey = '';
+                $controlledToken = [];
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'token:' . $sceneId . ':')) {
                         continue;
                     }
-                    $tokens[$tokenIndex]['initiative'] = $rolled['total'];
-                    $tokens[$tokenIndex]['_updatedAt'] = (int) floor(microtime(true) * 1000);
-                    $state['map']['tokens'] = $tokens;
-                    $state['initiative']['order'] = is_array($state['initiative']['order'] ?? null) ? $state['initiative']['order'] : [];
-                    if (!in_array($token['id'], $state['initiative']['order'], true)) {
-                        $state['initiative']['order'][] = $token['id'];
+                    $candidate = applicationDomainPayload($records, $key);
+                    if (($candidate['characterId'] ?? null) === $characterId
+                        && ($candidate['controllerPlayerId'] ?? null) === $accountId
+                        && ($candidate['hidden'] ?? false) !== true) {
+                        $controlledTokenKey = $key;
+                        $controlledToken = $candidate;
+                        break;
                     }
-                    usort($state['initiative']['order'], static function (mixed $leftId, mixed $rightId) use ($tokens): int {
-                        $left = $tokens[findEntryIndex($tokens, (string) $leftId)]['initiative'] ?? -1;
-                        $right = $tokens[findEntryIndex($tokens, (string) $rightId)]['initiative'] ?? -1;
-                        return (int) $right <=> (int) $left;
-                    });
+                }
+                if ($controlledTokenKey !== '') {
+                    $controlledToken['initiative'] = $rolled['total'];
+                    $controlledToken['_updatedAt'] = (int) floor(microtime(true) * 1000);
+                    $recordsForSort = $records;
+                    $recordsForSort[$controlledTokenKey] = [...$records[$controlledTokenKey], 'payload' => $controlledToken];
+                    $initiative = applicationDomainPayload($records, $initiativeKey);
+                    $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
+                    $currentTokenId = ($initiative['active'] ?? false) === true
+                        ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
+                    if (!in_array($controlledToken['id'], $order, true)) {
+                        $order[] = $controlledToken['id'];
+                    }
+                    $order = sortedOnlineInitiativeOrder($order, $recordsForSort, $sceneId);
+                    $initiative['order'] = $order;
+                    $initiative['currentIndex'] = $currentTokenId !== null && in_array($currentTokenId, $order, true)
+                        ? (int) array_search($currentTokenId, $order, true) : 0;
+                    $initiative['_updatedAt'] = (int) floor(microtime(true) * 1000);
+                    queueOnlineDomainUpsert($pending, $records, $controlledTokenKey, $controlledToken);
+                    queueOnlineDomainUpsert($pending, $records, $initiativeKey, $initiative);
                     $initiativeUpdated = true;
-                    break;
                 }
             }
             $result['roll'] = $roll;
             $result['initiativeUpdated'] = $initiativeUpdated;
         } elseif ($command === 'timer.create') {
-            if (($state['tacticalSync']['paused'] ?? false) === true) {
-                $connection->rollBack();
-                sendError(423, 'Les minuteurs sont verrouillés pendant la préparation du MJ.', 'table_locked');
+            if (($table['tacticalSync']['paused'] ?? false) === true) {
+                rejectOnlineCommand($connection, 423, 'Les minuteurs sont verrouillés pendant la préparation du MJ.', 'table_locked');
             }
-            if (($state['initiative']['active'] ?? false) !== true) {
-                $connection->rollBack();
-                sendError(409, 'Commencez un combat avant d’ajouter une recharge.', 'combat_required');
+            if ($sceneId === '') {
+                rejectOnlineCommand($connection, 409, 'Commencez un combat avant d’ajouter une recharge.', 'combat_required');
             }
-            $characters = $state['characters'] ?? [];
-            $index = findEntryIndex($characters, (string) ($arguments['characterId'] ?? ''));
-            if ($index < 0 || ($characters[$index]['ownerPlayerId'] ?? null) !== $accountId) {
-                $connection->rollBack();
-                sendError(403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+            $characterId = trim((string) ($arguments['characterId'] ?? ''));
+            $characterKey = 'character:' . $characterId;
+            $initiativeKey = 'initiative:' . $sceneId;
+            $records = array_replace($records, applicationDomainRecords($connection, [$characterKey, $initiativeKey, 'activity']));
+            $initiative = applicationDomainPayload($records, $initiativeKey);
+            if (($initiative['active'] ?? false) !== true) {
+                rejectOnlineCommand($connection, 409, 'Commencez un combat avant d’ajouter une recharge.', 'combat_required');
             }
-            $round = max(1, (int) ($state['initiative']['round'] ?? 1));
-            $cooldown = max(1, min(999, (int) ($arguments['cooldown'] ?? 1)));
+            $character = validApplicationDomainKey($characterKey) ? applicationDomainPayload($records, $characterKey) : [];
+            if ($character === [] || ($character['ownerPlayerId'] ?? null) !== $accountId) {
+                rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+            }
             $label = substr(trim((string) ($arguments['label'] ?? '')), 0, 120);
             if ($label === '') {
-                $connection->rollBack();
-                sendError(400, 'Donnez un nom à l’action.', 'invalid_timer');
+                rejectOnlineCommand($connection, 400, 'Donnez un nom à l’action.', 'invalid_timer');
             }
+            $round = max(1, (int) ($initiative['round'] ?? 1));
+            $cooldown = max(1, min(999, (int) ($arguments['cooldown'] ?? 1)));
             $timer = [
-                'id' => 'timer-' . randomToken(9),
-                'sceneId' => $state['activeSceneId'] ?? null,
-                'label' => $label,
-                'cooldown' => $cooldown,
-                'usedRound' => $round,
-                'readyRound' => $round + $cooldown,
-                'ownerPlayerId' => $accountId,
-                'characterId' => $characters[$index]['id'],
-                'ownerLabel' => $characters[$index]['name'] ?? (string) $identity['display_name'],
+                'id' => 'timer-' . randomToken(9), 'sceneId' => $sceneId, 'label' => $label,
+                'cooldown' => $cooldown, 'usedRound' => $round, 'readyRound' => $round + $cooldown,
+                'ownerPlayerId' => $accountId, 'characterId' => $character['id'],
+                'ownerLabel' => $character['name'] ?? (string) $identity['display_name'],
                 'visibility' => ($arguments['visibility'] ?? '') === 'public' ? 'public' : 'private',
-                'createdAt' => gmdate('c'),
-                'updatedAt' => gmdate('c'),
+                'createdAt' => gmdate('c'), 'updatedAt' => gmdate('c'),
             ];
-            $state['actionTimers'] = is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [];
-            array_unshift($state['actionTimers'], $timer);
-            $state['actionTimers'] = array_slice($state['actionTimers'], 0, 300);
+            $activity = applicationDomainPayload($records, 'activity');
+            $timers = is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [];
+            if (count($timers) >= 300) {
+                rejectOnlineCommand($connection, 409, 'La table a atteint sa limite de minuteurs.', 'timer_limit');
+            }
+            array_unshift($timers, $timer);
+            $activity['actionTimers'] = $timers;
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['timer'] = $timer + ['ownedByYou' => true];
         } elseif ($command === 'timer.update' || $command === 'timer.delete') {
-            if (($state['tacticalSync']['paused'] ?? false) === true) {
-                $connection->rollBack();
-                sendError(423, 'Les minuteurs sont verrouillés pendant la préparation du MJ.', 'table_locked');
+            if (($table['tacticalSync']['paused'] ?? false) === true) {
+                rejectOnlineCommand($connection, 423, 'Les minuteurs sont verrouillés pendant la préparation du MJ.', 'table_locked');
             }
-            $timers = is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [];
+            $keys = ['activity'];
+            if ($sceneId !== '') {
+                $keys[] = 'initiative:' . $sceneId;
+            }
+            $records = array_replace($records, applicationDomainRecords($connection, $keys));
+            $activity = applicationDomainPayload($records, 'activity');
+            $timers = is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [];
             $index = findEntryIndex($timers, (string) ($arguments['timerId'] ?? ''));
             if ($index < 0 || ($timers[$index]['ownerPlayerId'] ?? null) !== $accountId) {
-                $connection->rollBack();
-                sendError(403, 'Ce rappel ne vous appartient pas.', 'timer_forbidden');
+                rejectOnlineCommand($connection, 403, 'Ce rappel ne vous appartient pas.', 'timer_forbidden');
             }
             if ($command === 'timer.delete') {
                 $deleted = $timers[$index];
                 array_splice($timers, $index, 1);
                 $result['timer'] = ['id' => $deleted['id']];
             } else {
-                $round = max(1, (int) ($state['initiative']['round'] ?? 1));
+                $initiative = $sceneId === '' ? [] : applicationDomainPayload($records, 'initiative:' . $sceneId);
+                $round = max(1, (int) ($initiative['round'] ?? 1));
                 $timers[$index]['usedRound'] = $round;
                 $timers[$index]['readyRound'] = $round + max(1, (int) ($timers[$index]['cooldown'] ?? 1));
                 $timers[$index]['updatedAt'] = gmdate('c');
                 $result['timer'] = $timers[$index] + ['ownedByYou' => true];
             }
-            $state['actionTimers'] = $timers;
+            $activity['actionTimers'] = $timers;
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
         } elseif ($command === 'admin.character.delete' && $isGm && (bool) ($identity['can_administrate'] ?? false)) {
-            $characters = is_array($state['characters'] ?? null) ? $state['characters'] : [];
-            $index = findEntryIndex($characters, (string) ($arguments['characterId'] ?? ''));
-            if ($index < 0) {
-                $connection->rollBack();
-                sendError(404, 'Fiche introuvable.', 'character_missing');
+            $characterId = trim((string) ($arguments['characterId'] ?? ''));
+            $ownerPlayerId = trim((string) ($arguments['ownerPlayerId'] ?? ''));
+            $characterKey = 'character:' . $characterId;
+            if (!validApplicationDomainKey($characterKey)
+                || preg_match('/^[A-Za-z0-9_-]{8,128}$/D', $ownerPlayerId) !== 1) {
+                rejectOnlineCommand($connection, 404, 'Fiche introuvable.', 'character_missing');
             }
-            $result['character'] = ['id' => $characters[$index]['id'], 'name' => $characters[$index]['name'] ?? 'Fiche supprimée'];
-            array_splice($characters, $index, 1);
-            $state['characters'] = $characters;
+            $records = array_replace($records, applicationDomainRecords($connection, ['roster', 'activity', 'detached-combat', $characterKey]));
+            $character = applicationDomainPayload($records, $characterKey);
+            if ($character === []) {
+                rejectOnlineCommand($connection, 404, 'Fiche introuvable.', 'character_missing');
+            }
+            if ((string) ($character['ownerPlayerId'] ?? '') !== $ownerPlayerId) {
+                rejectOnlineCommand($connection, 409, 'La fiche n’appartient plus au profil sélectionné.', 'character_owner_changed');
+            }
+            $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
+            $records = array_replace($records, $characterTokenRecords);
+            $tokenIdsByScene = [];
+            foreach ($characterTokenRecords as $tokenKey => $tokenRecord) {
+                $segments = explode(':', (string) $tokenKey, 3);
+                if (count($segments) !== 3) {
+                    continue;
+                }
+                $tokenIdsByScene[$segments[1]] ??= [];
+                $tokenIdsByScene[$segments[1]][] = $segments[2];
+            }
+            $combatKeys = [];
+            foreach (array_keys($tokenIdsByScene) as $affectedSceneId) {
+                $combatKeys[] = 'token-index:' . $affectedSceneId;
+                $combatKeys[] = 'initiative:' . $affectedSceneId;
+                $combatKeys[] = 'presentation:' . $affectedSceneId;
+            }
+            if ($combatKeys !== []) {
+                $records = array_replace($records, applicationDomainRecords($connection, $combatKeys));
+            }
+            $roster = applicationDomainPayload($records, 'roster');
+            $roster['characterOrder'] = array_values(array_filter(
+                is_array($roster['characterOrder'] ?? null) ? $roster['characterOrder'] : [],
+                static fn (mixed $id): bool => (string) $id !== $characterId
+            ));
+            $tombstones = array_values(array_filter(
+                is_array($roster['characterTombstones'] ?? null) ? $roster['characterTombstones'] : [],
+                static fn (mixed $entry): bool => !is_array($entry) || (string) ($entry['id'] ?? '') !== $characterId
+            ));
+            $deletedAt = gmdate('c');
+            $tombstones[] = [
+                'id' => $characterId,
+                'ownerPlayerId' => (string) ($character['ownerPlayerId'] ?? ''),
+                'deletedAt' => $deletedAt,
+            ];
+            $roster['characterTombstones'] = array_slice($tombstones, -2000);
+            queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
+            $removedTokenCount = 0;
+            foreach ($tokenIdsByScene as $affectedSceneId => $tokenIds) {
+                $removedTokenCount += count($tokenIds);
+                $indexKey = 'token-index:' . $affectedSceneId;
+                if (isset($records[$indexKey])) {
+                    $index = applicationDomainPayload($records, $indexKey, ['order' => []]);
+                    $removedIds = array_fill_keys(array_map('strval', $tokenIds), true);
+                    $index['order'] = array_values(array_filter(
+                        is_array($index['order'] ?? null) ? $index['order'] : [],
+                        static fn (mixed $id): bool => !isset($removedIds[(string) $id])
+                    ));
+                    queueOnlineDomainUpsert($pending, $records, $indexKey, $index);
+                }
+                $initiativeKey = 'initiative:' . $affectedSceneId;
+                if (isset($records[$initiativeKey])) {
+                    queueOnlineDomainUpsert(
+                        $pending,
+                        $records,
+                        $initiativeKey,
+                        removeOnlineTokenIdsFromInitiative(applicationDomainPayload($records, $initiativeKey), $tokenIds)
+                    );
+                }
+                $presentationKey = 'presentation:' . $affectedSceneId;
+                if (isset($records[$presentationKey])) {
+                    queueOnlineDomainUpsert(
+                        $pending,
+                        $records,
+                        $presentationKey,
+                        removeOnlineCharacterFromCombat(applicationDomainPayload($records, $presentationKey), $characterId, $tokenIds)
+                    );
+                }
+            }
+            if (isset($records['detached-combat'])) {
+                queueOnlineDomainUpsert(
+                    $pending,
+                    $records,
+                    'detached-combat',
+                    removeOnlineCharacterFromCombat(applicationDomainPayload($records, 'detached-combat'), $characterId)
+                );
+            }
+            foreach (array_keys($characterTokenRecords) as $tokenKey) {
+                queueOnlineDomainDelete($pending, $records, $tokenKey);
+            }
+            $removedTimerCount = 0;
+            if (isset($records['activity'])) {
+                $activity = applicationDomainPayload($records, 'activity');
+                $timers = is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [];
+                $removedTimers = array_values(array_filter(
+                    $timers,
+                    static fn (mixed $timer): bool => is_array($timer) && (string) ($timer['characterId'] ?? '') === $characterId
+                ));
+                if ($removedTimers !== []) {
+                    $removedTimerCount = count($removedTimers);
+                    $removedTimerIds = array_fill_keys(array_map(
+                        static fn (array $timer): string => (string) ($timer['id'] ?? ''),
+                        $removedTimers
+                    ), true);
+                    unset($removedTimerIds['']);
+                    $activity['actionTimers'] = array_values(array_filter(
+                        $timers,
+                        static fn (mixed $timer): bool => !is_array($timer)
+                            || (string) ($timer['characterId'] ?? '') !== $characterId
+                    ));
+                    $timerTombstones = array_values(array_filter(
+                        is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
+                        static fn (mixed $entry): bool => !is_array($entry)
+                            || !isset($removedTimerIds[(string) ($entry['id'] ?? '')])
+                    ));
+                    foreach (array_keys($removedTimerIds) as $timerId) {
+                        $timerTombstones[] = ['id' => $timerId, 'deletedAt' => $deletedAt];
+                    }
+                    $activity['actionTimerTombstones'] = array_slice($timerTombstones, -1000);
+                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                }
+            }
+            queueOnlineDomainDelete($pending, $records, $characterKey);
+            $result['character'] = [
+                'id' => $characterId,
+                'name' => $character['name'] ?? 'Fiche supprimée',
+                'removedTokens' => $removedTokenCount,
+                'removedTimers' => $removedTimerCount,
+            ];
         } else {
-            $connection->rollBack();
-            sendError(400, 'Commande d’état inconnue ou refusée.', 'command_rejected');
+            rejectOnlineCommand($connection, 400, 'Commande d’état inconnue ou refusée.', 'command_rejected');
         }
-        if (stateContainsForbiddenSecret($state)) {
-            $connection->rollBack();
-            sendError(400, 'La modification contient une donnée secrète interdite.', 'secret_in_state');
-        }
-        $state = sanitizeStateImageReferences($state);
-        $nextRevision = (int) $record['revision'] + 1;
-        $state['revision'] = $nextRevision;
-        $state['updatedAt'] = gmdate('c');
-        $encoded = json_encode($state, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        if (strlen($encoded) > XAR_STATE_MAXIMUM_BYTES) {
-            $connection->rollBack();
-            sendError(413, 'L’état partagé dépasse 64 Mo.', 'state_too_large');
-        }
-        $update = $connection->prepare(
-            'UPDATE application_state SET schema_version = :schema_version, revision = :revision, payload = :payload, '
-            . 'updated_by_account_id = :updated_by WHERE singleton_id = 1'
-        );
-        $update->execute([
-            ':schema_version' => max(1, (int) ($state['schemaVersion'] ?? 1)),
-            ':revision' => $nextRevision,
-            ':payload' => $encoded,
-            ':updated_by' => $accountId,
-        ]);
+
+        $revision = $pending === []
+            ? (int) $clock['globalRevision']
+            : persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
         $connection->commit();
-        sendJson(200, ['ok' => true, 'revision' => $nextRevision, ...$result]);
+        cleanupApplicationDomainHistory($connection);
+        sendJson(200, ['ok' => true, 'revision' => $revision, ...$result]);
     } catch (Throwable $error) {
         if ($connection->inTransaction()) {
             $connection->rollBack();
@@ -1261,12 +1655,13 @@ function touchOnlineConnection(PDO $connection, bool $delete = false): never
 function onlineEvents(PDO $connection, bool $headOnly = false): never
 {
     $identity = requireIdentity($connection);
-    $record = applicationStateRecord($connection);
+    ensureDomainStoreInitialized($connection);
+    $clock = domainClockRecord($connection);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
     $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     sendJson(200, [
         'ok' => true,
-        'revision' => (int) ($record['revision'] ?? 0),
+        'revision' => (int) $clock['globalRevision'],
         ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
         'takeoverRequested' => $takeoverAt >= time() - 30,
     ], $headOnly);
@@ -1320,8 +1715,8 @@ function streamOnlineEvents(PDO $connection): never
         sendError(404, 'Connexion expirée.', 'connection_expired');
     }
     $knownRevision = max(0, (int) ($_GET['revision'] ?? 0));
-    $record = applicationStateRecord($connection);
-    $currentRevision = (int) ($record['revision'] ?? 0);
+    ensureDomainStoreInitialized($connection);
+    $currentRevision = (int) domainClockRecord($connection)['globalRevision'];
     $presence = liveOnlinePresence($connection);
     $presenceFingerprint = hash('sha256', json_encode($presence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
@@ -1351,7 +1746,7 @@ function streamOnlineEvents(PDO $connection): never
     $nextIdentityAt = $startedAt + 4.0;
     $nextConnectionTouchAt = $startedAt + 10.0;
     $nextHeartbeatAt = $startedAt + 10.0;
-    $revisionStatement = $connection->prepare('SELECT revision FROM application_state WHERE singleton_id = 1');
+    $revisionStatement = $connection->prepare('SELECT global_revision FROM application_domain_clock WHERE singleton_id = 1');
     while (!connection_aborted() && microtime(true) - $startedAt < 20.0) {
         usleep(500000);
         $now = microtime(true);
@@ -1437,7 +1832,101 @@ function mediaExtension(string $contentType): string
     };
 }
 
-function uploadOnlineMedia(PDO $connection): never
+function storedAudioMatchesContentType(string $path, string $contentType): bool
+{
+    $handle = @fopen($path, 'rb');
+    if ($handle === false) {
+        return false;
+    }
+    $prefix = fread($handle, 16);
+    fclose($handle);
+    if (!is_string($prefix)) {
+        return false;
+    }
+    $length = strlen($prefix);
+    $mpegFrame = $length >= 2
+        && ord($prefix[0]) === 0xff
+        && (ord($prefix[1]) & 0xe0) === 0xe0
+        && (ord($prefix[1]) & 0x06) !== 0;
+    $aacFrame = $length >= 2
+        && ord($prefix[0]) === 0xff
+        && (ord($prefix[1]) & 0xf6) === 0xf0;
+    return match ($contentType) {
+        'audio/mpeg' => str_starts_with($prefix, 'ID3') || $mpegFrame,
+        'audio/ogg' => str_starts_with($prefix, 'OggS'),
+        'audio/wav', 'audio/x-wav' => str_starts_with($prefix, 'RIFF') && substr($prefix, 8, 4) === 'WAVE',
+        'audio/mp4', 'audio/x-m4a' => substr($prefix, 4, 4) === 'ftyp',
+        'audio/aac' => str_starts_with($prefix, 'ADIF') || $aacFrame,
+        'audio/flac' => str_starts_with($prefix, 'fLaC'),
+        default => false,
+    };
+}
+
+function storedMediaMatchesContentType(string $path, string $contentType): bool
+{
+    if (str_starts_with($contentType, 'audio/')) {
+        return storedAudioMatchesContentType($path, $contentType);
+    }
+    if (!str_starts_with($contentType, 'image/')) {
+        return false;
+    }
+    $image = @getimagesize($path);
+    if (!is_array($image)) {
+        return false;
+    }
+    $width = (int) ($image[0] ?? 0);
+    $height = (int) ($image[1] ?? 0);
+    $detectedType = strtolower((string) ($image['mime'] ?? ''));
+    return $detectedType === $contentType
+        && $width > 0
+        && $height > 0
+        && $width <= 32768
+        && $height <= 32768
+        && $width * $height <= 120000000;
+}
+
+function mediaStorageLimits(array $configuration): array
+{
+    $gibibyte = 1024 * 1024 * 1024;
+    $maximum = 200 * $gibibyte;
+    $active = (int) ($configuration['media']['maximumTotalBytes'] ?? 20 * $gibibyte);
+    $active = max($gibibyte, min($maximum, $active));
+    $retainedDefault = min($maximum, $active + max(2 * $gibibyte, (int) floor($active / 4)));
+    $retained = (int) ($configuration['media']['maximumRetainedBytes'] ?? $retainedDefault);
+    return ['active' => $active, 'retained' => max($active, min($maximum, $retained))];
+}
+
+function mediaStorageUsage(PDO $connection): array
+{
+    $statement = $connection->query(
+        'SELECT COALESCE(SUM(CASE WHEN pending_delete_at IS NULL THEN byte_size ELSE 0 END), 0) AS active_bytes, '
+        . 'COALESCE(SUM(byte_size), 0) AS retained_bytes FROM media_objects'
+    );
+    $usage = $statement === false ? false : $statement->fetch();
+    return [
+        'active' => is_array($usage) ? (int) $usage['active_bytes'] : 0,
+        'retained' => is_array($usage) ? (int) $usage['retained_bytes'] : 0,
+    ];
+}
+
+function mediaQuotaViolation(array $usage, array $limits, int $additionalBytes): ?array
+{
+    if ((int) $usage['active'] + $additionalBytes > (int) $limits['active']) {
+        return [
+            'code' => 'media_storage_quota',
+            'message' => 'L’espace média actif de la Régie est plein. Retirez les médias inutilisés avant de réessayer.',
+        ];
+    }
+    if ((int) $usage['retained'] + $additionalBytes > (int) $limits['retained']) {
+        return [
+            'code' => 'media_retention_quota',
+            'message' => 'Le plafond physique incluant la rétention de sécurité est atteint. Attendez la purge ou augmentez ce plafond privé.',
+        ];
+    }
+    return null;
+}
+
+function uploadOnlineMedia(PDO $connection, array $configuration): never
 {
     $identity = requireIdentity($connection);
     @set_time_limit(900);
@@ -1454,6 +1943,11 @@ function uploadOnlineMedia(PDO $connection): never
     if ($declared <= 0 || $declared > XAR_MEDIA_MAXIMUM_BYTES) {
         sendError(413, 'Le média est vide ou dépasse 300 Mo.', 'media_too_large');
     }
+    $limits = mediaStorageLimits($configuration);
+    $violation = mediaQuotaViolation(mediaStorageUsage($connection), $limits, $declared);
+    if ($violation !== null) {
+        sendError(507, $violation['message'], $violation['code']);
+    }
     $directory = privateMediaDirectory();
     $id = randomToken(18);
     $storedName = $id . $extension;
@@ -1462,6 +1956,13 @@ function uploadOnlineMedia(PDO $connection): never
     $input = fopen('php://input', 'rb');
     $output = fopen($temporary, 'xb');
     if ($input === false || $output === false) {
+        if (is_resource($input)) {
+            fclose($input);
+        }
+        if (is_resource($output)) {
+            fclose($output);
+        }
+        @unlink($temporary);
         sendError(503, 'Stockage média indisponible.', 'media_unavailable');
     }
     $hash = hash_init('sha256');
@@ -1492,28 +1993,62 @@ function uploadOnlineMedia(PDO $connection): never
     }
     fclose($input);
     fclose($output);
-    if ($size <= 0 || !rename($temporary, $destination)) {
+    if ($size <= 0 || $size !== $declared) {
+        @unlink($temporary);
+        sendError(400, 'Le média reçu est incomplet.', 'media_upload_incomplete');
+    }
+    if (!rename($temporary, $destination)) {
         @unlink($temporary);
         sendError(503, 'Enregistrement du média impossible.', 'media_unavailable');
     }
     @chmod($destination, 0600);
-    try {
-        $insert = $connection->prepare(
-            'INSERT INTO media_objects '
-            . '(id, stored_name, original_name, content_type, byte_size, sha256, uploaded_by_account_id) '
-            . 'VALUES (:id, :stored_name, :original_name, :content_type, :byte_size, :sha256, :uploaded_by)'
-        );
-        $insert->bindValue(':id', $id);
-        $insert->bindValue(':stored_name', $storedName);
-        $insert->bindValue(':original_name', cleanMediaFilename((string) ($_SERVER['HTTP_X_XAR_FILENAME'] ?? 'media' . $extension)));
-        $insert->bindValue(':content_type', $contentType);
-        $insert->bindValue(':byte_size', $size, PDO::PARAM_INT);
-        $insert->bindValue(':sha256', hash_final($hash, true), PDO::PARAM_LOB);
-        $insert->bindValue(':uploaded_by', (string) $identity['id']);
-        $insert->execute();
-    } catch (Throwable $error) {
+    if (!storedMediaMatchesContentType($destination, $contentType)) {
         @unlink($destination);
-        throw $error;
+        sendError(415, 'Le contenu du média ne correspond pas au format annoncé.', 'media_signature_mismatch');
+    }
+    $quotaLocked = false;
+    $finalViolation = null;
+    $uploadError = null;
+    try {
+        $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-media-quota', 12)");
+        $lock->execute();
+        $quotaLocked = (int) $lock->fetchColumn() === 1;
+        if (!$quotaLocked) {
+            throw new RuntimeException('media_quota_lock_unavailable');
+        }
+        $finalViolation = mediaQuotaViolation(mediaStorageUsage($connection), $limits, $size);
+        if ($finalViolation === null) {
+            $insert = $connection->prepare(
+                'INSERT INTO media_objects '
+                . '(id, stored_name, original_name, content_type, byte_size, sha256, uploaded_by_account_id) '
+                . 'VALUES (:id, :stored_name, :original_name, :content_type, :byte_size, :sha256, :uploaded_by)'
+            );
+            $insert->bindValue(':id', $id);
+            $insert->bindValue(':stored_name', $storedName);
+            $insert->bindValue(':original_name', cleanMediaFilename((string) ($_SERVER['HTTP_X_XAR_FILENAME'] ?? 'media' . $extension)));
+            $insert->bindValue(':content_type', $contentType);
+            $insert->bindValue(':byte_size', $size, PDO::PARAM_INT);
+            $insert->bindValue(':sha256', hash_final($hash, true), PDO::PARAM_LOB);
+            $insert->bindValue(':uploaded_by', (string) $identity['id']);
+            $insert->execute();
+        }
+    } catch (Throwable $error) {
+        $uploadError = $error;
+    } finally {
+        if ($quotaLocked) {
+            try {
+                $connection->query("SELECT RELEASE_LOCK('xar-regie-media-quota')");
+            } catch (Throwable) {
+            }
+        }
+    }
+    if ($finalViolation !== null) {
+        @unlink($destination);
+        sendError(507, $finalViolation['message'], $finalViolation['code']);
+    }
+    if ($uploadError !== null) {
+        @unlink($destination);
+        throw $uploadError;
     }
     sendJson(201, ['ok' => true, 'mediaId' => $id, 'url' => '/media/' . $id, 'contentType' => $contentType, 'size' => $size]);
 }
@@ -1524,7 +2059,7 @@ function mediaRecord(PDO $connection, string $id): ?array
         return null;
     }
     $statement = $connection->prepare(
-        'SELECT id, stored_name, original_name, content_type, byte_size, public_slug, published_at '
+        'SELECT id, stored_name, original_name, content_type, byte_size, public_slug, published_at, pending_delete_at '
         . 'FROM media_objects WHERE id = :id LIMIT 1'
     );
     $statement->execute([':id' => $id]);
@@ -1532,12 +2067,70 @@ function mediaRecord(PDO $connection, string $id): ?array
     return is_array($record) ? $record : null;
 }
 
+function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHistory = false): int
+{
+    $reference = '%/media/' . $id . '%';
+    $current = $connection->prepare(
+        'SELECT COUNT(*) FROM application_domains WHERE CAST(payload AS CHAR) LIKE :reference'
+    );
+    $current->execute([':reference' => $reference]);
+    $count = (int) $current->fetchColumn();
+    if (!$includeHistory) {
+        return $count;
+    }
+    $history = $connection->prepare(
+        'SELECT COUNT(*) FROM application_domain_history WHERE payload IS NOT NULL '
+        . 'AND CAST(payload AS CHAR) LIKE :reference'
+    );
+    $history->execute([':reference' => $reference]);
+    return $count + (int) $history->fetchColumn();
+}
+
+function cleanupExpiredMediaRetention(PDO $connection): void
+{
+    $orphanCandidates = $connection->query(
+        'SELECT id FROM media_objects WHERE pending_delete_at IS NULL AND public_slug IS NULL '
+        . 'AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) ORDER BY created_at LIMIT 50'
+    );
+    foreach ($orphanCandidates === false ? [] : $orphanCandidates->fetchAll() as $candidate) {
+        $candidateId = (string) ($candidate['id'] ?? '');
+        if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $candidateId) !== 1
+            || mediaDomainReferenceCount($connection, $candidateId) > 0) {
+            continue;
+        }
+        $mark = $connection->prepare(
+            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3) '
+            . 'WHERE id = :id AND pending_delete_at IS NULL AND public_slug IS NULL'
+        );
+        $mark->execute([':id' => $candidateId]);
+    }
+    $statement = $connection->query(
+        'SELECT id, stored_name FROM media_objects WHERE pending_delete_at IS NOT NULL '
+        . 'AND pending_delete_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
+        . 'ORDER BY pending_delete_at LIMIT 50'
+    );
+    foreach ($statement === false ? [] : $statement->fetchAll() as $record) {
+        $id = (string) ($record['id'] ?? '');
+        if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $id) !== 1 || mediaDomainReferenceCount($connection, $id, true) > 0) {
+            continue;
+        }
+        $delete = $connection->prepare(
+            'DELETE FROM media_objects WHERE id = :id AND pending_delete_at IS NOT NULL '
+            . 'AND pending_delete_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY)'
+        );
+        $delete->execute([':id' => $id]);
+        if ($delete->rowCount() === 1) {
+            @unlink(privateMediaDirectory() . DIRECTORY_SEPARATOR . basename((string) ($record['stored_name'] ?? '')));
+        }
+    }
+}
+
 function streamOnlineMedia(PDO $connection, string $id, bool $headOnly = false): never
 {
     requireIdentity($connection);
     $record = mediaRecord($connection, $id);
     $path = is_array($record) ? privateMediaDirectory() . DIRECTORY_SEPARATOR . basename((string) $record['stored_name']) : '';
-    if (!is_array($record) || !is_file($path)) {
+    if (!is_array($record) || $record['pending_delete_at'] !== null || !is_file($path)) {
         sendError(404, 'Média introuvable.', 'media_missing');
     }
     $size = (int) $record['byte_size'];
@@ -1601,10 +2194,19 @@ function deleteOnlineMedia(PDO $connection, string $id): never
     if ($record['public_slug'] !== null && !(bool) ($identity['can_administrate'] ?? false)) {
         sendError(403, 'Seul un administrateur peut supprimer une image publiée sur le web.', 'administrator_required');
     }
-    $statement = $connection->prepare('DELETE FROM media_objects WHERE id = :id');
+    ensureDomainStoreInitialized($connection);
+    if (mediaDomainReferenceCount($connection, $id) > 0) {
+        sendError(
+            409,
+            'Ce média est encore utilisé par la table. Retirez d’abord sa référence.',
+            'media_still_referenced'
+        );
+    }
+    $statement = $connection->prepare(
+        'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3), public_slug = NULL, published_at = NULL WHERE id = :id'
+    );
     $statement->execute([':id' => $id]);
-    @unlink(privateMediaDirectory() . DIRECTORY_SEPARATOR . basename((string) $record['stored_name']));
-    sendJson(200, ['ok' => true]);
+    sendJson(200, ['ok' => true, 'retainedUntil' => gmdate('c', time() + 30 * 86400)]);
 }
 
 function publishOnlineMedia(PDO $connection, string $id): never
@@ -1620,7 +2222,7 @@ function publishOnlineMedia(PDO $connection, string $id): never
             $slug = randomToken(16);
             try {
                 $statement = $connection->prepare(
-                    'UPDATE media_objects SET public_slug = :public_slug, published_at = UTC_TIMESTAMP(3) '
+                    'UPDATE media_objects SET public_slug = :public_slug, published_at = UTC_TIMESTAMP(3), pending_delete_at = NULL '
                     . 'WHERE id = :id AND public_slug IS NULL'
                 );
                 $statement->execute([':public_slug' => $slug, ':id' => $id]);
@@ -1758,9 +2360,26 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
     }
     $content = substr(trim((string) ($payload['content'] ?? '')), 0, 1900);
     $imageDataUrl = (string) ($payload['imageDataUrl'] ?? '');
+    $mediaId = trim((string) ($payload['mediaId'] ?? ''));
     $temporary = null;
+    $attachmentPath = null;
+    $attachmentType = '';
+    $deleteAttachment = false;
     $headers = [];
-    if ($imageDataUrl !== '') {
+    if ($mediaId !== '') {
+        $media = mediaRecord($connection, $mediaId);
+        $attachmentPath = is_array($media)
+            ? privateMediaDirectory() . DIRECTORY_SEPARATOR . basename((string) $media['stored_name'])
+            : null;
+        $attachmentType = is_array($media) ? (string) $media['content_type'] : '';
+        if (!is_array($media) || $media['pending_delete_at'] !== null
+            || !str_starts_with($attachmentType, 'image/') || !is_file((string) $attachmentPath)) {
+            sendError(404, 'L’image Discord est introuvable.', 'media_missing');
+        }
+        if ((int) $media['byte_size'] <= 0 || (int) $media['byte_size'] > 24 * 1024 * 1024) {
+            sendError(413, 'L’image Discord est vide ou dépasse 24 Mo.', 'discord_image_too_large');
+        }
+    } elseif ($imageDataUrl !== '') {
         if (preg_match('#^data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$#s', $imageDataUrl, $match) !== 1) {
             sendError(400, 'L’image Discord est invalide.', 'invalid_discord_image');
         }
@@ -1775,9 +2394,14 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
             }
             sendError(503, 'Préparation de l’image Discord impossible.', 'discord_unavailable');
         }
+        $attachmentPath = $temporary;
+        $attachmentType = $match[1];
+        $deleteAttachment = true;
+    }
+    if (is_string($attachmentPath)) {
         $postFields = [
             'payload_json' => json_encode(['content' => $content, 'allowed_mentions' => ['parse' => []]], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-            'files[0]' => new CURLFile($temporary, $match[1], cleanMediaFilename((string) ($payload['filename'] ?? 'xar-tsaroth.png'))),
+            'files[0]' => new CURLFile($attachmentPath, $attachmentType, cleanMediaFilename((string) ($payload['filename'] ?? 'xar-tsaroth.png'))),
         ];
     } else {
         if ($content === '') {
@@ -1788,7 +2412,7 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
     }
     $request = curl_init($webhook . (str_contains($webhook, '?') ? '&' : '?') . 'wait=true');
     if ($request === false) {
-        if (is_string($temporary)) {
+        if ($deleteAttachment && is_string($temporary)) {
             @unlink($temporary);
         }
         sendError(503, 'Connexion Discord indisponible.', 'discord_unavailable');
@@ -1811,7 +2435,7 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
     $status = (int) curl_getinfo($request, CURLINFO_RESPONSE_CODE);
     $failed = $response === false;
     curl_close($request);
-    if (is_string($temporary)) {
+    if ($deleteAttachment && is_string($temporary)) {
         @unlink($temporary);
     }
     if ($failed || $status < 200 || $status >= 300) {
@@ -1831,6 +2455,9 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
 
 function handleOnlineRoute(PDO $connection, array $configuration, string $route, string $method, bool $headOnly): bool
 {
+    if (handleDomainRoute($connection, $route, $method, $headOnly)) {
+        return true;
+    }
     if ($route === '/api/v1/settings') {
         if ($method === 'GET' || $method === 'HEAD') {
             requireAdministratorIdentity($connection);
@@ -1860,7 +2487,7 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
             readOnlineState($connection, $headOnly);
         }
         if ($method === 'PUT') {
-            replaceOnlineState($connection);
+            rejectLegacyOnlineState($connection);
         }
         requireMethod($method, ['GET', 'HEAD', 'PUT']);
     }
@@ -1889,7 +2516,7 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
     }
     if ($route === '/api/v1/media') {
         if ($method === 'POST') {
-            uploadOnlineMedia($connection);
+            uploadOnlineMedia($connection, $configuration);
         }
         requireMethod($method, ['POST']);
     }

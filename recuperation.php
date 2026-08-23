@@ -83,7 +83,7 @@ header(
             credentials: 'same-origin',
             headers: {
               'Content-Type': 'application/json',
-              'X-Xar-Client-Version': '1.15.0'
+              'X-Xar-Client-Version': '1.16.0'
             },
             body: JSON.stringify({ recoveryToken, password: form.password.value })
           });

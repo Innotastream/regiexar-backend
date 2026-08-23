@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.6.8';
+const XAR_BACKEND_VERSION = '0.7.0';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -204,7 +204,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v6', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v7', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -312,10 +312,78 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(6, 'account_recovery_tokens', '7e0d690de56fc83527ec061fea9fc67f0e50cd66732dab10b2ab4c501c61bdba')"
             );
+            $version = 6;
+        }
+
+        if ($version < 7) {
+            if (!schemaColumnExists($connection, 'media_objects', 'pending_delete_at')) {
+                $connection->exec(
+                    'ALTER TABLE media_objects ADD COLUMN pending_delete_at DATETIME(3) NULL AFTER published_at'
+                );
+            }
+            if (!schemaIndexExists($connection, 'media_objects', 'idx_media_objects_pending_delete')) {
+                $connection->exec(
+                    'ALTER TABLE media_objects ADD KEY idx_media_objects_pending_delete (pending_delete_at)'
+                );
+            }
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS application_domain_clock ('
+                . 'singleton_id TINYINT UNSIGNED NOT NULL DEFAULT 1, '
+                . 'global_revision BIGINT UNSIGNED NOT NULL DEFAULT 0, '
+                . 'state_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 11, '
+                . 'domain_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 1, '
+                . 'legacy_revision BIGINT UNSIGNED NULL, initialized_at DATETIME(3) NULL, '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (singleton_id), CONSTRAINT chk_application_domain_clock_singleton CHECK (singleton_id = 1)'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS application_domains ('
+                . 'domain_key VARCHAR(192) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 1, revision BIGINT UNSIGNED NOT NULL DEFAULT 1, '
+                . 'payload JSON NOT NULL, updated_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (domain_key), CONSTRAINT fk_application_domains_account '
+                . 'FOREIGN KEY (updated_by_account_id) REFERENCES accounts (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS application_domain_changes ('
+                . 'global_revision BIGINT UNSIGNED NOT NULL, '
+                . 'domain_key VARCHAR(192) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'domain_revision BIGINT UNSIGNED NOT NULL, operation ENUM(\'upsert\', \'delete\') NOT NULL, '
+                . 'changed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (global_revision, domain_key), KEY idx_application_domain_changes_key (domain_key, global_revision)'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS application_domain_history ('
+                . 'history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, '
+                . 'domain_key VARCHAR(192) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'domain_revision BIGINT UNSIGNED NOT NULL, global_revision BIGINT UNSIGNED NOT NULL, '
+                . 'operation ENUM(\'upsert\', \'delete\') NOT NULL, payload JSON NULL, '
+                . 'changed_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (history_id), KEY idx_application_domain_history_key (domain_key, history_id), '
+                . 'KEY idx_application_domain_history_created (created_at), '
+                . 'CONSTRAINT fk_application_domain_history_account FOREIGN KEY (changed_by_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'INSERT INTO application_domain_clock '
+                . '(singleton_id, global_revision, state_schema_version, domain_schema_version) VALUES (1, 0, 11, 1) '
+                . 'ON DUPLICATE KEY UPDATE singleton_id = VALUES(singleton_id)'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(7, 'revisioned_domains_and_media_retention', 'f67ea6b167c2313869a9c72def9c49d913fe06696791c43b9413eb16c6df498a')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v6')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v7')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }
@@ -1170,6 +1238,7 @@ function recoverAdministratorAccount(PDO $connection): never
 }
 
 require_once __DIR__ . '/online.php';
+require_once __DIR__ . '/domains.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
@@ -1233,7 +1302,7 @@ if ($route === '/api/v1/health') {
 }
 
 try {
-    if ($route !== '/api/v1/auth/logout') {
+    if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)) {
         requireSupportedClient($configuration);
     }
     cleanupAuthentication($connection);

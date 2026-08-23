@@ -1,9 +1,11 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.6.8",
+  "backendVersion": "0.7.0",
   "apiVersion": "v1",
   "publicOrigin": "https://regie-xar-tsaroth.fr",
   "documentRoot": "regie",
   "privateConfigDirectory": "regie-private",
-  "applicationIntegration": "online-authority"
+  "applicationIntegration": "revisioned-domains",
+  "databaseSchemaVersion": 7,
+  "minimumApplicationVersion": "1.16.0"
 }
