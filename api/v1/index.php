@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.6.7';
+const XAR_BACKEND_VERSION = '0.6.8';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -204,7 +204,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v5', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v6', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -293,10 +293,29 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(5, 'single_active_session_handoff', 'f591dc307331c40a92a4f1f678b700e95499670dd64df68cbd1ee5decd4791d8')"
             );
+            $version = 5;
+        }
+
+        if ($version < 6) {
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS account_recovery_tokens ('
+                . 'token_hash BINARY(32) NOT NULL, '
+                . 'account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'expires_at DATETIME(3) NOT NULL, consumed_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (token_hash), KEY idx_account_recovery_tokens_account (account_id), '
+                . 'CONSTRAINT fk_account_recovery_tokens_account FOREIGN KEY (account_id) '
+                . 'REFERENCES accounts (id) ON DELETE CASCADE'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(6, 'account_recovery_tokens', '7e0d690de56fc83527ec061fea9fc67f0e50cd66732dab10b2ab4c501c61bdba')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v5')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v6')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }
@@ -969,6 +988,11 @@ function cleanupAuthentication(PDO $connection): void
             'DELETE FROM bootstrap_tokens WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
             . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
         );
+        $connection->exec(
+            'DELETE FROM account_recovery_tokens '
+            . 'WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+            . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
+        );
     } catch (Throwable $error) {
         error_log('[xar-regie-api] authentication cleanup failed: ' . get_class($error));
     }
@@ -1063,6 +1087,88 @@ function bootstrapFirstAccount(PDO $connection): never
     ], false, ['Set-Cookie' => sessionCookie($session['token'])]);
 }
 
+function recoverAdministratorAccount(PDO $connection): never
+{
+    $payload = readJsonBody();
+    $providedToken = trim((string) ($payload['recoveryToken'] ?? ''));
+    $bucket = rateBucket('account-recovery');
+    assertRateAvailable($connection, $bucket);
+    if (preg_match('/^[A-Za-z0-9_-]{43}$/', $providedToken) !== 1) {
+        recordRateFailure($connection, $bucket);
+        sendError(403, 'Récupération refusée.', 'recovery_refused');
+    }
+
+    try {
+        $password = validatedPassword($payload['password'] ?? '');
+    } catch (InvalidArgumentException $error) {
+        sendError(400, $error->getMessage(), 'invalid_password');
+    }
+
+    $providedHash = tokenHash($providedToken);
+    $passwordVerifier = hashPassword($password);
+    $recovered = false;
+    $connection->beginTransaction();
+    try {
+        $tokenLock = $connection->prepare(
+            'SELECT account_id, expires_at, consumed_at FROM account_recovery_tokens '
+            . 'WHERE token_hash = :token_hash FOR UPDATE'
+        );
+        $tokenLock->bindValue(':token_hash', $providedHash, PDO::PARAM_LOB);
+        $tokenLock->execute();
+        $tokenRow = $tokenLock->fetch();
+        if (is_array($tokenRow) && $tokenRow['consumed_at'] === null
+            && dateTimestamp($tokenRow['expires_at'] ?? null) > time()) {
+            $accountLock = $connection->prepare(
+                "SELECT id FROM accounts WHERE id = :id AND permanent_role = 'gm' "
+                . 'AND can_administrate = 1 AND revoked_at IS NULL LIMIT 1 FOR UPDATE'
+            );
+            $accountLock->execute([':id' => (string) $tokenRow['account_id']]);
+            $account = $accountLock->fetch();
+            if (is_array($account)) {
+                $accountId = (string) $account['id'];
+                $update = $connection->prepare(
+                    'UPDATE accounts SET password_verifier = :password_verifier, '
+                    . 'auth_revision = auth_revision + 1, takeover_requested_at = NULL, '
+                    . 'takeover_request_id = NULL WHERE id = :id'
+                );
+                $update->execute([
+                    ':password_verifier' => $passwordVerifier,
+                    ':id' => $accountId,
+                ]);
+                $deleteSessions = $connection->prepare(
+                    'DELETE FROM auth_sessions WHERE account_id = :account_id'
+                );
+                $deleteSessions->execute([':account_id' => $accountId]);
+                $consume = $connection->prepare(
+                    'UPDATE account_recovery_tokens SET consumed_at = UTC_TIMESTAMP(3) '
+                    . 'WHERE token_hash = :token_hash AND consumed_at IS NULL'
+                );
+                $consume->bindValue(':token_hash', $providedHash, PDO::PARAM_LOB);
+                $consume->execute();
+                $recovered = $consume->rowCount() === 1;
+            }
+        }
+
+        if ($recovered) {
+            $connection->commit();
+        } else {
+            $connection->rollBack();
+        }
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+
+    if (!$recovered) {
+        recordRateFailure($connection, $bucket);
+        sendError(403, 'Récupération refusée.', 'recovery_refused');
+    }
+    clearRateFailures($connection, $bucket);
+    sendJson(200, ['ok' => true]);
+}
+
 require_once __DIR__ . '/online.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -1135,6 +1241,11 @@ try {
     if ($route === '/api/v1/auth/bootstrap') {
         requireMethod($method, ['POST']);
         bootstrapFirstAccount($connection);
+    }
+
+    if ($route === '/api/v1/auth/recover') {
+        requireMethod($method, ['POST']);
+        recoverAdministratorAccount($connection);
     }
 
     if ($route === '/api/v1/auth/login') {
