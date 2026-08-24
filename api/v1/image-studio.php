@@ -9,6 +9,35 @@ const XAR_IMAGE_STUDIO_WORKER_ONLINE_SECONDS = 45;
 const XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS = 900;
 const XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS = 2;
 
+function cleanImageStudioSingleLineText(
+    mixed $value,
+    int $maximumCharacters,
+    string $label,
+    string $code
+): string {
+    try {
+        return cleanText($value, $maximumCharacters, $label);
+    } catch (InvalidArgumentException $error) {
+        sendError(400, $error->getMessage(), $code);
+    }
+}
+
+function cleanImageStudioMultilineText(
+    mixed $value,
+    int $maximumBytes,
+    string $label,
+    string $code
+): string {
+    $text = trim(str_replace(["\r\n", "\r"], "\n", (string) $value));
+    if ($text === ''
+        || strlen($text) > $maximumBytes
+        || str_contains($text, "\0")
+        || preg_match('//u', $text) !== 1) {
+        sendError(400, $label . ' invalide.', $code);
+    }
+    return $text;
+}
+
 function imageStudioSessionCookie(string $token, int $maximumAge = XAR_IMAGE_STUDIO_SESSION_SECONDS): string
 {
     return 'xar_studio_session=' . rawurlencode($token)
@@ -244,7 +273,7 @@ function createImageStudioConversation(PDO $connection): never
     if ($title === '') {
         $title = 'Nouvelle vision';
     }
-    $title = cleanText($title, 180, 'Titre');
+    $title = cleanImageStudioSingleLineText($title, 180, 'Titre', 'invalid_conversation_title');
     $id = randomToken(16);
     $statement = $connection->prepare(
         'INSERT INTO image_studio_conversations (id, owner_account_id, title) '
@@ -272,7 +301,12 @@ function updateImageStudioConversation(PDO $connection, string $id): never
     $values = [':id' => $id];
     if (array_key_exists('title', $payload)) {
         $fields[] = 'title = :title';
-        $values[':title'] = cleanText($payload['title'], 180, 'Titre');
+        $values[':title'] = cleanImageStudioSingleLineText(
+            $payload['title'],
+            180,
+            'Titre',
+            'invalid_conversation_title'
+        );
     }
     if (array_key_exists('archived', $payload)) {
         if (!is_bool($payload['archived'])) {
@@ -304,7 +338,12 @@ function normalizedImageStudioReferences(mixed $value): array
         $kind = in_array(($reference['kind'] ?? ''), ['catalog', 'character', 'upload', 'result'], true)
             ? (string) $reference['kind']
             : 'upload';
-        $label = cleanText($reference['label'] ?? 'Référence', 120, 'Nom de référence');
+        $label = cleanImageStudioSingleLineText(
+            $reference['label'] ?? 'Référence',
+            120,
+            'Nom de référence',
+            'invalid_reference'
+        );
         $id = trim((string) ($reference['id'] ?? ''));
         $mediaId = trim((string) ($reference['mediaId'] ?? ''));
         $sourceUrl = trim((string) ($reference['sourceUrl'] ?? ''));
@@ -654,7 +693,12 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         false
     );
     $payload = readJsonBody(196608);
-    $prompt = cleanText($payload['prompt'] ?? '', XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES, 'Description');
+    $prompt = cleanImageStudioMultilineText(
+        $payload['prompt'] ?? '',
+        XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES,
+        'Description',
+        'invalid_prompt'
+    );
     $operation = in_array(($payload['operation'] ?? ''), ['generate', 'edit', 'regenerate'], true)
         ? (string) $payload['operation']
         : 'generate';
@@ -858,7 +902,12 @@ function completeImageStudioMessage(PDO $connection, string $id): never
     }
     $revisedPrompt = trim((string) ($payload['revisedPrompt'] ?? ''));
     if ($revisedPrompt !== '') {
-        $revisedPrompt = cleanText($revisedPrompt, XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES, 'Prompt révisé');
+        $revisedPrompt = cleanImageStudioMultilineText(
+            $revisedPrompt,
+            XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES,
+            'Prompt révisé',
+            'invalid_revised_prompt'
+        );
     }
     $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
     $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
@@ -892,7 +941,12 @@ function failImageStudioMessage(PDO $connection, string $id): never
     if (preg_match('/^[a-z0-9_]{3,64}$/D', $code) !== 1) {
         $code = 'generation_failed';
     }
-    $detail = cleanText($payload['message'] ?? 'La génération n’a pas abouti.', 500, 'Erreur');
+    $detail = cleanImageStudioMultilineText(
+        $payload['message'] ?? 'La génération n’a pas abouti.',
+        500,
+        'Erreur',
+        'invalid_error_detail'
+    );
     $status = $code === 'request_rejected' ? 'rejected' : 'failed';
     $statement = $connection->prepare(
         'UPDATE image_studio_messages SET status = :status, error_code = :error_code, error_detail = :error_detail, '
@@ -917,7 +971,12 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
     }
     $revisedPrompt = trim((string) ($payload['revisedPrompt'] ?? ''));
     if ($revisedPrompt !== '') {
-        $revisedPrompt = cleanText($revisedPrompt, XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES, 'Prompt révisé');
+        $revisedPrompt = cleanImageStudioMultilineText(
+            $revisedPrompt,
+            XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES,
+            'Prompt révisé',
+            'invalid_revised_prompt'
+        );
     }
     $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
     $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
@@ -1005,7 +1064,12 @@ function failImageStudioRegieJob(PDO $connection, string $id): never
     if (preg_match('/^[a-z0-9_]{3,64}$/D', $code) !== 1) {
         $code = 'generation_failed';
     }
-    $detail = cleanText($payload['message'] ?? 'La génération n’a pas abouti.', 500, 'Erreur');
+    $detail = cleanImageStudioMultilineText(
+        $payload['message'] ?? 'La génération n’a pas abouti.',
+        500,
+        'Erreur',
+        'invalid_error_detail'
+    );
     $status = $code === 'request_rejected' ? 'rejected' : 'failed';
     $statement = $connection->prepare(
         'UPDATE image_studio_messages SET status = :status, error_code = :error_code, '
@@ -1403,7 +1467,7 @@ function normalizedImageReferenceAliases(mixed $value): array
     }
     $aliases = [];
     foreach ($value as $alias) {
-        $clean = cleanText($alias, 80, 'Alias');
+        $clean = cleanImageStudioSingleLineText($alias, 80, 'Alias', 'invalid_reference_alias');
         $key = mb_strtolower($clean, 'UTF-8');
         $aliases[$key] = $clean;
     }
@@ -1427,7 +1491,12 @@ function writeImageReferenceCatalog(PDO $connection, ?string $id = null): never
         sendError(404, 'Référence de catalogue introuvable.', 'reference_missing');
     }
     $label = array_key_exists('label', $payload)
-        ? cleanText($payload['label'], 120, 'Nom de référence')
+        ? cleanImageStudioSingleLineText(
+            $payload['label'],
+            120,
+            'Nom de référence',
+            'invalid_reference_label'
+        )
         : (string) ($existing['label'] ?? '');
     $aliases = array_key_exists('aliases', $payload)
         ? normalizedImageReferenceAliases($payload['aliases'])

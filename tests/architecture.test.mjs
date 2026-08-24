@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.9.0 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
+test("le backend 0.9.1 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.1'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -99,6 +99,10 @@ test("le Compte de la Régie est une file sérialisée, pausable et sans identit
   assert.match(studio, /XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS = 2/);
   assert.match(studio, /uploaded_by_account_id = :author_account_id/);
   assert.match(studio, /function assertImageStudioReferenceMediaAccess/);
+  assert.match(studio, /function cleanImageStudioMultilineText/);
+  assert.match(studio, /str_replace\(\["\\r\\n", "\\r"\], "\\n"/);
+  assert.match(studio, /cleanImageStudioMultilineText\([\s\S]*?'invalid_prompt'/);
+  assert.doesNotMatch(studio, /\$prompt = cleanText\(/);
   assert.match(studio, /own_shared_active_count/);
   assert.match(studio, /cancelled_by_author/);
   assert.match(studio, /\['xar-tsaroth\.fr', 'www\.xar-tsaroth\.fr'\]/);
