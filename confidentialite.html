@@ -64,6 +64,7 @@
         <li><strong>Présence :</strong> connexion ouverte, mode effectif Joueur ou MJ et dernière activité nécessaire à l’affichage en ligne.</li>
         <li><strong>Partie :</strong> scènes, cartes, tokens, initiatives, réglages, journaux de jeu, playlists et autres contenus saisis par les participants.</li>
         <li><strong>Fiches et médias :</strong> fiches de personnages, images, musiques, ambiances, noms de fichiers et métadonnées nécessaires à leur utilisation.</li>
+        <li><strong>Studio d’images :</strong> conversations, prompts, références nommées, opérations de génération ou de modification, auteur MJ, état d’exécution et images obtenues. Les identifiants ChatGPT, jetons Codex et secrets d’authentification OpenAI ne sont jamais envoyés à l’hébergement de la Régie.</li>
         <li><strong>Données techniques :</strong> journaux de sécurité et d’hébergement pouvant notamment contenir une adresse IP, une date, une route demandée et un code de réponse.</li>
         <li><strong>Données locales :</strong> copies de fiches et préférences de dossiers conservées sur le PC. Les chemins locaux choisis ne sont pas transmis comme état partagé.</li>
       </ul>
@@ -82,7 +83,7 @@
         <li><strong>OVHcloud</strong> héberge l’API, la base MySQL, les médias et les journaux techniques du service.</li>
         <li><strong>Microsoft Store</strong> distribue, certifie et met à jour l’application. Les données du compte Microsoft et du téléchargement sont traitées par Microsoft selon sa propre politique ; la Régie ne les reçoit pas.</li>
         <li><strong>Discord</strong> reçoit uniquement le texte ou l’image qu’un MJ choisit d’envoyer lorsqu’un webhook a été configuré et activé.</li>
-        <li><strong>ChatGPT</strong> s’ouvre dans le navigateur habituel. La Régie ne reçoit aucune clé API ni aucun mot de passe ChatGPT. Le prompt et les références choisis ne sont transmis à ChatGPT qu’à la suite d’une action visible de l’utilisateur.</li>
+        <li><strong>ChatGPT et Codex</strong> sont utilisés localement, après une connexion officielle ouverte dans le navigateur par l’utilisateur. La Régie en ligne ne reçoit aucune clé API, aucun mot de passe ChatGPT, aucun cookie et aucun jeton Codex. Le processus local transmet à OpenAI uniquement le prompt et les références choisis pour une génération d’image explicitement lancée.</li>
         <li><strong>GitHub</strong> héberge le code public ou privé du programme, jamais les comptes, secrets ou données de production.</li>
       </ul>
       <p>Les utilisateurs autorisés d’une même table accèdent uniquement aux informations prévues par leur mode effectif et leurs droits. Les données secrètes MJ ne sont pas transmises au client Joueur. L’utilisation facultative de Microsoft, Discord ou ChatGPT peut entraîner un traitement hors de l’Espace économique européen selon les garanties et politiques de ces fournisseurs.</p>
@@ -91,6 +92,7 @@
     <section>
       <h2>5. Publications et contrôle du partage</h2>
       <p>Une image n’est rendue publique qu’après une action de publication. Elle reçoit une adresse aléatoire non indexée, mais toute personne possédant cette adresse peut la consulter. Seul un administrateur peut supprimer une image ainsi publiée. Un média privé reste réservé aux sessions autorisées.</p>
+      <p>Dans le studio, chaque MJ consulte uniquement ses propres conversations et images. L’administrateur de la Régie peut consulter l’historique de tous les MJ, y compris les conversations ou messages retirés de leur vue. Cette conservation d’audit est signalée dans l’application et dans la galerie avant toute action de retrait.</p>
     </section>
 
     <section>
@@ -101,6 +103,7 @@
         <li>Les compteurs anti‑bruteforce expirés sont supprimés après une durée maximale d’environ <strong>24 heures</strong>.</li>
         <li>Les comptes, contenus de partie, fiches et médias sont conservés tant que la table et le compte sont maintenus, puis supprimés sur instruction de l’administrateur ou après une demande d’effacement traitée par l’éditeur, sous réserve d’une obligation légale ou de sécurité.</li>
         <li>Une image publiée reste accessible jusqu’à sa suppression par un administrateur.</li>
+        <li>Retirer une conversation ou une génération du studio la masque au MJ sans effacer son journal administrateur. Lorsqu’une image privée retirée n’est ni publiée ni utilisée par la table, son fichier est placé en rétention pendant <strong>30 jours</strong> avant suppression ; le journal textuel et ses métadonnées restent conservés pour l’audit jusqu’à une décision d’effacement administrateur ou une demande légitime traitée par l’éditeur.</li>
         <li>Les copies et préférences locales restent sur l’appareil jusqu’à leur suppression par son utilisateur.</li>
         <li>Les journaux techniques suivent les durées strictement nécessaires à la sécurité, au diagnostic et aux obligations applicables de l’hébergeur.</li>
       </ul>
@@ -108,7 +111,7 @@
 
     <section>
       <h2>7. Sécurité</h2>
-      <p>Les échanges utilisent HTTPS. Les mots de passe sont hachés côté serveur, les jetons de session sont stockés sous forme de condensat et les secrets d’intégration sont chiffrés. Les droits sont contrôlés côté serveur, le mode Joueur reste distinct du mode MJ et un compte ne peut conserver qu’une session active. Aucun secret ni donnée de production n’est inclus dans le paquet Microsoft Store.</p>
+      <p>Les échanges utilisent HTTPS. Les mots de passe sont hachés côté serveur, les jetons de session sont stockés sous forme de condensat et les secrets d’intégration sont chiffrés. Les droits sont contrôlés côté serveur, le mode Joueur reste distinct du mode MJ et un compte ne peut conserver qu’une session de partie active. La session web limitée du studio ne donne aucun accès aux scènes, fiches, réglages ou autres écritures de partie. L’authentification Codex reste dans le coffre sécurisé du PC. Aucun secret ni donnée de production n’est inclus dans le paquet Microsoft Store.</p>
     </section>
 
     <section>
@@ -129,7 +132,7 @@
     </section>
 
     <footer>
-      Politique en vigueur à compter du 21 août 2026 — version 1.0.
+      Politique mise à jour le 24 août 2026 — version 2.0.
     </footer>
   </main>
 </body>

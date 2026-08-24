@@ -10,6 +10,7 @@ RewriteRule ^(?:tests|\.github)(?:/|$) - [F,L]
 RewriteRule ^initialisation/?$ initialisation.php [QSA,L]
 RewriteRule ^recuperation/?$ recuperation.php [QSA,L]
 RewriteRule ^confidentialite/?$ confidentialite.html [L]
+RewriteRule ^studio/?$ studio.php [QSA,L]
 RewriteRule ^api/v1(?:/.*)?$ api/v1/index.php [QSA,L]
 RewriteRule ^share/[A-Za-z0-9_-]{22}(?:/image)?/?$ api/v1/index.php [QSA,L]
 

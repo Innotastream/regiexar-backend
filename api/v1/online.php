@@ -2124,6 +2124,17 @@ function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHis
     );
     $current->execute([':reference' => $reference]);
     $count = (int) $current->fetchColumn();
+    $studio = $connection->prepare(
+        'SELECT COUNT(*) FROM image_studio_messages '
+        . 'WHERE media_id = :media_id AND owner_hidden_at IS NULL'
+    );
+    $studio->execute([':media_id' => $id]);
+    $count += (int) $studio->fetchColumn();
+    $catalog = $connection->prepare(
+        'SELECT COUNT(*) FROM image_reference_catalog WHERE media_id = :media_id AND active = 1'
+    );
+    $catalog->execute([':media_id' => $id]);
+    $count += (int) $catalog->fetchColumn();
     if (!$includeHistory) {
         return $count;
     }
@@ -2176,7 +2187,11 @@ function cleanupExpiredMediaRetention(PDO $connection): void
 
 function streamOnlineMedia(PDO $connection, string $id, bool $headOnly = false): never
 {
-    requireIdentity($connection);
+    $identity = requireIdentity($connection);
+    $studioOwner = imageStudioMediaOwner($connection, $id);
+    if (is_array($studioOwner)) {
+        assertImageStudioMediaAccess($connection, $identity, $id);
+    }
     $record = mediaRecord($connection, $id);
     $path = is_array($record) ? privateMediaDirectory() . DIRECTORY_SEPARATOR . basename((string) $record['stored_name']) : '';
     if (!is_array($record) || $record['pending_delete_at'] !== null || !is_file($path)) {
@@ -2243,6 +2258,12 @@ function deleteOnlineMedia(PDO $connection, string $id): never
     if ($record['public_slug'] !== null && !(bool) ($identity['can_administrate'] ?? false)) {
         sendError(403, 'Seul un administrateur peut supprimer une image publiée sur le web.', 'administrator_required');
     }
+    $studioOwner = imageStudioMediaOwner($connection, $id);
+    if (is_array($studioOwner)
+        && (string) $studioOwner['author_account_id'] !== (string) $identity['id']
+        && !(bool) ($identity['can_administrate'] ?? false)) {
+        sendError(403, 'Cette image appartient à un autre MJ.', 'media_forbidden');
+    }
     ensureDomainStoreInitialized($connection);
     if (mediaDomainReferenceCount($connection, $id) > 0) {
         sendError(
@@ -2260,10 +2281,16 @@ function deleteOnlineMedia(PDO $connection, string $id): never
 
 function publishOnlineMedia(PDO $connection, string $id): never
 {
-    requireGmIdentity($connection);
+    $identity = requireGmIdentity($connection);
     $record = mediaRecord($connection, $id);
     if (!is_array($record) || !str_starts_with((string) $record['content_type'], 'image/')) {
         sendError(404, 'Image introuvable.', 'media_missing');
+    }
+    $studioOwner = imageStudioMediaOwner($connection, $id);
+    if (is_array($studioOwner)
+        && (string) $studioOwner['author_account_id'] !== (string) $identity['id']
+        && !(bool) ($identity['can_administrate'] ?? false)) {
+        sendError(403, 'Cette image appartient à un autre MJ.', 'media_forbidden');
     }
     $slug = (string) ($record['public_slug'] ?? '');
     if ($slug === '') {
@@ -2504,6 +2531,9 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
 
 function handleOnlineRoute(PDO $connection, array $configuration, string $route, string $method, bool $headOnly): bool
 {
+    if (handleImageStudioRoute($connection, $route, $method, $headOnly)) {
+        return true;
+    }
     if (handleDomainRoute($connection, $route, $method, $headOnly)) {
         return true;
     }

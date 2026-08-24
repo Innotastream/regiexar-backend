@@ -59,19 +59,72 @@ function balancedPhpDelimiters(source) {
 }
 
 test("les sources PHP ont des délimiteurs structurels équilibrés", async () => {
-  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "index.php", "initialisation.php", "recuperation.php"]) {
+  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
     assert.equal(balancedPhpDelimiters(await read(file)), true, file);
   }
 });
 
-test("le backend 0.7.1 installe le schéma révisionné et conserve la migration 1.15", async () => {
+test("le backend 0.8.0 installe le studio et conserve la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.7\.1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.8\.0'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
+  assert.match(index, /private_codex_image_studio/);
+  assert.match(index, /image_studio_conversations/);
+  assert.match(index, /image_studio_messages/);
+  assert.match(index, /image_reference_catalog/);
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 7);
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 8);
+  assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.0.0");
+});
+
+test("le studio sépare les secrets Codex, les propriétaires et l’audit administrateur", async () => {
+  const [studio, online, index] = await Promise.all([
+    read("api/v1/image-studio.php"), read("api/v1/online.php"), read("api/v1/index.php")
+  ]);
+  assert.match(studio, /xar_studio_session/);
+  assert.match(studio, /Path=\/api\/v1\/image-studio/);
+  assert.match(studio, /limitedGallerySession/);
+  assert.match(studio, /conversation_forbidden/);
+  assert.match(studio, /message_forbidden/);
+  assert.match(studio, /media_forbidden/);
+  assert.match(studio, /function imageStudioMediaUsedByCatalog/);
+  assert.match(studio, /\$catalogued \|\| imageStudioMediaUsedByCurrentDomain/);
+  assert.match(studio, /mediaDomainReferenceCount[\s\S]*?!imageStudioMediaUsedByCatalog/);
+  assert.match(studio, /historyRetainedForAdministrator/);
+  assert.match(studio, /owner_hidden_at/);
+  assert.match(studio, /generation_already_active/);
+  assert.match(studio, /INTERVAL 30 MINUTE/);
+  assert.match(studio, /qualityRequested[^\n]+high/);
+  assert.match(studio, /qualityApplied[^\n]+null/);
+  assert.match(studio, /media_content_type/);
+  assert.match(studio, /XAR_IMAGE_STUDIO_MAX_REFERENCES = 5/);
+  assert.match(studio, /'subjectId' => 'site-' \. \$characterId/);
+  assert.match(studio, /function xarTsarothReferenceViewRank/);
+  assert.match(studio, /str_contains\(\$file, '_front'\)[\s\S]*?return 0/);
+  assert.match(studio, /usort\(\$files,[\s\S]*?xarTsarothReferenceViewRank/);
+  assert.equal((studio.match(/\['eiko(?:-perso)?', 'Eiko'/g) ?? []).length, 1);
+  assert.doesNotMatch(studio, /OPENAI_API_KEY|auth\.json|ChatGPT.*token|codex.*token/i);
+  assert.match(online, /imageStudioMediaOwner/);
+  assert.match(online, /assertImageStudioMediaAccess/);
+  assert.match(index, /!str_starts_with\(\$route, '\/api\/v1\/image-studio'\)/);
+});
+
+test("la galerie web reste MJ, privée et explicite sur la conservation", async () => {
+  const [page, rules, privacy] = await Promise.all([read("studio.php"), read(".htaccess"), read("confidentialite.html")]);
+  assert.match(rules, /\^studio\/\?\$/);
+  assert.match(page, /Content-Security-Policy/);
+  assert.match(page, /form-action 'none'/);
+  assert.match(page, /Connexion MJ/);
+  assert.match(page, /scope=all/);
+  assert.match(page, /journal restera accessible à l’administrateur/);
+  assert.match(page, /id="removeDialog"/);
+  assert.match(page, /new Map\(\[\["image\/jpeg", "jpg"\], \["image\/webp", "webp"\]\]\)/);
+  assert.doesNotMatch(page, /\balert\s*\(|\bconfirm\s*\(/);
+  assert.match(privacy, /Studio d’images/);
+  assert.match(privacy, /aucun jeton Codex/);
+  assert.match(privacy, /30 jours/);
 });
 
 test("l’ancien état global est en lecture seule et les commandes sont ciblées", async () => {

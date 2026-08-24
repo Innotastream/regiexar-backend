@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.7.1';
+const XAR_BACKEND_VERSION = '0.8.0';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -204,7 +204,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v7', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v8', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -380,10 +380,90 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(7, 'revisioned_domains_and_media_retention', 'f67ea6b167c2313869a9c72def9c49d913fe06696791c43b9413eb16c6df498a')"
             );
+            $version = 7;
+        }
+
+        if ($version < 8) {
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS image_studio_sessions ('
+                . 'token_hash BINARY(32) NOT NULL, '
+                . 'account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'auth_revision BIGINT UNSIGNED NOT NULL, expires_at DATETIME(3) NOT NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (token_hash), UNIQUE KEY uq_image_studio_sessions_account (account_id), '
+                . 'KEY idx_image_studio_sessions_expiry (expires_at), '
+                . 'CONSTRAINT fk_image_studio_sessions_account FOREIGN KEY (account_id) '
+                . 'REFERENCES accounts (id) ON DELETE CASCADE'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS image_studio_conversations ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'owner_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'title VARCHAR(180) NOT NULL, owner_archived_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), KEY idx_image_studio_conversations_owner (owner_account_id, owner_archived_at, updated_at), '
+                . 'CONSTRAINT fk_image_studio_conversations_owner FOREIGN KEY (owner_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE RESTRICT'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS image_studio_messages ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'conversation_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'author_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . "operation ENUM('generate', 'edit', 'regenerate') NOT NULL DEFAULT 'generate', "
+                . 'prompt MEDIUMTEXT NOT NULL, revised_prompt MEDIUMTEXT NULL, '
+                . "quality ENUM('high') NOT NULL DEFAULT 'high', "
+                . "aspect ENUM('landscape', 'portrait', 'square') NOT NULL DEFAULT 'landscape', "
+                . 'references_json JSON NOT NULL, '
+                . "status ENUM('queued', 'generating', 'succeeded', 'failed', 'rejected') NOT NULL DEFAULT 'queued', "
+                . 'parent_message_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'media_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'width SMALLINT UNSIGNED NULL, height SMALLINT UNSIGNED NULL, '
+                . 'error_code VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, error_detail VARCHAR(500) NULL, '
+                . 'owner_hidden_at DATETIME(3) NULL, started_at DATETIME(3) NULL, completed_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), KEY idx_image_studio_messages_conversation (conversation_id, created_at), '
+                . 'KEY idx_image_studio_messages_author_status (author_account_id, status, created_at), '
+                . 'KEY idx_image_studio_messages_media (media_id), '
+                . 'CONSTRAINT fk_image_studio_messages_conversation FOREIGN KEY (conversation_id) '
+                . 'REFERENCES image_studio_conversations (id) ON DELETE RESTRICT, '
+                . 'CONSTRAINT fk_image_studio_messages_author FOREIGN KEY (author_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE RESTRICT, '
+                . 'CONSTRAINT fk_image_studio_messages_parent FOREIGN KEY (parent_message_id) '
+                . 'REFERENCES image_studio_messages (id) ON DELETE SET NULL, '
+                . 'CONSTRAINT fk_image_studio_messages_media FOREIGN KEY (media_id) '
+                . 'REFERENCES media_objects (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS image_reference_catalog ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, label VARCHAR(120) NOT NULL, '
+                . 'aliases_json JSON NOT NULL, media_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'active TINYINT(1) NOT NULL DEFAULT 1, priority SMALLINT UNSIGNED NOT NULL DEFAULT 100, '
+                . 'created_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), KEY idx_image_reference_catalog_active (active, priority, label), '
+                . 'KEY idx_image_reference_catalog_media (media_id), '
+                . 'CONSTRAINT fk_image_reference_catalog_media FOREIGN KEY (media_id) '
+                . 'REFERENCES media_objects (id) ON DELETE RESTRICT, '
+                . 'CONSTRAINT fk_image_reference_catalog_account FOREIGN KEY (created_by_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE RESTRICT'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(8, 'private_codex_image_studio', '2756d095310647900133b669980030d27bed6480540d7007b81032c137e3bd58')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v7')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v8')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }
@@ -1239,6 +1319,7 @@ function recoverAdministratorAccount(PDO $connection): never
 
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
+require_once __DIR__ . '/image-studio.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
@@ -1302,7 +1383,8 @@ if ($route === '/api/v1/health') {
 }
 
 try {
-    if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)) {
+    if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)
+        && !str_starts_with($route, '/api/v1/image-studio')) {
         requireSupportedClient($configuration);
     }
     cleanupAuthentication($connection);

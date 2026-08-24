@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.7.1
+# Backend OVH — Régie du Seuil 0.8.0
 
-La 0.7.1 conserve sans migration SQL le contrat de domaines 0.7 et ajoute la suppression sécurisée d’une fiche par son propriétaire connecté en mode Joueur. L’identité du propriétaire est tirée de la session ; un identifiant transmis par le client ne peut jamais choisir un autre compte. Les commandes Joueur sont aussi refusées lorsqu’un compte MJ utilise réellement le mode MJ, tout en restant disponibles s’il entre volontairement par l’accès Joueur.
+La 0.8.0 conserve le contrat de domaines 0.7 et ajoute l’autorité en ligne du studio d’images de l’application 2.0 : conversations, journal de génération, références approuvées, droits par MJ, galerie privée et conservation d’audit. Les secrets et sessions Codex restent exclusivement sur le PC ; OVH ne reçoit que les prompts, métadonnées, références déclarées et images que le MJ choisit de conserver.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -12,7 +12,7 @@ Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsarot
 
 API publique : `https://regie-xar-tsaroth.fr/api/v1`.
 
-## Contrat 0.7
+## Contrat 0.7 conservé
 
 Le schéma 007 remplace l’état JSON monolithique par des documents révisionnés :
 
@@ -32,6 +32,27 @@ Routes principales :
 - `/api/v1/connections`, `/api/v1/events` et `/api/v1/events/stream` : présence et SSE authentifié ;
 - `/api/v1/media` : médias privés, diffusion en flux et publication contrôlée ;
 - `/api/v1/settings` et `/api/v1/bridge-settings` : réglages et secrets chiffrés.
+
+## Studio d’images 0.8
+
+Le schéma 008 ajoute :
+
+- une session web limitée au studio, distincte de la session de partie et incapable d’accéder aux scènes, fiches ou réglages ;
+- des conversations appartenant à un seul compte MJ ;
+- un journal de demandes avec opérations `generate`, `edit` et `regenerate`, qualité `high` demandée (niveau appliqué laissé à Codex), références et états bornés ;
+- un catalogue de références nominatives approuvées par l’administrateur ;
+- une galerie où chaque MJ ne voit que ses images, tandis que l’administrateur voit l’historique complet ;
+- une seule génération active par compte et le classement automatique d’une exécution interrompue après trente minutes.
+
+Routes principales :
+
+- `/api/v1/image-studio/auth/*` : session web MJ limitée ;
+- `/api/v1/image-studio/conversations` et `.../{id}/messages` : conversations et journal ;
+- `/api/v1/image-studio/messages/{id}/start|complete|fail` : transitions contrôlées par le processus local ;
+- `/api/v1/image-studio/gallery` et `/api/v1/image-studio/media/{id}` : collection privée filtrée côté serveur ;
+- `/api/v1/image-studio/references` : catalogue partagé, modifiable uniquement par un administrateur.
+
+« Retirer » masque une entrée au propriétaire sans supprimer l’audit administrateur. Le fichier privé, lorsqu’il n’est ni publié, ni utilisé par un domaine, ni actif dans le catalogue, entre dans la rétention média de trente jours. Une image ne devient publique qu’après l’action distincte de publication.
 
 Chaque écriture modifie uniquement les domaines concernés, incrémente l’horloge globale et conserve l’ancienne valeur dans l’historique. Une collision de révision renvoie `409 domain_revision_conflict`. Les deltas sont conservés sur 2 000 révisions et l’historique trente jours.
 
@@ -94,10 +115,12 @@ regie/
 ├── initialisation.php
 ├── recuperation.php
 ├── confidentialite.html
+├── studio.php
 └── api/v1/
     ├── index.php
     ├── online.php
-    └── domains.php
+    ├── domains.php
+    └── image-studio.php
 ```
 
-Avant déploiement : analyse syntaxique des quatre entrées PHP publiques, tests de contrat 0.7, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse PHP réussie ne remplace pas une suite fonctionnelle contre MySQL.
+Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat 0.8, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse PHP réussie ne remplace pas une suite fonctionnelle contre MySQL.

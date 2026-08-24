@@ -8,7 +8,7 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: no-referrer');
 header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
-header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 
 ?><!doctype html>
 <html lang="fr">
@@ -28,8 +28,8 @@ header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; 
 <body>
   <main>
     <h1>Xar Tsaroth — Régie du Seuil</h1>
-    <p>Le service central est en cours de préparation.</p>
+    <p>Le service central de la Régie est en ligne.</p>
+    <p><a href="/studio" style="color:#d8ad54">Ouvrir ma collection d’images MJ</a></p>
   </main>
 </body>
 </html>
-
