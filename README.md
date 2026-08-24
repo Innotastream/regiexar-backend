@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.8.0
+# Backend OVH — Régie du Seuil 0.9.0
 
-La 0.8.0 conserve le contrat de domaines 0.7 et ajoute l’autorité en ligne du studio d’images de l’application 2.0 : conversations, journal de génération, références approuvées, droits par MJ, galerie privée et conservation d’audit. Les secrets et sessions Codex restent exclusivement sur le PC ; OVH ne reçoit que les prompts, métadonnées, références déclarées et images que le MJ choisit de conserver.
+La 0.9.0 conserve le contrat du studio 0.8 et ajoute la file privée du **Compte de la Régie** pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -33,7 +33,7 @@ Routes principales :
 - `/api/v1/media` : médias privés, diffusion en flux et publication contrôlée ;
 - `/api/v1/settings` et `/api/v1/bridge-settings` : réglages et secrets chiffrés.
 
-## Studio d’images 0.8
+## Studio d’images 0.9
 
 Le schéma 008 ajoute :
 
@@ -44,15 +44,28 @@ Le schéma 008 ajoute :
 - une galerie où chaque MJ ne voit que ses images, tandis que l’administrateur voit l’historique complet ;
 - une seule génération active par compte et le classement automatique d’une exécution interrompue après trente minutes.
 
+Le schéma 009 ajoute :
+
+- le choix explicite `local` ou `regie` sur chaque demande ;
+- un identifiant de demande unique par MJ pour empêcher un doublon de quota après répétition réseau ;
+- une file partagée FIFO, une seule prise active, un bail renouvelé par heartbeat et une seule reprise avant échec explicite ;
+- une pause globale initialement active, modifiable uniquement par Innota administrateur ;
+- l’annulation d’une demande en attente ou en cours, avec conservation du journal ;
+- le transfert transactionnel du média calculé par le worker vers le compte MJ auteur.
+
 Routes principales :
 
 - `/api/v1/image-studio/auth/*` : session web MJ limitée ;
 - `/api/v1/image-studio/conversations` et `.../{id}/messages` : conversations et journal ;
 - `/api/v1/image-studio/messages/{id}/start|complete|fail` : transitions contrôlées par le processus local ;
+- `/api/v1/image-studio/regie/status|access` : état partagé et pause/reprise propriétaire ;
+- `/api/v1/image-studio/regie/worker/heartbeat` et `/regie/jobs/*` : présence minimale, prise sérialisée et clôture du worker privé ;
 - `/api/v1/image-studio/gallery` et `/api/v1/image-studio/media/{id}` : collection privée filtrée côté serveur ;
 - `/api/v1/image-studio/references` : catalogue partagé, modifiable uniquement par un administrateur.
 
-« Retirer » masque une entrée au propriétaire sans supprimer l’audit administrateur. Le fichier privé, lorsqu’il n’est ni publié, ni utilisé par un domaine, ni actif dans le catalogue, entre dans la rétention média de trente jours. Une image ne devient publique qu’après l’action distincte de publication.
+« Retirer » masque une entrée au propriétaire sans supprimer l’audit administrateur. Un média encore attaché au résultat ou aux références d’un message conservé reste protégé par cet audit. Le fichier privé réellement orphelin, lorsqu’il n’est ni publié, ni utilisé par un domaine, ni actif dans le catalogue, entre dans la rétention média de trente jours. Une image ne devient publique qu’après l’action distincte de publication.
+
+Le heartbeat transporte uniquement le booléen `ready` et, pendant une exécution, la référence de la demande déjà connue du backend, avec la session MJ d’Innota. Aucun identifiant matériel, cookie ChatGPT, mot de passe, fichier `auth.json`, jeton Codex ou secret OpenAI n’est accepté ni stocké. Mettre l’accès en pause refuse les nouvelles demandes et les nouvelles prises, mais ne détruit pas le travail déjà lancé.
 
 Chaque écriture modifie uniquement les domaines concernés, incrémente l’horloge globale et conserve l’ancienne valeur dans l’historique. Une collision de révision renvoie `409 domain_revision_conflict`. Les deltas sont conservés sur 2 000 révisions et l’historique trente jours.
 
@@ -123,4 +136,4 @@ regie/
     └── image-studio.php
 ```
 
-Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat 0.8, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse PHP réussie ne remplace pas une suite fonctionnelle contre MySQL.
+Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat 0.9, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse PHP réussie ne remplace pas une suite fonctionnelle contre MySQL.

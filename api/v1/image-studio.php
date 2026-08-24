@@ -5,6 +5,9 @@ declare(strict_types=1);
 const XAR_IMAGE_STUDIO_SESSION_SECONDS = 43200;
 const XAR_IMAGE_STUDIO_MAX_REFERENCES = 5;
 const XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES = 50000;
+const XAR_IMAGE_STUDIO_WORKER_ONLINE_SECONDS = 45;
+const XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS = 900;
+const XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS = 2;
 
 function imageStudioSessionCookie(string $token, int $maximumAge = XAR_IMAGE_STUDIO_SESSION_SECONDS): string
 {
@@ -304,17 +307,32 @@ function normalizedImageStudioReferences(mixed $value): array
         $label = cleanText($reference['label'] ?? 'Référence', 120, 'Nom de référence');
         $id = trim((string) ($reference['id'] ?? ''));
         $mediaId = trim((string) ($reference['mediaId'] ?? ''));
+        $sourceUrl = trim((string) ($reference['sourceUrl'] ?? ''));
         if ($id !== '' && preg_match('/^[A-Za-z0-9_-]{1,128}$/D', $id) !== 1) {
             sendError(400, 'Identifiant de référence invalide.', 'invalid_reference');
         }
         if ($mediaId !== '' && preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
             sendError(400, 'Média de référence invalide.', 'invalid_reference');
         }
+        if ($sourceUrl !== '') {
+            $parts = parse_url($sourceUrl);
+            $validSource = is_array($parts)
+                && strtolower((string) ($parts['scheme'] ?? '')) === 'https'
+                && in_array(strtolower((string) ($parts['host'] ?? '')), ['xar-tsaroth.fr', 'www.xar-tsaroth.fr'], true)
+                && preg_match('#^/media/personnages/[A-Za-z0-9_-]+\.webp$#D', (string) ($parts['path'] ?? '')) === 1
+                && !isset($parts['port']) && !isset($parts['user']) && !isset($parts['pass'])
+                && !isset($parts['query']) && !isset($parts['fragment']);
+            if (!$validSource) {
+                sendError(400, 'Source de référence invalide.', 'invalid_reference');
+            }
+            $sourceUrl = 'https://www.xar-tsaroth.fr' . (string) $parts['path'];
+        }
         $normalized[] = [
             'kind' => $kind,
             'label' => $label,
             ...($id !== '' ? ['id' => $id] : []),
             ...($mediaId !== '' ? ['mediaId' => $mediaId] : []),
+            ...($sourceUrl !== '' ? ['sourceUrl' => $sourceUrl] : []),
         ];
     }
     return $normalized;
@@ -337,6 +355,7 @@ function imageStudioMessagePayload(array $row, bool $administratorView = false):
         'qualityRequested' => 'high',
         'qualityApplied' => null,
         'aspect' => (string) $row['aspect'],
+        'executionMode' => (string) ($row['execution_mode'] ?? 'local'),
         'references' => $references,
         'status' => (string) $row['status'],
         'parentMessageId' => $row['parent_message_id'] === null ? null : (string) $row['parent_message_id'],
@@ -416,6 +435,216 @@ function listImageStudioMessages(PDO $connection, string $conversationId, bool $
     ], $headOnly);
 }
 
+function isRegieCodexOwner(array $identity): bool
+{
+    return (bool) ($identity['can_administrate'] ?? false)
+        && (string) ($identity['permanent_role'] ?? '') === 'gm'
+        && strcasecmp(trim((string) ($identity['username'] ?? '')), 'Innota') === 0;
+}
+
+function requireRegieCodexOwner(PDO $connection): array
+{
+    $identity = requireImageStudioIdentity($connection);
+    if (!isRegieCodexOwner($identity)) {
+        sendError(403, 'Le Compte de la Régie est piloté uniquement par Innota.', 'regie_codex_owner_required');
+    }
+    return $identity;
+}
+
+function imageStudioRegieServiceRecord(PDO $connection, bool $forUpdate = false): array
+{
+    $statement = $connection->query(
+        'SELECT singleton_id, paused, worker_ready, worker_account_id, worker_last_seen_at, updated_at, '
+        . '(worker_ready = 1 AND worker_last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL '
+        . XAR_IMAGE_STUDIO_WORKER_ONLINE_SECONDS . ' SECOND)) AS worker_online '
+        . 'FROM image_studio_regie_service WHERE singleton_id = 1'
+        . ($forUpdate ? ' FOR UPDATE' : '')
+    );
+    $record = $statement === false ? false : $statement->fetch();
+    if (!is_array($record)) {
+        throw new RuntimeException('regie_codex_service_missing');
+    }
+    return $record;
+}
+
+function imageStudioRegieServicePayload(PDO $connection, array $identity): array
+{
+    $service = imageStudioRegieServiceRecord($connection);
+    $accountId = (string) $identity['id'];
+    $counts = $connection->prepare(
+        "SELECT SUM(execution_mode = 'regie' AND status = 'queued') AS queued_count, "
+        . "SUM(execution_mode = 'regie' AND status = 'generating') AS active_count, "
+        . "SUM(execution_mode = 'regie' AND author_account_id = :account_id "
+        . "AND status IN ('queued', 'generating')) AS own_shared_active_count FROM image_studio_messages"
+    );
+    $counts->execute([':account_id' => $accountId]);
+    $queue = $counts->fetch();
+    $paused = (bool) $service['paused'];
+    return [
+        'paused' => $paused,
+        'acceptingRequests' => !$paused,
+        'workerOnline' => (bool) $service['worker_online'],
+        'queuedCount' => (int) ($queue['queued_count'] ?? 0),
+        'activeCount' => (int) ($queue['active_count'] ?? 0),
+        'ownSharedActiveCount' => (int) ($queue['own_shared_active_count'] ?? 0),
+        'canControl' => isRegieCodexOwner($identity),
+        'workerLastSeenAt' => $service['worker_last_seen_at'] === null ? null : (string) $service['worker_last_seen_at'],
+        'updatedAt' => (string) $service['updated_at'],
+        'pausePolicy' => 'La pause refuse les nouvelles demandes et les nouvelles prises de travail ; une génération déjà commencée peut se terminer.',
+    ];
+}
+
+function readImageStudioRegieService(PDO $connection, bool $headOnly): never
+{
+    $identity = requireImageStudioIdentity($connection);
+    sendJson(200, [
+        'ok' => true,
+        'service' => imageStudioRegieServicePayload($connection, $identity),
+    ], $headOnly);
+}
+
+function updateImageStudioRegieAccess(PDO $connection): never
+{
+    $identity = requireRegieCodexOwner($connection);
+    $payload = readJsonBody(8192);
+    if (!array_key_exists('paused', $payload) || !is_bool($payload['paused'])) {
+        sendError(400, 'État de pause invalide.', 'invalid_pause_state');
+    }
+    $lock = $connection->query("SELECT GET_LOCK('xar-regie-codex-access', 12)");
+    if ($lock === false || (int) $lock->fetchColumn() !== 1) {
+        sendError(503, 'Le contrôle du Compte de la Régie est occupé.', 'regie_codex_lock_unavailable');
+    }
+    try {
+        $statement = $connection->prepare(
+            'UPDATE image_studio_regie_service SET paused = :paused, updated_by_account_id = :account_id '
+            . 'WHERE singleton_id = 1'
+        );
+        $statement->execute([
+            ':paused' => $payload['paused'] ? 1 : 0,
+            ':account_id' => (string) $identity['id'],
+        ]);
+        $service = imageStudioRegieServicePayload($connection, $identity);
+    } finally {
+        try {
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-codex-access')");
+        } catch (Throwable) {
+        }
+    }
+    sendJson(200, [
+        'ok' => true,
+        'service' => $service,
+    ]);
+}
+
+function heartbeatImageStudioRegieWorker(PDO $connection): never
+{
+    $identity = requireRegieCodexOwner($connection);
+    $payload = readJsonBody(8192);
+    if (!array_key_exists('ready', $payload) || !is_bool($payload['ready'])) {
+        sendError(400, 'État du worker invalide.', 'invalid_worker_state');
+    }
+    $activeMessageId = trim((string) ($payload['activeMessageId'] ?? ''));
+    if ($activeMessageId !== '' && !validImageStudioMessageId($activeMessageId)) {
+        sendError(400, 'Travail actif du worker invalide.', 'invalid_worker_job');
+    }
+    $statement = $connection->prepare(
+        'UPDATE image_studio_regie_service SET worker_ready = :ready, worker_account_id = :account_id, '
+        . 'worker_last_seen_at = UTC_TIMESTAMP(3) WHERE singleton_id = 1'
+    );
+    $statement->execute([
+        ':ready' => $payload['ready'] ? 1 : 0,
+        ':account_id' => (string) $identity['id'],
+    ]);
+    if ($payload['ready'] && $activeMessageId !== '') {
+        $renew = $connection->prepare(
+            'UPDATE image_studio_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+            . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
+            . "WHERE id = :id AND execution_mode = 'regie' AND status = 'generating' "
+            . 'AND worker_account_id = :account_id'
+        );
+        $renew->execute([
+            ':id' => $activeMessageId,
+            ':account_id' => (string) $identity['id'],
+        ]);
+    }
+    sendJson(200, [
+        'ok' => true,
+        'service' => imageStudioRegieServicePayload($connection, $identity),
+    ]);
+}
+
+function recoverExpiredImageStudioRegieJobs(PDO $connection): void
+{
+    $fail = $connection->prepare(
+        "UPDATE image_studio_messages SET status = 'failed', error_code = 'worker_interrupted', "
+        . "error_detail = 'Le worker de la Régie a été interrompu à plusieurs reprises.', "
+        . 'worker_account_id = NULL, worker_lease_expires_at = NULL, completed_at = UTC_TIMESTAMP(3) '
+        . "WHERE execution_mode = 'regie' AND status = 'generating' "
+        . 'AND worker_lease_expires_at < UTC_TIMESTAMP(3) AND worker_attempts >= :maximum_attempts'
+    );
+    $fail->execute([':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS]);
+    $retry = $connection->prepare(
+        "UPDATE image_studio_messages SET status = 'queued', worker_account_id = NULL, "
+        . 'worker_lease_expires_at = NULL, started_at = NULL, error_code = NULL, error_detail = NULL '
+        . "WHERE execution_mode = 'regie' AND status = 'generating' "
+        . 'AND worker_lease_expires_at < UTC_TIMESTAMP(3) AND worker_attempts < :maximum_attempts'
+    );
+    $retry->execute([':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS]);
+}
+
+function claimImageStudioRegieJob(PDO $connection): never
+{
+    $identity = requireRegieCodexOwner($connection);
+    $messageId = null;
+    $connection->beginTransaction();
+    try {
+        $service = imageStudioRegieServiceRecord($connection, true);
+        recoverExpiredImageStudioRegieJobs($connection);
+        if (!(bool) $service['paused'] && (bool) $service['worker_online']) {
+            $active = $connection->query(
+                "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
+                . "AND status = 'generating' ORDER BY started_at, id LIMIT 1 FOR UPDATE"
+            );
+            $activeId = $active === false ? false : $active->fetchColumn();
+            if ($activeId === false) {
+                $next = $connection->query(
+                    "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
+                    . "AND status = 'queued' ORDER BY created_at, id LIMIT 1 FOR UPDATE"
+                );
+                $candidate = $next === false ? false : $next->fetchColumn();
+                if (is_string($candidate) && validImageStudioMessageId($candidate)) {
+                    $claim = $connection->prepare(
+                        "UPDATE image_studio_messages SET status = 'generating', worker_account_id = :account_id, "
+                        . 'worker_attempts = worker_attempts + 1, started_at = UTC_TIMESTAMP(3), '
+                        . 'worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+                        . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
+                        . "WHERE id = :id AND execution_mode = 'regie' AND status = 'queued'"
+                    );
+                    $claim->execute([
+                        ':account_id' => (string) $identity['id'],
+                        ':id' => $candidate,
+                    ]);
+                    if ($claim->rowCount() === 1) {
+                        $messageId = $candidate;
+                    }
+                }
+            }
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+    $message = $messageId === null ? null : imageStudioMessageRecord($connection, $messageId);
+    sendJson(200, [
+        'ok' => true,
+        'job' => is_array($message) ? imageStudioMessagePayload($message, true) : null,
+        'service' => imageStudioRegieServicePayload($connection, $identity),
+    ]);
+}
+
 function createImageStudioMessage(PDO $connection, string $conversationId): never
 {
     $identity = requireImageStudioIdentity($connection);
@@ -432,7 +661,24 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
     $aspect = in_array(($payload['aspect'] ?? ''), ['landscape', 'portrait', 'square'], true)
         ? (string) $payload['aspect']
         : 'landscape';
+    $executionMode = ($payload['executionMode'] ?? '') === 'regie' ? 'regie' : 'local';
+    $clientRequestId = trim((string) ($payload['clientRequestId'] ?? ''));
+    if ($clientRequestId !== '' && preg_match('/^[A-Za-z0-9_-]{16,64}$/D', $clientRequestId) !== 1) {
+        sendError(400, 'Identifiant de demande invalide.', 'invalid_client_request');
+    }
     $references = normalizedImageStudioReferences($payload['references'] ?? []);
+    foreach ($references as $reference) {
+        if (isset($reference['mediaId'])) {
+            assertImageStudioReferenceMediaAccess($connection, $identity, (string) $reference['mediaId']);
+        }
+    }
+    if ($executionMode === 'regie') {
+        foreach ($references as $reference) {
+            if (!isset($reference['mediaId']) && !isset($reference['sourceUrl'])) {
+                sendError(400, 'Une référence partagée ne contient aucune image persistante.', 'invalid_reference');
+            }
+        }
+    }
     $parentMessageId = trim((string) ($payload['parentMessageId'] ?? ''));
     if ($parentMessageId !== '') {
         $parent = imageStudioMessageRecord($connection, $parentMessageId);
@@ -442,33 +688,92 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
     }
 
     $accountId = (string) $identity['id'];
+    if ($clientRequestId !== '') {
+        $duplicate = $connection->prepare(
+            'SELECT id FROM image_studio_messages WHERE author_account_id = :account_id '
+            . 'AND client_request_id = :client_request_id LIMIT 1'
+        );
+        $duplicate->execute([
+            ':account_id' => $accountId,
+            ':client_request_id' => $clientRequestId,
+        ]);
+        $duplicateId = $duplicate->fetchColumn();
+        if (is_string($duplicateId) && validImageStudioMessageId($duplicateId)) {
+            sendJson(200, [
+                'ok' => true,
+                'deduplicated' => true,
+                'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $duplicateId)),
+            ]);
+        }
+    }
     $lockName = 'xar-image-generation-' . substr(hash('sha256', $accountId), 0, 38);
     $lock = $connection->prepare('SELECT GET_LOCK(:lock_name, 12)');
     $lock->execute([':lock_name' => $lockName]);
     if ((int) $lock->fetchColumn() !== 1) {
         sendError(503, 'La file de génération est occupée.', 'generation_lock_unavailable');
     }
+    $regieAccessLockHeld = false;
     try {
+        if ($executionMode === 'regie') {
+            $accessLock = $connection->query("SELECT GET_LOCK('xar-regie-codex-access', 12)");
+            if ($accessLock === false || (int) $accessLock->fetchColumn() !== 1) {
+                sendError(503, 'Le contrôle du Compte de la Régie est occupé.', 'regie_codex_lock_unavailable');
+            }
+            $regieAccessLockHeld = true;
+            if ((bool) imageStudioRegieServiceRecord($connection)['paused']) {
+                sendError(423, 'Le Compte de la Régie est actuellement en pause.', 'regie_codex_paused');
+            }
+        }
+        if ($clientRequestId !== '') {
+            $duplicate = $connection->prepare(
+                'SELECT id FROM image_studio_messages WHERE author_account_id = :account_id '
+                . 'AND client_request_id = :client_request_id LIMIT 1'
+            );
+            $duplicate->execute([
+                ':account_id' => $accountId,
+                ':client_request_id' => $clientRequestId,
+            ]);
+            $duplicateId = $duplicate->fetchColumn();
+            if (is_string($duplicateId) && validImageStudioMessageId($duplicateId)) {
+                sendJson(200, [
+                    'ok' => true,
+                    'deduplicated' => true,
+                    'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $duplicateId)),
+                ]);
+            }
+        }
         $stale = $connection->prepare(
             "UPDATE image_studio_messages SET status = 'failed', error_code = 'interrupted', "
             . "error_detail = 'La Régie a été interrompue avant la fin de la génération.', completed_at = UTC_TIMESTAMP(3) "
-            . "WHERE author_account_id = :account_id AND status IN ('queued', 'generating') "
+            . "WHERE author_account_id = :account_id AND execution_mode = 'local' "
+            . "AND status IN ('queued', 'generating') "
             . 'AND updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 MINUTE)'
         );
         $stale->execute([':account_id' => $accountId]);
         $active = $connection->prepare(
             "SELECT COUNT(*) FROM image_studio_messages WHERE author_account_id = :account_id "
-            . "AND status IN ('queued', 'generating')"
+            . "AND execution_mode = :execution_mode AND status IN ('queued', 'generating')"
         );
-        $active->execute([':account_id' => $accountId]);
+        $active->execute([
+            ':account_id' => $accountId,
+            ':execution_mode' => $executionMode,
+        ]);
         if ((int) $active->fetchColumn() > 0) {
-            sendError(409, 'Une génération est déjà en cours pour ce compte.', 'generation_already_active');
+            sendError(
+                409,
+                $executionMode === 'regie'
+                    ? 'Une demande utilise déjà le Compte de la Régie pour ce compte MJ.'
+                    : 'Une génération personnelle est déjà en cours pour ce compte MJ.',
+                'generation_already_active'
+            );
         }
         $id = randomToken(18);
         $insert = $connection->prepare(
             'INSERT INTO image_studio_messages '
-            . '(id, conversation_id, author_account_id, operation, prompt, quality, aspect, references_json, parent_message_id) '
-            . "VALUES (:id, :conversation_id, :author_account_id, :operation, :prompt, 'high', :aspect, :references_json, :parent_message_id)"
+            . '(id, conversation_id, author_account_id, operation, prompt, quality, aspect, execution_mode, '
+            . 'client_request_id, references_json, parent_message_id) '
+            . "VALUES (:id, :conversation_id, :author_account_id, :operation, :prompt, 'high', :aspect, "
+            . ':execution_mode, :client_request_id, :references_json, :parent_message_id)'
         );
         $insert->execute([
             ':id' => $id,
@@ -477,12 +782,20 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
             ':operation' => $operation,
             ':prompt' => $prompt,
             ':aspect' => $aspect,
+            ':execution_mode' => $executionMode,
+            ':client_request_id' => $clientRequestId !== '' ? $clientRequestId : null,
             ':references_json' => json_encode($references, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
             ':parent_message_id' => $parentMessageId !== '' ? $parentMessageId : null,
         ]);
         $touch = $connection->prepare('UPDATE image_studio_conversations SET updated_at = UTC_TIMESTAMP(3) WHERE id = :id');
         $touch->execute([':id' => $conversationId]);
     } finally {
+        if ($regieAccessLockHeld) {
+            try {
+                $connection->query("SELECT RELEASE_LOCK('xar-regie-codex-access')");
+            } catch (Throwable) {
+            }
+        }
         try {
             $release = $connection->prepare('SELECT RELEASE_LOCK(:lock_name)');
             $release->execute([':lock_name' => $lockName]);
@@ -497,6 +810,9 @@ function startImageStudioMessage(PDO $connection, string $id): never
 {
     $identity = requireImageStudioIdentity($connection);
     $message = requireOwnedImageStudioMessage($connection, $identity, $id);
+    if ((string) ($message['execution_mode'] ?? 'local') !== 'local') {
+        sendError(403, 'Cette demande doit être prise par le worker du Compte de la Régie.', 'regie_codex_worker_required');
+    }
     if ((string) $message['status'] === 'generating') {
         sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload($message)]);
     }
@@ -515,6 +831,9 @@ function completeImageStudioMessage(PDO $connection, string $id): never
 {
     $identity = requireImageStudioIdentity($connection);
     $message = requireOwnedImageStudioMessage($connection, $identity, $id);
+    if ((string) ($message['execution_mode'] ?? 'local') !== 'local') {
+        sendError(403, 'Cette demande doit être terminée par le worker du Compte de la Régie.', 'regie_codex_worker_required');
+    }
     $payload = readJsonBody(65536);
     $mediaId = trim((string) ($payload['mediaId'] ?? ''));
     if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
@@ -562,6 +881,9 @@ function failImageStudioMessage(PDO $connection, string $id): never
 {
     $identity = requireImageStudioIdentity($connection);
     $message = requireOwnedImageStudioMessage($connection, $identity, $id);
+    if ((string) ($message['execution_mode'] ?? 'local') !== 'local') {
+        sendError(403, 'Cette demande doit être clôturée par le worker du Compte de la Régie.', 'regie_codex_worker_required');
+    }
     if (!in_array((string) $message['status'], ['queued', 'generating'], true)) {
         sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload($message)]);
     }
@@ -585,12 +907,135 @@ function failImageStudioMessage(PDO $connection, string $id): never
     sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
 }
 
+function completeImageStudioRegieJob(PDO $connection, string $id): never
+{
+    $identity = requireRegieCodexOwner($connection);
+    $payload = readJsonBody(65536);
+    $mediaId = trim((string) ($payload['mediaId'] ?? ''));
+    if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
+        sendError(400, 'Résultat média invalide.', 'invalid_media');
+    }
+    $revisedPrompt = trim((string) ($payload['revisedPrompt'] ?? ''));
+    if ($revisedPrompt !== '') {
+        $revisedPrompt = cleanText($revisedPrompt, XAR_IMAGE_STUDIO_MAX_PROMPT_BYTES, 'Prompt révisé');
+    }
+    $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
+    $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
+
+    $connection->beginTransaction();
+    try {
+        $selectMessage = $connection->prepare('SELECT * FROM image_studio_messages WHERE id = :id LIMIT 1 FOR UPDATE');
+        $selectMessage->execute([':id' => $id]);
+        $message = $selectMessage->fetch();
+        if (!is_array($message) || (string) ($message['execution_mode'] ?? '') !== 'regie') {
+            sendError(404, 'Travail du Compte de la Régie introuvable.', 'message_missing');
+        }
+        if ((string) $message['status'] === 'succeeded' && (string) $message['media_id'] === $mediaId) {
+            $connection->commit();
+            sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
+        }
+        if ((string) $message['status'] === 'cancelled') {
+            $connection->commit();
+            sendError(409, 'Cette demande a été annulée par son auteur.', 'generation_cancelled');
+        }
+        if ((string) $message['status'] !== 'generating'
+            || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']) {
+            sendError(409, 'Ce travail n’est pas attribué à ce worker.', 'worker_job_not_claimed');
+        }
+        $selectMedia = $connection->prepare(
+            'SELECT id, content_type, uploaded_by_account_id, pending_delete_at, public_slug '
+            . 'FROM media_objects WHERE id = :id LIMIT 1 FOR UPDATE'
+        );
+        $selectMedia->execute([':id' => $mediaId]);
+        $media = $selectMedia->fetch();
+        if (!is_array($media)
+            || !str_starts_with((string) $media['content_type'], 'image/')
+            || (string) $media['uploaded_by_account_id'] !== (string) $identity['id']
+            || $media['pending_delete_at'] !== null
+            || $media['public_slug'] !== null) {
+            sendError(403, 'Le résultat doit être une nouvelle image privée envoyée par le worker.', 'media_ownership_required');
+        }
+        $transfer = $connection->prepare(
+            'UPDATE media_objects SET uploaded_by_account_id = :author_account_id WHERE id = :id'
+        );
+        $transfer->execute([
+            ':author_account_id' => (string) $message['author_account_id'],
+            ':id' => $mediaId,
+        ]);
+        $complete = $connection->prepare(
+            "UPDATE image_studio_messages SET status = 'succeeded', media_id = :media_id, "
+            . 'revised_prompt = :revised_prompt, width = :width, height = :height, '
+            . 'error_code = NULL, error_detail = NULL, worker_account_id = NULL, '
+            . 'worker_lease_expires_at = NULL, completed_at = UTC_TIMESTAMP(3) '
+            . "WHERE id = :id AND status = 'generating'"
+        );
+        $complete->execute([
+            ':media_id' => $mediaId,
+            ':revised_prompt' => $revisedPrompt !== '' ? $revisedPrompt : null,
+            ':width' => $width,
+            ':height' => $height,
+            ':id' => $id,
+        ]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+    sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
+}
+
+function failImageStudioRegieJob(PDO $connection, string $id): never
+{
+    $identity = requireRegieCodexOwner($connection);
+    $message = imageStudioMessageRecord($connection, $id);
+    if (!is_array($message) || (string) ($message['execution_mode'] ?? '') !== 'regie') {
+        sendError(404, 'Travail du Compte de la Régie introuvable.', 'message_missing');
+    }
+    if (in_array((string) $message['status'], ['succeeded', 'failed', 'rejected', 'cancelled'], true)) {
+        sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload($message)]);
+    }
+    if ((string) $message['status'] !== 'generating'
+        || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']) {
+        sendError(409, 'Ce travail n’est pas attribué à ce worker.', 'worker_job_not_claimed');
+    }
+    $payload = readJsonBody(8192);
+    $code = strtolower(trim((string) ($payload['code'] ?? 'generation_failed')));
+    if (preg_match('/^[a-z0-9_]{3,64}$/D', $code) !== 1) {
+        $code = 'generation_failed';
+    }
+    $detail = cleanText($payload['message'] ?? 'La génération n’a pas abouti.', 500, 'Erreur');
+    $status = $code === 'request_rejected' ? 'rejected' : 'failed';
+    $statement = $connection->prepare(
+        'UPDATE image_studio_messages SET status = :status, error_code = :error_code, '
+        . 'error_detail = :error_detail, worker_account_id = NULL, worker_lease_expires_at = NULL, '
+        . "completed_at = UTC_TIMESTAMP(3) WHERE id = :id AND status = 'generating' "
+        . 'AND worker_account_id = :account_id'
+    );
+    $statement->execute([
+        ':status' => $status,
+        ':error_code' => $code,
+        ':error_detail' => $detail,
+        ':id' => $id,
+        ':account_id' => (string) $identity['id'],
+    ]);
+    sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
+}
+
 function hideImageStudioMessage(PDO $connection, string $id): never
 {
     $identity = requireImageStudioIdentity($connection);
     $message = requireOwnedImageStudioMessage($connection, $identity, $id);
+    $cancelled = in_array((string) $message['status'], ['queued', 'generating'], true);
     $statement = $connection->prepare(
-        'UPDATE image_studio_messages SET owner_hidden_at = COALESCE(owner_hidden_at, UTC_TIMESTAMP(3)) WHERE id = :id'
+        "UPDATE image_studio_messages SET owner_hidden_at = COALESCE(owner_hidden_at, UTC_TIMESTAMP(3)), "
+        . "error_code = CASE WHEN status IN ('queued', 'generating') THEN 'cancelled_by_author' ELSE error_code END, "
+        . "error_detail = CASE WHEN status IN ('queued', 'generating') "
+        . "THEN 'La demande a été annulée par son auteur.' ELSE error_detail END, "
+        . "completed_at = CASE WHEN status IN ('queued', 'generating') THEN UTC_TIMESTAMP(3) ELSE completed_at END, "
+        . "status = CASE WHEN status IN ('queued', 'generating') THEN 'cancelled' ELSE status END, "
+        . 'worker_account_id = NULL, worker_lease_expires_at = NULL WHERE id = :id'
     );
     $statement->execute([':id' => $id]);
     $mediaScheduled = false;
@@ -609,6 +1054,7 @@ function hideImageStudioMessage(PDO $connection, string $id): never
     sendJson(200, [
         'ok' => true,
         'hidden' => true,
+        'cancelled' => $cancelled,
         'historyRetainedForAdministrator' => true,
         'mediaScheduledForDeletion' => $mediaScheduled,
         ...($mediaScheduled ? ['retainedUntil' => gmdate('c', time() + 30 * 86400)] : []),
@@ -691,6 +1137,35 @@ function imageStudioMediaUsedByCatalog(PDO $connection, string $mediaId): bool
     );
     $statement->execute([':media_id' => $mediaId]);
     return (int) $statement->fetchColumn() > 0;
+}
+
+function assertImageStudioReferenceMediaAccess(PDO $connection, array $identity, string $mediaId): void
+{
+    if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
+        sendError(400, 'Média de référence invalide.', 'invalid_media');
+    }
+    $statement = $connection->prepare(
+        'SELECT id, content_type, uploaded_by_account_id, pending_delete_at '
+        . 'FROM media_objects WHERE id = :id LIMIT 1'
+    );
+    $statement->execute([':id' => $mediaId]);
+    $media = $statement->fetch();
+    if (!is_array($media)
+        || !str_starts_with((string) $media['content_type'], 'image/')
+        || $media['pending_delete_at'] !== null) {
+        sendError(404, 'Image de référence introuvable.', 'media_missing');
+    }
+    if (imageStudioMediaUsedByCatalog($connection, $mediaId)) {
+        return;
+    }
+    $studioOwner = imageStudioMediaOwner($connection, $mediaId);
+    if (is_array($studioOwner)) {
+        assertImageStudioMediaAccess($connection, $identity, $mediaId);
+        return;
+    }
+    if ((string) ($media['uploaded_by_account_id'] ?? '') !== (string) $identity['id']) {
+        sendError(403, 'Cette référence appartient à un autre MJ.', 'media_forbidden');
+    }
 }
 
 function assertImageStudioMediaAccess(PDO $connection, array $identity, string $mediaId): void
@@ -860,19 +1335,29 @@ function xarTsarothSiteReferenceCatalog(): array
                 $catalog[$file]['aliases'] = array_values(array_unique([...$catalog[$file]['aliases'], ...$aliases]));
                 continue;
             }
-            $view = str_contains($file, 'nohelmet') ? 'Sans casque'
-                : (str_contains($file, '_front') ? 'Face'
-                    : (str_contains($file, '_side') || str_contains($file, 'expressive') ? 'Profil'
-                        : (str_contains($file, '_back') ? 'Dos'
-                            : (str_contains($file, 'portrait') ? 'Portrait' : 'Référence'))));
+            $view = str_contains($file, '_front') ? 'Face'
+                : (str_contains($file, '_side') || str_contains($file, 'expressive') ? 'Profil'
+                    : (str_contains($file, '_back') ? 'Dos'
+                        : (str_contains($file, 'portrait') ? 'Portrait'
+                            : (str_contains($file, 'scene') ? 'Scène' : 'Référence'))));
+            $traits = [];
+            if (str_contains($file, 'nohelmet') || str_contains($file, 'sans_casque')) {
+                $traits[] = 'Sans casque';
+            }
+            if (preg_match('/(?:^|_)(?:unarmed|no_?weapons?|without_?weapons?|sans_?armes?)(?:_|$)/', $file) === 1) {
+                $traits[] = 'Sans armes';
+            } elseif (preg_match('/(?:^|_)(?:armed|with_?weapons?|weapons?|avec_?armes?)(?:_|$)/', $file) === 1) {
+                $traits[] = 'Avec armes';
+            }
+            $variant = implode(' · ', [$view, ...$traits]);
             $catalog[$file] = [
                 'id' => 'site-' . $characterId . '-' . substr(hash('sha256', $file), 0, 10),
                 'subjectId' => 'site-' . $characterId,
-                'label' => $name . ' — ' . $view,
+                'label' => $name . ' — ' . $variant,
                 'aliases' => $aliases,
                 'mediaId' => null,
-                'sourceUrl' => 'https://xar-tsaroth.fr/media/personnages/' . rawurlencode($file) . '.webp',
-                'imageUrl' => 'https://xar-tsaroth.fr/media/personnages/' . rawurlencode($file) . '.webp',
+                'sourceUrl' => 'https://www.xar-tsaroth.fr/media/personnages/' . rawurlencode($file) . '.webp',
+                'imageUrl' => 'https://www.xar-tsaroth.fr/media/personnages/' . rawurlencode($file) . '.webp',
                 'active' => true,
                 'priority' => $priority++,
                 'source' => 'site',
@@ -1023,6 +1508,30 @@ function handleImageStudioRoute(PDO $connection, string $route, string $method, 
         requireMethod($method, ['GET', 'HEAD']);
         $identity = requireImageStudioIdentity($connection);
         sendJson(200, ['ok' => true, 'account' => imageStudioPublicIdentity($identity)], $headOnly);
+    }
+    if ($route === '/api/v1/image-studio/regie/status') {
+        requireMethod($method, ['GET', 'HEAD']);
+        readImageStudioRegieService($connection, $headOnly);
+    }
+    if ($route === '/api/v1/image-studio/regie/access') {
+        requireMethod($method, ['POST']);
+        updateImageStudioRegieAccess($connection);
+    }
+    if ($route === '/api/v1/image-studio/regie/worker/heartbeat') {
+        requireMethod($method, ['POST']);
+        heartbeatImageStudioRegieWorker($connection);
+    }
+    if ($route === '/api/v1/image-studio/regie/jobs/claim') {
+        requireMethod($method, ['POST']);
+        claimImageStudioRegieJob($connection);
+    }
+    if (preg_match('#^/api/v1/image-studio/regie/jobs/([A-Za-z0-9_-]{24})/complete$#', $route, $match) === 1) {
+        requireMethod($method, ['POST']);
+        completeImageStudioRegieJob($connection, $match[1]);
+    }
+    if (preg_match('#^/api/v1/image-studio/regie/jobs/([A-Za-z0-9_-]{24})/fail$#', $route, $match) === 1) {
+        requireMethod($method, ['POST']);
+        failImageStudioRegieJob($connection, $match[1]);
     }
     if ($route === '/api/v1/image-studio/conversations') {
         if ($method === 'GET' || $method === 'HEAD') {

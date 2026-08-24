@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.8.0';
+const XAR_BACKEND_VERSION = '0.9.0';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -204,7 +204,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v8', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v9', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -460,10 +460,82 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(8, 'private_codex_image_studio', '2756d095310647900133b669980030d27bed6480540d7007b81032c137e3bd58')"
             );
+            $version = 8;
+        }
+
+        if ($version < 9) {
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'execution_mode')) {
+                $connection->exec(
+                    "ALTER TABLE image_studio_messages ADD COLUMN execution_mode "
+                    . "ENUM('local', 'regie') NOT NULL DEFAULT 'local' AFTER aspect"
+                );
+            }
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'client_request_id')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD COLUMN client_request_id '
+                    . 'VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER execution_mode'
+                );
+            }
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'worker_account_id')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD COLUMN worker_account_id '
+                    . 'VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER client_request_id'
+                );
+            }
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'worker_attempts')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD COLUMN worker_attempts '
+                    . 'TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER worker_account_id'
+                );
+            }
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'worker_lease_expires_at')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD COLUMN worker_lease_expires_at '
+                    . 'DATETIME(3) NULL AFTER worker_attempts'
+                );
+            }
+            $connection->exec(
+                "ALTER TABLE image_studio_messages MODIFY COLUMN status "
+                . "ENUM('queued', 'generating', 'succeeded', 'failed', 'rejected', 'cancelled') "
+                . "NOT NULL DEFAULT 'queued'"
+            );
+            if (!schemaIndexExists($connection, 'image_studio_messages', 'uq_image_studio_messages_request', true)) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD UNIQUE KEY uq_image_studio_messages_request '
+                    . '(author_account_id, client_request_id)'
+                );
+            }
+            if (!schemaIndexExists($connection, 'image_studio_messages', 'idx_image_studio_messages_regie_queue')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD KEY idx_image_studio_messages_regie_queue '
+                    . '(execution_mode, status, created_at)'
+                );
+            }
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS image_studio_regie_service ('
+                . 'singleton_id TINYINT UNSIGNED NOT NULL DEFAULT 1, '
+                . 'paused TINYINT(1) NOT NULL DEFAULT 1, worker_ready TINYINT(1) NOT NULL DEFAULT 0, '
+                . 'worker_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'worker_last_seen_at DATETIME(3) NULL, '
+                . 'updated_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (singleton_id), '
+                . 'CONSTRAINT chk_image_studio_regie_service_singleton CHECK (singleton_id = 1)'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'INSERT INTO image_studio_regie_service (singleton_id, paused, worker_ready) VALUES (1, 1, 0) '
+                . 'ON DUPLICATE KEY UPDATE singleton_id = VALUES(singleton_id)'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(9, 'shared_regie_codex_queue', '2fe9c195ca43c1d7565d050a409cf44217e779160d183bdb9531cc974c6a391d')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v8')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v9')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }

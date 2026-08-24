@@ -64,7 +64,7 @@
         <li><strong>Présence :</strong> connexion ouverte, mode effectif Joueur ou MJ et dernière activité nécessaire à l’affichage en ligne.</li>
         <li><strong>Partie :</strong> scènes, cartes, tokens, initiatives, réglages, journaux de jeu, playlists et autres contenus saisis par les participants.</li>
         <li><strong>Fiches et médias :</strong> fiches de personnages, images, musiques, ambiances, noms de fichiers et métadonnées nécessaires à leur utilisation.</li>
-        <li><strong>Studio d’images :</strong> conversations, prompts, références nommées, opérations de génération ou de modification, auteur MJ, état d’exécution et images obtenues. Les identifiants ChatGPT, jetons Codex et secrets d’authentification OpenAI ne sont jamais envoyés à l’hébergement de la Régie.</li>
+        <li><strong>Studio d’images :</strong> conversations, prompts, références nommées, opérations de génération ou de modification, auteur MJ, mode local ou Compte de la Régie, état de file, annulation et images obtenues. Les identifiants matériels, identifiants ChatGPT, jetons Codex et secrets d’authentification OpenAI ne sont jamais envoyés à l’hébergement de la Régie.</li>
         <li><strong>Données techniques :</strong> journaux de sécurité et d’hébergement pouvant notamment contenir une adresse IP, une date, une route demandée et un code de réponse.</li>
         <li><strong>Données locales :</strong> copies de fiches et préférences de dossiers conservées sur le PC. Les chemins locaux choisis ne sont pas transmis comme état partagé.</li>
       </ul>
@@ -83,7 +83,7 @@
         <li><strong>OVHcloud</strong> héberge l’API, la base MySQL, les médias et les journaux techniques du service.</li>
         <li><strong>Microsoft Store</strong> distribue, certifie et met à jour l’application. Les données du compte Microsoft et du téléchargement sont traitées par Microsoft selon sa propre politique ; la Régie ne les reçoit pas.</li>
         <li><strong>Discord</strong> reçoit uniquement le texte ou l’image qu’un MJ choisit d’envoyer lorsqu’un webhook a été configuré et activé.</li>
-        <li><strong>ChatGPT et Codex</strong> sont utilisés localement, après une connexion officielle ouverte dans le navigateur par l’utilisateur. La Régie en ligne ne reçoit aucune clé API, aucun mot de passe ChatGPT, aucun cookie et aucun jeton Codex. Le processus local transmet à OpenAI uniquement le prompt et les références choisis pour une génération d’image explicitement lancée.</li>
+        <li><strong>ChatGPT et Codex</strong> sont utilisés par un processus local, après une connexion officielle ouverte dans le navigateur. Selon le choix du MJ, ce processus s’exécute sur son PC ou sur le worker privé contrôlé par Innota. La Régie en ligne ne reçoit aucune clé API, aucun mot de passe ChatGPT, aucun cookie, aucun jeton Codex ni identifiant matériel. Le processus transmet à OpenAI uniquement le prompt et les références d’une génération d’image explicitement lancée.</li>
         <li><strong>GitHub</strong> héberge le code public ou privé du programme, jamais les comptes, secrets ou données de production.</li>
       </ul>
       <p>Les utilisateurs autorisés d’une même table accèdent uniquement aux informations prévues par leur mode effectif et leurs droits. Les données secrètes MJ ne sont pas transmises au client Joueur. L’utilisation facultative de Microsoft, Discord ou ChatGPT peut entraîner un traitement hors de l’Espace économique européen selon les garanties et politiques de ces fournisseurs.</p>
@@ -111,7 +111,7 @@
 
     <section>
       <h2>7. Sécurité</h2>
-      <p>Les échanges utilisent HTTPS. Les mots de passe sont hachés côté serveur, les jetons de session sont stockés sous forme de condensat et les secrets d’intégration sont chiffrés. Les droits sont contrôlés côté serveur, le mode Joueur reste distinct du mode MJ et un compte ne peut conserver qu’une session de partie active. La session web limitée du studio ne donne aucun accès aux scènes, fiches, réglages ou autres écritures de partie. L’authentification Codex reste dans le coffre sécurisé du PC. Aucun secret ni donnée de production n’est inclus dans le paquet Microsoft Store.</p>
+      <p>Les échanges utilisent HTTPS. Les mots de passe sont hachés côté serveur, les jetons de session sont stockés sous forme de condensat et les secrets d’intégration sont chiffrés. Les droits sont contrôlés côté serveur, le mode Joueur reste distinct du mode MJ et un compte ne peut conserver qu’une session de partie active. La session web limitée du studio ne donne aucun accès aux scènes, fiches, réglages ou autres écritures de partie. L’authentification Codex reste dans le coffre sécurisé du PC qui exécute le travail ; le worker partagé ne publie au serveur qu’un état prêt ou hors ligne et, pendant l’exécution, l’identifiant interne de la demande déjà connue du backend. Aucun secret ni donnée de production n’est inclus dans le paquet Microsoft Store.</p>
     </section>
 
     <section>
@@ -132,7 +132,7 @@
     </section>
 
     <footer>
-      Politique mise à jour le 24 août 2026 — version 2.0.
+      Politique mise à jour le 24 août 2026 — version 2.1.
     </footer>
   </main>
 </body>

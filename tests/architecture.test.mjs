@@ -64,19 +64,61 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.8.0 installe le studio et conserve la migration révisionnée 1.15", async () => {
+test("le backend 0.9.0 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.8\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.0'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
+  assert.match(index, /shared_regie_codex_queue/);
   assert.match(index, /image_studio_conversations/);
   assert.match(index, /image_studio_messages/);
+  assert.match(index, /image_studio_regie_service/);
   assert.match(index, /image_reference_catalog/);
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 8);
-  assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.0.0");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
+  assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("le Compte de la Régie est une file sérialisée, pausable et sans identité matérielle", async () => {
+  const [studio, index, online] = await Promise.all([
+    read("api/v1/image-studio.php"),
+    read("api/v1/index.php"),
+    read("api/v1/online.php")
+  ]);
+  assert.match(studio, /function requireRegieCodexOwner/);
+  assert.match(studio, /strcasecmp[\s\S]*?'Innota'/);
+  assert.match(studio, /regie_codex_owner_required/);
+  assert.match(studio, /\/image-studio\/regie\/status/);
+  assert.match(studio, /\/image-studio\/regie\/access/);
+  assert.match(studio, /\/image-studio\/regie\/worker\/heartbeat/);
+  assert.match(studio, /\/image-studio\/regie\/jobs\/claim/);
+  assert.match(studio, /pause refuse les nouvelles demandes et les nouvelles prises de travail/);
+  assert.match(studio, /worker_lease_expires_at/);
+  assert.match(studio, /XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS = 2/);
+  assert.match(studio, /uploaded_by_account_id = :author_account_id/);
+  assert.match(studio, /function assertImageStudioReferenceMediaAccess/);
+  assert.match(studio, /own_shared_active_count/);
+  assert.match(studio, /cancelled_by_author/);
+  assert.match(studio, /\['xar-tsaroth\.fr', 'www\.xar-tsaroth\.fr'\]/);
+  assert.match(studio, /\$sourceUrl = 'https:\/\/www\.xar-tsaroth\.fr'/);
+  assert.match(index, /uq_image_studio_messages_request/);
+  assert.match(index, /idx_image_studio_messages_regie_queue/);
+  assert.match(index, /ENUM\('local', 'regie'\)/);
+  assert.match(online, /JSON_CONTAINS\(references_json, JSON_OBJECT\('mediaId', :reference_media_id\), '\$'\)/);
+  assert.doesNotMatch(`${studio}\n${index}`, /OPENAI_API_KEY|auth\.json|machine[_-]?id|device[_-]?id|hardware[_-]?id/i);
+});
+
+test("la pause du Compte de la Régie ne bloque jamais les générations personnelles", async () => {
+  const studio = await read("api/v1/image-studio.php");
+  const localBranch = studio.match(/if \(\$executionMode === 'regie'\) \{[\s\S]*?\$stale =/u)?.[0] ?? "";
+  assert.match(localBranch, /regie_codex_paused/);
+  assert.match(studio, /AND execution_mode = :execution_mode AND status IN \('queued', 'generating'\)/);
+  assert.match(studio, /':execution_mode' => \$executionMode/);
+  assert.match(studio, /\$executionMode === 'regie'[\s\S]*?Une demande utilise déjà le Compte de la Régie/);
+  assert.match(studio, /Une génération personnelle est déjà en cours/);
+  assert.doesNotMatch(studio, /WHERE author_account_id = :account_id AND status IN \('queued', 'generating'\)/);
 });
 
 test("le studio sépare les secrets Codex, les propriétaires et l’audit administrateur", async () => {
@@ -104,6 +146,9 @@ test("le studio sépare les secrets Codex, les propriétaires et l’audit admin
   assert.match(studio, /function xarTsarothReferenceViewRank/);
   assert.match(studio, /str_contains\(\$file, '_front'\)[\s\S]*?return 0/);
   assert.match(studio, /usort\(\$files,[\s\S]*?xarTsarothReferenceViewRank/);
+  assert.match(studio, /\$traits\[\] = 'Sans casque'/);
+  assert.match(studio, /\$traits\[\] = 'Sans armes'/);
+  assert.match(studio, /\$traits\[\] = 'Avec armes'/);
   assert.equal((studio.match(/\['eiko(?:-perso)?', 'Eiko'/g) ?? []).length, 1);
   assert.doesNotMatch(studio, /OPENAI_API_KEY|auth\.json|ChatGPT.*token|codex.*token/i);
   assert.match(online, /imageStudioMediaOwner/);

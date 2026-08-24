@@ -2130,6 +2130,12 @@ function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHis
     );
     $studio->execute([':media_id' => $id]);
     $count += (int) $studio->fetchColumn();
+    $studioReference = $connection->prepare(
+        'SELECT COUNT(*) FROM image_studio_messages '
+        . "WHERE JSON_CONTAINS(references_json, JSON_OBJECT('mediaId', :reference_media_id), '$') = 1"
+    );
+    $studioReference->execute([':reference_media_id' => $id]);
+    $count += (int) $studioReference->fetchColumn();
     $catalog = $connection->prepare(
         'SELECT COUNT(*) FROM image_reference_catalog WHERE media_id = :media_id AND active = 1'
     );

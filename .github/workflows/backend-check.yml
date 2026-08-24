@@ -1,4 +1,4 @@
-name: Backend 0.7 check
+name: Vérifier le backend Régie
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: PHP syntax
         run: find . -type f -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
       - name: Architecture contracts
