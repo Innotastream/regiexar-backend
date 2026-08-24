@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.7 installe le schéma révisionné et conserve la migration 1.15", async () => {
+test("le backend 0.7.1 installe le schéma révisionné et conserve la migration 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.7\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.7\.1'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
@@ -93,6 +93,27 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /detached-combat/);
   assert.match(administrativeDeletion, /actionTimerTombstones/);
   assert.match(administrativeDeletion, /character_owner_changed/);
+  assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
+  assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
+  assert.match(command, /\$isGm && !in_array\(\$command, \['ensure-player', 'admin\.character\.delete'\], true\)/);
+  assert.match(command, /player_mode_required/);
+  const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
+  assert.match(timerDelete, /actionTimerTombstones/);
+  assert.match(timerDelete, /deletedTimerId/);
+});
+
+test("le rapprochement automatique répare aussi un compte déjà présent en double", async () => {
+  const online = await read("api/v1/online.php");
+  const command = online.slice(online.indexOf("function commandOnlineState"), online.indexOf("function openOnlineConnection"));
+  const ensurePlayer = command.slice(command.indexOf("$command === 'ensure-player'"), command.indexOf("$command === 'preferences.update'"));
+  assert.match(online, /function rosterRepairAliases[\s\S]*?\$username === 'innota' \? \['inho'\] : \[\]/);
+  assert.match(ensurePlayer, /\$accountIndex = findEntryIndex\(\$players, \$accountId\)/);
+  assert.match(ensurePlayer, /\$aliases = \$accountIndex >= 0 \? rosterRepairAliases\(\$identity\) : rosterAliases\(\$identity\)/);
+  assert.match(ensurePlayer, /\$rosterChanged = false/);
+  assert.match(ensurePlayer, /if \(\$pendingIndex >= 0\)[\s\S]*?array_splice\(\$players, \$pendingIndex, 1\)/);
+  assert.match(ensurePlayer, /\$oldId[\s\S]*?\$payload\['ownerPlayerId'\] = \$accountId/);
+  assert.match(ensurePlayer, /str_starts_with\(\$key, 'presentation:'\) \|\| \$key === 'detached-combat'/);
+  assert.match(ensurePlayer, /\$activity\['actionTimers'\]\[\$index\]\['ownerPlayerId'\] = \$accountId/);
 });
 
 test("SSE et vue joueur évitent la reconstruction de toutes les scènes", async () => {

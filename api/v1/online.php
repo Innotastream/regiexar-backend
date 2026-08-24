@@ -622,7 +622,7 @@ function rejectLegacyOnlineState(PDO $connection): never
     requireGmIdentity($connection);
     sendJson(426, [
         'ok' => false,
-        'error' => 'Cette version bêta utilise encore l’ancien état global. Installez la Régie 1.16 depuis Microsoft Store.',
+        'error' => 'Cette version utilise encore l’ancien état global. Installez une version compatible avec les documents révisionnés depuis Microsoft Store dès qu’elle y est disponible.',
         'code' => 'domain_client_required',
         'minimumVersion' => '1.16.0',
         'latestVersion' => '1.16.0',
@@ -651,6 +651,12 @@ function rosterAliases(array $identity): array
         $aliases[] = 'inho';
     }
     return array_values(array_unique($aliases));
+}
+
+function rosterRepairAliases(array $identity): array
+{
+    $username = strtolower(trim((string) ($identity['username'] ?? '')));
+    return $username === 'innota' ? ['inho'] : [];
 }
 
 function cleanPlayerCharacter(array $character, string $accountId): array
@@ -971,6 +977,10 @@ function commandOnlineState(PDO $connection): never
         $pending = [];
         $result = [];
 
+        if ($isGm && !in_array($command, ['ensure-player', 'admin.character.delete'], true)) {
+            rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
+        }
+
         if ($command === 'ensure-player') {
             $records = applicationDomainRecords($connection);
             $roster = applicationDomainPayload($records, 'roster', [
@@ -978,104 +988,127 @@ function commandOnlineState(PDO $connection): never
                 'playerTombstones' => [], 'characterTombstones' => [],
             ]);
             $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
-            if (findEntryIndex($players, $accountId) < 0) {
+            $accountIndex = findEntryIndex($players, $accountId);
+            // Lorsqu'un compte existe déjà dans le roster, seule une migration
+            // historique explicitement connue peut absorber une seconde entrée.
+            // Un simple homonyme ne doit jamais être fusionné silencieusement.
+            $aliases = $accountIndex >= 0 ? rosterRepairAliases($identity) : rosterAliases($identity);
+            $pendingIndex = -1;
+            foreach ($players as $index => $player) {
+                if (!is_array($player)) {
+                    continue;
+                }
+                $name = strtolower(trim((string) ($player['name'] ?? '')));
+                $id = strtolower(trim((string) ($player['id'] ?? '')));
+                if ($id === strtolower($accountId)) {
+                    continue;
+                }
+                foreach ($aliases as $alias) {
+                    if ($name === $alias || $id === 'player-' . preg_replace('/[^a-z0-9]+/', '-', $alias)) {
+                        $pendingIndex = (int) $index;
+                        break 2;
+                    }
+                }
+            }
+            $now = (int) floor(microtime(true) * 1000);
+            $oldId = '';
+            $rosterChanged = false;
+            if ($accountIndex < 0 && $pendingIndex < 0) {
                 if (count($players) >= 1000) {
                     rejectOnlineCommand($connection, 409, 'La table a atteint sa limite de joueurs.', 'player_limit');
                 }
-                $aliases = rosterAliases($identity);
-                $pendingIndex = -1;
-                foreach ($players as $index => $player) {
-                    if (!is_array($player)) {
+                $players[] = ['id' => $accountId, 'name' => (string) $identity['display_name'], '_updatedAt' => $now];
+                $rosterChanged = true;
+            } elseif ($accountIndex < 0) {
+                $oldId = (string) ($players[$pendingIndex]['id'] ?? '');
+                $players[$pendingIndex]['id'] = $accountId;
+                $players[$pendingIndex]['name'] = (string) $identity['display_name'];
+                $players[$pendingIndex]['_updatedAt'] = $now;
+                $rosterChanged = true;
+            } else {
+                if ((string) ($players[$accountIndex]['name'] ?? '') !== (string) $identity['display_name']) {
+                    $players[$accountIndex]['name'] = (string) $identity['display_name'];
+                    $players[$accountIndex]['_updatedAt'] = $now;
+                    $rosterChanged = true;
+                }
+                if ($pendingIndex >= 0) {
+                    $oldId = (string) ($players[$pendingIndex]['id'] ?? '');
+                    array_splice($players, $pendingIndex, 1);
+                    $rosterChanged = true;
+                }
+            }
+            if ($oldId !== '' && $oldId !== $accountId) {
+                $preferences = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
+                if (isset($preferences[$oldId]) && !isset($preferences[$accountId])) {
+                    $preferences[$accountId] = $preferences[$oldId];
+                }
+                unset($preferences[$oldId]);
+                $roster['playerPreferences'] = $preferences;
+                foreach (['playerTombstones', 'characterTombstones'] as $listKey) {
+                    if (!is_array($roster[$listKey] ?? null)) {
                         continue;
                     }
-                    $name = strtolower(trim((string) ($player['name'] ?? '')));
-                    $id = strtolower(trim((string) ($player['id'] ?? '')));
-                    foreach ($aliases as $alias) {
-                        if ($name === $alias || $id === 'player-' . preg_replace('/[^a-z0-9]+/', '-', $alias)) {
-                            $pendingIndex = (int) $index;
-                            break 2;
-                        }
-                    }
-                }
-                $now = (int) floor(microtime(true) * 1000);
-                if ($pendingIndex < 0) {
-                    $players[] = ['id' => $accountId, 'name' => (string) $identity['display_name'], '_updatedAt' => $now];
-                } else {
-                    $oldId = (string) ($players[$pendingIndex]['id'] ?? '');
-                    $players[$pendingIndex]['id'] = $accountId;
-                    $players[$pendingIndex]['_updatedAt'] = $now;
-                    $preferences = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
-                    if ($oldId !== '' && isset($preferences[$oldId]) && !isset($preferences[$accountId])) {
-                        $preferences[$accountId] = $preferences[$oldId];
-                    }
-                    if ($oldId !== '') {
-                        unset($preferences[$oldId]);
-                    }
-                    $roster['playerPreferences'] = $preferences;
-                    foreach (['playerTombstones', 'characterTombstones'] as $listKey) {
-                        if (!is_array($roster[$listKey] ?? null)) {
+                    foreach ($roster[$listKey] as &$entry) {
+                        if (!is_array($entry)) {
                             continue;
                         }
-                        foreach ($roster[$listKey] as &$entry) {
-                            if (!is_array($entry)) {
-                                continue;
-                            }
-                            if (($entry['ownerPlayerId'] ?? null) === $oldId) {
-                                $entry['ownerPlayerId'] = $accountId;
-                            }
-                            if ($listKey === 'playerTombstones' && ($entry['id'] ?? null) === $oldId) {
-                                $entry['id'] = $accountId;
-                            }
+                        if (($entry['ownerPlayerId'] ?? null) === $oldId) {
+                            $entry['ownerPlayerId'] = $accountId;
                         }
-                        unset($entry);
-                    }
-                    foreach ($records as $key => $record) {
-                        if (str_starts_with($key, 'character:')) {
-                            $payload = applicationDomainPayload($records, $key);
-                            if (($payload['ownerPlayerId'] ?? null) === $oldId) {
-                                $payload['ownerPlayerId'] = $accountId;
-                                $payload['_updatedAt'] = $now;
-                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
-                            }
-                        } elseif (str_starts_with($key, 'token:')) {
-                            $payload = applicationDomainPayload($records, $key);
-                            if (($payload['controllerPlayerId'] ?? null) === $oldId) {
-                                $payload['controllerPlayerId'] = $accountId;
-                                $payload['_updatedAt'] = $now;
-                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
-                            }
-                        } elseif (str_starts_with($key, 'presentation:')) {
-                            $payload = applicationDomainPayload($records, $key);
-                            if (!is_array($payload['map']['tokens'] ?? null)) {
-                                continue;
-                            }
-                            $changed = false;
-                            foreach ($payload['map']['tokens'] as &$token) {
-                                if (is_array($token) && ($token['controllerPlayerId'] ?? null) === $oldId) {
-                                    $token['controllerPlayerId'] = $accountId;
-                                    $token['_updatedAt'] = $now;
-                                    $changed = true;
-                                }
-                            }
-                            unset($token);
-                            if ($changed) {
-                                queueOnlineDomainUpsert($pending, $records, $key, $payload);
-                            }
+                        if ($listKey === 'playerTombstones' && ($entry['id'] ?? null) === $oldId) {
+                            $entry['id'] = $accountId;
                         }
                     }
-                    $activity = applicationDomainPayload($records, 'activity');
-                    $activityChanged = false;
-                    foreach (is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [] as $index => $timer) {
-                        if (is_array($timer) && ($timer['ownerPlayerId'] ?? null) === $oldId) {
-                            $activity['actionTimers'][$index]['ownerPlayerId'] = $accountId;
-                            $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
-                            $activityChanged = true;
+                    unset($entry);
+                }
+                foreach ($records as $key => $record) {
+                    if (str_starts_with($key, 'character:')) {
+                        $payload = applicationDomainPayload($records, $key);
+                        if (($payload['ownerPlayerId'] ?? null) === $oldId) {
+                            $payload['ownerPlayerId'] = $accountId;
+                            $payload['_updatedAt'] = $now;
+                            queueOnlineDomainUpsert($pending, $records, $key, $payload);
                         }
-                    }
-                    if ($activityChanged) {
-                        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                    } elseif (str_starts_with($key, 'token:')) {
+                        $payload = applicationDomainPayload($records, $key);
+                        if (($payload['controllerPlayerId'] ?? null) === $oldId) {
+                            $payload['controllerPlayerId'] = $accountId;
+                            $payload['_updatedAt'] = $now;
+                            queueOnlineDomainUpsert($pending, $records, $key, $payload);
+                        }
+                    } elseif (str_starts_with($key, 'presentation:') || $key === 'detached-combat') {
+                        $payload = applicationDomainPayload($records, $key);
+                        if (!is_array($payload['map']['tokens'] ?? null)) {
+                            continue;
+                        }
+                        $changed = false;
+                        foreach ($payload['map']['tokens'] as &$token) {
+                            if (is_array($token) && ($token['controllerPlayerId'] ?? null) === $oldId) {
+                                $token['controllerPlayerId'] = $accountId;
+                                $token['_updatedAt'] = $now;
+                                $changed = true;
+                            }
+                        }
+                        unset($token);
+                        if ($changed) {
+                            queueOnlineDomainUpsert($pending, $records, $key, $payload);
+                        }
                     }
                 }
+                $activity = applicationDomainPayload($records, 'activity');
+                $activityChanged = false;
+                foreach (is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [] as $index => $timer) {
+                    if (is_array($timer) && ($timer['ownerPlayerId'] ?? null) === $oldId) {
+                        $activity['actionTimers'][$index]['ownerPlayerId'] = $accountId;
+                        $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
+                        $activityChanged = true;
+                    }
+                }
+                if ($activityChanged) {
+                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                }
+            }
+            if ($rosterChanged) {
                 $roster['players'] = $players;
                 queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
             }
@@ -1428,6 +1461,16 @@ function commandOnlineState(PDO $connection): never
                 $deleted = $timers[$index];
                 array_splice($timers, $index, 1);
                 $result['timer'] = ['id' => $deleted['id']];
+                $deletedTimerId = (string) ($deleted['id'] ?? '');
+                $timerTombstones = array_values(array_filter(
+                    is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
+                    static fn (mixed $entry): bool => !is_array($entry)
+                        || (string) ($entry['id'] ?? '') !== $deletedTimerId
+                ));
+                if ($deletedTimerId !== '') {
+                    $timerTombstones[] = ['id' => $deletedTimerId, 'deletedAt' => gmdate('c')];
+                }
+                $activity['actionTimerTombstones'] = array_slice($timerTombstones, -1000);
             } else {
                 $initiative = $sceneId === '' ? [] : applicationDomainPayload($records, 'initiative:' . $sceneId);
                 $round = max(1, (int) ($initiative['round'] ?? 1));
@@ -1438,9 +1481,13 @@ function commandOnlineState(PDO $connection): never
             }
             $activity['actionTimers'] = $timers;
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-        } elseif ($command === 'admin.character.delete' && $isGm && (bool) ($identity['can_administrate'] ?? false)) {
+        } elseif (($command === 'character.delete' && !$isGm)
+            || ($command === 'admin.character.delete' && $isGm && (bool) ($identity['can_administrate'] ?? false))) {
+            $selfDelete = $command === 'character.delete';
             $characterId = trim((string) ($arguments['characterId'] ?? ''));
-            $ownerPlayerId = trim((string) ($arguments['ownerPlayerId'] ?? ''));
+            $ownerPlayerId = $selfDelete
+                ? $accountId
+                : trim((string) ($arguments['ownerPlayerId'] ?? ''));
             $characterKey = 'character:' . $characterId;
             if (!validApplicationDomainKey($characterKey)
                 || preg_match('/^[A-Za-z0-9_-]{8,128}$/D', $ownerPlayerId) !== 1) {
@@ -1570,6 +1617,8 @@ function commandOnlineState(PDO $connection): never
             $result['character'] = [
                 'id' => $characterId,
                 'name' => $character['name'] ?? 'Fiche supprimée',
+                'ownerPlayerId' => $ownerPlayerId,
+                'deletedAt' => $deletedAt,
                 'removedTokens' => $removedTokenCount,
                 'removedTimers' => $removedTimerCount,
             ];

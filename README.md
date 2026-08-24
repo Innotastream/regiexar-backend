@@ -1,4 +1,6 @@
-# Backend OVH — Régie du Seuil 0.7.0
+# Backend OVH — Régie du Seuil 0.7.1
+
+La 0.7.1 conserve sans migration SQL le contrat de domaines 0.7 et ajoute la suppression sécurisée d’une fiche par son propriétaire connecté en mode Joueur. L’identité du propriétaire est tirée de la session ; un identifiant transmis par le client ne peut jamais choisir un autre compte. Les commandes Joueur sont aussi refusées lorsqu’un compte MJ utilise réellement le mode MJ, tout en restant disponibles s’il entre volontairement par l’accès Joueur.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -67,7 +69,7 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-`client.enforce` doit rester à `false` tant que la 1.16.0 n’est pas réellement installable depuis Microsoft Store.
+`client.enforce` doit rester à `false` tant que la version cliente visée n’est pas réellement installable depuis Microsoft Store, recettée sous Windows et explicitement approuvée par le propriétaire.
 
 ## Comptes et sessions
 
