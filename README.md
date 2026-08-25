@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.9.1
+# Backend OVH — Régie du Seuil 0.9.2
 
-La 0.9.1 conserve le contrat du studio 0.8 et la file privée du **Compte de la Régie** ajoutée en 0.9.0 pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Elle accepte les descriptions et prompts révisés multiligne et classe désormais les saisies Studio invalides en erreur cliente explicite au lieu d’un faux incident de service. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
+La 0.9.2 conserve le contrat du studio 0.8 et la file privée du **Compte de la Régie** ajoutée en 0.9.0 pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Elle ajoute une validation bornée des tokens, modèles de bestiaire, instantanés publiés et jets avant leur persistance. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -71,7 +71,7 @@ Chaque écriture modifie uniquement les domaines concernés, incrémente l’hor
 
 Plusieurs MJ utilisent des comptes et sessions distincts. Le verrou transactionnel de l’horloge sérialise brièvement les validations MySQL, puis la révision attendue de chaque document empêche tout écrasement silencieux. Deux modifications de domaines différents sont acceptées indépendamment ; deux modifications du même document déclenchent le rebasage client. La contrainte de session unique s’applique par compte, jamais globalement à tous les MJ.
 
-Les domaines sont bornés avant écriture : profondeur et nombre de nœuds, longueur des chaînes, 256 scènes, 2 000 tokens par scène, 1 000 fiches, 300 minuteurs et collections secondaires limitées. Une commande qui atteindrait une limite est refusée explicitement sans évincer silencieusement une donnée existante.
+Les domaines sont bornés avant écriture : profondeur et nombre de nœuds, longueur des chaînes, 256 scènes, 2 000 tokens par scène, 1 000 fiches, 300 minuteurs et collections secondaires limitées. Les nombres, identifiants, textes, booléens, statistiques et visibilités des tokens et jets sont également validés avant mutation. Une commande qui atteindrait une limite est refusée explicitement sans évincer silencieusement une donnée existante.
 
 ## Médias
 

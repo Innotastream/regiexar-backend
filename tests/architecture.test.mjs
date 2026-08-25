@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.9.1 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
+test("le backend 0.9.2 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.2'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -264,6 +264,11 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /playerTombstones[^\n]+2000/);
   assert.match(domains, /characterTombstones[^\n]+2000/);
   assert.match(domains, /validApplicationCharacterDomain\(\$payload\)/);
+  assert.match(domains, /function validApplicationTokenDomain/);
+  assert.match(domains, /function validApplicationRollDomain/);
+  assert.match(domains, /validApplicationRollList\(\$payload\['rolls'\]/);
+  assert.match(domains, /validApplicationTokenList\(\$payload\['tokenLibrary'\]/);
+  assert.match(domains, /validApplicationTokenDomain\(\$payload\)/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
   assert.match(online, /\$current\['characterSchemaVersion'\] = 2/);
   assert.doesNotMatch(online, /'characterSchema', 'characterSchemaVersion',/);
@@ -291,4 +296,10 @@ test("les fichiers de contrôle ne sont pas servis par Apache", async () => {
   const rules = await read(".htaccess");
   assert.match(rules, /tests\|\\\.github|tests\|\.github|tests\|\\\\\.github/);
   assert.match(rules, /\|md/);
+});
+
+test("le workflow backend épingle l’action de lecture du dépôt", async () => {
+  const workflow = await read(".github/workflows/backend-check.yml");
+  assert.match(workflow, /actions\/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8/);
+  assert.doesNotMatch(workflow, /actions\/checkout@v5/);
 });

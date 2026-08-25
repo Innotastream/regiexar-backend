@@ -106,6 +106,141 @@ function validApplicationDomainStringList(mixed $value, int $maximumCount, int $
     return true;
 }
 
+function validApplicationDomainText(mixed $value, int $maximumLength, bool $allowEmpty = true): bool
+{
+    return is_string($value)
+        && ($allowEmpty || $value !== '')
+        && strlen($value) <= $maximumLength
+        && preg_match('/[\x00]/', $value) !== 1;
+}
+
+function validApplicationDomainIdentifier(mixed $value, int $maximumLength = 180, bool $nullable = false): bool
+{
+    if ($nullable && $value === null) {
+        return true;
+    }
+    return is_string($value)
+        && strlen($value) >= 1
+        && strlen($value) <= $maximumLength
+        && preg_match('/^[A-Za-z0-9_-]+$/D', $value) === 1;
+}
+
+function validApplicationDomainNumber(mixed $value, float $minimum = -1000000000, float $maximum = 1000000000): bool
+{
+    return (is_int($value) || is_float($value))
+        && is_finite((float) $value)
+        && (float) $value >= $minimum
+        && (float) $value <= $maximum;
+}
+
+function validApplicationTokenStats(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, 20)) {
+        return false;
+    }
+    foreach ($value as $entry) {
+        if ((array_key_exists('id', $entry) && !validApplicationDomainIdentifier($entry['id'], 120))
+            || (array_key_exists('label', $entry) && !validApplicationDomainText($entry['label'], 40))
+            || (array_key_exists('value', $entry) && !validApplicationDomainText($entry['value'], 80))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validApplicationTokenDomain(array $payload): bool
+{
+    if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
+        return false;
+    }
+    foreach (['libraryTemplateId' => 120, 'characterId' => 180, 'controllerPlayerId' => 128, 'linkedTokenId' => 180] as $key => $maximum) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainIdentifier($payload[$key], $maximum, true)) {
+            return false;
+        }
+    }
+    foreach (['name' => 120, 'damageDice' => 80, 'condition' => 200, 'notes' => 4000, 'gmNotes' => 4000] as $key => $maximum) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainText($payload[$key], $maximum)) {
+            return false;
+        }
+    }
+    if (array_key_exists('image', $payload)
+        && $payload['image'] !== null
+        && !validApplicationDomainText($payload['image'], 4096)) {
+        return false;
+    }
+    if (array_key_exists('color', $payload) && (!is_string($payload['color']) || preg_match('/^#[0-9A-Fa-f]{6}$/D', $payload['color']) !== 1)) {
+        return false;
+    }
+    foreach (['hp', 'maxHp', 'mana', 'maxMana', 'armor', 'speed', 'initiativeBonus'] as $key) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key])) {
+            return false;
+        }
+    }
+    foreach (['x' => [0, 100], 'y' => [0, 100], 'size' => [10, 220], '_updatedAt' => [0, 9007199254740991], '_movedAt' => [0, 9007199254740991]] as $key => [$minimum, $maximum]) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key], $minimum, $maximum)) {
+            return false;
+        }
+    }
+    if (array_key_exists('initiative', $payload)
+        && $payload['initiative'] !== null
+        && !validApplicationDomainNumber($payload['initiative'])) {
+        return false;
+    }
+    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers'] as $key) {
+        if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
+            return false;
+        }
+    }
+    return !array_key_exists('stats', $payload) || validApplicationTokenStats($payload['stats']);
+}
+
+function validApplicationTokenList(mixed $value, int $maximumCount): bool
+{
+    if (!validApplicationDomainObjectList($value, $maximumCount)) {
+        return false;
+    }
+    foreach ($value as $token) {
+        if (!validApplicationTokenDomain($token)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validApplicationRollDomain(array $payload): bool
+{
+    if (!validApplicationDomainIdentifier($payload['id'] ?? null, 180)
+        || !array_key_exists('total', $payload)
+        || !validApplicationDomainNumber($payload['total'])) {
+        return false;
+    }
+    foreach (['label' => 160, 'characterName' => 120, 'formula' => 120, 'breakdown' => 2000, 'rollerName' => 120, 'createdAt' => 80] as $key => $maximum) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainText($payload[$key], $maximum)) {
+            return false;
+        }
+    }
+    if (array_key_exists('visibility', $payload) && !in_array($payload['visibility'], ['public', 'gm', 'queued'], true)) {
+        return false;
+    }
+    if (array_key_exists('rollerRole', $payload) && !in_array($payload['rollerRole'], ['gm', 'player'], true)) {
+        return false;
+    }
+    return !array_key_exists('revealed', $payload) || is_bool($payload['revealed']);
+}
+
+function validApplicationRollList(mixed $value, int $maximumCount): bool
+{
+    if (!validApplicationDomainObjectList($value, $maximumCount)) {
+        return false;
+    }
+    foreach ($value as $roll) {
+        if (!validApplicationRollDomain($roll)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function applicationDomainNodeShapeIsValid(mixed $value, int $depth, int &$nodes): bool
 {
     $nodes++;
@@ -273,11 +408,11 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['actionTimerTombstones'] ?? null, 1000)
             || !validApplicationDomainObjectList($payload['mapPings'] ?? null, 20)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
-            || !validApplicationDomainObjectList($payload['rolls'] ?? null, 100))) {
+            || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
     }
     if ($key === 'library'
-        && !validApplicationDomainObjectList($payload['tokenLibrary'] ?? null, 200)) {
+        && !validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)) {
         sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
     if ($key === 'audio'
@@ -298,7 +433,9 @@ function validatedDomainPayload(string $key, mixed $payload): array
     }
     if (str_starts_with($key, 'token:')) {
         $segments = explode(':', $key, 3);
-        if (count($segments) !== 3 || (string) ($payload['id'] ?? '') !== $segments[2]) {
+        if (count($segments) !== 3
+            || (string) ($payload['id'] ?? '') !== $segments[2]
+            || !validApplicationTokenDomain($payload)) {
             sendError(400, 'Document de token incohérent.', 'invalid_token_domain');
         }
     }
@@ -314,7 +451,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
     }
     if (str_starts_with($key, 'presentation:')
         && (!is_array($payload['map'] ?? null)
-            || !validApplicationDomainObjectList($payload['map']['tokens'] ?? [], 2000)
+            || !validApplicationTokenList($payload['map']['tokens'] ?? [], 2000)
             || !is_array($payload['initiative'] ?? null)
             || !validApplicationDomainIdentifierList($payload['initiative']['order'] ?? [], 2000))) {
         sendError(400, 'Instantané de présentation incohérent.', 'invalid_presentation_domain');

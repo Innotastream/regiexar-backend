@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.9.1';
+const XAR_BACKEND_VERSION = '0.9.2';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
