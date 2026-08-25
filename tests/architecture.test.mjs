@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.10.0 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
+test("le backend 0.11.0 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.10\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.11\.0'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -299,7 +299,19 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /validApplicationTokenList\(\$payload\['tokenLibrary'\]/);
   assert.match(domains, /validApplicationTokenDomain\(\$payload\)/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 2/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 3/);
+  assert.match(online, /normalizeOnlineAbilities/);
+  assert.match(online, /'hitThreshold'/);
+  assert.match(online, /\['stat', 'hit'\]/);
+  assert.match(online, /\$formula = '1d100';/);
+  assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\]/);
+  assert.match(online, /\[1, 11, 22, 33, 44\]/);
+  assert.match(online, /\[10, 66, 77, 88, 99\]/);
+  assert.doesNotMatch(online, /\$formula = '1d100' \. \(\$value/);
+  assert.match(online, /tryPostOnlineDiscordText/);
+  assert.match(online, /\['roll', 'token\.roll'\]/);
+  assert.match(domains, /validApplicationAbilities/);
+  assert.match(domains, /'hitThreshold'/);
   assert.doesNotMatch(online, /'characterSchema', 'characterSchemaVersion',/);
   assert.match(online, /player_limit/);
   assert.match(online, /character_limit/);

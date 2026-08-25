@@ -602,7 +602,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId),
         ];
         if ($details) {
-            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'armor', 'speed', 'stats', 'initiativeBonus', 'condition', 'notes'] as $key) {
+            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'condition', 'notes'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
                 }
@@ -748,19 +748,92 @@ function cleanPlayerCharacter(array $character, string $accountId): array
     return $character;
 }
 
+function validOnlineRollFormula(string $formula): bool
+{
+    $normalized = strtolower(str_replace(' ', '', $formula));
+    if (strlen($normalized) > 100) {
+        return false;
+    }
+    if ($normalized === '' || preg_match('/^[+-]?((\d*)d\d+|\d+)([+-]((\d*)d\d+|\d+))*$/D', $normalized) !== 1) {
+        return false;
+    }
+    preg_match_all('/[+-]?[^+-]+/', $normalized, $matches);
+    if (count($matches[0]) > 30) {
+        return false;
+    }
+    foreach ($matches[0] as $term) {
+        $clean = ltrim($term, '+-');
+        if (str_contains($clean, 'd')) {
+            [$countText, $sidesText] = explode('d', $clean, 2);
+            $count = $countText === '' ? 1 : (int) $countText;
+            $sides = (int) $sidesText;
+            if ($count < 1 || $count > 100 || $sides < 2 || $sides > 1000) {
+                return false;
+            }
+        } elseif (strlen($clean) > 10 || (int) $clean > 1000000000) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function normalizeOnlineAbilities(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    $normalized = [];
+    $seen = [];
+    foreach (array_slice($value, 0, 200) as $index => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $fallback = 'ability-' . ((int) $index + 1);
+        $id = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($entry['id'] ?? $fallback), 0, 120)) ?: $fallback;
+        if (isset($seen[$id])) {
+            $id = substr($id, 0, 108) . '-' . ((int) $index + 1);
+        }
+        $seen[$id] = true;
+        $name = substr(trim((string) ($entry['name'] ?? $entry['label'] ?? 'Nouvelle capacité')), 0, 120);
+        $formula = strtolower(str_replace(' ', '', substr((string) ($entry['formula'] ?? $entry['damageFormula'] ?? '1d6'), 0, 100)));
+        if (!validOnlineRollFormula($formula)) {
+            $formula = '1d6';
+        }
+        $normalized[] = [
+            'id' => $id,
+            'name' => $name !== '' ? $name : 'Nouvelle capacité',
+            'formula' => $formula,
+            'description' => substr((string) ($entry['description'] ?? ''), 0, 2000),
+        ];
+    }
+    return $normalized;
+}
+
+function normalizeOnlineD100Difficulty(mixed $value): ?int
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    return is_numeric($value) ? max(0, min(100, (int) $value)) : null;
+}
+
 function playerCharacterPatch(array $current, array $patch): array
 {
     $allowed = [
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'fatigue', 'morale',
-        'armor', 'speed', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'weaponText',
+        'armor', 'speed', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
-        'shortcuts', 'linkedTokens',
+        'shortcuts', 'abilities', 'linkedTokens',
     ];
     foreach ($allowed as $key) {
         if (array_key_exists($key, $patch)) {
             if ($key === 'portrait') {
                 $current[$key] = normalizePersistedImageReference($patch[$key]);
+            } elseif ($key === 'abilities') {
+                $current[$key] = normalizeOnlineAbilities($patch[$key]);
+            } elseif ($key === 'hitThreshold') {
+                $current[$key] = normalizeOnlineD100Difficulty($patch[$key]);
             } elseif ($key === 'linkedTokens') {
                 $linked = stripForbiddenPlayerData($patch[$key]);
                 $current[$key] = is_array($linked) ? array_map(static function (mixed $entry): mixed {
@@ -776,20 +849,21 @@ function playerCharacterPatch(array $current, array $patch): array
         }
     }
     $current['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $current['characterSchemaVersion'] = 2;
+    $current['characterSchemaVersion'] = 3;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
 
 function onlineRollFormula(string $formula): array
 {
-    $normalized = strtolower(str_replace(' ', '', substr($formula, 0, 100)));
-    if ($normalized === '' || preg_match('/^[+-]?((\d*)d\d+|\d+)([+-]((\d*)d\d+|\d+))*$/', $normalized) !== 1) {
+    $normalized = strtolower(str_replace(' ', '', $formula));
+    if (!validOnlineRollFormula($normalized)) {
         throw new InvalidArgumentException('Formule de jet invalide.');
     }
     preg_match_all('/[+-]?[^+-]+/', $normalized, $matches);
     $total = 0;
     $parts = [];
+    $dice = [];
     foreach ($matches[0] as $term) {
         $sign = str_starts_with($term, '-') ? -1 : 1;
         $clean = ltrim($term, '+-');
@@ -806,13 +880,17 @@ function onlineRollFormula(string $formula): array
             }
             $total += array_sum($rolls) * $sign;
             $parts[] = ($sign < 0 ? '−' : ($parts !== [] ? '+' : '')) . '[' . implode(', ', $rolls) . ']';
+            $dice[] = ['count' => $count, 'sides' => $sides, 'sign' => $sign, 'results' => $rolls];
         } else {
             $value = (int) $clean * $sign;
             $total += $value;
             $parts[] = ($value >= 0 && $parts !== [] ? '+' : '') . (string) $value;
         }
     }
-    return ['total' => $total, 'breakdown' => implode(' ', $parts), 'formula' => $normalized];
+    $rawD100 = count($dice) === 1 && $dice[0]['count'] === 1 && $dice[0]['sides'] === 100 && $dice[0]['sign'] === 1
+        ? (int) $dice[0]['results'][0]
+        : null;
+    return ['total' => $total, 'breakdown' => implode(' ', $parts), 'formula' => $normalized, 'rawD100' => $rawD100];
 }
 
 function rejectOnlineCommand(PDO $connection, int $status, string $message, string $code): never
@@ -1011,13 +1089,54 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
             ];
         }
     }
+    $token['hitThreshold'] = normalizeOnlineD100Difficulty($character['hitThreshold'] ?? null);
+    $token['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
     $token['_updatedAt'] = $updatedAt;
     return $token;
 }
 
-function onlineRollEntry(array $identity, array $rolled, string $label, string $characterName): array
+function normalizeOnlineD100Modifier(mixed $value): int
 {
-    return [
+    return max(-100, min(100, is_numeric($value) ? (int) $value : 0));
+}
+
+function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0): ?array
+{
+    if (!is_numeric($rawValue)) {
+        return null;
+    }
+    $raw = (int) $rawValue;
+    if ($raw < 1 || $raw > 100) {
+        return null;
+    }
+    $baseThreshold = $threshold === null ? null : max(0, min(100, (int) $threshold));
+    $appliedModifier = normalizeOnlineD100Modifier($modifier);
+    $effectiveThreshold = $baseThreshold === null ? null : max(0, min(100, $baseThreshold + $appliedModifier));
+    $common = [
+        'raw' => $raw,
+        'baseThreshold' => $baseThreshold,
+        'modifier' => $appliedModifier,
+        'threshold' => $effectiveThreshold,
+    ];
+    if (in_array($raw, [1, 11, 22, 33, 44], true)) {
+        return [...$common, 'code' => 'critical-success', 'label' => 'RÉUSSITE CRITIQUE', 'success' => true, 'effect' => true];
+    }
+    if ($raw === 55) {
+        return [...$common, 'code' => 'special-success', 'label' => 'RÉUSSITE SPÉCIALE', 'success' => true, 'effect' => true];
+    }
+    if (in_array($raw, [10, 66, 77, 88, 99], true)) {
+        return [...$common, 'code' => 'critical-failure', 'label' => 'ÉCHEC CRITIQUE', 'success' => false, 'effect' => true];
+    }
+    if ($effectiveThreshold === null) {
+        return null;
+    }
+    $success = $raw <= $effectiveThreshold;
+    return [...$common, 'code' => $success ? 'success' : 'failure', 'label' => $success ? 'RÉUSSITE' : 'ÉCHEC', 'success' => $success, 'effect' => false];
+}
+
+function onlineRollEntry(array $identity, array $rolled, string $label, string $characterName, ?array $outcome = null): array
+{
+    $entry = [
         'id' => randomToken(12),
         'label' => substr($label, 0, 120),
         'characterName' => substr($characterName, 0, 120),
@@ -1030,9 +1149,89 @@ function onlineRollEntry(array $identity, array $rolled, string $label, string $
         'rollerRole' => 'player',
         'createdAt' => gmdate('c'),
     ];
+    if ($outcome !== null) {
+        $entry['outcome'] = $outcome;
+    }
+    return $entry;
 }
 
-function commandOnlineState(PDO $connection): never
+function safeOnlineDiscordLabel(mixed $value): string
+{
+    $singleLine = preg_replace('/[\r\n]+/', ' ', (string) $value) ?? 'Jet';
+    return substr(preg_replace('/([*_`~|\\\\])/', '\\\\$1', $singleLine) ?? 'Jet', 0, 180);
+}
+
+function onlineDiscordRollContent(array $roll): string
+{
+    $actor = safeOnlineDiscordLabel($roll['rollerName'] ?? 'Joueur');
+    $label = safeOnlineDiscordLabel(($roll['characterName'] ?? '') !== ''
+        ? (string) $roll['characterName'] . ' · ' . (string) ($roll['label'] ?? 'Jet')
+        : (string) ($roll['label'] ?? 'Jet'));
+    $content = '🎲 **' . $actor . ' · ' . $label . '** — `' . (string) ($roll['formula'] ?? '') . '`'
+        . "\nRésultat : **" . (string) ($roll['total'] ?? 0) . '** · ' . (string) ($roll['breakdown'] ?? '');
+    $outcome = is_array($roll['outcome'] ?? null) ? $roll['outcome'] : null;
+    if ($outcome !== null) {
+        $content .= "\n**" . safeOnlineDiscordLabel($outcome['label'] ?? '') . '** · d100 brut **'
+            . (string) ($outcome['raw'] ?? '') . '**';
+        if (($outcome['threshold'] ?? null) !== null) {
+            $modifier = (int) ($outcome['modifier'] ?? 0);
+            $content .= $modifier !== 0
+                ? ' · seuil ajusté **' . (string) $outcome['threshold'] . '** (base **'
+                    . (string) ($outcome['baseThreshold'] ?? '') . '**, **' . ($modifier > 0 ? '+' : '') . (string) $modifier . '**)'
+                : ' · seuil **' . (string) $outcome['threshold'] . '**';
+        }
+    }
+    return substr($content, 0, 1900);
+}
+
+function tryPostOnlineDiscordText(PDO $connection, array $configuration, string $target, string $content): array
+{
+    try {
+        $record = settingsRecord($connection);
+        $public = jsonColumn($record['public_payload'] ?? null);
+        $secrets = decryptSettingsSecrets($configuration, $record);
+        $webhook = trim((string) ($secrets['discord'][$target] ?? ''));
+        if (($public['discord'][$target]['enabled'] ?? false) !== true || !validDiscordWebhook($webhook)) {
+            return ['posted' => false, 'error' => ''];
+        }
+        if (!function_exists('curl_init')) {
+            return ['posted' => false, 'error' => 'Discord indisponible sur le serveur.'];
+        }
+        $request = curl_init($webhook . (str_contains($webhook, '?') ? '&' : '?') . 'wait=true');
+        if ($request === false) {
+            return ['posted' => false, 'error' => 'Connexion Discord indisponible.'];
+        }
+        $options = [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode([
+                'content' => substr(trim($content), 0, 1900),
+                'allowed_mentions' => ['parse' => []],
+            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        ];
+        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS')) {
+            $options[CURLOPT_PROTOCOLS] = CURLPROTO_HTTPS;
+        }
+        curl_setopt_array($request, $options);
+        $response = curl_exec($request);
+        $status = (int) curl_getinfo($request, CURLINFO_RESPONSE_CODE);
+        $failed = $response === false;
+        curl_close($request);
+        if ($failed || $status < 200 || $status >= 300) {
+            return ['posted' => false, 'error' => 'Discord a refusé ou interrompu l’envoi.'];
+        }
+        return ['posted' => true, 'error' => ''];
+    } catch (Throwable) {
+        return ['posted' => false, 'error' => 'Publication Discord indisponible.'];
+    }
+}
+
+function commandOnlineState(PDO $connection, array $configuration): never
 {
     $identity = requireIdentity($connection);
     $body = readJsonBody(2 * 1024 * 1024);
@@ -1252,7 +1451,7 @@ function commandOnlineState(PDO $connection): never
             $patch = is_array($arguments['patch'] ?? null) ? $arguments['patch'] : [];
             $character = playerCharacterPatch($character, $patch);
             queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
-            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armor', 'speed', 'stats', 'initiativeBonus', 'linkedTokens'];
+            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armor', 'speed', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
             if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {
                 $tokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
                 $records = array_replace($records, $tokenRecords);
@@ -1324,19 +1523,30 @@ function commandOnlineState(PDO $connection): never
             if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
                 rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
             }
-            $kind = in_array(($arguments['kind'] ?? ''), ['stat', 'initiative', 'damage', 'custom'], true)
+            $kind = in_array(($arguments['kind'] ?? ''), ['stat', 'hit', 'initiative', 'damage', 'ability', 'custom'], true)
                 ? (string) $arguments['kind'] : 'custom';
             $label = 'Test personnalisé';
             $formula = '1d100';
+            $threshold = null;
+            $modifier = 0;
             if ($kind === 'stat') {
                 $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
                 $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
                 if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
                     rejectOnlineCommand($connection, 404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');
                 }
-                $value = (int) $stats[$statIndex]['value'];
+                $threshold = max(0, min(100, (int) $stats[$statIndex]['value']));
+                $modifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
                 $label = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
-                $formula = '1d100' . ($value >= 0 ? '+' : '') . $value;
+                $formula = '1d100';
+            } elseif ($kind === 'hit') {
+                $threshold = normalizeOnlineD100Difficulty($token['hitThreshold'] ?? null);
+                if ($threshold === null) {
+                    rejectOnlineCommand($connection, 400, 'La difficulté de Touché n’est pas renseignée sur ce personnage.', 'token_hit_missing');
+                }
+                $modifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $label = 'Touché';
+                $formula = '1d100';
             } elseif ($kind === 'initiative') {
                 $bonus = is_numeric($token['initiativeBonus'] ?? null) ? (int) $token['initiativeBonus'] : 0;
                 $label = 'Initiative';
@@ -1346,6 +1556,19 @@ function commandOnlineState(PDO $connection): never
                 $formula = substr(str_replace(' ', '', (string) ($token['damageDice'] ?? '')), 0, 80);
                 if ($formula === '') {
                     rejectOnlineCommand($connection, 400, 'Les dégâts de ce token ne sont pas renseignés.', 'token_damage_missing');
+                }
+            } elseif ($kind === 'ability') {
+                $abilities = normalizeOnlineAbilities($token['abilities'] ?? []);
+                $abilityIndex = findEntryIndex($abilities, (string) ($arguments['abilityId'] ?? ''));
+                if ($abilityIndex < 0) {
+                    rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus sur le token.', 'token_ability_missing');
+                }
+                $modifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $label = (string) $abilities[$abilityIndex]['name'];
+                $formula = (string) $abilities[$abilityIndex]['formula']
+                    . ($modifier !== 0 ? ($modifier > 0 ? '+' : '') . (string) $modifier : '');
+                if (strlen($formula) > 100) {
+                    rejectOnlineCommand($connection, 400, 'La formule modifiée dépasse la limite autorisée.', 'invalid_roll');
                 }
             } else {
                 $label = substr(trim((string) ($arguments['label'] ?? 'Test personnalisé')), 0, 120);
@@ -1359,7 +1582,10 @@ function commandOnlineState(PDO $connection): never
             } catch (InvalidArgumentException $error) {
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
-            $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'));
+            $outcome = in_array($kind, ['stat', 'hit'], true)
+                ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier)
+                : classifyOnlineD100Outcome($rolled['rawD100'] ?? null);
+            $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
             $activity = applicationDomainPayload($records, 'activity');
             $rolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
             array_unshift($rolls, $roll);
@@ -1409,7 +1635,7 @@ function commandOnlineState(PDO $connection): never
             $shortcut = $shortcuts[$shortcutIndex];
             $kind = (string) ($shortcut['kind'] ?? 'roll');
             $formula = (string) ($shortcut['formula'] ?? '1d100');
-            if ($kind !== 'damage' && preg_match('/d[eé]g[aâ]ts?|dommages?|damage/i', (string) ($shortcut['label'] ?? '')) !== 1) {
+            if ($kind === 'initiative') {
                 $formula = preg_replace('/(?:\d*)d\d+/i', '1d100', str_replace(' ', '', $formula), 1) ?? '1d100';
                 if (!str_contains(strtolower($formula), 'd')) {
                     $formula = '1d100' . ($formula !== '' ? (preg_match('/^[+-]/', $formula) === 1 ? '' : '+') . $formula : '');
@@ -1420,11 +1646,13 @@ function commandOnlineState(PDO $connection): never
             } catch (InvalidArgumentException $error) {
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
+            $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null);
             $roll = onlineRollEntry(
                 $identity,
                 $rolled,
                 (string) ($shortcut['label'] ?? 'Jet'),
-                (string) ($character['name'] ?? 'Personnage')
+                (string) ($character['name'] ?? 'Personnage'),
+                $outcome
             );
             $activity = applicationDomainPayload($records, 'activity');
             $rolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
@@ -1707,6 +1935,11 @@ function commandOnlineState(PDO $connection): never
             : persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
         $connection->commit();
         cleanupApplicationDomainHistory($connection);
+        if (in_array($command, ['roll', 'token.roll'], true) && is_array($result['roll'] ?? null)) {
+            $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordRollContent($result['roll']));
+            $result['discordPosted'] = $discord['posted'];
+            $result['discordError'] = $discord['error'];
+        }
         sendJson(200, ['ok' => true, 'revision' => $revision, ...$result]);
     } catch (Throwable $error) {
         if ($connection->inTransaction()) {
@@ -2654,7 +2887,7 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
     }
     if ($route === '/api/v1/state/command') {
         requireMethod($method, ['POST']);
-        commandOnlineState($connection);
+        commandOnlineState($connection, $configuration);
     }
     if ($route === '/api/v1/connections') {
         if ($method === 'POST') {

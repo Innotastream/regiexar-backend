@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.10.0
+# Backend OVH — Régie du Seuil 0.11.0
 
-La 0.10.0 conserve le contrat du studio 0.8 et la file privée du **Compte de la Régie** ajoutée en 0.9.0 pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Elle ajoute la suppression définitive, réservée à l’administrateur, des discussions inactives et de leur journal. La clé de chiffrement des réglages peut être créée automatiquement dans `regie-private`, hors du document root, avec des droits privés ; les webhooks ne sont jamais enregistrés dans Git. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
+La 0.11.0 conserve le contrat du studio, la file privée du **Compte de la Régie**, la suppression définitive administrateur et la clé de chiffrement privée auto-créée hors webroot de la 0.10.0. Elle ajoute l’autorité serveur des capacités multi-dés, de la difficulté personnelle de Touché et des jets d100 par seuil. Le serveur compare le d100 brut au seuil ajusté et calcule les catégories remarquables uniquement sur ce résultat brut. Les jets publics des joueurs sont envoyés au webhook des jets lorsqu’il est configuré et actif ; le journal de tour reste une action MJ explicite avec image. Les webhooks ne sont jamais enregistrés dans Git.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -71,7 +71,7 @@ Chaque écriture modifie uniquement les domaines concernés, incrémente l’hor
 
 Plusieurs MJ utilisent des comptes et sessions distincts. Le verrou transactionnel de l’horloge sérialise brièvement les validations MySQL, puis la révision attendue de chaque document empêche tout écrasement silencieux. Deux modifications de domaines différents sont acceptées indépendamment ; deux modifications du même document déclenchent le rebasage client. La contrainte de session unique s’applique par compte, jamais globalement à tous les MJ.
 
-Les domaines sont bornés avant écriture : profondeur et nombre de nœuds, longueur des chaînes, 256 scènes, 2 000 tokens par scène, 1 000 fiches, 300 minuteurs et collections secondaires limitées. Les nombres, identifiants, textes, booléens, statistiques et visibilités des tokens et jets sont également validés avant mutation. Une commande qui atteindrait une limite est refusée explicitement sans évincer silencieusement une donnée existante.
+Les domaines sont bornés avant écriture : profondeur et nombre de nœuds, longueur des chaînes, 256 scènes, 2 000 tokens par scène, 1 000 fiches, 300 minuteurs et collections secondaires limitées. Les nombres, identifiants, textes, booléens, statistiques, difficultés de Touché, capacités et visibilités des tokens et jets sont également validés avant mutation. Une commande qui atteindrait une limite est refusée explicitement sans évincer silencieusement une donnée existante.
 
 ## Médias
 
@@ -136,4 +136,4 @@ regie/
     └── image-studio.php
 ```
 
-Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat 0.9, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse PHP réussie ne remplace pas une suite fonctionnelle contre MySQL.
+Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat statiques, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse statique réussie ne remplace pas une suite fonctionnelle PHP/MySQL.

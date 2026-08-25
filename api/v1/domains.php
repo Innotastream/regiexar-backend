@@ -148,6 +148,52 @@ function validApplicationTokenStats(mixed $value): bool
     return true;
 }
 
+function validApplicationAbilityFormula(mixed $value): bool
+{
+    if (!is_string($value)) {
+        return false;
+    }
+    $formula = strtolower(str_replace(' ', '', $value));
+    if ($formula === '' || strlen($formula) > 100
+        || preg_match('/^[+-]?((\d*)d\d+|\d+)([+-]((\d*)d\d+|\d+))*$/D', $formula) !== 1) {
+        return false;
+    }
+    preg_match_all('/[+-]?[^+-]+/', $formula, $matches);
+    if (count($matches[0]) > 30) {
+        return false;
+    }
+    foreach ($matches[0] as $term) {
+        $clean = ltrim($term, '+-');
+        if (str_contains($clean, 'd')) {
+            [$countText, $sidesText] = explode('d', $clean, 2);
+            $count = $countText === '' ? 1 : (int) $countText;
+            if ($count < 1 || $count > 100 || (int) $sidesText < 2 || (int) $sidesText > 1000) {
+                return false;
+            }
+        } elseif (strlen($clean) > 10 || (int) $clean > 1000000000) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validApplicationAbilities(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, 200)) {
+        return false;
+    }
+    foreach ($value as $entry) {
+        if (!validApplicationDomainIdentifier($entry['id'] ?? null, 120)
+            || !validApplicationDomainText($entry['name'] ?? null, 120, false)
+            || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
+            || !validApplicationAbilityFormula($entry['formula'] ?? null)
+            || (array_key_exists('description', $entry) && !validApplicationDomainText($entry['description'], 2000))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function validApplicationTokenDomain(array $payload): bool
 {
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
@@ -176,6 +222,11 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
+    if (array_key_exists('hitThreshold', $payload)
+        && $payload['hitThreshold'] !== null
+        && !validApplicationDomainNumber($payload['hitThreshold'], 0, 100)) {
+        return false;
+    }
     foreach (['x' => [0, 100], 'y' => [0, 100], 'size' => [10, 220], '_updatedAt' => [0, 9007199254740991], '_movedAt' => [0, 9007199254740991]] as $key => [$minimum, $maximum]) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key], $minimum, $maximum)) {
             return false;
@@ -191,7 +242,8 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
-    return !array_key_exists('stats', $payload) || validApplicationTokenStats($payload['stats']);
+    return (!array_key_exists('stats', $payload) || validApplicationTokenStats($payload['stats']))
+        && (!array_key_exists('abilities', $payload) || validApplicationAbilities($payload['abilities']));
 }
 
 function validApplicationTokenList(mixed $value, int $maximumCount): bool
@@ -225,7 +277,22 @@ function validApplicationRollDomain(array $payload): bool
     if (array_key_exists('rollerRole', $payload) && !in_array($payload['rollerRole'], ['gm', 'player'], true)) {
         return false;
     }
-    return !array_key_exists('revealed', $payload) || is_bool($payload['revealed']);
+    if (array_key_exists('revealed', $payload) && !is_bool($payload['revealed'])) {
+        return false;
+    }
+    if (!array_key_exists('outcome', $payload)) {
+        return true;
+    }
+    $outcome = $payload['outcome'];
+    return is_array($outcome)
+        && validApplicationDomainNumber($outcome['raw'] ?? null, 1, 100)
+        && (!array_key_exists('baseThreshold', $outcome) || $outcome['baseThreshold'] === null || validApplicationDomainNumber($outcome['baseThreshold'], 0, 100))
+        && validApplicationDomainNumber($outcome['modifier'] ?? null, -100, 100)
+        && (!array_key_exists('threshold', $outcome) || $outcome['threshold'] === null || validApplicationDomainNumber($outcome['threshold'], 0, 100))
+        && in_array(($outcome['code'] ?? ''), ['critical-success', 'special-success', 'critical-failure', 'success', 'failure'], true)
+        && validApplicationDomainText($outcome['label'] ?? null, 40, false)
+        && is_bool($outcome['success'] ?? null)
+        && is_bool($outcome['effect'] ?? null);
 }
 
 function validApplicationRollList(mixed $value, int $maximumCount): bool
@@ -276,16 +343,24 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 2)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 3)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationDomainStringList($payload['conditions'], 100, 240)) {
         return false;
     }
-    foreach (['shortcuts' => 200, 'linkedTokens' => 200] as $key => $maximum) {
+    if (array_key_exists('hitThreshold', $payload)
+        && $payload['hitThreshold'] !== null
+        && !validApplicationDomainNumber($payload['hitThreshold'], 0, 100)) {
+        return false;
+    }
+    foreach (['shortcuts' => 200, 'linkedTokens' => 200, 'abilities' => 200] as $key => $maximum) {
         if (isset($payload[$key]) && !validApplicationDomainObjectList($payload[$key], $maximum)) {
             return false;
         }
+    }
+    if (isset($payload['abilities']) && !validApplicationAbilities($payload['abilities'])) {
+        return false;
     }
     foreach (['resources', 'stats', 'fatigue', 'secret'] as $key) {
         if (isset($payload[$key]) && (!is_array($payload[$key]) || count($payload[$key]) > 64)) {
