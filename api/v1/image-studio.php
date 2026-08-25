@@ -325,6 +325,87 @@ function updateImageStudioConversation(PDO $connection, string $id): never
     sendJson(200, ['ok' => true, 'conversation' => imageStudioConversationPayload($updated)]);
 }
 
+function permanentlyDeleteImageStudioConversation(PDO $connection, string $id): never
+{
+    $identity = requireImageStudioIdentity($connection);
+    if (!(bool) ($identity['can_administrate'] ?? false)) {
+        sendError(403, 'La suppression définitive des discussions est réservée à l’administrateur.', 'administrator_required');
+    }
+    $conversation = assertImageStudioConversationAccess(
+        $identity,
+        imageStudioConversationRecord($connection, $id)
+    );
+    $active = $connection->prepare(
+        "SELECT COUNT(*) FROM image_studio_messages WHERE conversation_id = :conversation_id "
+        . "AND status IN ('queued', 'generating')"
+    );
+    $active->execute([':conversation_id' => $id]);
+    if ((int) $active->fetchColumn() > 0) {
+        sendError(409, 'Annulez ou terminez les générations actives avant de supprimer cette discussion.', 'conversation_generation_active');
+    }
+    $media = $connection->prepare(
+        'SELECT DISTINCT m.media_id, mo.public_slug FROM image_studio_messages m '
+        . 'LEFT JOIN media_objects mo ON mo.id = m.media_id '
+        . 'WHERE m.conversation_id = :conversation_id AND m.media_id IS NOT NULL'
+    );
+    $media->execute([':conversation_id' => $id]);
+    $mediaRows = $media->fetchAll();
+    $deletedMessages = 0;
+    $connection->beginTransaction();
+    try {
+        $detachReplies = $connection->prepare(
+            'UPDATE image_studio_messages SET parent_message_id = NULL WHERE conversation_id = :conversation_id'
+        );
+        $detachReplies->execute([':conversation_id' => $id]);
+        $deleteMessages = $connection->prepare(
+            'DELETE FROM image_studio_messages WHERE conversation_id = :conversation_id'
+        );
+        $deleteMessages->execute([':conversation_id' => $id]);
+        $deletedMessages = $deleteMessages->rowCount();
+        $deleteConversation = $connection->prepare(
+            'DELETE FROM image_studio_conversations WHERE id = :id'
+        );
+        $deleteConversation->execute([':id' => (string) $conversation['id']]);
+        if ($deleteConversation->rowCount() !== 1) {
+            throw new RuntimeException('conversation_delete_failed');
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+    $mediaScheduled = 0;
+    foreach ($mediaRows as $row) {
+        $mediaId = (string) ($row['media_id'] ?? '');
+        if ($mediaId === '' || $row['public_slug'] !== null
+            || mediaDomainReferenceCount($connection, $mediaId) > 0
+            || imageStudioMediaUsedByCatalog($connection, $mediaId)) {
+            continue;
+        }
+        $stillUsed = $connection->prepare('SELECT COUNT(*) FROM image_studio_messages WHERE media_id = :media_id');
+        $stillUsed->execute([':media_id' => $mediaId]);
+        if ((int) $stillUsed->fetchColumn() > 0) {
+            continue;
+        }
+        $mark = $connection->prepare(
+            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3) '
+            . 'WHERE id = :id AND public_slug IS NULL AND pending_delete_at IS NULL'
+        );
+        $mark->execute([':id' => $mediaId]);
+        $mediaScheduled += $mark->rowCount();
+    }
+    sendJson(200, [
+        'ok' => true,
+        'permanentlyDeleted' => true,
+        'conversationId' => $id,
+        'deletedMessages' => $deletedMessages,
+        'mediaScheduledForDeletion' => $mediaScheduled,
+        'historyRetainedForAdministrator' => false,
+    ]);
+}
+
 function normalizedImageStudioReferences(mixed $value): array
 {
     if (!is_array($value) || count($value) > XAR_IMAGE_STUDIO_MAX_REFERENCES) {
@@ -1629,8 +1710,13 @@ function handleImageStudioRoute(PDO $connection, string $route, string $method, 
         writeImageReferenceCatalog($connection, $match[1]);
     }
     if (preg_match('#^/api/v1/image-studio/conversations/([A-Za-z0-9_-]{22})$#', $route, $match) === 1) {
-        requireMethod($method, ['PATCH']);
-        updateImageStudioConversation($connection, $match[1]);
+        if ($method === 'PATCH') {
+            updateImageStudioConversation($connection, $match[1]);
+        }
+        if ($method === 'DELETE') {
+            permanentlyDeleteImageStudioConversation($connection, $match[1]);
+        }
+        requireMethod($method, ['PATCH', 'DELETE']);
     }
     if (preg_match('#^/api/v1/image-studio/conversations/([A-Za-z0-9_-]{22})/messages$#', $route, $match) === 1) {
         if ($method === 'GET' || $method === 'HEAD') {

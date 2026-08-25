@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.9.2 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
+test("le backend 0.10.0 installe la file Codex partagée et conserve la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.9\.2'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.10\.0'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -169,11 +169,34 @@ test("la galerie web reste MJ, privée et explicite sur la conservation", async 
   assert.match(page, /scope=all/);
   assert.match(page, /journal restera accessible à l’administrateur/);
   assert.match(page, /id="removeDialog"/);
+  assert.match(page, /Fermer l’aperçu/);
+  assert.match(page, /id="deleteConversationDialog"/);
+  assert.match(page, /Supprimer définitivement/);
+  assert.match(page, /method: "DELETE"/);
   assert.match(page, /new Map\(\[\["image\/jpeg", "jpg"\], \["image\/webp", "webp"\]\]\)/);
   assert.doesNotMatch(page, /\balert\s*\(|\bconfirm\s*\(/);
   assert.match(privacy, /Studio d’images/);
   assert.match(privacy, /aucun jeton Codex/);
   assert.match(privacy, /30 jours/);
+});
+
+test("l’administrateur peut effacer définitivement une discussion inactive", async () => {
+  const studio = await read("api/v1/image-studio.php");
+  const deletion = studio.slice(
+    studio.indexOf("function permanentlyDeleteImageStudioConversation"),
+    studio.indexOf("function normalizedImageStudioReferences")
+  );
+  assert.match(deletion, /can_administrate/);
+  assert.match(deletion, /administrator_required/);
+  assert.match(deletion, /status IN \('queued', 'generating'\)/);
+  assert.match(deletion, /conversation_generation_active/);
+  assert.match(deletion, /SET parent_message_id = NULL/);
+  assert.match(deletion, /DELETE FROM image_studio_messages/);
+  assert.match(deletion, /DELETE FROM image_studio_conversations/);
+  assert.match(deletion, /historyRetainedForAdministrator' => false/);
+  assert.match(deletion, /mediaDomainReferenceCount/);
+  assert.match(deletion, /imageStudioMediaUsedByCatalog/);
+  assert.match(studio, /requireMethod\(\$method, \['PATCH', 'DELETE'\]\)/);
 });
 
 test("l’ancien état global est en lecture seule et les commandes sont ciblées", async () => {
@@ -241,6 +264,12 @@ test("les secrets ont une clé indépendante et les médias une rétention", asy
   assert.match(online, /settingsEncryptionKey/);
   assert.match(online, /previousSettingsEncryptionKeys/);
   assert.match(online, /settings_encryption_key_required/);
+  assert.match(online, /function createPrivateSettingsEncryptionKey/);
+  assert.match(online, /settings-encryption\.key/);
+  assert.match(online, /random_bytes\(32\)/);
+  assert.match(online, /chmod\(\$path, 0600\)/);
+  assert.match(online, /str_starts_with\(\$privatePrefix, \$documentPrefix\)/);
+  assert.match(online, /XAR_REGIE_SETTINGS_ENCRYPTION_KEY/);
   assert.match(index, /pending_delete_at/);
   assert.match(online, /maximumRetainedBytes/);
   assert.match(online, /xar-regie-media-quota/);

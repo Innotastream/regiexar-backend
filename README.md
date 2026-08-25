@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.9.2
+# Backend OVH — Régie du Seuil 0.10.0
 
-La 0.9.2 conserve le contrat du studio 0.8 et la file privée du **Compte de la Régie** ajoutée en 0.9.0 pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Elle ajoute une validation bornée des tokens, modèles de bestiaire, instantanés publiés et jets avant leur persistance. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
+La 0.10.0 conserve le contrat du studio 0.8 et la file privée du **Compte de la Régie** ajoutée en 0.9.0 pour l’application 2.1 : demandes dédupliquées, exécution sérialisée par le worker d’Innota, pause globale, reprise bornée après interruption, annulation et attribution du résultat au MJ demandeur. Elle ajoute la suppression définitive, réservée à l’administrateur, des discussions inactives et de leur journal. La clé de chiffrement des réglages peut être créée automatiquement dans `regie-private`, hors du document root, avec des droits privés ; les webhooks ne sont jamais enregistrés dans Git. Les secrets et sessions Codex restent exclusivement sur le poste worker ; OVH ne reçoit que les prompts, métadonnées, références déclarées, états de file et images conservées.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 

@@ -43,15 +43,91 @@ function decodeSettingsEncryptionKey(mixed $value): string
 
 function configuredSettingsEncryptionKey(array $configuration): string
 {
-    return decodeSettingsEncryptionKey($configuration['security']['settingsEncryptionKey'] ?? '');
+    $configured = decodeSettingsEncryptionKey($configuration['security']['settingsEncryptionKey'] ?? '');
+    if (strlen($configured) === 32) {
+        return $configured;
+    }
+    $environment = decodeSettingsEncryptionKey(getenv('XAR_REGIE_SETTINGS_ENCRYPTION_KEY'));
+    if (strlen($environment) === 32) {
+        return $environment;
+    }
+    $path = settingsEncryptionKeyFilePath();
+    if ($path === '' || !is_file($path) || !is_readable($path)) {
+        return '';
+    }
+    $persisted = decodeSettingsEncryptionKey(file_get_contents($path));
+    return strlen($persisted) === 32 ? $persisted : '';
+}
+
+function settingsEncryptionKeyFilePath(): string
+{
+    $configPath = privateConfigPath();
+    $documentRoot = realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''));
+    if ($configPath === null || $documentRoot === false) {
+        return '';
+    }
+    $privateDirectory = realpath(dirname($configPath));
+    if ($privateDirectory === false) {
+        return '';
+    }
+    $documentPrefix = rtrim($documentRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    $privatePrefix = rtrim($privateDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    if ($privateDirectory === $documentRoot || str_starts_with($privatePrefix, $documentPrefix)) {
+        return '';
+    }
+    return $privateDirectory . DIRECTORY_SEPARATOR . 'settings-encryption.key';
+}
+
+function createPrivateSettingsEncryptionKey(array $configuration): string
+{
+    $existing = configuredSettingsEncryptionKey($configuration);
+    if (strlen($existing) === 32) {
+        return $existing;
+    }
+    $path = settingsEncryptionKeyFilePath();
+    if ($path === '') {
+        return '';
+    }
+    $lock = fopen($path . '.lock', 'c');
+    if ($lock === false) {
+        return '';
+    }
+    try {
+        @chmod($path . '.lock', 0600);
+        if (!flock($lock, LOCK_EX)) {
+            return '';
+        }
+        $persisted = is_file($path) && is_readable($path)
+            ? decodeSettingsEncryptionKey(file_get_contents($path))
+            : '';
+        if (strlen($persisted) === 32) {
+            return $persisted;
+        }
+        $key = random_bytes(32);
+        $temporary = tempnam(dirname($path), 'xar-settings-key-');
+        if (!is_string($temporary)) {
+            return '';
+        }
+        $written = file_put_contents($temporary, base64_encode($key) . "\n", LOCK_EX);
+        @chmod($temporary, 0600);
+        if ($written === false || !rename($temporary, $path)) {
+            @unlink($temporary);
+            return '';
+        }
+        @chmod($path, 0600);
+        return $key;
+    } finally {
+        @flock($lock, LOCK_UN);
+        fclose($lock);
+    }
 }
 
 function requireWritableSettingsEncryption(array $configuration): void
 {
-    if (strlen(configuredSettingsEncryptionKey($configuration)) !== 32) {
+    if (strlen(createPrivateSettingsEncryptionKey($configuration)) !== 32) {
         sendError(
             503,
-            'La clé privée de chiffrement des réglages doit être configurée avant cette écriture.',
+            'La clé privée de chiffrement des réglages n’a pas pu être créée hors du dossier public.',
             'settings_encryption_key_required'
         );
     }
