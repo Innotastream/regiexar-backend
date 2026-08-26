@@ -654,6 +654,54 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative['order'] = $visibleOrder;
     $initiative['currentTokenId'] = in_array($activeTokenId, $visibleOrder, true) ? $activeTokenId : null;
     $initiative['currentIndex'] = $initiative['currentTokenId'] === null ? 0 : array_search($activeTokenId, $visibleOrder, true);
+    $visibleSceneId = '';
+    if ($paused) {
+        $publishedScene = $fullState['tacticalSync']['publishedActiveScene'] ?? null;
+        if (is_array($publishedScene) && is_string($publishedScene['id'] ?? null)) {
+            $visibleSceneId = (string) $publishedScene['id'];
+        }
+    } elseif (is_string($fullState['activeSceneId'] ?? null)) {
+        $visibleSceneId = (string) $fullState['activeSceneId'];
+    } elseif (is_array($fullState['activeScene'] ?? null) && is_string($fullState['activeScene']['id'] ?? null)) {
+        $visibleSceneId = (string) $fullState['activeScene']['id'];
+    }
+    $visibleActionTimers = [];
+    foreach (is_array($fullState['actionTimers'] ?? null) ? $fullState['actionTimers'] : [] as $timer) {
+        if (!is_array($timer) || (string) ($timer['sceneId'] ?? '') !== $visibleSceneId) {
+            continue;
+        }
+        $owned = ($timer['ownerPlayerId'] ?? null) === $accountId;
+        if (($timer['visibility'] ?? '') !== 'public' && !$owned) {
+            continue;
+        }
+        $visibleActionTimers[] = [
+            'id' => $timer['id'] ?? null,
+            'label' => $timer['label'] ?? 'Action',
+            'cooldown' => (int) ($timer['cooldown'] ?? 1),
+            'usedRound' => (int) ($timer['usedRound'] ?? 1),
+            'readyRound' => (int) ($timer['readyRound'] ?? 1),
+            'ownerLabel' => $timer['ownerLabel'] ?? 'Personnage',
+            'visibility' => ($timer['visibility'] ?? '') === 'public' ? 'public' : 'private',
+            'ownedByYou' => $owned,
+        ];
+    }
+    $nowMilliseconds = (int) floor(microtime(true) * 1000);
+    $visibleMapPings = [];
+    foreach (is_array($fullState['mapPings'] ?? null) ? $fullState['mapPings'] : [] as $ping) {
+        if (!is_array($ping)
+            || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
+            || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds) {
+            continue;
+        }
+        $visibleMapPings[] = [
+            'id' => $ping['id'] ?? null,
+            'x' => (float) ($ping['x'] ?? 0),
+            'y' => (float) ($ping['y'] ?? 0),
+            'author' => $ping['author'] ?? 'MJ',
+            'color' => $ping['color'] ?? '#8d72cb',
+            'expiresAt' => (int) ($ping['expiresAt'] ?? 0),
+        ];
+    }
     return [
         'schemaVersion' => $fullState['schemaVersion'] ?? 1,
         'revision' => $fullState['revision'] ?? 0,
@@ -677,12 +725,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             ? ($fullState['tacticalSync']['publishedActiveScene'] ?? null)
             : ($fullState['activeScene'] ?? null)),
         'rolls' => stripForbiddenPlayerData(array_slice($rolls, 0, 30)),
-        'actionTimers' => stripForbiddenPlayerData(array_values(array_filter($fullState['actionTimers'] ?? [], static fn (mixed $timer): bool =>
-            is_array($timer) && (($timer['visibility'] ?? '') === 'public' || ($timer['ownerPlayerId'] ?? null) === $accountId)
-        ))),
-        'mapPings' => array_values(array_filter($fullState['mapPings'] ?? [], static fn (mixed $ping): bool =>
-            is_array($ping) && (int) ($ping['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000)
-        )),
+        'actionTimers' => $visibleActionTimers,
+        'mapPings' => $visibleMapPings,
         'tracks' => stripForbiddenPlayerData($fullState['tracks'] ?? []),
         'audio' => stripForbiddenPlayerData($fullState['audio'] ?? null),
     ];
@@ -1869,10 +1913,15 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $keys[] = 'initiative:' . $sceneId;
             }
             $records = array_replace($records, applicationDomainRecords($connection, $keys));
+            $initiative = $sceneId === '' ? [] : applicationDomainPayload($records, 'initiative:' . $sceneId);
+            if ($command === 'timer.update' && ($sceneId === '' || ($initiative['active'] ?? false) !== true)) {
+                rejectOnlineCommand($connection, 409, 'Commencez un combat avant de réutiliser une recharge.', 'combat_required');
+            }
             $activity = applicationDomainPayload($records, 'activity');
             $timers = is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [];
             $index = findEntryIndex($timers, (string) ($arguments['timerId'] ?? ''));
-            if ($index < 0 || ($timers[$index]['ownerPlayerId'] ?? null) !== $accountId) {
+            if ($index < 0 || ($timers[$index]['ownerPlayerId'] ?? null) !== $accountId
+                || ($command === 'timer.update' && (string) ($timers[$index]['sceneId'] ?? '') !== $sceneId)) {
                 rejectOnlineCommand($connection, 403, 'Ce rappel ne vous appartient pas.', 'timer_forbidden');
             }
             if ($command === 'timer.delete') {
@@ -1890,7 +1939,6 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $activity['actionTimerTombstones'] = array_slice($timerTombstones, -1000);
             } else {
-                $initiative = $sceneId === '' ? [] : applicationDomainPayload($records, 'initiative:' . $sceneId);
                 $round = max(1, (int) ($initiative['round'] ?? 1));
                 $timers[$index]['usedRound'] = $round;
                 $timers[$index]['readyRound'] = $round + max(1, (int) ($timers[$index]['cooldown'] ?? 1));

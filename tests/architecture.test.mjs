@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.2 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.3 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.2'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.3'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -342,6 +342,30 @@ test("la projection joueur partage les statuts, réserve les stats aux alliés e
   const preferences = online.slice(online.indexOf("\$command === 'preferences.update'"), online.indexOf("\$command === 'character.create'"));
   assert.match(preferences, /character_forbidden/);
   assert.match(preferences, /activeCharacterId/);
+});
+
+test("la projection joueur borne les événements éphémères à la scène visible", async () => {
+  const online = await read("api/v1/online.php");
+  const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
+  assert.match(projection, /\$visibleSceneId/);
+  const timers = projection.slice(projection.indexOf("$visibleActionTimers"), projection.indexOf("$visibleMapPings"));
+  const pings = projection.slice(projection.indexOf("$visibleMapPings"), projection.indexOf("return ["));
+  assert.match(timers, /\$timer\['sceneId'\][\s\S]*?\$visibleSceneId/);
+  assert.match(timers, /'ownedByYou'\s*=>\s*\$owned/);
+  assert.match(pings, /\$ping\['sceneId'\][\s\S]*?\$visibleSceneId/);
+  assert.match(pings, /\$ping\['expiresAt'\]/);
+  assert.match(projection, /'actionTimers'\s*=>\s*\$visibleActionTimers/);
+  assert.match(projection, /'mapPings'\s*=>\s*\$visibleMapPings/);
+});
+
+test("la réutilisation d’un minuteur reste liée au combat et à sa scène", async () => {
+  const online = await read("api/v1/online.php");
+  const timerCommands = online.slice(
+    online.indexOf("$command === 'timer.update'"),
+    online.indexOf("$command === 'character.delete'")
+  );
+  assert.match(timerCommands, /\$command === 'timer\.update'[\s\S]*?\$initiative\['active'\]/);
+  assert.match(timerCommands, /\$command === 'timer\.update'[\s\S]*?\$timers\[\$index\]\['sceneId'\][\s\S]*?\$sceneId/);
 });
 
 test("les variantes de cadre sont bornées et restent publiques sans élargir les détails tactiques", async () => {
