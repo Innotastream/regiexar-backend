@@ -569,6 +569,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         'musicMuted' => ($storedPreferences['musicMuted'] ?? false) === true,
         'ambienceMuted' => ($storedPreferences['ambienceMuted'] ?? false) === true,
         'activePage' => ($storedPreferences['activePage'] ?? '') === 'characters' ? 'characters' : 'map',
+        'activeCharacterId' => is_string($storedPreferences['activeCharacterId'] ?? null)
+            ? (string) $storedPreferences['activeCharacterId'] : null,
     ];
     $paused = (bool) ($fullState['tacticalSync']['paused'] ?? false);
     $map = $paused && is_array($fullState['tacticalSync']['publishedMap'] ?? null)
@@ -586,7 +588,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             continue;
         }
         $owned = ($token['controllerPlayerId'] ?? null) === $accountId;
-        $details = $owned || ($token['revealDetailsToPlayers'] ?? false) === true;
+        $allied = is_string($token['controllerPlayerId'] ?? null) && (string) $token['controllerPlayerId'] !== '';
+        $details = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
         $visible = [
             'id' => $token['id'] ?? null,
             'characterId' => $token['characterId'] ?? null,
@@ -597,12 +600,13 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 30),
             'initiative' => $token['initiative'] ?? null,
+            'condition' => substr((string) ($token['condition'] ?? ''), 0, 200),
             'detailsVisible' => $details,
             'ownedByYou' => $owned,
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId),
         ];
         if ($details) {
-            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'condition', 'notes'] as $key) {
+            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'notes'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
                 }
@@ -893,6 +897,65 @@ function onlineRollFormula(string $formula): array
     return ['total' => $total, 'breakdown' => implode(' ', $parts), 'formula' => $normalized, 'rawD100' => $rawD100];
 }
 
+function normalizeOnlineRollMode(mixed $value): string
+{
+    $mode = (string) $value;
+    return in_array($mode, ['advantage', 'disadvantage'], true) ? $mode : 'normal';
+}
+
+function onlineOutcomeDesirability(array $rolled, ?int $threshold, int $modifier): int
+{
+    $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier);
+    return match ($outcome['code'] ?? '') {
+        'critical-success' => 5,
+        'special-success' => 4,
+        'success' => 3,
+        'failure' => 1,
+        'critical-failure' => 0,
+        default => 2,
+    };
+}
+
+function onlineRollFormulaWithMode(string $formula, mixed $mode, ?int $threshold = null, int $modifier = 0): array
+{
+    $rollMode = normalizeOnlineRollMode($mode);
+    $attempts = [onlineRollFormula($formula)];
+    if ($rollMode !== 'normal') {
+        $attempts[] = onlineRollFormula($formula);
+    }
+    $selectedIndex = 0;
+    if (count($attempts) === 2) {
+        $first = $attempts[0];
+        $second = $attempts[1];
+        if (is_int($first['rawD100'] ?? null) && is_int($second['rawD100'] ?? null)) {
+            $firstRank = onlineOutcomeDesirability($first, $threshold, $modifier);
+            $secondRank = onlineOutcomeDesirability($second, $threshold, $modifier);
+            if ($firstRank !== $secondRank) {
+                $selectedIndex = $rollMode === 'advantage'
+                    ? ($secondRank > $firstRank ? 1 : 0)
+                    : ($secondRank < $firstRank ? 1 : 0);
+            } else {
+                $selectedIndex = $rollMode === 'advantage'
+                    ? ((int) $second['rawD100'] < (int) $first['rawD100'] ? 1 : 0)
+                    : ((int) $second['rawD100'] > (int) $first['rawD100'] ? 1 : 0);
+            }
+        } else {
+            $selectedIndex = $rollMode === 'advantage'
+                ? ((int) $second['total'] > (int) $first['total'] ? 1 : 0)
+                : ((int) $second['total'] < (int) $first['total'] ? 1 : 0);
+        }
+    }
+    $selected = $attempts[$selectedIndex];
+    $selected['rollMode'] = $rollMode;
+    $selected['selectedIndex'] = $selectedIndex;
+    $selected['attempts'] = array_map(static fn (array $attempt): array => [
+        'total' => (int) $attempt['total'],
+        'breakdown' => (string) $attempt['breakdown'],
+        'rawD100' => $attempt['rawD100'] ?? null,
+    ], $attempts);
+    return $selected;
+}
+
 function rejectOnlineCommand(PDO $connection, int $status, string $message, string $code): never
 {
     if ($connection->inTransaction()) {
@@ -1148,7 +1211,12 @@ function onlineRollEntry(array $identity, array $rolled, string $label, string $
         'rollerName' => (string) $identity['display_name'],
         'rollerRole' => 'player',
         'createdAt' => gmdate('c'),
+        'rollMode' => normalizeOnlineRollMode($rolled['rollMode'] ?? 'normal'),
+        'selectedIndex' => max(0, min(1, (int) ($rolled['selectedIndex'] ?? 0))),
     ];
+    if (($entry['rollMode'] ?? 'normal') !== 'normal') {
+        $entry['attempts'] = $rolled['attempts'] ?? [];
+    }
     if ($outcome !== null) {
         $entry['outcome'] = $outcome;
     }
@@ -1169,6 +1237,17 @@ function onlineDiscordRollContent(array $roll): string
         : (string) ($roll['label'] ?? 'Jet'));
     $content = '🎲 **' . $actor . ' · ' . $label . '** — `' . (string) ($roll['formula'] ?? '') . '`'
         . "\nRésultat : **" . (string) ($roll['total'] ?? 0) . '** · ' . (string) ($roll['breakdown'] ?? '');
+    $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
+    $attempts = is_array($roll['attempts'] ?? null) ? $roll['attempts'] : [];
+    if ($mode !== 'normal' && count($attempts) === 2) {
+        $labelMode = $mode === 'advantage' ? 'Avantage' : 'Désavantage';
+        $selectedIndex = max(0, min(1, (int) ($roll['selectedIndex'] ?? 0)));
+        $values = [];
+        foreach ($attempts as $index => $attempt) {
+            $values[] = ($index === $selectedIndex ? 'retenu ' : '') . (string) ($attempt['total'] ?? 0);
+        }
+        $content .= "\n" . $labelMode . ' · ' . implode(' / ', $values);
+    }
     $outcome = is_array($roll['outcome'] ?? null) ? $roll['outcome'] : null;
     if ($outcome !== null) {
         $content .= "\n**" . safeOnlineDiscordLabel($outcome['label'] ?? '') . '** · d100 brut **'
@@ -1401,10 +1480,29 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (array_key_exists('activePage', $arguments)) {
                 $preferences['activePage'] = $arguments['activePage'] === 'characters' ? 'characters' : 'map';
             }
+            if (array_key_exists('activeCharacterId', $arguments)) {
+                $activeCharacterId = trim((string) ($arguments['activeCharacterId'] ?? ''));
+                if ($activeCharacterId !== '') {
+                    $characterKey = 'character:' . $activeCharacterId;
+                    if (!validApplicationDomainKey($characterKey)) {
+                        rejectOnlineCommand($connection, 400, 'Personnage actif invalide.', 'invalid_active_character');
+                    }
+                    $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+                    $activeCharacter = applicationDomainPayload($records, $characterKey);
+                    if ($activeCharacter === [] || ($activeCharacter['ownerPlayerId'] ?? null) !== $accountId) {
+                        rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+                    }
+                    $preferences['activeCharacterId'] = $activeCharacterId;
+                } else {
+                    $preferences['activeCharacterId'] = null;
+                }
+            }
             $preferences = [
                 'musicMuted' => ($preferences['musicMuted'] ?? false) === true,
                 'ambienceMuted' => ($preferences['ambienceMuted'] ?? false) === true,
                 'activePage' => ($preferences['activePage'] ?? '') === 'characters' ? 'characters' : 'map',
+                'activeCharacterId' => is_string($preferences['activeCharacterId'] ?? null)
+                    ? (string) $preferences['activeCharacterId'] : null,
             ];
             $roster['playerPreferences'] = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
             $roster['playerPreferences'][$accountId] = $preferences;
@@ -1529,6 +1627,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $formula = '1d100';
             $threshold = null;
             $modifier = 0;
+            $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
             if ($kind === 'stat') {
                 $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
                 $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
@@ -1578,7 +1677,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
             }
             try {
-                $rolled = onlineRollFormula($formula);
+                $rolled = onlineRollFormulaWithMode(
+                    $formula,
+                    $rollMode,
+                    in_array($kind, ['stat', 'hit'], true) ? $threshold : null,
+                    in_array($kind, ['stat', 'hit'], true) ? $modifier : 0
+                );
             } catch (InvalidArgumentException $error) {
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
@@ -1635,6 +1739,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $shortcut = $shortcuts[$shortcutIndex];
             $kind = (string) ($shortcut['kind'] ?? 'roll');
             $formula = (string) ($shortcut['formula'] ?? '1d100');
+            $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
             if ($kind === 'initiative') {
                 $formula = preg_replace('/(?:\d*)d\d+/i', '1d100', str_replace(' ', '', $formula), 1) ?? '1d100';
                 if (!str_contains(strtolower($formula), 'd')) {
@@ -1642,7 +1747,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
             }
             try {
-                $rolled = onlineRollFormula($formula);
+                $rolled = onlineRollFormulaWithMode($formula, $rollMode);
             } catch (InvalidArgumentException $error) {
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }

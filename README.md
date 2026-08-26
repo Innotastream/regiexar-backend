@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.11.0
+# Backend OVH — Régie du Seuil 0.12.0
 
-La 0.11.0 conserve le contrat du studio, la file privée du **Compte de la Régie**, la suppression définitive administrateur et la clé de chiffrement privée auto-créée hors webroot de la 0.10.0. Elle ajoute l’autorité serveur des capacités multi-dés, de la difficulté personnelle de Touché et des jets d100 par seuil. Le serveur compare le d100 brut au seuil ajusté et calcule les catégories remarquables uniquement sur ce résultat brut. Les jets publics des joueurs sont envoyés au webhook des jets lorsqu’il est configuré et actif ; le journal de tour reste une action MJ explicite avec image. Les webhooks ne sont jamais enregistrés dans Git.
+La 0.12.0 conserve les contrats 0.11.0 et ajoute l’arbitrage serveur de l’avantage et du désavantage, la préférence du personnage actif et la projection tactique alliée. Deux résultats sont produits dans les modes avantage/désavantage ; une réussite critique prime sous avantage et un échec critique sous désavantage. Les statuts restent visibles de tous tandis que ressources, statistiques, bonus et malus sont limités aux tokens alliés. Le serveur compare toujours le d100 brut au seuil ajusté, sans modifier le dé, et calcule les catégories remarquables uniquement sur ce résultat brut. Les jets publics des joueurs sont envoyés au webhook des jets lorsqu’il est configuré et actif ; le journal de tour reste une action MJ explicite avec image. Les webhooks ne sont jamais enregistrés dans Git.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 

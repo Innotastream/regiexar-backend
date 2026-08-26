@@ -204,7 +204,7 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
-    foreach (['name' => 120, 'damageDice' => 80, 'condition' => 200, 'notes' => 4000, 'gmNotes' => 4000] as $key => $maximum) {
+    foreach (['name' => 120, 'damageDice' => 80, 'condition' => 200, 'bonuses' => 1000, 'penalties' => 1000, 'notes' => 4000, 'gmNotes' => 4000] as $key => $maximum) {
         if (array_key_exists($key, $payload) && !validApplicationDomainText($payload[$key], $maximum)) {
             return false;
         }
@@ -278,6 +278,34 @@ function validApplicationRollDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('revealed', $payload) && !is_bool($payload['revealed'])) {
+        return false;
+    }
+    $rollMode = (string) ($payload['rollMode'] ?? 'normal');
+    if (!in_array($rollMode, ['normal', 'advantage', 'disadvantage'], true)) {
+        return false;
+    }
+    if (array_key_exists('selectedIndex', $payload)
+        && !validApplicationDomainNumber($payload['selectedIndex'], 0, 1)) {
+        return false;
+    }
+    if (array_key_exists('attempts', $payload)) {
+        if (!is_array($payload['attempts']) || count($payload['attempts']) < 1 || count($payload['attempts']) > 2) {
+            return false;
+        }
+        if ($rollMode !== 'normal' && count($payload['attempts']) !== 2) {
+            return false;
+        }
+        foreach ($payload['attempts'] as $attempt) {
+            if (!is_array($attempt)
+                || !validApplicationDomainNumber($attempt['total'] ?? null)
+                || !validApplicationDomainText($attempt['breakdown'] ?? null, 2000)
+                || (array_key_exists('rawD100', $attempt)
+                    && $attempt['rawD100'] !== null
+                    && !validApplicationDomainNumber($attempt['rawD100'], 1, 100))) {
+                return false;
+            }
+        }
+    } elseif ($rollMode !== 'normal') {
         return false;
     }
     if (!array_key_exists('outcome', $payload)) {

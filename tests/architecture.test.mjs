@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.11.0 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.0 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.11\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.0'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -307,6 +307,13 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\]/);
   assert.match(online, /\[1, 11, 22, 33, 44\]/);
   assert.match(online, /\[10, 66, 77, 88, 99\]/);
+  assert.match(online, /function onlineRollFormulaWithMode/);
+  assert.match(online, /normalizeOnlineRollMode/);
+  assert.match(online, /onlineOutcomeDesirability/);
+  assert.match(online, /'attempts'/);
+  assert.match(domains, /\['normal', 'advantage', 'disadvantage'\]/);
+  assert.match(domains, /'bonuses' => 1000/);
+  assert.match(domains, /'penalties' => 1000/);
   assert.doesNotMatch(online, /\$formula = '1d100' \. \(\$value/);
   assert.match(online, /tryPostOnlineDiscordText/);
   assert.match(online, /\['roll', 'token\.roll'\]/);
@@ -316,6 +323,19 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /player_limit/);
   assert.match(online, /character_limit/);
   assert.match(online, /timer_limit/);
+});
+
+test("la projection joueur partage les statuts, réserve les stats aux alliés et mémorise le personnage actif", async () => {
+  const online = await read("api/v1/online.php");
+  const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
+  assert.match(projection, /\$allied = is_string\(\$token\['controllerPlayerId'\]/);
+  assert.match(projection, /'condition' => substr/);
+  assert.match(projection, /\$details = \$allied \|\|/);
+  assert.match(projection, /'bonuses', 'penalties'/);
+  assert.match(projection, /'activeCharacterId'/);
+  const preferences = online.slice(online.indexOf("\$command === 'preferences.update'"), online.indexOf("\$command === 'character.create'"));
+  assert.match(preferences, /character_forbidden/);
+  assert.match(preferences, /activeCharacterId/);
 });
 
 test("plusieurs MJ sont sérialisés par transaction sans verrou de session global", async () => {
