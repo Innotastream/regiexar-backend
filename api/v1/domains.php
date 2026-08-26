@@ -1175,6 +1175,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     $clock = domainClockRecord($connection);
     $since = max(0, (int) ($_GET['since'] ?? 0));
     $prefix = trim((string) ($_GET['prefix'] ?? ''));
+    $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     if ($prefix !== '' && (!validApplicationDomainPrefix($prefix) || $since !== 0)) {
         sendError(400, 'Sélection de domaines invalide.', 'invalid_domain_selection');
     }
@@ -1227,7 +1228,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
         'domains' => $entries,
         'deleted' => array_values($deleted),
         ...($prefix !== '' ? ['selection' => ['prefix' => $prefix]] : []),
-        'presence' => liveOnlinePresence($connection),
+        ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
     ], $headOnly);
 }
 

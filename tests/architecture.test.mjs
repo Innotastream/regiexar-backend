@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.1 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.2 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.2'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,6 +79,12 @@ test("le backend 0.12.1 conserve la file Codex partagée et la migration révisi
   assert.match(domains, /legacyStateToDomains/);
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("les lectures techniques de domaines peuvent exclure la présence sans changer le défaut", async () => {
+  const domains = await read("api/v1/domains.php");
+  assert.match(domains, /\$includePresence = \(string\) \(\$_GET\['presence'\] \?\? '1'\) !== '0'/);
+  assert.match(domains, /\.\.\.\(\$includePresence \? \['presence' => liveOnlinePresence\(\$connection\)\] : \[\]\)/);
 });
 
 test("le Compte de la Régie est une file sérialisée, pausable et sans identité matérielle", async () => {
