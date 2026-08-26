@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.0 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.1 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.0'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.1'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -336,6 +336,17 @@ test("la projection joueur partage les statuts, réserve les stats aux alliés e
   const preferences = online.slice(online.indexOf("\$command === 'preferences.update'"), online.indexOf("\$command === 'character.create'"));
   assert.match(preferences, /character_forbidden/);
   assert.match(preferences, /activeCharacterId/);
+});
+
+test("les variantes de cadre sont bornées et restent publiques sans élargir les détails tactiques", async () => {
+  const [domains, online] = await Promise.all([read("api/v1/domains.php"), read("api/v1/online.php")]);
+  assert.match(domains, /frameVariant/);
+  assert.match(domains, /\['player', 'creature', 'boss', 'apostle'\]/);
+  assert.match(online, /function normalizeOnlineTokenFrameVariant/);
+  assert.match(online, /\$playerControlled \? 'player' : 'creature'/);
+  const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
+  assert.match(projection, /'frameVariant' => normalizeOnlineTokenFrameVariant/);
+  assert.match(projection, /\$details = \$allied \|\|/);
 });
 
 test("plusieurs MJ sont sérialisés par transaction sans verrou de session global", async () => {

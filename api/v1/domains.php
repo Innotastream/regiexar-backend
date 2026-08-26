@@ -217,6 +217,11 @@ function validApplicationTokenDomain(array $payload): bool
     if (array_key_exists('color', $payload) && (!is_string($payload['color']) || preg_match('/^#[0-9A-Fa-f]{6}$/D', $payload['color']) !== 1)) {
         return false;
     }
+    if (array_key_exists('frameVariant', $payload)
+        && (!is_string($payload['frameVariant'])
+            || !in_array($payload['frameVariant'], ['player', 'creature', 'boss', 'apostle'], true))) {
+        return false;
+    }
     foreach (['hp', 'maxHp', 'mana', 'maxMana', 'armor', 'speed', 'initiativeBonus'] as $key) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key])) {
             return false;

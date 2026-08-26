@@ -559,6 +559,14 @@ function liveOnlinePresence(PDO $connection): array
     ], $rows);
 }
 
+function normalizeOnlineTokenFrameVariant(mixed $value, bool $playerControlled = false): string
+{
+    $variant = is_string($value) ? strtolower(trim($value)) : '';
+    return in_array($variant, ['player', 'creature', 'boss', 'apostle'], true)
+        ? $variant
+        : ($playerControlled ? 'player' : 'creature');
+}
+
 function publicPlayerState(array $fullState, array $identity, array $presence): array
 {
     $accountId = (string) $identity['id'];
@@ -596,6 +604,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'name' => $token['name'] ?? 'Token',
             'image' => $token['image'] ?? null,
             'color' => $token['color'] ?? '#8d72cb',
+            'frameVariant' => normalizeOnlineTokenFrameVariant($token['frameVariant'] ?? null, $allied),
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 30),
