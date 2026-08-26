@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.3 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.4 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.3'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.4'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,6 +79,14 @@ test("le backend 0.12.3 conserve la file Codex partagée et la migration révisi
   assert.match(domains, /legacyStateToDomains/);
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("le statut Discord MJ expose seulement configuré et activé sans renvoyer les webhooks", async () => {
+  const online = await read("api/v1/online.php");
+  assert.match(online, /function readOnlineDiscordStatus[\s\S]+?requireGmIdentity\(\$connection\)[\s\S]+?readOnlineSettings[\s\S]+?\['ok' => true, 'discord' => \$settings\['discord'\]\]/);
+  assert.match(online, /if \(\$route === '\/api\/v1\/integrations\/discord'\)[\s\S]+?\['GET', 'HEAD', 'POST'\]/);
+  assert.match(online, /'configured' => isset\(\$secrets\['discord'\]\[\$target\]\)/);
+  assert.doesNotMatch(online, /\['ok' => true, 'discord' => \$secrets\['discord'\]\]/);
 });
 
 test("les lectures techniques de domaines peuvent exclure la présence sans changer le défaut", async () => {

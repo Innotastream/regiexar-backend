@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.3
+# Backend OVH — Régie du Seuil 0.12.4
 
-La 0.12.3 conserve les contrats 0.12.2 et corrige la projection des événements éphémères : minuteurs et signaux sont limités à la scène réellement publiée, y compris pendant une préparation secrète, et la propriété d’un minuteur est restituée uniquement à son joueur. Réutiliser une recharge exige désormais un combat actif et la scène active. Les cadres de fiche `player`, `creature`, `boss` et `apostle`, l’arbitrage serveur de l’avantage et du désavantage, la préférence du personnage actif et la projection tactique alliée restent inchangés. Deux résultats sont produits dans les modes avantage/désavantage ; une réussite critique prime sous avantage et un échec critique sous désavantage. Les statuts restent visibles de tous tandis que ressources, statistiques, bonus et malus sont limités aux tokens alliés. Le serveur compare toujours le d100 brut au seuil ajusté, sans modifier le dé, et calcule les catégories remarquables uniquement sur ce résultat brut. Les jets publics des joueurs sont envoyés au webhook des jets lorsqu’il est configuré et actif ; le journal de tour reste une action MJ explicite avec image. Les webhooks ne sont jamais enregistrés dans Git.
+La 0.12.4 conserve les contrats 0.12.3 et permet à toute session MJ de lire l’état opérationnel des trois cibles Discord (`configuré` et `activé`) sans jamais recevoir leur URL. L’application peut ainsi distinguer un webhook absent, désactivé ou utilisable au lieu de déclarer les trois intégrations absentes. Les envois restent arbitrés côté serveur et les webhooks ne sont jamais enregistrés dans Git ni renvoyés au client.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -31,7 +31,8 @@ Routes principales :
 - `POST /api/v1/state/command` : commandes joueur ciblées sans reconstruction de l’état global ;
 - `/api/v1/connections`, `/api/v1/events` et `/api/v1/events/stream` : présence et SSE authentifié ;
 - `/api/v1/media` : médias privés, diffusion en flux et publication contrôlée ;
-- `/api/v1/settings` et `/api/v1/bridge-settings` : réglages et secrets chiffrés.
+- `/api/v1/settings` et `/api/v1/bridge-settings` : réglages et secrets chiffrés ;
+- `GET|HEAD /api/v1/integrations/discord` : statut `configuré/activé` sans URL pour une session MJ ; `POST` conserve l’envoi arbitré côté serveur.
 
 ## Studio d’images 0.9
 

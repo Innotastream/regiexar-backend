@@ -279,6 +279,13 @@ function readOnlineSettings(PDO $connection, array $configuration): array
     return publicSettings($record, decryptSettingsSecrets($configuration, $record));
 }
 
+function readOnlineDiscordStatus(PDO $connection, array $configuration, bool $headOnly = false): never
+{
+    requireGmIdentity($connection);
+    $settings = readOnlineSettings($connection, $configuration);
+    sendJson(200, ['ok' => true, 'discord' => $settings['discord']], $headOnly);
+}
+
 function updateOnlineSettings(PDO $connection, array $configuration): never
 {
     $identity = requireAdministratorIdentity($connection);
@@ -3035,8 +3042,13 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
         requireMethod($method, ['GET', 'HEAD', 'PUT']);
     }
     if ($route === '/api/v1/integrations/discord') {
-        requireMethod($method, ['POST']);
-        postOnlineDiscord($connection, $configuration);
+        if ($method === 'GET' || $method === 'HEAD') {
+            readOnlineDiscordStatus($connection, $configuration, $headOnly);
+        }
+        if ($method === 'POST') {
+            postOnlineDiscord($connection, $configuration);
+        }
+        requireMethod($method, ['GET', 'HEAD', 'POST']);
     }
     if ($route === '/api/v1/state') {
         if ($method === 'GET' || $method === 'HEAD') {
