@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.5
+# Backend OVH — Régie du Seuil 0.12.6
 
-La 0.12.5 conserve les contrats 0.12.4 et permet d’annoncer la dernière version réellement distribuée par Microsoft Store avec la variable privée d’hébergement `XAR_CLIENT_LATEST_VERSION`, uniquement lorsque `client.latestVersion` est vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : cette variable ne peut donc jamais activer seule un refus HTTP 426.
+La 0.12.6 conserve les contrats 0.12.5 et annonce `2.4.6`, la version réellement distribuée par Microsoft Store, même sur l’hébergement mutualisé OVH qui ne propose pas de variable d’environnement applicative arbitraire. Cette valeur publique ne complète qu’un `client.latestVersion` vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : l’annonce Store ne peut donc jamais activer seule un refus HTTP 426.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -106,7 +106,7 @@ La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’
 
 `client.enforce` doit rester à `false` tant que la version cliente visée n’est pas réellement installable depuis Microsoft Store, recettée sous Windows et explicitement approuvée par le propriétaire.
 
-Lorsque `client.latestVersion` reste vide, la variable privée OVH `XAR_CLIENT_LATEST_VERSION` peut annoncer la version Store publiée sans réécrire le fichier qui contient les secrets. Elle doit contenir uniquement une version `x.y.z`. Elle ne remplace jamais `client.minimumVersion` et ne peut jamais modifier `client.enforce`.
+Lorsque `client.latestVersion` reste vide, `XAR_CLIENT_LATEST_VERSION` peut annoncer une version Store publiée sur les hébergements qui acceptent cette variable. À défaut, la constante publique `XAR_STORE_LATEST_VERSION` fournit l’annonce versionnée avec le backend. Ces deux mécanismes ne remplacent jamais `client.minimumVersion` et ne peuvent jamais modifier `client.enforce`.
 
 ## Comptes et sessions
 

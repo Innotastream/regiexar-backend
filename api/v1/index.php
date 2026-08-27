@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.5';
+const XAR_BACKEND_VERSION = '0.12.6';
+const XAR_STORE_LATEST_VERSION = '2.4.6';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -125,6 +126,9 @@ function clientPolicy(array $configuration): array
     $latestVersion = trim((string) ($configured['latestVersion'] ?? ''));
     if ($latestVersion === '') {
         $latestVersion = trim((string) getenv('XAR_CLIENT_LATEST_VERSION'));
+    }
+    if ($latestVersion === '') {
+        $latestVersion = XAR_STORE_LATEST_VERSION;
     }
     if ($latestVersion === '') {
         $latestVersion = $minimumVersion;
