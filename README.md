@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.4
+# Backend OVH — Régie du Seuil 0.12.5
 
-La 0.12.4 conserve les contrats 0.12.3 et permet à toute session MJ de lire l’état opérationnel des trois cibles Discord (`configuré` et `activé`) sans jamais recevoir leur URL. L’application peut ainsi distinguer un webhook absent, désactivé ou utilisable au lieu de déclarer les trois intégrations absentes. Les envois restent arbitrés côté serveur et les webhooks ne sont jamais enregistrés dans Git ni renvoyés au client.
+La 0.12.5 conserve les contrats 0.12.4 et permet d’annoncer la dernière version réellement distribuée par Microsoft Store avec la variable privée d’hébergement `XAR_CLIENT_LATEST_VERSION`, uniquement lorsque `client.latestVersion` est vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : cette variable ne peut donc jamais activer seule un refus HTTP 426.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -105,6 +105,8 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
 `client.enforce` doit rester à `false` tant que la version cliente visée n’est pas réellement installable depuis Microsoft Store, recettée sous Windows et explicitement approuvée par le propriétaire.
+
+Lorsque `client.latestVersion` reste vide, la variable privée OVH `XAR_CLIENT_LATEST_VERSION` peut annoncer la version Store publiée sans réécrire le fichier qui contient les secrets. Elle doit contenir uniquement une version `x.y.z`. Elle ne remplace jamais `client.minimumVersion` et ne peut jamais modifier `client.enforce`.
 
 ## Comptes et sessions
 

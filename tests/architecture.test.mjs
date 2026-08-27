@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.4 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.5 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.4'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.5'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,6 +79,13 @@ test("le backend 0.12.4 conserve la file Codex partagée et la migration révisi
   assert.match(domains, /legacyStateToDomains/);
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("la dernière version Store privée complète seulement une annonce vide sans activer le blocage", async () => {
+  const index = await read("api/v1/index.php");
+  assert.match(index, /\$latestVersion = trim[\s\S]+?\$configured\['latestVersion'\][\s\S]+?if \(\$latestVersion === ''\)[\s\S]+?getenv\('XAR_CLIENT_LATEST_VERSION'\)/);
+  assert.match(index, /\$enforce = \(\$configured\['enforce'\] \?\? false\) === true/);
+  assert.doesNotMatch(index, /getenv\('XAR_CLIENT_(?:MINIMUM_VERSION|ENFORCE)'\)/);
 });
 
 test("le statut Discord MJ expose seulement configuré et activé sans renvoyer les webhooks", async () => {

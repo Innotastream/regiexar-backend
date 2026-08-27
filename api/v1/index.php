@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.4';
+const XAR_BACKEND_VERSION = '0.12.5';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -122,7 +122,13 @@ function clientPolicy(array $configuration): array
     $configured = $configuration['client'] ?? [];
     $configured = is_array($configured) ? $configured : [];
     $minimumVersion = trim((string) ($configured['minimumVersion'] ?? ''));
-    $latestVersion = trim((string) ($configured['latestVersion'] ?? $minimumVersion));
+    $latestVersion = trim((string) ($configured['latestVersion'] ?? ''));
+    if ($latestVersion === '') {
+        $latestVersion = trim((string) getenv('XAR_CLIENT_LATEST_VERSION'));
+    }
+    if ($latestVersion === '') {
+        $latestVersion = $minimumVersion;
+    }
     $validVersion = static fn (string $value): bool => preg_match('/^\d+\.\d+\.\d+$/', $value) === 1;
     $enforce = ($configured['enforce'] ?? false) === true;
     if ($enforce && (!$validVersion($minimumVersion) || ($latestVersion !== '' && !$validVersion($latestVersion)))) {
