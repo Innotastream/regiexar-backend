@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.9';
-const XAR_STORE_LATEST_VERSION = '2.4.6';
+const XAR_BACKEND_VERSION = '0.12.10';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.1';
+const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -120,47 +121,53 @@ function privateConfig(): ?array
 
 function clientPolicy(array $configuration): array
 {
-    $configured = $configuration['client'] ?? [];
-    $configured = is_array($configured) ? $configured : [];
-    $minimumVersion = trim((string) ($configured['minimumVersion'] ?? ''));
-    $latestVersion = trim((string) ($configured['latestVersion'] ?? ''));
-    if ($latestVersion === '') {
-        $latestVersion = trim((string) getenv('XAR_CLIENT_LATEST_VERSION'));
-    }
-    if ($latestVersion === '') {
-        $latestVersion = XAR_STORE_LATEST_VERSION;
-    }
-    if ($latestVersion === '') {
-        $latestVersion = $minimumVersion;
-    }
-    $validVersion = static fn (string $value): bool => preg_match('/^\d+\.\d+\.\d+$/', $value) === 1;
-    $enforce = ($configured['enforce'] ?? false) === true;
-    if ($enforce && (!$validVersion($minimumVersion) || ($latestVersion !== '' && !$validVersion($latestVersion)))) {
+    $announcedVersion = XAR_RELEASE_ANNOUNCEMENT_VERSION;
+    if (preg_match('/^\d+\.\d+\.\d+$/', $announcedVersion) !== 1) {
         sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');
     }
     return [
-        'enforce' => $enforce && $validVersion($minimumVersion),
-        'minimumVersion' => $validVersion($minimumVersion) ? $minimumVersion : '',
-        'latestVersion' => $validVersion($latestVersion) ? $latestVersion : $minimumVersion,
+        'enforce' => true,
+        'exactVersion' => true,
+        'minimumVersion' => $announcedVersion,
+        'latestVersion' => $announcedVersion,
         'storeId' => '9N5N5M67N704',
     ];
 }
 
-function requireSupportedClient(array $configuration): void
+function drainingBackendSession(PDO $connection): bool
+{
+    $token = requestSessionToken();
+    if ($token === '') {
+        return false;
+    }
+    $statement = $connection->prepare(
+        'SELECT 1 FROM auth_sessions s JOIN backend_release_state r ON r.singleton_id = 1 '
+        . 'WHERE s.token_hash = :token_hash AND s.expires_at > UTC_TIMESTAMP(3) '
+        . 'AND s.backend_version <> :backend_version '
+        . 'AND DATE_ADD(r.activated_at, INTERVAL ' . XAR_BACKEND_SESSION_DRAIN_SECONDS . ' SECOND) > UTC_TIMESTAMP(3) '
+        . 'LIMIT 1'
+    );
+    $statement->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
+    $statement->bindValue(':backend_version', XAR_BACKEND_VERSION);
+    $statement->execute();
+    return $statement->fetchColumn() !== false;
+}
+
+function requireSupportedClient(PDO $connection, array $configuration): void
 {
     $policy = clientPolicy($configuration);
-    if ($policy['enforce'] !== true) {
+    $provided = trim((string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? ''));
+    if (hash_equals((string) $policy['latestVersion'], $provided)) {
         return;
     }
-    $provided = trim((string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? ''));
-    if (preg_match('/^\d+\.\d+\.\d+$/', $provided) === 1
-        && version_compare($provided, (string) $policy['minimumVersion'], '>=')) {
+    if (drainingBackendSession($connection)) {
         return;
     }
     sendJson(426, [
         'ok' => false,
-        'error' => 'Cette version de Xar-Tsaroth Régie n’est plus compatible. Installez la mise à jour depuis le Microsoft Store.',
+        'error' => 'Cette version de Xar-Tsaroth Régie est interdite. Installez la version annoncée.',
         'code' => 'client_update_required',
+        'exactVersion' => true,
         'minimumVersion' => $policy['minimumVersion'],
         'latestVersion' => $policy['latestVersion'],
         'storeId' => $policy['storeId'],
@@ -214,7 +221,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v10', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v11', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -562,10 +569,97 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(10, 'stable_character_health_overlays', '0d8d3a6657cb4e0dc175558b8cc899be6b8d88e5fa9b2740cd47f80ad6400375')"
             );
+            $version = 10;
+        }
+
+        if ($version < 11) {
+            if (!schemaColumnExists($connection, 'auth_sessions', 'backend_version')) {
+                $connection->exec(
+                    "ALTER TABLE auth_sessions ADD COLUMN backend_version "
+                    . "VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '' AFTER auth_revision"
+                );
+            }
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS backend_release_state ('
+                . 'singleton_id TINYINT UNSIGNED NOT NULL DEFAULT 1, '
+                . 'backend_version VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'activated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (singleton_id), '
+                . 'CONSTRAINT chk_backend_release_state_singleton CHECK (singleton_id = 1)'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $insertRelease = $connection->prepare(
+                'INSERT IGNORE INTO backend_release_state (singleton_id, backend_version, activated_at) '
+                . 'VALUES (1, :backend_version, UTC_TIMESTAMP(3))'
+            );
+            $insertRelease->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $connection->exec(
+                "UPDATE accounts a SET a.takeover_requested_at = UTC_TIMESTAMP(3), a.takeover_request_id = NULL "
+                . "WHERE EXISTS (SELECT 1 FROM auth_sessions s WHERE s.account_id = a.id "
+                . "AND s.backend_version <> '" . XAR_BACKEND_VERSION . "')"
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(11, 'backend_release_session_drain', 'f3d32f7edfe3b84d453946e92c5ad63a3e0d98d7be8449f2a13c748c9ea768b4')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v10')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v11')");
+        } catch (Throwable) {
+            // La fermeture de la connexion libère aussi ce verrou de maintenance.
+        }
+    }
+}
+
+function synchronizeBackendRelease(PDO $connection): void
+{
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-backend-release', 5)");
+    $lock->execute();
+    if ((int) $lock->fetchColumn() !== 1) {
+        throw new RuntimeException('backend_release_lock_unavailable');
+    }
+
+    try {
+        $statement = $connection->query(
+            'SELECT backend_version FROM backend_release_state WHERE singleton_id = 1 LIMIT 1'
+        );
+        $activeVersion = $statement === false ? '' : (string) $statement->fetchColumn();
+        if (!hash_equals(XAR_BACKEND_VERSION, $activeVersion)) {
+            $update = $connection->prepare(
+                'INSERT INTO backend_release_state (singleton_id, backend_version, activated_at) '
+                . 'VALUES (1, :backend_version, UTC_TIMESTAMP(3)) '
+                . 'ON DUPLICATE KEY UPDATE backend_version = VALUES(backend_version), '
+                . 'activated_at = VALUES(activated_at)'
+            );
+            $update->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $takeover = $connection->prepare(
+                'UPDATE accounts a SET a.takeover_requested_at = UTC_TIMESTAMP(3), a.takeover_request_id = NULL '
+                . 'WHERE EXISTS (SELECT 1 FROM auth_sessions s WHERE s.account_id = a.id '
+                . 'AND s.backend_version <> :backend_version)'
+            );
+            $takeover->execute([':backend_version' => XAR_BACKEND_VERSION]);
+        }
+
+        $expiredRelease = $connection->prepare(
+            'SELECT 1 FROM backend_release_state WHERE singleton_id = 1 '
+            . 'AND DATE_ADD(activated_at, INTERVAL ' . XAR_BACKEND_SESSION_DRAIN_SECONDS . ' SECOND) <= UTC_TIMESTAMP(3)'
+        );
+        $expiredRelease->execute();
+        if ($expiredRelease->fetchColumn() !== false) {
+            $deleteConnections = $connection->prepare(
+                'DELETE c FROM live_connections c JOIN auth_sessions s ON s.token_hash = c.session_token_hash '
+                . 'WHERE s.backend_version <> :backend_version'
+            );
+            $deleteConnections->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $deleteSessions = $connection->prepare(
+                'DELETE FROM auth_sessions WHERE backend_version <> :backend_version'
+            );
+            $deleteSessions->execute([':backend_version' => XAR_BACKEND_VERSION]);
+        }
+    } finally {
+        try {
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-backend-release')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }
@@ -732,13 +826,14 @@ function createSession(PDO $connection, array $account, string $effectiveMode): 
     $token = randomToken();
     $statement = $connection->prepare(
         'INSERT INTO auth_sessions '
-        . '(token_hash, account_id, effective_mode, auth_revision, expires_at) '
-        . 'VALUES (:token_hash, :account_id, :effective_mode, :auth_revision, :expires_at)'
+        . '(token_hash, account_id, effective_mode, auth_revision, backend_version, expires_at) '
+        . 'VALUES (:token_hash, :account_id, :effective_mode, :auth_revision, :backend_version, :expires_at)'
     );
     $statement->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
     $statement->bindValue(':account_id', (string) $account['id']);
     $statement->bindValue(':effective_mode', $mode);
     $statement->bindValue(':auth_revision', (int) $account['auth_revision'], PDO::PARAM_INT);
+    $statement->bindValue(':backend_version', XAR_BACKEND_VERSION);
     $statement->bindValue(':expires_at', utcAfter(XAR_SESSION_SECONDS));
     $statement->execute();
     return ['token' => $token, 'mode' => $mode];
@@ -837,7 +932,7 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
     $statement = $connection->prepare(
         'SELECT a.id, a.username, a.display_name, a.permanent_role, a.can_administrate, a.auth_revision, a.revoked_at, '
         . 'a.takeover_requested_at, a.takeover_request_id, '
-        . 's.effective_mode, s.auth_revision AS session_auth_revision '
+        . 's.effective_mode, s.auth_revision AS session_auth_revision, s.backend_version AS session_backend_version '
         . 'FROM auth_sessions s JOIN accounts a ON a.id = s.account_id '
         . 'WHERE s.token_hash = :token_hash AND s.expires_at > UTC_TIMESTAMP(3) LIMIT 1'
     );
@@ -864,6 +959,11 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
         $update->execute();
     }
     return $identity;
+}
+
+function backendSessionNeedsHandoff(array $identity): bool
+{
+    return !hash_equals(XAR_BACKEND_VERSION, (string) ($identity['session_backend_version'] ?? ''));
 }
 
 function rateBucket(string $usernameKey): string
@@ -1457,6 +1557,7 @@ if ($configuration === null) {
 try {
     $connection = databaseConnection($configuration);
     ensureCurrentSchema($connection);
+    synchronizeBackendRelease($connection);
 } catch (Throwable $error) {
     error_log('[xar-regie-api] database connection failed: ' . get_class($error));
     $code = $error instanceof RuntimeException && $error->getMessage() === 'configuration_required'
@@ -1491,7 +1592,7 @@ try {
     }
     if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)
         && !str_starts_with($route, '/api/v1/image-studio')) {
-        requireSupportedClient($configuration);
+        requireSupportedClient($connection, $configuration);
     }
     cleanupAuthentication($connection);
 

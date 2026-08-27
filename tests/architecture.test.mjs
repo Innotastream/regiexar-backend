@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.9 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.10 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.9'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.10'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -78,8 +78,9 @@ test("le backend 0.12.9 conserve la file Codex partagée et la migration révisi
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.9");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 10);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.10");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.1");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -129,12 +130,34 @@ test("le déplacement hors tour exige une autorisation MJ temporaire et le regis
   assert.match(domains, /\$allowed !== true/);
 });
 
-test("la dernière version Store publiée complète seulement une annonce vide sans activer le blocage", async () => {
+test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_STORE_LATEST_VERSION = '2\.4\.6'/);
-  assert.match(index, /\$latestVersion = trim[\s\S]+?\$configured\['latestVersion'\][\s\S]+?getenv\('XAR_CLIENT_LATEST_VERSION'\)[\s\S]+?XAR_STORE_LATEST_VERSION/);
-  assert.match(index, /\$enforce = \(\$configured\['enforce'\] \?\? false\) === true/);
-  assert.doesNotMatch(index, /getenv\('XAR_CLIENT_(?:MINIMUM_VERSION|ENFORCE)'\)/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.1'/);
+  const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
+  const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
+  assert.match(policy, /'enforce' => true/);
+  assert.match(policy, /'exactVersion' => true/);
+  assert.match(policy, /'minimumVersion' => \$announcedVersion/);
+  assert.match(policy, /'latestVersion' => \$announcedVersion/);
+  assert.doesNotMatch(policy, /\$configuration\['client'\]|XAR_CLIENT_/);
+  assert.match(enforcement, /hash_equals\(\(string\) \$policy\['latestVersion'\], \$provided\)/);
+  assert.match(enforcement, /drainingBackendSession\(\$connection\)/);
+  assert.match(enforcement, /sendJson\(426/);
+  assert.match(enforcement, /'exactVersion' => true/);
+  assert.doesNotMatch(enforcement, /version_compare/);
+});
+
+test("un déploiement backend demande la sauvegarde puis révoque les anciennes sessions", async () => {
+  const [index, online] = await Promise.all([read("api/v1/index.php"), read("api/v1/online.php")]);
+  assert.match(index, /XAR_BACKEND_SESSION_DRAIN_SECONDS = 30/);
+  assert.match(index, /ALTER TABLE auth_sessions ADD COLUMN backend_version/);
+  assert.match(index, /CREATE TABLE IF NOT EXISTS backend_release_state/);
+  assert.match(index, /backend_release_session_drain/);
+  assert.match(index, /INSERT INTO auth_sessions[\s\S]*?backend_version[\s\S]*?:backend_version/);
+  assert.match(index, /function synchronizeBackendRelease[\s\S]*?takeover_requested_at = UTC_TIMESTAMP\(3\)/);
+  assert.match(index, /function synchronizeBackendRelease[\s\S]*?DELETE FROM auth_sessions WHERE backend_version <> :backend_version/);
+  assert.match(index, /ensureCurrentSchema\(\$connection\);\s+synchronizeBackendRelease\(\$connection\);/);
+  assert.match(online, /backendSessionNeedsHandoff\(\$identity\)[\s\S]*?'session-takeover'[\s\S]*?'backend-update'/);
 });
 
 test("le statut Discord MJ expose seulement configuré et activé sans renvoyer les webhooks", async () => {

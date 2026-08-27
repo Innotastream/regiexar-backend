@@ -2216,12 +2216,14 @@ function onlineEvents(PDO $connection, bool $headOnly = false): never
     ensureDomainStoreInitialized($connection);
     $clock = domainClockRecord($connection);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
+    $backendHandoff = backendSessionNeedsHandoff($identity);
     $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     sendJson(200, [
         'ok' => true,
         'revision' => (int) $clock['globalRevision'],
         ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
-        'takeoverRequested' => $takeoverAt >= time() - 30,
+        'takeoverRequested' => $backendHandoff || $takeoverAt >= time() - 30,
+        ...($backendHandoff ? ['takeoverReason' => 'backend-update'] : []),
     ], $headOnly);
 }
 
@@ -2293,7 +2295,9 @@ function streamOnlineEvents(PDO $connection): never
     writeOnlineEvent('revision', ['revision' => $currentRevision]);
     writeOnlineEvent('presence', ['presence' => $presence]);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
-    if ($takeoverAt >= time() - 30) {
+    if (backendSessionNeedsHandoff($identity)) {
+        writeOnlineEvent('session-takeover', ['reason' => 'backend-update']);
+    } elseif ($takeoverAt >= time() - 30) {
         writeOnlineEvent('session-takeover', ['reason' => 'new-login']);
     }
     writeOnlineEvent('heartbeat', ['at' => (int) floor(microtime(true) * 1000)]);
@@ -2327,10 +2331,14 @@ function streamOnlineEvents(PDO $connection): never
             $nextIdentityAt = $now + 4.0;
             $identity = resolveSession($connection, $token, false);
             if (!is_array($identity)) {
-                writeOnlineEvent('session-replaced', ['reason' => 'new-login']);
+                writeOnlineEvent('session-replaced', ['reason' => 'session-revoked']);
                 break;
             }
             $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
+            if (backendSessionNeedsHandoff($identity)) {
+                writeOnlineEvent('session-takeover', ['reason' => 'backend-update']);
+                break;
+            }
             if ($takeoverAt >= time() - 30) {
                 writeOnlineEvent('session-takeover', ['reason' => 'new-login']);
                 break;

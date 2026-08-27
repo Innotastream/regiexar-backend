@@ -1,8 +1,10 @@
-# Backend OVH — Régie du Seuil 0.12.9
+# Backend OVH — Régie du Seuil 0.12.10
 
-La 0.12.9 ajoute les calques Stream de PV des personnages joueurs : chaque URL-capacité reste fixe jusqu’à sa régénération manuelle, ne révèle que le nom, les PV et l’état calculé, et cesse de répondre si la fiche n’est plus un personnage joueur. Elle conserve le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage et les jets propriétaires avec ou sans token introduits en 0.12.7. En combat, un token joueur reste immobile hors de son tour ; une autorisation temporaire inscrite par le MJ dans l’initiative peut lever cette restriction jusqu’au prochain changement de tour. Le backend contrôle cette exception lui-même et ne transmet aux joueurs qu’un booléen de contrôle, jamais le registre interne des autorisations. La variante visuelle `elite` en cuivre reste bornée sans élargir les détails tactiques.
+La 0.12.10 applique la règle de livraison décidée par le propriétaire : dès qu’un nouveau candidat MSIX est demandé, construit et techniquement contrôlé, sa version est annoncée par la santé publique, même avant son chargement ou sa publication dans Microsoft Store. Le candidat courant `2.5.1` est l’unique version applicative autorisée par l’API : toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Cette annonce ne prétend pas que le paquet est déjà installable depuis le Store.
 
-Elle conserve aussi l’annonce `2.4.6`, version réellement distribuée par Microsoft Store. Cette valeur publique ne complète qu’un `client.latestVersion` vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : l’annonce Store ne peut donc jamais activer seule un refus HTTP 426.
+Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
+
+Elle conserve les calques Stream de PV des personnages joueurs ajoutés en 0.12.9 : chaque URL-capacité reste fixe jusqu’à sa régénération manuelle, ne révèle que le nom, les PV et l’état calculé, et cesse de répondre si la fiche n’est plus un personnage joueur. Elle conserve aussi le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage, les jets propriétaires avec ou sans token, le déplacement hors tour soumis à une autorisation MJ temporaire et la variante visuelle `elite` en cuivre.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -97,18 +99,13 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
     'maximumTotalBytes' => 20 * 1024 * 1024 * 1024,
     'maximumRetainedBytes' => 25 * 1024 * 1024 * 1024,
 ],
-'client' => [
-    'minimumVersion' => '1.16.0',
-    'latestVersion' => '1.16.0',
-    'enforce' => false,
-],
 ```
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-`client.enforce` doit rester à `false` tant que la version cliente visée n’est pas réellement installable depuis Microsoft Store, recettée sous Windows et explicitement approuvée par le propriétaire.
+La politique de version de l’application n’est plus pilotée par le bloc privé `client`. Son autorité unique est `XAR_RELEASE_ANNOUNCEMENT_VERSION`, reflétée par `announcedApplicationVersion` dans le manifeste public du dépôt. La santé expose toujours `enforce=true`, `exactVersion=true` et la même version dans `minimumVersion` et `latestVersion`.
 
-Lorsque `client.latestVersion` reste vide, `XAR_CLIENT_LATEST_VERSION` peut annoncer une version Store publiée sur les hébergements qui acceptent cette variable. À défaut, la constante publique `XAR_STORE_LATEST_VERSION` fournit l’annonce versionnée avec le backend. Ces deux mécanismes ne remplacent jamais `client.minimumVersion` et ne peuvent jamais modifier `client.enforce`.
+Règle de livraison permanente demandée par le propriétaire : après chaque création et contrôle d’un nouveau MSIX, mettre `XAR_RELEASE_ANNOUNCEMENT_VERSION` et `announcedApplicationVersion` à la version applicative exacte, incrémenter la version backend, exécuter les contrôles puis déployer le backend dans la même livraison. Cette annonce et son verrou exact sont effectués même si Partner Center ne contient pas encore le paquet. Le patch précédemment annoncé devient immédiatement interdit après le déploiement.
 
 ## Comptes et sessions
 
@@ -116,6 +113,7 @@ Lorsque `client.latestVersion` reste vide, `XAR_CLIENT_LATEST_VERSION` peut anno
 - un seul jeton de session actif par compte ;
 - plusieurs comptes MJ actifs et visibles simultanément dans la présence ;
 - transfert demandé à l’ancienne instance avant révocation ;
+- lors d’un changement de version backend, transfert de sauvegarde demandé aux sessions actives puis révocation forcée après trente secondes ;
 - niveau permanent et mode effectif séparés ;
 - un MJ sans `can_administrate` ne peut pas gérer les comptes ;
 - le dernier MJ et le dernier administrateur actifs sont protégés.
