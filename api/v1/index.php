@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.8';
+const XAR_BACKEND_VERSION = '0.12.9';
 const XAR_STORE_LATEST_VERSION = '2.4.6';
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -214,7 +214,7 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
 
 function ensureCurrentSchema(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v9', 15)");
+    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v10', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
         throw new RuntimeException('schema_lock_unavailable');
@@ -542,10 +542,30 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(9, 'shared_regie_codex_queue', '2fe9c195ca43c1d7565d050a409cf44217e779160d183bdb9531cc974c6a391d')"
             );
+            $version = 9;
+        }
+
+        if ($version < 10) {
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS character_health_overlays ('
+                . 'character_id VARCHAR(180) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'public_slug VARCHAR(43) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'created_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'regenerated_at DATETIME(3) NULL, '
+                . 'PRIMARY KEY (character_id), UNIQUE KEY uq_character_health_overlays_slug (public_slug), '
+                . 'CONSTRAINT fk_character_health_overlays_account FOREIGN KEY (created_by_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(10, 'stable_character_health_overlays', '0d8d3a6657cb4e0dc175558b8cc899be6b8d88e5fa9b2740cd47f80ad6400375')"
+            );
         }
     } finally {
         try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v9')");
+            $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v10')");
         } catch (Throwable) {
             // La fermeture de la connexion libère aussi ce verrou de maintenance.
         }
@@ -1402,6 +1422,7 @@ function recoverAdministratorAccount(PDO $connection): never
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/image-studio.php';
+require_once __DIR__ . '/health-overlays.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
@@ -1465,6 +1486,9 @@ if ($route === '/api/v1/health') {
 }
 
 try {
+    if (handlePublicHealthOverlayRoute($connection, $route, $method, $headOnly)) {
+        exit;
+    }
     if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)
         && !str_starts_with($route, '/api/v1/image-studio')) {
         requireSupportedClient($configuration);

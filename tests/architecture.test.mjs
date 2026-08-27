@@ -59,17 +59,18 @@ function balancedPhpDelimiters(source) {
 }
 
 test("les sources PHP ont des délimiteurs structurels équilibrés", async () => {
-  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
+  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
     assert.equal(balancedPhpDelimiters(await read(file)), true, file);
   }
 });
 
-test("le backend 0.12.8 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.9 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.8'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.9'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
+  assert.match(index, /stable_character_health_overlays/);
   assert.match(index, /image_studio_conversations/);
   assert.match(index, /image_studio_messages/);
   assert.match(index, /image_studio_regie_service/);
@@ -77,9 +78,30 @@ test("le backend 0.12.8 conserve la file Codex partagée et la migration révisi
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.8");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.9");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 10);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("les calques PV sont publics en lecture seule, stables et gérés uniquement par le MJ", async () => {
+  const [index, online, overlays, rules] = await Promise.all([
+    read("api/v1/index.php"),
+    read("api/v1/online.php"),
+    read("api/v1/health-overlays.php"),
+    read(".htaccess")
+  ]);
+  assert.match(index, /character_health_overlays/);
+  assert.match(index, /uq_character_health_overlays_slug/);
+  assert.match(index, /handlePublicHealthOverlayRoute\(\$connection, \$route, \$method, \$headOnly\)[\s\S]*?requireSupportedClient/);
+  assert.match(overlays, /requireGmIdentity\(\$connection\)/);
+  assert.match(overlays, /\['ensure', 'regenerate'\]/);
+  assert.match(overlays, /if \(!is_array\(\$record\)\)[\s\S]*?randomToken\(\)/);
+  assert.match(overlays, /elseif \(\$action === 'regenerate'\)[\s\S]*?public_slug = :public_slug/);
+  assert.match(overlays, /'name' =>[\s\S]*?'hp' =>[\s\S]*?'maxHp' =>[\s\S]*?'effect' =>/);
+  assert.doesNotMatch(overlays, /portrait|conditions|secret|ownerPlayerId' =>/);
+  assert.match(overlays, /frame-ancestors 'none'/);
+  assert.match(rules, /\^health\/\[A-Za-z0-9_-\]\{43\}/);
+  assert.match(online, /'playerControlled' => \$allied/);
 });
 
 test("les jets sans token restent propriétaires et Chance force un seul d100 brut", async () => {

@@ -621,6 +621,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'condition' => substr((string) ($token['condition'] ?? ''), 0, 200),
             'detailsVisible' => $details,
             'ownedByYou' => $owned,
+            'playerControlled' => $allied,
             'temporaryMovementAllowed' => $temporaryMovementAllowed,
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId || $temporaryMovementAllowed),
         ];
@@ -3045,6 +3046,9 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
 
 function handleOnlineRoute(PDO $connection, array $configuration, string $route, string $method, bool $headOnly): bool
 {
+    if (handleHealthOverlayManagementRoute($connection, $route, $method, $headOnly)) {
+        return true;
+    }
     if (handleImageStudioRoute($connection, $route, $method, $headOnly)) {
         return true;
     }
