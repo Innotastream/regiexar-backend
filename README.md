@@ -1,6 +1,8 @@
-# Backend OVH — Régie du Seuil 0.12.6
+# Backend OVH — Régie du Seuil 0.12.7
 
-La 0.12.6 conserve les contrats 0.12.5 et annonce `2.4.6`, la version réellement distribuée par Microsoft Store, même sur l’hébergement mutualisé OVH qui ne propose pas de variable d’environnement applicative arbitraire. Cette valeur publique ne complète qu’un `client.latestVersion` vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : l’annonce Store ne peut donc jamais activer seule un refus HTTP 426.
+La 0.12.7 ajoute le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage. Un joueur peut lancer le même arbre de jets depuis sa fiche quand aucun token n’est posé ; le backend vérifie alors directement que la fiche lui appartient. Les jets d’un token continuent d’exiger sa propriété et sa visibilité. La variante visuelle `elite` en cuivre rejoint la liste bornée des cadres autorisés sans élargir les détails tactiques.
+
+Elle conserve aussi l’annonce `2.4.6`, version réellement distribuée par Microsoft Store. Cette valeur publique ne complète qu’un `client.latestVersion` vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : l’annonce Store ne peut donc jamais activer seule un refus HTTP 426.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 

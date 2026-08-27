@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.6 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.7 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.6'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.7'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -77,8 +77,22 @@ test("le backend 0.12.6 conserve la file Codex partagée et la migration révisi
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.7");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+});
+
+test("les jets sans token restent propriétaires et Chance force un seul d100 brut", async () => {
+  const online = await read("api/v1/online.php");
+  const command = online.slice(online.indexOf("} elseif ($command === 'token.roll')"), online.indexOf("} elseif ($command === 'roll')"));
+  assert.match(command, /\$characterId = trim/);
+  assert.match(command, /'character:' \. \$characterId/);
+  assert.match(command, /\(\$character\['ownerPlayerId'\] \?\? null\) !== \$accountId/);
+  assert.match(command, /synchronizeOnlineCharacterToken\(\[\], \$character\)/);
+  assert.match(command, /\['luck', 'stat', 'hit', 'initiative', 'damage', 'ability', 'custom'\]/);
+  assert.match(command, /\$kind === 'luck' \? 'normal' : normalizeOnlineRollMode/);
+  assert.match(command, /\$kind === 'luck'[\s\S]*?\$label = 'Chance'[\s\S]*?\$formula = '1d100'/);
+  assert.match(command, /\$tokenKey !== '' && \$kind === 'initiative'/);
 });
 
 test("la dernière version Store publiée complète seulement une annonce vide sans activer le blocage", async () => {
@@ -387,7 +401,7 @@ test("la réutilisation d’un minuteur reste liée au combat et à sa scène", 
 test("les variantes de cadre sont bornées et restent publiques sans élargir les détails tactiques", async () => {
   const [domains, online] = await Promise.all([read("api/v1/domains.php"), read("api/v1/online.php")]);
   assert.match(domains, /frameVariant/);
-  assert.match(domains, /\['player', 'creature', 'boss', 'apostle'\]/);
+  assert.match(domains, /\['player', 'creature', 'elite', 'boss', 'apostle'\]/);
   assert.match(online, /function normalizeOnlineTokenFrameVariant/);
   assert.match(online, /\$playerControlled \? 'player' : 'creature'/);
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));

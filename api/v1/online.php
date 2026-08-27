@@ -569,7 +569,7 @@ function liveOnlinePresence(PDO $connection): array
 function normalizeOnlineTokenFrameVariant(mixed $value, bool $playerControlled = false): string
 {
     $variant = is_string($value) ? strtolower(trim($value)) : '';
-    return in_array($variant, ['player', 'creature', 'boss', 'apostle'], true)
+    return in_array($variant, ['player', 'creature', 'elite', 'boss', 'apostle'], true)
         ? $variant
         : ($playerControlled ? 'player' : 'creature');
 }
@@ -1670,25 +1670,49 @@ function commandOnlineState(PDO $connection, array $configuration): never
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['ping'] = $ping;
         } elseif ($command === 'token.roll') {
-            if ($sceneId === '') {
-                rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
-            }
-            $tokenKey = onlineTokenDomainKey($sceneId, $arguments['tokenId'] ?? '');
+            $tokenId = trim((string) ($arguments['tokenId'] ?? ''));
+            $characterId = trim((string) ($arguments['characterId'] ?? ''));
+            $tokenKey = '';
             $initiativeKey = 'initiative:' . $sceneId;
             $indexKey = 'token-index:' . $sceneId;
-            $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity']));
-            $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
-            if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
-                rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
+            if ($tokenId !== '') {
+                if ($sceneId === '') {
+                    rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
+                }
+                $tokenKey = onlineTokenDomainKey($sceneId, $tokenId);
+                $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity']));
+                $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+                if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+                    rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
+                }
+            } else {
+                $characterKey = 'character:' . $characterId;
+                if ($characterId === '' || !validApplicationDomainKey($characterKey)) {
+                    rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+                }
+                $records = array_replace($records, applicationDomainRecords($connection, [$characterKey, 'activity']));
+                $character = applicationDomainPayload($records, $characterKey);
+                if ($character === [] || ($character['ownerPlayerId'] ?? null) !== $accountId) {
+                    rejectOnlineCommand($connection, 403, 'Ce personnage ne vous appartient pas.', 'character_forbidden');
+                }
+                $token = synchronizeOnlineCharacterToken([], $character);
+                $token['characterId'] = $characterId;
+                $token['controllerPlayerId'] = $accountId;
+                $token['name'] = trim((string) ($character['name'] ?? '')) !== ''
+                    ? (string) $character['name'] : 'Personnage';
+                $token['damageDice'] = '';
             }
-            $kind = in_array(($arguments['kind'] ?? ''), ['stat', 'hit', 'initiative', 'damage', 'ability', 'custom'], true)
+            $kind = in_array(($arguments['kind'] ?? ''), ['luck', 'stat', 'hit', 'initiative', 'damage', 'ability', 'custom'], true)
                 ? (string) $arguments['kind'] : 'custom';
             $label = 'Test personnalisé';
             $formula = '1d100';
             $threshold = null;
             $modifier = 0;
-            $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
-            if ($kind === 'stat') {
+            $rollMode = $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+            if ($kind === 'luck') {
+                $label = 'Chance';
+                $formula = '1d100';
+            } elseif ($kind === 'stat') {
                 $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
                 $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
                 if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
@@ -1756,7 +1780,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $activity['rolls'] = array_slice($rolls, 0, 100);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $initiativeUpdated = false;
-            if ($kind === 'initiative' && ($table['tacticalSync']['paused'] ?? false) !== true) {
+            if ($tokenKey !== '' && $kind === 'initiative' && ($table['tacticalSync']['paused'] ?? false) !== true) {
                 $records = onlineSceneTokenRecords($connection, $sceneId, $records);
                 $token['initiative'] = $rolled['total'];
                 $token['_updatedAt'] = (int) floor(microtime(true) * 1000);

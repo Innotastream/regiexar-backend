@@ -219,7 +219,7 @@ function validApplicationTokenDomain(array $payload): bool
     }
     if (array_key_exists('frameVariant', $payload)
         && (!is_string($payload['frameVariant'])
-            || !in_array($payload['frameVariant'], ['player', 'creature', 'boss', 'apostle'], true))) {
+            || !in_array($payload['frameVariant'], ['player', 'creature', 'elite', 'boss', 'apostle'], true))) {
         return false;
     }
     foreach (['hp', 'maxHp', 'mana', 'maxMana', 'armor', 'speed', 'initiativeBonus'] as $key) {
