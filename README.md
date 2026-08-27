@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.7
+# Backend OVH — Régie du Seuil 0.12.8
 
-La 0.12.7 ajoute le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage. Un joueur peut lancer le même arbre de jets depuis sa fiche quand aucun token n’est posé ; le backend vérifie alors directement que la fiche lui appartient. Les jets d’un token continuent d’exiger sa propriété et sa visibilité. La variante visuelle `elite` en cuivre rejoint la liste bornée des cadres autorisés sans élargir les détails tactiques.
+La 0.12.8 conserve le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage et les jets propriétaires avec ou sans token introduits en 0.12.7. En combat, un token joueur reste immobile hors de son tour ; une autorisation temporaire inscrite par le MJ dans l’initiative peut lever cette restriction jusqu’au prochain changement de tour. Le backend contrôle cette exception lui-même et ne transmet aux joueurs qu’un booléen de contrôle, jamais le registre interne des autorisations. La variante visuelle `elite` en cuivre reste bornée sans élargir les détails tactiques.
 
 Elle conserve aussi l’annonce `2.4.6`, version réellement distribuée par Microsoft Store. Cette valeur publique ne complète qu’un `client.latestVersion` vide. La version minimale et son application restent exclusivement pilotées par `regie-private/config.php` : l’annonce Store ne peut donc jamais activer seule un refus HTTP 426.
 

@@ -93,6 +93,19 @@ function validApplicationDomainMap(mixed $value, int $maximumCount, int $maximum
     return true;
 }
 
+function validApplicationMovementOverrides(mixed $value): bool
+{
+    if (!validApplicationDomainMap($value, 2000, 80)) {
+        return false;
+    }
+    foreach ($value as $allowed) {
+        if ($allowed !== true) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function validApplicationDomainStringList(mixed $value, int $maximumCount, int $maximumLength): bool
 {
     if (!validApplicationDomainList($value, $maximumCount)) {
@@ -554,14 +567,18 @@ function validatedDomainPayload(string $key, mixed $payload): array
         }
     }
     if (str_starts_with($key, 'initiative:')
-        && !validApplicationDomainIdentifierList($payload['order'] ?? [], 2000)) {
+        && (!validApplicationDomainIdentifierList($payload['order'] ?? [], 2000)
+            || (array_key_exists('movementOverrides', $payload)
+                && !validApplicationMovementOverrides($payload['movementOverrides'])))) {
         sendError(400, 'Initiative incohérente.', 'invalid_initiative_domain');
     }
     if (str_starts_with($key, 'presentation:')
         && (!is_array($payload['map'] ?? null)
             || !validApplicationTokenList($payload['map']['tokens'] ?? [], 2000)
             || !is_array($payload['initiative'] ?? null)
-            || !validApplicationDomainIdentifierList($payload['initiative']['order'] ?? [], 2000))) {
+            || !validApplicationDomainIdentifierList($payload['initiative']['order'] ?? [], 2000)
+            || (array_key_exists('movementOverrides', $payload['initiative'])
+                && !validApplicationMovementOverrides($payload['initiative']['movementOverrides'])))) {
         sendError(400, 'Instantané de présentation incohérent.', 'invalid_presentation_domain');
     }
     $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);

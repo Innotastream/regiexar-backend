@@ -597,6 +597,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $active = (bool) ($initiative['active'] ?? false);
     $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
     $activeTokenId = $active ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
+    $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
         if (!is_array($token) || ($token['hidden'] ?? false) === true) {
@@ -605,6 +606,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         $owned = ($token['controllerPlayerId'] ?? null) === $accountId;
         $allied = is_string($token['controllerPlayerId'] ?? null) && (string) $token['controllerPlayerId'] !== '';
         $details = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
+        $temporaryMovementAllowed = $active && ($movementOverrides[(string) ($token['id'] ?? '')] ?? false) === true;
         $visible = [
             'id' => $token['id'] ?? null,
             'characterId' => $token['characterId'] ?? null,
@@ -619,7 +621,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'condition' => substr((string) ($token['condition'] ?? ''), 0, 200),
             'detailsVisible' => $details,
             'ownedByYou' => $owned,
-            'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId),
+            'temporaryMovementAllowed' => $temporaryMovementAllowed,
+            'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId || $temporaryMovementAllowed),
         ];
         if ($details) {
             foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'notes'] as $key) {
@@ -657,6 +660,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative = stripForbiddenPlayerData($initiative);
     $map = is_array($map) ? $map : [];
     $initiative = is_array($initiative) ? $initiative : [];
+    unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
     $initiative['currentTokenId'] = in_array($activeTokenId, $visibleOrder, true) ? $activeTokenId : null;
@@ -1637,7 +1641,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (($initiative['active'] ?? false) === true) {
                 $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
                 $activeId = $order[(int) ($initiative['currentIndex'] ?? 0)] ?? null;
-                if ($activeId !== ($token['id'] ?? null)) {
+                $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
+                $movementOverride = ($movementOverrides[(string) ($token['id'] ?? '')] ?? false) === true;
+                if ($activeId !== ($token['id'] ?? null) && !$movementOverride) {
                     rejectOnlineCommand($connection, 403, 'Ce n’est pas le tour de ce token.', 'turn_required');
                 }
             }

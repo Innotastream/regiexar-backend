@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.7 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.8 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.7'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.8'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -77,7 +77,7 @@ test("le backend 0.12.7 conserve la file Codex partagée et la migration révisi
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.7");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.8");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 9);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -93,6 +93,18 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
   assert.match(command, /\$kind === 'luck' \? 'normal' : normalizeOnlineRollMode/);
   assert.match(command, /\$kind === 'luck'[\s\S]*?\$label = 'Chance'[\s\S]*?\$formula = '1d100'/);
   assert.match(command, /\$tokenKey !== '' && \$kind === 'initiative'/);
+});
+
+test("le déplacement hors tour exige une autorisation MJ temporaire et le registre reste privé", async () => {
+  const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
+  const command = online.slice(online.indexOf("} elseif ($command === 'token.move')"), online.indexOf("} elseif ($command === 'ping')"));
+  assert.match(command, /\$movementOverrides = is_array\(\$initiative\['movementOverrides'\]/);
+  assert.match(command, /\$activeId !== \(\$token\['id'\] \?\? null\) && !\$movementOverride/);
+  assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
+  assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
+  assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
+  assert.match(domains, /function validApplicationMovementOverrides/);
+  assert.match(domains, /\$allowed !== true/);
 });
 
 test("la dernière version Store publiée complète seulement une annonce vide sans activer le blocage", async () => {
