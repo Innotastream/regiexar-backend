@@ -66,4 +66,47 @@ requireDomainCompatibility(
     'Un effet temporaire non nul et incomplet doit rester refusé.'
 );
 
+$orderedToken = [
+    'id' => 'legacy-token',
+    'name' => 'Goldark',
+    'resources' => ['hp' => 42, 'mana' => 7],
+];
+$reorderedToken = [
+    'resources' => ['mana' => 7, 'hp' => 42],
+    'resourcePulse' => null,
+    'name' => 'Goldark',
+    'id' => 'legacy-token',
+];
+requireDomainCompatibility(
+    prepareApplicationDomainUpsert('token:scene-1:legacy-token', $reorderedToken, [
+        'payload' => $orderedToken,
+        'revision' => 12,
+    ]) === null,
+    'L’ordre des propriétés et resourcePulse null ne doivent pas créer un faux changement de token.'
+);
+
+$legacyAudio = [
+    'tracks' => [[
+        'assetId' => 'ancienne-piste-locale',
+        'name' => 'Ancienne piste',
+    ]],
+    'playback' => ['muted' => false, 'masterVolume' => 70],
+];
+$normalizedAudio = [
+    'playback' => ['masterVolume' => 70, 'muted' => false],
+    'folders' => [],
+    'tracks' => [[
+        'name' => 'Ancienne piste',
+        'folderId' => null,
+        'assetId' => 'ancienne-piste-locale',
+    ]],
+];
+requireDomainCompatibility(
+    prepareApplicationDomainUpsert('audio', $normalizedAudio, [
+        'payload' => $legacyAudio,
+        'revision' => 8,
+    ]) === null,
+    'Les valeurs de classement médias absentes et leurs valeurs vides normalisées doivent être équivalentes.'
+);
+
 fwrite(STDOUT, "Compatibilité rétroactive des domaines : OK" . PHP_EOL);

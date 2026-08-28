@@ -755,12 +755,56 @@ function applicationDomainPayload(array $records, string $key, array $fallback =
     return is_array($payload) ? $payload : $fallback;
 }
 
+function canonicalApplicationDomainValue(mixed $value): mixed
+{
+    if (!is_array($value)) {
+        return $value;
+    }
+    if (array_is_list($value)) {
+        return array_map('canonicalApplicationDomainValue', $value);
+    }
+    ksort($value, SORT_STRING);
+    foreach ($value as $key => $entry) {
+        $value[$key] = canonicalApplicationDomainValue($entry);
+    }
+    return $value;
+}
+
+function applicationDomainPayloadForComparison(string $key, array $payload): array
+{
+    if (str_starts_with($key, 'token:') && ($payload['resourcePulse'] ?? null) === null) {
+        unset($payload['resourcePulse']);
+    }
+    if ($key === 'audio') {
+        if (($payload['folders'] ?? null) === []) {
+            unset($payload['folders']);
+        }
+        if (is_array($payload['tracks'] ?? null)) {
+            foreach ($payload['tracks'] as $index => $track) {
+                if (!is_array($track) || !array_key_exists('folderId', $track)) {
+                    continue;
+                }
+                if ($track['folderId'] === null || $track['folderId'] === '') {
+                    unset($payload['tracks'][$index]['folderId']);
+                }
+            }
+        }
+    }
+    return canonicalApplicationDomainValue($payload);
+}
+
 function prepareApplicationDomainUpsert(string $key, mixed $payload, ?array $current): ?array
 {
     $payload = validatedDomainPayload($key, $payload);
-    $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $encoded = json_encode(
+        applicationDomainPayloadForComparison($key, $payload),
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+    );
     $currentEncoded = is_array($current)
-        ? json_encode($current['payload'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+        ? json_encode(
+            applicationDomainPayloadForComparison($key, is_array($current['payload'] ?? null) ? $current['payload'] : []),
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
+        )
         : null;
     if ($encoded === $currentEncoded) {
         return null;
@@ -1342,23 +1386,19 @@ function patchApplicationDomains(PDO $connection): never
             $key = trim((string) ($change['key'] ?? ''));
             $operation = ($change['operation'] ?? 'upsert') === 'delete' ? 'delete' : 'upsert';
             $current = $records[$key] ?? null;
+            $prepared = $operation === 'upsert'
+                ? prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current)
+                : prepareApplicationDomainDelete($key, $current);
+            if ($prepared === null) {
+                continue;
+            }
             $expected = max(0, (int) ($change['expectedRevision'] ?? 0));
             $currentRevision = (int) ($current['revision'] ?? 0);
             if ($expected !== $currentRevision) {
                 $conflicts[] = ['key' => $key, 'expectedRevision' => $expected, 'currentRevision' => $currentRevision];
                 continue;
             }
-            if ($operation === 'delete' && $current === null) {
-                continue;
-            }
-            if ($operation === 'upsert') {
-                $prepared = prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current);
-                if ($prepared !== null) {
-                    $pending[] = $prepared;
-                }
-            } else {
-                $pending[] = ['key' => $key, 'operation' => 'delete', 'current' => $current];
-            }
+            $pending[] = $prepared;
         }
         if ($conflicts !== []) {
             $connection->rollBack();

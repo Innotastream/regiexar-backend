@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.13 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.14 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.13'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.14'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -78,7 +78,7 @@ test("le backend 0.12.13 conserve la file Codex partagée et la migration révis
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.13");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.14");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
@@ -496,6 +496,12 @@ test("plusieurs MJ sont sérialisés par transaction sans verrou de session glob
   assert.match(patch, /expectedRevision/);
   assert.match(patch, /domain_revision_conflict/);
   assert.match(patch, /rollBack\(\)/);
+  assert.ok(
+    patch.indexOf("$prepared = $operation === 'upsert'") < patch.indexOf("if ($expected !== $currentRevision)"),
+    "un changement sémantiquement nul doit être écarté avant le contrôle de révision"
+  );
+  assert.match(domains, /function canonicalApplicationDomainValue/);
+  assert.match(domains, /applicationDomainPayloadForComparison/);
   assert.match(online, /GROUP BY a\.id, a\.display_name, s\.effective_mode/);
   assert.match(index, /UNIQUE KEY uq_auth_sessions_account \(account_id\)/);
   assert.doesNotMatch(index, /UNIQUE KEY[^\n]+effective_mode/);
