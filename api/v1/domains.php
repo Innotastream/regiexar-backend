@@ -260,7 +260,7 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
-    if (array_key_exists('resourcePulse', $payload)) {
+    if (array_key_exists('resourcePulse', $payload) && $payload['resourcePulse'] !== null) {
         $pulse = $payload['resourcePulse'];
         if (!is_array($pulse)
             || !validApplicationDomainIdentifier($pulse['id'] ?? null, 120)
@@ -318,15 +318,14 @@ function validApplicationAudioTracks(mixed $tracks, mixed $folders): bool
         $folderChannels[(string) $folder['id']] = (string) $folder['channel'];
     }
     foreach ($tracks as $track) {
-        $channel = $track['channel'] ?? null;
-        if (!validApplicationDomainIdentifier($track['id'] ?? null, 180)
-            || !in_array($channel, ['music', 'ambience'], true)) {
-            return false;
-        }
         $folderId = $track['folderId'] ?? null;
-        if ($folderId !== null && $folderId !== ''
-            && (!validApplicationDomainIdentifier($folderId, 180)
-                || ($folderChannels[(string) $folderId] ?? null) !== $channel)) {
+        if ($folderId === null || $folderId === '') {
+            continue;
+        }
+        $channel = $track['channel'] ?? null;
+        if (!validApplicationDomainIdentifier($folderId, 180)
+            || !in_array($channel, ['music', 'ambience'], true)
+            || ($folderChannels[(string) $folderId] ?? null) !== $channel) {
             return false;
         }
     }

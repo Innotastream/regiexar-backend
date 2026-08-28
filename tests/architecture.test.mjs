@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.12 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.13 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.12'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.13'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -78,7 +78,7 @@ test("le backend 0.12.12 conserve la file Codex partagée et la migration révis
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.12");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.13");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
@@ -408,7 +408,9 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /validApplicationTokenDomain\(\$payload\)/);
   assert.match(domains, /function validApplicationMediaFolders/);
   assert.match(domains, /function validApplicationAudioTracks/);
+  assert.match(domains, /\$folderId === null \|\| \$folderId === ''/);
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
+  assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
   assert.match(online, /\$current\['characterSchemaVersion'\] = 3/);
   assert.match(online, /normalizeOnlineAbilities/);
@@ -509,4 +511,5 @@ test("le workflow backend épingle l’action de lecture du dépôt", async () =
   const workflow = await read(".github/workflows/backend-check.yml");
   assert.match(workflow, /actions\/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8/);
   assert.doesNotMatch(workflow, /actions\/checkout@v5/);
+  assert.match(workflow, /php tests\/domain-backward-compatibility\.php/);
 });
