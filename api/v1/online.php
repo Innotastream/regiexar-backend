@@ -626,7 +626,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId || $temporaryMovementAllowed),
         ];
         if ($details) {
-            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'notes'] as $key) {
+            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'notes', 'resourcePulse'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
                 }
@@ -1396,7 +1396,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
         $pending = [];
         $result = [];
 
-        if ($isGm && !in_array($command, ['ensure-player', 'admin.character.delete'], true)) {
+        if ($isGm && !in_array($command, ['ensure-player', 'admin.character.delete', 'token.resource.adjust'], true)) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
@@ -1655,6 +1655,107 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $token['_movedAt'] = (int) floor(microtime(true) * 1000);
             queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
             $result['token'] = $token;
+        } elseif ($command === 'token.resource.adjust') {
+            if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
+                rejectOnlineCommand($connection, 423, 'Les ressources sont verrouillées pendant la préparation du MJ.', 'table_locked');
+            }
+            $resourceSceneId = $isGm ? trim((string) ($arguments['sceneId'] ?? '')) : $sceneId;
+            if ($resourceSceneId === '' || !validApplicationDomainKey('scene:' . $resourceSceneId)) {
+                rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
+            }
+            $resource = (string) ($arguments['resource'] ?? '');
+            $requestedDelta = is_numeric($arguments['delta'] ?? null) ? (int) $arguments['delta'] : 0;
+            $requestedDelta = max(-1000000000, min(1000000000, $requestedDelta));
+            if (!in_array($resource, ['hp', 'mana'], true) || $requestedDelta === 0) {
+                rejectOnlineCommand($connection, 400, 'Indiquez une ressource et une variation numérique non nulle.', 'invalid_resource_delta');
+            }
+            $tokenKey = onlineTokenDomainKey($resourceSceneId, $arguments['tokenId'] ?? '');
+            $records = array_replace($records, applicationDomainRecords($connection, $tokenKey !== '' ? [$tokenKey] : []));
+            $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+            if ($token === []) {
+                rejectOnlineCommand($connection, 404, 'Token introuvable.', 'token_missing');
+            }
+            if (!$isGm && (($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true)) {
+                rejectOnlineCommand($connection, 403, 'Vous ne pouvez pas modifier les ressources de ce token.', 'token_forbidden');
+            }
+            $maximumKey = $resource === 'mana' ? 'maxMana' : 'maxHp';
+            $character = null;
+            $characterKey = '';
+            $characterId = trim((string) ($token['characterId'] ?? ''));
+            $followsCharacter = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
+            if ($followsCharacter && $characterId !== '') {
+                $characterKey = 'character:' . $characterId;
+                if (validApplicationDomainKey($characterKey)) {
+                    $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+                    $candidate = applicationDomainPayload($records, $characterKey);
+                    if ($candidate !== []) {
+                        if (!$isGm && ($candidate['ownerPlayerId'] ?? null) !== $accountId) {
+                            rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
+                        }
+                        $character = $candidate;
+                        $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+                        $token[$resource] = $resources[$resource] ?? ($token[$resource] ?? 0);
+                        $token[$maximumKey] = $resources[$maximumKey] ?? ($token[$maximumKey] ?? 0);
+                    }
+                }
+            }
+            $maximum = max(0, min(1000000000, is_numeric($token[$maximumKey] ?? null) ? (int) $token[$maximumKey] : 0));
+            if ($maximum <= 0) {
+                rejectOnlineCommand($connection, 409, 'Ce token ne possède pas de maximum pour cette ressource.', 'resource_missing');
+            }
+            $previous = max(0, min($maximum, is_numeric($token[$resource] ?? null) ? (int) $token[$resource] : 0));
+            $current = max(0, min($maximum, $previous + $requestedDelta));
+            $appliedDelta = $current - $previous;
+            if ($appliedDelta === 0) {
+                rejectOnlineCommand($connection, 409, 'La ressource est déjà à sa limite.', 'resource_limit');
+            }
+            $now = (int) floor(microtime(true) * 1000);
+            $pulse = [
+                'id' => 'resource-' . randomToken(12),
+                'resource' => $resource,
+                'delta' => $appliedDelta,
+                'at' => $now,
+            ];
+            $token[$resource] = $current;
+            $token['resourcePulse'] = $pulse;
+            $token['_updatedAt'] = $now;
+            if (is_array($character)) {
+                $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+                $resources[$resource] = $current;
+                $character['resources'] = $resources;
+                $character['_updatedAt'] = $now;
+                queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
+                $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
+                $records = array_replace($records, $characterTokenRecords);
+                foreach ($characterTokenRecords as $relatedTokenKey => $record) {
+                    $relatedToken = applicationDomainPayload($records, $relatedTokenKey);
+                    if (($relatedToken['followCharacter'] ?? true) === false || trim((string) ($relatedToken['linkedTokenId'] ?? '')) !== '') {
+                        continue;
+                    }
+                    $relatedToken[$resource] = $current;
+                    $relatedToken[$maximumKey] = $maximum;
+                    $relatedToken['_updatedAt'] = $now;
+                    if ($relatedTokenKey === $tokenKey) {
+                        $relatedToken['resourcePulse'] = $pulse;
+                        $relatedToken['_updatedAt'] = $now;
+                        $token = $relatedToken;
+                    }
+                    queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $relatedToken);
+                }
+            } else {
+                queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+            }
+            $result['token'] = [
+                'id' => $token['id'] ?? null,
+                'hp' => $token['hp'] ?? null,
+                'maxHp' => $token['maxHp'] ?? null,
+                'mana' => $token['mana'] ?? null,
+                'maxMana' => $token['maxMana'] ?? null,
+                'resourcePulse' => $pulse,
+            ];
+            $result['appliedDelta'] = $appliedDelta;
+            $result['current'] = $current;
+            $result['maximum'] = $maximum;
         } elseif ($command === 'ping') {
             $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
             $activity = applicationDomainPayload($records, 'activity');

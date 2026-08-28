@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.10
+# Backend OVH — Régie du Seuil 0.12.11
 
-La 0.12.10 applique la règle de livraison décidée par le propriétaire : dès qu’un nouveau candidat MSIX est demandé, construit et techniquement contrôlé, sa version est annoncée par la santé publique, même avant son chargement ou sa publication dans Microsoft Store. Le candidat courant `2.5.1` est l’unique version applicative autorisée par l’API : toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Cette annonce ne prétend pas que le paquet est déjà installable depuis le Store.
+La 0.12.11 ajoute l’ajustement atomique des PV et du mana depuis les tokens, avec contrôle de propriété, synchronisation de la fiche liée et signal visuel public borné aux détails déjà autorisés. Elle conserve la règle de livraison décidée par le propriétaire : dès qu’un nouveau candidat MSIX est demandé, construit et techniquement contrôlé, sa version est annoncée par la santé publique, même avant son chargement ou sa publication dans Microsoft Store. Le candidat courant `2.5.1` reste l’unique version applicative autorisée par l’API : toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Cette annonce ne prétend pas que le paquet est déjà installable depuis le Store.
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 

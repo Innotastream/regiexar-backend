@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.10 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.11 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.10'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.11'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -78,7 +78,7 @@ test("le backend 0.12.10 conserve la file Codex partagée et la migration révis
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.10");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.11");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.1");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
@@ -313,11 +313,26 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\$isGm && !in_array\(\$command, \['ensure-player', 'admin\.character\.delete'\], true\)/);
+  assert.match(command, /\$isGm && !in_array\(\$command, \['ensure-player', 'admin\.character\.delete', 'token\.resource\.adjust'\], true\)/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
   assert.match(timerDelete, /deletedTimerId/);
+});
+
+test("les PV et le mana d’un token sont ajustés atomiquement sans élargir les données publiques", async () => {
+  const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
+  const command = online.slice(online.indexOf("$command === 'token.resource.adjust'"), online.indexOf("$command === 'ping'"));
+  assert.match(command, /\$isGm \? trim\(\(string\) \(\$arguments\['sceneId'\]/);
+  assert.match(command, /\!\$isGm && \(\(\$token\['controllerPlayerId'\]/);
+  assert.match(command, /\(\$token\['hidden'\] \?\? false\) === true/);
+  assert.match(command, /\$current = max\(0, min\(\$maximum, \$previous \+ \$requestedDelta\)\)/);
+  assert.match(command, /applicationCharacterTokenDomainRecords\(\$connection, \$characterId\)/);
+  assert.match(command, /queueOnlineDomainUpsert\(\$pending, \$records, \$characterKey, \$character\)/);
+  assert.match(command, /'resourcePulse' => \$pulse/);
+  assert.match(online, /'notes', 'resourcePulse'/);
+  assert.match(domains, /array_key_exists\('resourcePulse', \$payload\)/);
+  assert.match(domains, /\['hp', 'mana'\]/);
 });
 
 test("le rapprochement automatique répare aussi un compte déjà présent en double", async () => {
@@ -391,6 +406,9 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /validApplicationRollList\(\$payload\['rolls'\]/);
   assert.match(domains, /validApplicationTokenList\(\$payload\['tokenLibrary'\]/);
   assert.match(domains, /validApplicationTokenDomain\(\$payload\)/);
+  assert.match(domains, /function validApplicationMediaFolders/);
+  assert.match(domains, /function validApplicationAudioTracks/);
+  assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
   assert.match(online, /\$current\['characterSchemaVersion'\] = 3/);
   assert.match(online, /normalizeOnlineAbilities/);

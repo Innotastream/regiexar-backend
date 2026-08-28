@@ -260,6 +260,17 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
+    if (array_key_exists('resourcePulse', $payload)) {
+        $pulse = $payload['resourcePulse'];
+        if (!is_array($pulse)
+            || !validApplicationDomainIdentifier($pulse['id'] ?? null, 120)
+            || !in_array($pulse['resource'] ?? null, ['hp', 'mana'], true)
+            || !validApplicationDomainNumber($pulse['delta'] ?? null, -1000000000, 1000000000)
+            || (float) ($pulse['delta'] ?? 0) === 0.0
+            || !validApplicationDomainNumber($pulse['at'] ?? null, 1, 9007199254740991)) {
+            return false;
+        }
+    }
     return (!array_key_exists('stats', $payload) || validApplicationTokenStats($payload['stats']))
         && (!array_key_exists('abilities', $payload) || validApplicationAbilities($payload['abilities']));
 }
@@ -271,6 +282,51 @@ function validApplicationTokenList(mixed $value, int $maximumCount): bool
     }
     foreach ($value as $token) {
         if (!validApplicationTokenDomain($token)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validApplicationMediaFolders(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, 200)) {
+        return false;
+    }
+    $ids = [];
+    foreach ($value as $folder) {
+        $id = (string) ($folder['id'] ?? '');
+        if (!validApplicationDomainIdentifier($id, 180)
+            || isset($ids[$id])
+            || !validApplicationDomainText($folder['name'] ?? null, 120, false)
+            || !in_array($folder['channel'] ?? null, ['music', 'ambience'], true)
+            || (array_key_exists('createdAt', $folder) && !validApplicationDomainText($folder['createdAt'], 80))) {
+            return false;
+        }
+        $ids[$id] = (string) $folder['channel'];
+    }
+    return true;
+}
+
+function validApplicationAudioTracks(mixed $tracks, mixed $folders): bool
+{
+    if (!validApplicationDomainObjectList($tracks, 2000) || !validApplicationMediaFolders($folders)) {
+        return false;
+    }
+    $folderChannels = [];
+    foreach ($folders as $folder) {
+        $folderChannels[(string) $folder['id']] = (string) $folder['channel'];
+    }
+    foreach ($tracks as $track) {
+        $channel = $track['channel'] ?? null;
+        if (!validApplicationDomainIdentifier($track['id'] ?? null, 180)
+            || !in_array($channel, ['music', 'ambience'], true)) {
+            return false;
+        }
+        $folderId = $track['folderId'] ?? null;
+        if ($folderId !== null && $folderId !== ''
+            && (!validApplicationDomainIdentifier($folderId, 180)
+                || ($folderChannels[(string) $folderId] ?? null) !== $channel)) {
             return false;
         }
     }
@@ -537,7 +593,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
         sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
     if ($key === 'audio'
-        && !validApplicationDomainObjectList($payload['tracks'] ?? null, 2000)) {
+        && !validApplicationAudioTracks($payload['tracks'] ?? null, $payload['folders'] ?? [])) {
         sendError(400, 'Playlist incohérente.', 'invalid_audio_domain');
     }
     if (str_starts_with($key, 'scene:')) {
@@ -794,6 +850,7 @@ function legacyStateToDomains(array $state): array
         ],
         'library' => ['tokenLibrary' => is_array($state['tokenLibrary'] ?? null) ? $state['tokenLibrary'] : []],
         'audio' => [
+            'folders' => is_array($state['mediaFolders'] ?? null) ? $state['mediaFolders'] : [],
             'tracks' => is_array($state['tracks'] ?? null) ? $state['tracks'] : [],
             'playback' => is_array($state['audio'] ?? null) ? $state['audio'] : [],
         ],
@@ -965,6 +1022,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'shortcuts' => is_array($activity['shortcuts'] ?? null) ? $activity['shortcuts'] : [],
         'rolls' => is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [],
+        'mediaFolders' => is_array($audio['folders'] ?? null) ? $audio['folders'] : [],
         'tracks' => is_array($audio['tracks'] ?? null) ? $audio['tracks'] : [],
         'audio' => is_array($audio['playback'] ?? null) ? $audio['playback'] : [],
         'forge' => $payload('forge'),
