@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.11 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.12 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.11'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.12'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -78,8 +78,8 @@ test("le backend 0.12.11 conserve la file Codex partagée et la migration révis
   assert.match(index, /application_domain_clock/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.11");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.1");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.12");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -132,7 +132,7 @@ test("le déplacement hors tour exige une autorisation MJ temporaire et le regis
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.1'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.2'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
