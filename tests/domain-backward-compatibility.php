@@ -105,4 +105,90 @@ requireDomainCompatibility(
     'Les valeurs de classement médias absentes et leurs valeurs vides normalisées doivent être équivalentes.'
 );
 
+$currentCharacterRecord = [
+    'revision' => 8,
+    'payload' => [
+        'id' => 'character-hira',
+        'resources' => ['hp' => 42, 'maxHp' => 80, 'mana' => 69, 'maxMana' => 100],
+        '_updatedAt' => 200,
+    ],
+];
+$staleCharacter = [
+    'id' => 'character-hira',
+    'resources' => ['hp' => 0, 'maxHp' => 0, 'mana' => 0, 'maxMana' => 0],
+    '_updatedAt' => 100,
+];
+requireDomainCompatibility(
+    prepareApplicationDomainUpsert('character:character-hira', $staleCharacter, $currentCharacterRecord, true) === null,
+    'Une ancienne vue MJ ne doit jamais remettre une fiche joueur récente à zéro.'
+);
+requireDomainCompatibility(
+    prepareApplicationDomainUpsert('character:character-hira', $staleCharacter, $currentCharacterRecord) !== null,
+    'Les commandes ciblées du serveur doivent rester capables de remplacer un document.'
+);
+
+$currentTokenRecord = [
+    'revision' => 12,
+    'payload' => [
+        'id' => 'token-boss',
+        'name' => 'Boss',
+        'x' => 40,
+        'y' => 50,
+        'mana' => 69,
+        'maxMana' => 100,
+        '_updatedAt' => 300,
+        '_movedAt' => 200,
+    ],
+];
+$staleTokenWithNewMovement = [
+    'id' => 'token-boss',
+    'name' => 'Boss',
+    'x' => 75,
+    'y' => 80,
+    'mana' => 0,
+    'maxMana' => 0,
+    '_updatedAt' => 100,
+    '_movedAt' => 400,
+];
+$protectedToken = prepareApplicationDomainUpsert(
+    'token:scene-1:token-boss',
+    $staleTokenWithNewMovement,
+    $currentTokenRecord,
+    true
+);
+requireDomainCompatibility(
+    is_array($protectedToken)
+        && ($protectedToken['payload']['mana'] ?? null) === 69
+        && ($protectedToken['payload']['maxMana'] ?? null) === 100
+        && ($protectedToken['payload']['x'] ?? null) === 75
+        && ($protectedToken['payload']['y'] ?? null) === 80
+        && ($protectedToken['payload']['_movedAt'] ?? null) === 400,
+    'Un ancien token ne doit pas effacer ses ressources, mais son déplacement plus récent doit rester accepté.'
+);
+
+$newTokenDataWithOldMovement = [
+    'id' => 'token-boss',
+    'name' => 'Boss renforcé',
+    'x' => 5,
+    'y' => 6,
+    'mana' => 90,
+    'maxMana' => 120,
+    '_updatedAt' => 500,
+    '_movedAt' => 100,
+];
+$protectedMovement = prepareApplicationDomainUpsert(
+    'token:scene-1:token-boss',
+    $newTokenDataWithOldMovement,
+    $currentTokenRecord,
+    true
+);
+requireDomainCompatibility(
+    is_array($protectedMovement)
+        && ($protectedMovement['payload']['mana'] ?? null) === 90
+        && ($protectedMovement['payload']['x'] ?? null) === 40
+        && ($protectedMovement['payload']['y'] ?? null) === 50
+        && ($protectedMovement['payload']['_movedAt'] ?? null) === 200,
+    'Une modification récente de fiche token ne doit pas ramener sa position à une coordonnée plus ancienne.'
+);
+
 fwrite(STDOUT, "Compatibilité rétroactive des domaines : OK" . PHP_EOL);

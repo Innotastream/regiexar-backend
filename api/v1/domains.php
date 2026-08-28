@@ -793,9 +793,66 @@ function applicationDomainPayloadForComparison(string $key, array $payload): arr
     return canonicalApplicationDomainValue($payload);
 }
 
-function prepareApplicationDomainUpsert(string $key, mixed $payload, ?array $current): ?array
+function applicationDomainEntityTimestamp(array $payload, string $field): int
+{
+    $value = $payload[$field] ?? 0;
+    if (!is_numeric($value) || !is_finite((float) $value)) {
+        return 0;
+    }
+    return max(0, (int) $value);
+}
+
+function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $payload, ?array $current): array
+{
+    if (!is_array($current) || !is_array($current['payload'] ?? null)) {
+        return $payload;
+    }
+    $currentPayload = $current['payload'];
+    $incomingUpdatedAt = applicationDomainEntityTimestamp($payload, '_updatedAt');
+    $currentUpdatedAt = applicationDomainEntityTimestamp($currentPayload, '_updatedAt');
+    if (str_starts_with($key, 'character:')) {
+        return $currentUpdatedAt > $incomingUpdatedAt ? $currentPayload : $payload;
+    }
+    if (!str_starts_with($key, 'token:')) {
+        return $payload;
+    }
+
+    $incomingMovedAt = applicationDomainEntityTimestamp($payload, '_movedAt');
+    $currentMovedAt = applicationDomainEntityTimestamp($currentPayload, '_movedAt');
+    if ($currentUpdatedAt > $incomingUpdatedAt) {
+        $protected = $currentPayload;
+        if ($incomingMovedAt > $currentMovedAt) {
+            foreach (['x', 'y', '_movedAt'] as $field) {
+                if (array_key_exists($field, $payload)) {
+                    $protected[$field] = $payload[$field];
+                }
+            }
+        }
+        return $protected;
+    }
+    if ($currentMovedAt > $incomingMovedAt) {
+        foreach (['x', 'y', '_movedAt'] as $field) {
+            if (array_key_exists($field, $currentPayload)) {
+                $payload[$field] = $currentPayload[$field];
+            } else {
+                unset($payload[$field]);
+            }
+        }
+    }
+    return $payload;
+}
+
+function prepareApplicationDomainUpsert(
+    string $key,
+    mixed $payload,
+    ?array $current,
+    bool $protectAgainstStaleEntityWrite = false
+): ?array
 {
     $payload = validatedDomainPayload($key, $payload);
+    if ($protectAgainstStaleEntityWrite) {
+        $payload = protectApplicationDomainAgainstStaleEntityWrite($key, $payload, $current);
+    }
     $encoded = json_encode(
         applicationDomainPayloadForComparison($key, $payload),
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
@@ -1387,7 +1444,7 @@ function patchApplicationDomains(PDO $connection): never
             $operation = ($change['operation'] ?? 'upsert') === 'delete' ? 'delete' : 'upsert';
             $current = $records[$key] ?? null;
             $prepared = $operation === 'upsert'
-                ? prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current)
+                ? prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current, true)
                 : prepareApplicationDomainDelete($key, $current);
             if ($prepared === null) {
                 continue;

@@ -1,6 +1,9 @@
 name: Vérifier le backend Régie
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
