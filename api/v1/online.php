@@ -923,6 +923,30 @@ function playerCharacterPatch(array $current, array $patch): array
     return $current;
 }
 
+function legacyWholePlayerCharacterPatch(array $patch): bool
+{
+    $signature = [
+        'name', 'color', 'portrait', 'resources', 'stats', 'fatigue', 'armor', 'speed',
+        'initiativeBonus', 'conditions', 'armorText', 'hitThreshold', 'weaponText',
+        'inventory', 'shortcuts', 'abilities', 'linkedTokens',
+    ];
+    return count($patch) >= 24
+        && count(array_intersect($signature, array_keys($patch))) === count($signature);
+}
+
+function playerCharacterPatchChangesCurrent(array $current, array $patch): bool
+{
+    $candidate = playerCharacterPatch($current, $patch);
+    foreach (array_keys($patch) as $key) {
+        $candidateValue = array_key_exists($key, $candidate) ? $candidate[$key] : null;
+        $currentValue = array_key_exists($key, $current) ? $current[$key] : null;
+        if (canonicalApplicationDomainValue($candidateValue) !== canonicalApplicationDomainValue($currentValue)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function onlineRollFormula(string $formula): array
 {
     $normalized = strtolower(str_replace(' ', '', $formula));
@@ -1612,7 +1636,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
             }
             $patch = is_array($arguments['patch'] ?? null) ? $arguments['patch'] : [];
-            $character = playerCharacterPatch($character, $patch);
+            $legacyWholePatch = legacyWholePlayerCharacterPatch($patch);
+            if ($legacyWholePatch && playerCharacterPatchChangesCurrent($character, $patch)) {
+                rejectOnlineCommand(
+                    $connection,
+                    409,
+                    'Une ancienne copie complète a été empêchée d’écraser la fiche en ligne. Modifiez puis enregistrez uniquement les champs voulus.',
+                    'stale_full_character_patch'
+                );
+            }
+            if (!$legacyWholePatch) {
+                $character = playerCharacterPatch($character, $patch);
+            }
             queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
             $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armor', 'speed', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
             if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {

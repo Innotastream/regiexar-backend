@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../api/v1/domains.php';
+require_once __DIR__ . '/../api/v1/online.php';
 
 function requireDomainCompatibility(bool $condition, string $message): void
 {
@@ -119,12 +120,12 @@ $staleCharacter = [
     '_updatedAt' => 100,
 ];
 requireDomainCompatibility(
-    prepareApplicationDomainUpsert('character:character-hira', $staleCharacter, $currentCharacterRecord, true) === null,
+    protectApplicationDomainAgainstStaleEntityWrite(
+        'character:character-hira',
+        $staleCharacter,
+        $currentCharacterRecord
+    ) === $currentCharacterRecord['payload'],
     'Une ancienne vue MJ ne doit jamais remettre une fiche joueur récente à zéro.'
-);
-requireDomainCompatibility(
-    prepareApplicationDomainUpsert('character:character-hira', $staleCharacter, $currentCharacterRecord) !== null,
-    'Les commandes ciblées du serveur doivent rester capables de remplacer un document.'
 );
 
 $currentTokenRecord = [
@@ -150,19 +151,18 @@ $staleTokenWithNewMovement = [
     '_updatedAt' => 100,
     '_movedAt' => 400,
 ];
-$protectedToken = prepareApplicationDomainUpsert(
+$protectedToken = protectApplicationDomainAgainstStaleEntityWrite(
     'token:scene-1:token-boss',
     $staleTokenWithNewMovement,
-    $currentTokenRecord,
-    true
+    $currentTokenRecord
 );
 requireDomainCompatibility(
     is_array($protectedToken)
-        && ($protectedToken['payload']['mana'] ?? null) === 69
-        && ($protectedToken['payload']['maxMana'] ?? null) === 100
-        && ($protectedToken['payload']['x'] ?? null) === 75
-        && ($protectedToken['payload']['y'] ?? null) === 80
-        && ($protectedToken['payload']['_movedAt'] ?? null) === 400,
+        && ($protectedToken['mana'] ?? null) === 69
+        && ($protectedToken['maxMana'] ?? null) === 100
+        && ($protectedToken['x'] ?? null) === 75
+        && ($protectedToken['y'] ?? null) === 80
+        && ($protectedToken['_movedAt'] ?? null) === 400,
     'Un ancien token ne doit pas effacer ses ressources, mais son déplacement plus récent doit rester accepté.'
 );
 
@@ -176,19 +176,59 @@ $newTokenDataWithOldMovement = [
     '_updatedAt' => 500,
     '_movedAt' => 100,
 ];
-$protectedMovement = prepareApplicationDomainUpsert(
+$protectedMovement = protectApplicationDomainAgainstStaleEntityWrite(
     'token:scene-1:token-boss',
     $newTokenDataWithOldMovement,
-    $currentTokenRecord,
-    true
+    $currentTokenRecord
 );
 requireDomainCompatibility(
     is_array($protectedMovement)
-        && ($protectedMovement['payload']['mana'] ?? null) === 90
-        && ($protectedMovement['payload']['x'] ?? null) === 40
-        && ($protectedMovement['payload']['y'] ?? null) === 50
-        && ($protectedMovement['payload']['_movedAt'] ?? null) === 200,
+        && ($protectedMovement['mana'] ?? null) === 90
+        && ($protectedMovement['x'] ?? null) === 40
+        && ($protectedMovement['y'] ?? null) === 50
+        && ($protectedMovement['_movedAt'] ?? null) === 200,
     'Une modification récente de fiche token ne doit pas ramener sa position à une coordonnée plus ancienne.'
+);
+
+$wholeCharacterPatch = [
+    'name' => 'Hira', 'surname' => '', 'givenName' => '', 'race' => '', 'age' => '',
+    'className' => '', 'advancedClass' => '', 'profession' => '', 'previousProfession' => '',
+    'pronouns' => '', 'portrait' => null, 'color' => '#8d72cb',
+    'resources' => ['hp' => 0, 'maxHp' => 0, 'mana' => 0, 'maxMana' => 0],
+    'stats' => [], 'fatigue' => ['current' => 40, 'max' => 100], 'morale' => '',
+    'armor' => 0, 'speed' => 0, 'initiativeBonus' => 0, 'conditions' => [],
+    'publicNotes' => '', 'armorText' => '', 'hitThreshold' => null, 'weaponText' => '',
+    'passives' => '', 'skills' => '', 'specialSkills' => '', 'languages' => '',
+    'inventory' => '', 'personalAdvantageStock' => 1, 'shortcuts' => [],
+    'abilities' => [], 'linkedTokens' => [],
+];
+$currentHira = [
+    ...$wholeCharacterPatch,
+    'id' => 'character-hira',
+    'ownerPlayerId' => 'player-hira',
+    'resources' => ['hp' => 42, 'maxHp' => 80, 'mana' => 69, 'maxMana' => 100],
+    'characterSchema' => 'xar-tsaroth.character-sheet',
+    'characterSchemaVersion' => 3,
+    '_updatedAt' => 500,
+];
+requireDomainCompatibility(
+    legacyWholePlayerCharacterPatch($wholeCharacterPatch),
+    'La réécriture complète produite par la restauration automatique 2.5.2 doit être reconnue.'
+);
+requireDomainCompatibility(
+    playerCharacterPatchChangesCurrent($currentHira, $wholeCharacterPatch),
+    'Une ancienne copie complète à zéro doit être distinguée de la fiche Hira récente.'
+);
+requireDomainCompatibility(
+    !playerCharacterPatchChangesCurrent($currentHira, [
+        ...$wholeCharacterPatch,
+        'resources' => $currentHira['resources'],
+    ]),
+    'Une copie complète identique doit rester un simple non-effet.'
+);
+requireDomainCompatibility(
+    !legacyWholePlayerCharacterPatch(['resources' => ['mana' => 70]]),
+    'Une sauvegarde ciblée de mana doit toujours rester autorisée.'
 );
 
 fwrite(STDOUT, "Compatibilité rétroactive des domaines : OK" . PHP_EOL);

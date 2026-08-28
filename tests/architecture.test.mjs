@@ -335,6 +335,16 @@ test("les PV et le mana d’un token sont ajustés atomiquement sans élargir le
   assert.match(domains, /\['hp', 'mana'\]/);
 });
 
+test("une ancienne restauration complète ne peut plus remettre une fiche joueur à zéro", async () => {
+  const online = await read("api/v1/online.php");
+  const patch = online.slice(online.indexOf("$command === 'character.patch'"), online.indexOf("$command === 'token.move'"));
+  assert.match(online, /function legacyWholePlayerCharacterPatch/);
+  assert.match(online, /function playerCharacterPatchChangesCurrent/);
+  assert.match(patch, /legacyWholePlayerCharacterPatch\(\$patch\)/);
+  assert.match(patch, /stale_full_character_patch/);
+  assert.match(patch, /if \(!\$legacyWholePatch\)[\s\S]*?playerCharacterPatch/);
+});
+
 test("le rapprochement automatique répare aussi un compte déjà présent en double", async () => {
   const online = await read("api/v1/online.php");
   const command = online.slice(online.indexOf("function commandOnlineState"), online.indexOf("function openOnlineConnection"));
