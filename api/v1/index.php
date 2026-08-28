@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.15';
+const XAR_BACKEND_VERSION = '0.12.16';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.2';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
+const XAR_DATABASE_SCHEMA_VERSION = 12;
+const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
@@ -219,8 +221,33 @@ function schemaColumnExists(PDO $connection, string $table, string $column): boo
     return (int) $statement->fetchColumn() > 0;
 }
 
+function acquireMaintenanceLock(PDO $connection, string $name): bool
+{
+    $statement = $connection->prepare('SELECT GET_LOCK(:lock_name, 0)');
+    $statement->execute([':lock_name' => $name]);
+    return (int) $statement->fetchColumn() === 1;
+}
+
+function releaseMaintenanceLock(PDO $connection, string $name): void
+{
+    try {
+        $statement = $connection->prepare('SELECT RELEASE_LOCK(:lock_name)');
+        $statement->execute([':lock_name' => $name]);
+    } catch (Throwable) {
+        // La fermeture de la connexion libère aussi ce verrou opportuniste.
+    }
+}
+
 function ensureCurrentSchema(PDO $connection): void
 {
+    $version = (int) $connection->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
+    if ($version >= XAR_DATABASE_SCHEMA_VERSION) {
+        return;
+    }
+    if ($version < 3) {
+        throw new RuntimeException('schema_initialization_required');
+    }
+
     $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-schema-v11', 15)");
     $lock->execute();
     if ((int) $lock->fetchColumn() !== 1) {
@@ -229,6 +256,9 @@ function ensureCurrentSchema(PDO $connection): void
 
     try {
         $version = (int) $connection->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
+        if ($version >= XAR_DATABASE_SCHEMA_VERSION) {
+            return;
+        }
         if ($version < 3) {
             throw new RuntimeException('schema_initialization_required');
         }
@@ -602,6 +632,31 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(11, 'backend_release_session_drain', 'f3d32f7edfe3b84d453946e92c5ad63a3e0d98d7be8449f2a13c748c9ea768b4')"
             );
+            $version = 11;
+        }
+
+        if ($version < 12) {
+            if (!schemaColumnExists($connection, 'backend_release_state', 'drain_completed_at')) {
+                $connection->exec(
+                    'ALTER TABLE backend_release_state ADD COLUMN drain_completed_at DATETIME(3) NULL AFTER activated_at'
+                );
+            }
+            if (!schemaIndexExists($connection, 'auth_sessions', 'idx_auth_sessions_backend_version')) {
+                $connection->exec(
+                    'ALTER TABLE auth_sessions ADD KEY idx_auth_sessions_backend_version (backend_version)'
+                );
+            }
+            $initializeDrain = $connection->prepare(
+                'UPDATE backend_release_state SET drain_completed_at = CASE '
+                . 'WHEN backend_version = :backend_version THEN NULL '
+                . 'ELSE COALESCE(drain_completed_at, activated_at) END WHERE singleton_id = 1'
+            );
+            $initializeDrain->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(12, 'bounded_runtime_maintenance_and_release_cleanup', "
+                . "'6656df3ebbbacdc1f1bebdd0c17db0f7cf4851935ea0dfec66906139d498fbbc')"
+            );
         }
     } finally {
         try {
@@ -612,41 +667,70 @@ function ensureCurrentSchema(PDO $connection): void
     }
 }
 
+function backendReleaseState(PDO $connection): ?array
+{
+    $statement = $connection->query(
+        'SELECT backend_version, activated_at, drain_completed_at, '
+        . 'DATE_ADD(activated_at, INTERVAL ' . XAR_BACKEND_SESSION_DRAIN_SECONDS . ' SECOND) <= UTC_TIMESTAMP(3) '
+        . 'AS drain_expired FROM backend_release_state WHERE singleton_id = 1 LIMIT 1'
+    );
+    $record = $statement === false ? false : $statement->fetch();
+    return is_array($record) ? $record : null;
+}
+
 function synchronizeBackendRelease(PDO $connection): void
 {
-    $lock = $connection->prepare("SELECT GET_LOCK('xar-regie-backend-release', 5)");
-    $lock->execute();
-    if ((int) $lock->fetchColumn() !== 1) {
-        throw new RuntimeException('backend_release_lock_unavailable');
+    $state = backendReleaseState($connection);
+    $currentGeneration = is_array($state)
+        && hash_equals(XAR_BACKEND_VERSION, (string) ($state['backend_version'] ?? ''));
+    if ($currentGeneration && $state['drain_completed_at'] !== null) {
+        return;
+    }
+    if ($currentGeneration && (int) ($state['drain_expired'] ?? 0) !== 1) {
+        return;
+    }
+    if (!acquireMaintenanceLock($connection, 'xar-regie-backend-release')) {
+        // Une autre requête effectue déjà l'unique transition nécessaire.
+        return;
     }
 
     try {
-        $statement = $connection->query(
-            'SELECT backend_version FROM backend_release_state WHERE singleton_id = 1 LIMIT 1'
-        );
-        $activeVersion = $statement === false ? '' : (string) $statement->fetchColumn();
-        if (!hash_equals(XAR_BACKEND_VERSION, $activeVersion)) {
-            $update = $connection->prepare(
-                'INSERT INTO backend_release_state (singleton_id, backend_version, activated_at) '
-                . 'VALUES (1, :backend_version, UTC_TIMESTAMP(3)) '
-                . 'ON DUPLICATE KEY UPDATE backend_version = VALUES(backend_version), '
-                . 'activated_at = VALUES(activated_at)'
-            );
-            $update->execute([':backend_version' => XAR_BACKEND_VERSION]);
-            $takeover = $connection->prepare(
-                'UPDATE accounts a SET a.takeover_requested_at = UTC_TIMESTAMP(3), a.takeover_request_id = NULL '
-                . 'WHERE EXISTS (SELECT 1 FROM auth_sessions s WHERE s.account_id = a.id '
-                . 'AND s.backend_version <> :backend_version)'
-            );
-            $takeover->execute([':backend_version' => XAR_BACKEND_VERSION]);
+        $state = backendReleaseState($connection);
+        $currentGeneration = is_array($state)
+            && hash_equals(XAR_BACKEND_VERSION, (string) ($state['backend_version'] ?? ''));
+        if (!$currentGeneration) {
+            $connection->beginTransaction();
+            try {
+                $update = $connection->prepare(
+                    'INSERT INTO backend_release_state '
+                    . '(singleton_id, backend_version, activated_at, drain_completed_at) '
+                    . 'VALUES (1, :backend_version, UTC_TIMESTAMP(3), NULL) '
+                    . 'ON DUPLICATE KEY UPDATE backend_version = VALUES(backend_version), '
+                    . 'activated_at = VALUES(activated_at), drain_completed_at = NULL'
+                );
+                $update->execute([':backend_version' => XAR_BACKEND_VERSION]);
+                $takeover = $connection->prepare(
+                    'UPDATE accounts a SET a.takeover_requested_at = UTC_TIMESTAMP(3), a.takeover_request_id = NULL '
+                    . 'WHERE EXISTS (SELECT 1 FROM auth_sessions s WHERE s.account_id = a.id '
+                    . 'AND s.backend_version <> :backend_version)'
+                );
+                $takeover->execute([':backend_version' => XAR_BACKEND_VERSION]);
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) {
+                    $connection->rollBack();
+                }
+                throw $error;
+            }
+            return;
         }
 
-        $expiredRelease = $connection->prepare(
-            'SELECT 1 FROM backend_release_state WHERE singleton_id = 1 '
-            . 'AND DATE_ADD(activated_at, INTERVAL ' . XAR_BACKEND_SESSION_DRAIN_SECONDS . ' SECOND) <= UTC_TIMESTAMP(3)'
-        );
-        $expiredRelease->execute();
-        if ($expiredRelease->fetchColumn() !== false) {
+        if ($state['drain_completed_at'] !== null || (int) ($state['drain_expired'] ?? 0) !== 1) {
+            return;
+        }
+
+        $connection->beginTransaction();
+        try {
             $deleteConnections = $connection->prepare(
                 'DELETE c FROM live_connections c JOIN auth_sessions s ON s.token_hash = c.session_token_hash '
                 . 'WHERE s.backend_version <> :backend_version'
@@ -656,13 +740,20 @@ function synchronizeBackendRelease(PDO $connection): void
                 'DELETE FROM auth_sessions WHERE backend_version <> :backend_version'
             );
             $deleteSessions->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $completed = $connection->prepare(
+                'UPDATE backend_release_state SET drain_completed_at = UTC_TIMESTAMP(3) '
+                . 'WHERE singleton_id = 1 AND backend_version = :backend_version AND drain_completed_at IS NULL'
+            );
+            $completed->execute([':backend_version' => XAR_BACKEND_VERSION]);
+            $connection->commit();
+        } catch (Throwable $error) {
+            if ($connection->inTransaction()) {
+                $connection->rollBack();
+            }
+            throw $error;
         }
     } finally {
-        try {
-            $connection->query("SELECT RELEASE_LOCK('xar-regie-backend-release')");
-        } catch (Throwable) {
-            // La fermeture de la connexion libère aussi ce verrou de maintenance.
-        }
+        releaseMaintenanceLock($connection, 'xar-regie-backend-release');
     }
 }
 
@@ -1325,24 +1416,38 @@ function authenticateAccount(PDO $connection, mixed $username, mixed $password, 
 
 function cleanupAuthentication(PDO $connection): void
 {
+    $lockName = 'xar-regie-authentication-cleanup';
     try {
-        if (random_int(1, 50) !== 1) {
+        if (random_int(1, 50) !== 1 || !acquireMaintenanceLock($connection, $lockName)) {
             return;
         }
-        $connection->exec('DELETE FROM live_connections WHERE expires_at <= UTC_TIMESTAMP(3)');
-        $connection->exec('DELETE FROM auth_sessions WHERE expires_at <= UTC_TIMESTAMP(3)');
-        $connection->exec(
-            'DELETE FROM auth_rate_limits WHERE updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
-        );
-        $connection->exec(
-            'DELETE FROM bootstrap_tokens WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
-            . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
-        );
-        $connection->exec(
-            'DELETE FROM account_recovery_tokens '
-            . 'WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
-            . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)'
-        );
+        try {
+            $connection->exec(
+                'DELETE FROM live_connections WHERE expires_at <= UTC_TIMESTAMP(3) '
+                . 'LIMIT ' . XAR_MAINTENANCE_BATCH_SIZE
+            );
+            $connection->exec(
+                'DELETE FROM auth_sessions WHERE expires_at <= UTC_TIMESTAMP(3) '
+                . 'LIMIT ' . XAR_MAINTENANCE_BATCH_SIZE
+            );
+            $connection->exec(
+                'DELETE FROM auth_rate_limits WHERE updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+                . 'LIMIT ' . XAR_MAINTENANCE_BATCH_SIZE
+            );
+            $connection->exec(
+                'DELETE FROM bootstrap_tokens WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+                . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+                . 'LIMIT ' . XAR_MAINTENANCE_BATCH_SIZE
+            );
+            $connection->exec(
+                'DELETE FROM account_recovery_tokens '
+                . 'WHERE expires_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+                . 'OR consumed_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) '
+                . 'LIMIT ' . XAR_MAINTENANCE_BATCH_SIZE
+            );
+        } finally {
+            releaseMaintenanceLock($connection, $lockName);
+        }
     } catch (Throwable $error) {
         error_log('[xar-regie-api] authentication cleanup failed: ' . get_class($error));
     }

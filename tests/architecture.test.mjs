@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.15 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.16 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.15'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.16'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -76,11 +76,12 @@ test("le backend 0.12.15 conserve la file Codex partagée et la migration révis
   assert.match(index, /image_studio_regie_service/);
   assert.match(index, /image_reference_catalog/);
   assert.match(index, /application_domain_clock/);
+  assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.15");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.16");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.2");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 11);
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 12);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -118,11 +119,18 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
   assert.match(command, /\$tokenKey !== '' && \$kind === 'initiative'/);
 });
 
-test("le déplacement hors tour exige une autorisation MJ temporaire et le registre reste privé", async () => {
+test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les droits Joueur", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
   const command = online.slice(online.indexOf("} elseif ($command === 'token.move')"), online.indexOf("} elseif ($command === 'ping')"));
+  assert.ok(command.indexOf("tacticalSync']['paused") < command.indexOf("if ($token === []"));
+  assert.ok(command.indexOf("if ($sceneId === '')") < command.indexOf("onlineTokenDomainKey"));
   assert.match(command, /\$movementOverrides = is_array\(\$initiative\['movementOverrides'\]/);
+  assert.match(command, /if \(!\$isGm && \(\$initiative\['active'\] \?\? false\) === true\)/);
   assert.match(command, /\$activeId !== \(\$token\['id'\] \?\? null\) && !\$movementOverride/);
+  assert.match(command, /!\$isGm[\s\S]*?controllerPlayerId[\s\S]*?hidden/);
+  assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$x\)/);
+  assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$y\)/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -153,11 +161,83 @@ test("un déploiement backend demande la sauvegarde puis révoque les anciennes 
   assert.match(index, /ALTER TABLE auth_sessions ADD COLUMN backend_version/);
   assert.match(index, /CREATE TABLE IF NOT EXISTS backend_release_state/);
   assert.match(index, /backend_release_session_drain/);
+  assert.match(index, /drain_completed_at/);
   assert.match(index, /INSERT INTO auth_sessions[\s\S]*?backend_version[\s\S]*?:backend_version/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?takeover_requested_at = UTC_TIMESTAMP\(3\)/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?DELETE FROM auth_sessions WHERE backend_version <> :backend_version/);
   assert.match(index, /ensureCurrentSchema\(\$connection\);\s+synchronizeBackendRelease\(\$connection\);/);
   assert.match(online, /backendSessionNeedsHandoff\(\$identity\)[\s\S]*?'session-takeover'[\s\S]*?'backend-update'/);
+});
+
+test("schéma et génération utilisent un chemin stable sans verrou ni nettoyage répété", async () => {
+  const index = await read("api/v1/index.php");
+  const schema = index.slice(index.indexOf("function ensureCurrentSchema"), index.indexOf("function backendReleaseState"));
+  const release = index.slice(index.indexOf("function synchronizeBackendRelease"), index.indexOf("function readJsonBody"));
+  assert.ok(
+    schema.indexOf("SELECT COALESCE(MAX(version), 0)") < schema.indexOf("GET_LOCK('xar-regie-schema-v11'"),
+    "la version du schéma doit être lue avant tout verrou"
+  );
+  assert.match(schema, /if \(\$version >= XAR_DATABASE_SCHEMA_VERSION\) \{\s+return;/);
+  assert.match(schema, /ALTER TABLE backend_release_state ADD COLUMN drain_completed_at/);
+  assert.match(schema, /idx_auth_sessions_backend_version/);
+  assert.match(schema, /WHEN backend_version = :backend_version THEN NULL/);
+  assert.match(schema, /ELSE COALESCE\(drain_completed_at, activated_at\) END/);
+  assert.ok(
+    release.indexOf("$state['drain_completed_at'] !== null") < release.indexOf("acquireMaintenanceLock"),
+    "une génération terminée doit sortir avant le verrou"
+  );
+  const lockIndex = release.indexOf("acquireMaintenanceLock");
+  assert.ok(release.indexOf("$state = backendReleaseState($connection);", lockIndex) > lockIndex);
+  assert.equal((release.match(/beginTransaction\(\)/g) ?? []).length, 2);
+  assert.equal((release.match(/rollBack\(\)/g) ?? []).length, 2);
+  assert.match(release, /if \(!acquireMaintenanceLock\(\$connection, 'xar-regie-backend-release'\)\)[\s\S]*?return;/);
+  assert.match(release, /drain_completed_at = UTC_TIMESTAMP\(3\)/);
+  assert.match(release, /drain_completed_at IS NULL/);
+});
+
+test("les maintenances opportunistes sont non bloquantes et bornées", async () => {
+  const [index, domains, online] = await Promise.all([
+    read("api/v1/index.php"), read("api/v1/domains.php"), read("api/v1/online.php")
+  ]);
+  const authentication = index.slice(index.indexOf("function cleanupAuthentication"), index.indexOf("function bootstrapFirstAccount"));
+  const history = domains.slice(domains.indexOf("function cleanupApplicationDomainHistory"), domains.indexOf("function listApplicationDomainHistory"));
+  const media = online.slice(online.indexOf("function cleanupExpiredMediaRetention"), online.indexOf("function streamOnlineMedia"));
+  assert.match(index, /SELECT GET_LOCK\(:lock_name, 0\)/);
+  assert.match(authentication, /acquireMaintenanceLock/);
+  assert.match(authentication, /LIMIT ' \. XAR_MAINTENANCE_BATCH_SIZE/g);
+  assert.equal((authentication.match(/LIMIT ' \. XAR_MAINTENANCE_BATCH_SIZE/g) ?? []).length, 5);
+  assert.match(history, /acquireMaintenanceLock/);
+  assert.match(history, /LIMIT ' \. XAR_DOMAIN_MAINTENANCE_BATCH_SIZE/g);
+  assert.equal((history.match(/LIMIT ' \. XAR_DOMAIN_MAINTENANCE_BATCH_SIZE/g) ?? []).length, 2);
+  assert.match(media, /LIMIT ' \. XAR_MEDIA_MAINTENANCE_CANDIDATES/g);
+  assert.equal((media.match(/XAR_MEDIA_MAINTENANCE_CANDIDATES/g) ?? []).length, 2);
+});
+
+test("le SSE adapte sa cadence, reprend par identifiant et désynchronise les reconnexions", async () => {
+  const online = await read("api/v1/online.php");
+  const stream = online.slice(online.indexOf("function streamOnlineEvents"), online.indexOf("function privateMediaDirectory"));
+  assert.match(online, /function onlineEventPollDelayMicroseconds/);
+  assert.match(online, /XAR_SSE_MAXIMUM_POLL_MICROSECONDS/);
+  assert.match(stream, /HTTP_LAST_EVENT_ID/);
+  assert.match(stream, /\$_GET\['revision'\] \?\? \$_SERVER\['HTTP_LAST_EVENT_ID'\] \?\? 0/);
+  assert.match(stream, /if \(\$currentRevision !== \$knownRevision\)[\s\S]*?writeOnlineEvent\('revision'/);
+  assert.match(stream, /\$knownRevision = \$currentRevision;/);
+  assert.match(stream, /usleep\(onlineEventPollDelayMicroseconds\(\$idleChecks\)\)/);
+  assert.match(stream, /\$idleChecks\+\+/);
+  assert.match(stream, /onlineEventReconnectDelayMilliseconds\(\$connectionId\)/);
+  assert.match(online, /echo 'id: ' \. max\(0, \$id\)/);
+});
+
+test("GET state évite toute projection et présence lorsque la révision est inchangée", async () => {
+  const online = await read("api/v1/online.php");
+  const reader = online.slice(online.indexOf("function readOnlineState"), online.indexOf("function rejectLegacyOnlineState"));
+  const fastPath = reader.slice(reader.indexOf("if ($since !== null)"), reader.indexOf("$record ="));
+  assert.match(online, /function requestedOnlineStateRevision/);
+  assert.ok(reader.indexOf("requireIdentity($connection)") < reader.indexOf("requestedOnlineStateRevision()"));
+  assert.match(fastPath, /domainClockRecord\(\$connection\)/);
+  assert.match(fastPath, /'unchanged' => true/);
+  assert.match(fastPath, /'state' => null/);
+  assert.doesNotMatch(fastPath, /domainApplicationStateRecord|playerApplicationStateRecord|liveOnlinePresence/);
 });
 
 test("le statut Discord MJ expose seulement configuré et activé sans renvoyer les webhooks", async () => {
@@ -313,7 +393,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\$isGm && !in_array\(\$command, \['ensure-player', 'admin\.character\.delete', 'token\.resource\.adjust'\], true\)/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);

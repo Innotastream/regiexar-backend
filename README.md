@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.15
+# Backend OVH — Régie du Seuil 0.12.16
 
-La 0.12.15 empêche une ancienne vue MJ de réécrire une fiche joueur ou un token plus récent. Les horodatages de contenu et de déplacement sont arbitrés séparément : une position récente reste acceptée sans pouvoir rétablir d’anciens PV ou mana, et une fiche récente conserve la dernière position connue. Elle bloque aussi la restauration automatique complète de la 2.5.2 lorsqu’elle diffère de la fiche en ligne, tout en laissant passer les sauvegardes ciblées normales. Elle conserve enfin la neutralisation 0.12.14 des faux conflits dus au seul ordre des propriétés JSON et aux valeurs de compatibilité vides (`resourcePulse: null`, `folders: []`, `folderId: null`). Elle continue d’annoncer le candidat MSIX `2.5.2`, construit et techniquement contrôlé, comme unique version applicative autorisée par l’API ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Cette annonce ne prétend pas que le paquet est déjà installable depuis le Store.
+La 0.12.16 réduit la contention lorsque dix participants agissent ensemble. En régime stable, les requêtes ne prennent plus les verrous globaux de schéma et de génération ; le nettoyage d’une ancienne génération est marqué comme terminé et ne se rejoue plus à chaque appel. Les maintenances opportunistes sont non bloquantes, sérialisées et bornées par lots. Le flux SSE accélère après une action puis ralentit progressivement au repos, reprend avec `Last-Event-ID` et répartit les reconnexions. `GET /api/v1/state?since=N` répond immédiatement sans projection ni présence lorsque rien n’a changé, et le déplacement MJ peut emprunter la même commande ciblée que le joueur sans recomposer toute la table. Elle conserve toutes les protections anti-rollback de la 0.12.15 et continue d’annoncer uniquement l’application `2.5.2` ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`.
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 
@@ -29,7 +29,7 @@ La première requête 0.7 transforme une seule fois l’ancien `application_stat
 
 Routes principales :
 
-- `GET /api/v1/state` : vue complète pour un MJ, vue filtrée et ciblée sur la scène active pour un joueur ;
+- `GET /api/v1/state` : vue complète pour un MJ, vue filtrée et ciblée sur la scène active pour un joueur ; `?since=N` renvoie un non-changement léger sans présence lorsque la révision est déjà connue ;
 - `GET|PATCH /api/v1/state/domains` : deltas et écritures MJ avec révision optimiste par document ;
 - `GET /api/v1/state/domains/history` et `POST .../history/restore` : historique/restauration administrateur ;
 - `POST /api/v1/state/command` : commandes joueur ciblées sans reconstruction de l’état global ;

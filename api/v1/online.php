@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
+const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
+const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
+const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 1500000;
 
 function requireIdentity(PDO $connection): array
 {
@@ -744,9 +747,45 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     ];
 }
 
+function requestedOnlineStateRevision(): ?int
+{
+    if (!array_key_exists('since', $_GET)) {
+        return null;
+    }
+    $value = $_GET['since'];
+    if (!is_string($value) && !is_int($value)) {
+        sendError(400, 'Révision conditionnelle invalide.', 'invalid_since_revision');
+    }
+    $raw = trim((string) $value);
+    if (preg_match('/^(?:0|[1-9][0-9]{0,18})$/D', $raw) !== 1) {
+        sendError(400, 'Révision conditionnelle invalide.', 'invalid_since_revision');
+    }
+    $revision = filter_var($raw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+    if ($revision === false) {
+        sendError(400, 'Révision conditionnelle invalide.', 'invalid_since_revision');
+    }
+    return (int) $revision;
+}
+
 function readOnlineState(PDO $connection, bool $headOnly = false): never
 {
     $identity = requireIdentity($connection);
+    $since = requestedOnlineStateRevision();
+    if ($since !== null) {
+        $clock = domainClockRecord($connection);
+        if ($clock['initializedAt'] === null) {
+            ensureDomainStoreInitialized($connection);
+            $clock = domainClockRecord($connection);
+        }
+        if ((int) $clock['globalRevision'] <= $since) {
+            sendJson(200, [
+                'ok' => true,
+                'unchanged' => true,
+                'state' => null,
+                'revision' => (int) $clock['globalRevision'],
+            ], $headOnly);
+        }
+    }
     $record = (string) $identity['effective_mode'] === 'gm'
         ? domainApplicationStateRecord($connection)
         : playerApplicationStateRecord($connection);
@@ -1420,7 +1459,11 @@ function commandOnlineState(PDO $connection, array $configuration): never
         $pending = [];
         $result = [];
 
-        if ($isGm && !in_array($command, ['ensure-player', 'admin.character.delete', 'token.resource.adjust'], true)) {
+        if ($isGm && !in_array(
+            $command,
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust'],
+            true
+        )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
@@ -1670,11 +1713,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $initiativeKey = 'initiative:' . $sceneId;
             $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
-            if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+            if ($token === [] || (!$isGm
+                && (($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true))) {
                 rejectOnlineCommand($connection, 403, 'Déplacement refusé.', 'token_forbidden');
             }
             $initiative = applicationDomainPayload($records, $initiativeKey);
-            if (($initiative['active'] ?? false) === true) {
+            if (!$isGm && ($initiative['active'] ?? false) === true) {
                 $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
                 $activeId = $order[(int) ($initiative['currentIndex'] ?? 0)] ?? null;
                 $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
@@ -2363,8 +2407,35 @@ function onlineEvents(PDO $connection, bool $headOnly = false): never
     ], $headOnly);
 }
 
-function writeOnlineEvent(string $event, array $payload): void
+function onlineEventPollDelayMicroseconds(int $idleChecks): int
 {
+    if ($idleChecks <= 1) {
+        return XAR_SSE_MINIMUM_POLL_MICROSECONDS;
+    }
+    if ($idleChecks <= 4) {
+        return 500000;
+    }
+    if ($idleChecks <= 10) {
+        return 750000;
+    }
+    if ($idleChecks <= 20) {
+        return 1000000;
+    }
+    return XAR_SSE_MAXIMUM_POLL_MICROSECONDS;
+}
+
+function onlineEventReconnectDelayMilliseconds(string $connectionId): int
+{
+    $bytes = unpack('Nvalue', substr(hash('sha256', $connectionId, true), 0, 4));
+    $value = is_array($bytes) ? (int) ($bytes['value'] ?? 0) : 0;
+    return 250 + ($value % 651);
+}
+
+function writeOnlineEvent(string $event, array $payload, ?int $id = null): void
+{
+    if ($id !== null) {
+        echo 'id: ' . max(0, $id) . "\n";
+    }
     echo 'event: ' . $event . "\n";
     echo 'data: ' . json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n\n";
     @flush();
@@ -2410,14 +2481,15 @@ function streamOnlineEvents(PDO $connection): never
     if (!refreshOnlineConnectionRecord($connection, $rawId, $tokenHash)) {
         sendError(404, 'Connexion expirée.', 'connection_expired');
     }
-    $knownRevision = max(0, (int) ($_GET['revision'] ?? 0));
+    $revisionHint = $_GET['revision'] ?? $_SERVER['HTTP_LAST_EVENT_ID'] ?? 0;
+    $knownRevision = max(0, is_numeric($revisionHint) ? (int) $revisionHint : 0);
     ensureDomainStoreInitialized($connection);
     $currentRevision = (int) domainClockRecord($connection)['globalRevision'];
     $presence = liveOnlinePresence($connection);
     $presenceFingerprint = hash('sha256', json_encode($presence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
     @ini_set('zlib.output_compression', '0');
-    @set_time_limit(25);
+    @set_time_limit(30);
     while (ob_get_level() > 0) {
         @ob_end_clean();
     }
@@ -2428,7 +2500,9 @@ function streamOnlineEvents(PDO $connection): never
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
 
-    writeOnlineEvent('revision', ['revision' => $currentRevision]);
+    if ($currentRevision !== $knownRevision) {
+        writeOnlineEvent('revision', ['revision' => $currentRevision], $currentRevision);
+    }
     writeOnlineEvent('presence', ['presence' => $presence]);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
     if (backendSessionNeedsHandoff($identity)) {
@@ -2440,22 +2514,27 @@ function streamOnlineEvents(PDO $connection): never
     $knownRevision = $currentRevision;
 
     $startedAt = microtime(true);
-    $nextPresenceAt = $startedAt + 4.0;
-    $nextIdentityAt = $startedAt + 4.0;
-    $nextConnectionTouchAt = $startedAt + 10.0;
+    $nextPresenceAt = $startedAt + 6.0;
+    $nextIdentityAt = $startedAt + 6.0;
+    $nextConnectionTouchAt = $startedAt + 12.0;
     $nextHeartbeatAt = $startedAt + 10.0;
+    $idleChecks = 0;
+    $streamLifetime = 20.0 + (onlineEventReconnectDelayMilliseconds($connectionId) / 1000.0);
     $revisionStatement = $connection->prepare('SELECT global_revision FROM application_domain_clock WHERE singleton_id = 1');
-    while (!connection_aborted() && microtime(true) - $startedAt < 20.0) {
-        usleep(500000);
+    while (!connection_aborted() && microtime(true) - $startedAt < $streamLifetime) {
+        usleep(onlineEventPollDelayMicroseconds($idleChecks));
         $now = microtime(true);
         $revisionStatement->execute();
         $nextRevision = (int) ($revisionStatement->fetchColumn() ?: 0);
         if ($nextRevision !== $knownRevision) {
             $knownRevision = $nextRevision;
-            writeOnlineEvent('revision', ['revision' => $knownRevision]);
+            $idleChecks = 0;
+            writeOnlineEvent('revision', ['revision' => $knownRevision], $knownRevision);
+        } else {
+            $idleChecks++;
         }
         if ($now >= $nextPresenceAt) {
-            $nextPresenceAt = $now + 4.0;
+            $nextPresenceAt = $now + 6.0;
             $nextPresence = liveOnlinePresence($connection);
             $nextFingerprint = hash('sha256', json_encode($nextPresence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
             if (!hash_equals($presenceFingerprint, $nextFingerprint)) {
@@ -2464,7 +2543,7 @@ function streamOnlineEvents(PDO $connection): never
             }
         }
         if ($now >= $nextIdentityAt) {
-            $nextIdentityAt = $now + 4.0;
+            $nextIdentityAt = $now + 6.0;
             $identity = resolveSession($connection, $token, false);
             if (!is_array($identity)) {
                 writeOnlineEvent('session-replaced', ['reason' => 'session-revoked']);
@@ -2481,7 +2560,7 @@ function streamOnlineEvents(PDO $connection): never
             }
         }
         if ($now >= $nextConnectionTouchAt) {
-            $nextConnectionTouchAt = $now + 10.0;
+            $nextConnectionTouchAt = $now + 12.0;
             if (!refreshOnlineConnectionRecord($connection, $rawId, $tokenHash)) {
                 writeOnlineEvent('session-replaced', ['reason' => 'connection-expired']);
                 break;
@@ -2492,7 +2571,7 @@ function streamOnlineEvents(PDO $connection): never
             writeOnlineEvent('heartbeat', ['at' => (int) floor($now * 1000)]);
         }
     }
-    writeOnlineEvent('reconnect', ['afterMilliseconds' => 100]);
+    writeOnlineEvent('reconnect', ['afterMilliseconds' => onlineEventReconnectDelayMilliseconds($connectionId)]);
     exit;
 }
 
@@ -2809,7 +2888,8 @@ function cleanupExpiredMediaRetention(PDO $connection): void
 {
     $orphanCandidates = $connection->query(
         'SELECT id FROM media_objects WHERE pending_delete_at IS NULL AND public_slug IS NULL '
-        . 'AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) ORDER BY created_at LIMIT 50'
+        . 'AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) ORDER BY created_at LIMIT '
+        . XAR_MEDIA_MAINTENANCE_CANDIDATES
     );
     foreach ($orphanCandidates === false ? [] : $orphanCandidates->fetchAll() as $candidate) {
         $candidateId = (string) ($candidate['id'] ?? '');
@@ -2826,7 +2906,7 @@ function cleanupExpiredMediaRetention(PDO $connection): void
     $statement = $connection->query(
         'SELECT id, stored_name FROM media_objects WHERE pending_delete_at IS NOT NULL '
         . 'AND pending_delete_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
-        . 'ORDER BY pending_delete_at LIMIT 50'
+        . 'ORDER BY pending_delete_at LIMIT ' . XAR_MEDIA_MAINTENANCE_CANDIDATES
     );
     foreach ($statement === false ? [] : $statement->fetchAll() as $record) {
         $id = (string) ($record['id'] ?? '');

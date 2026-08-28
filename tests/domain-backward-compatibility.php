@@ -231,4 +231,32 @@ requireDomainCompatibility(
     'Une sauvegarde ciblée de mana doit toujours rester autorisée.'
 );
 
+$pollDelays = array_map('onlineEventPollDelayMicroseconds', [0, 2, 5, 11, 21, 1000]);
+requireDomainCompatibility(
+    $pollDelays === [250000, 500000, 750000, 1000000, 1500000, 1500000],
+    'Le flux SSE doit accélérer après une action puis plafonner son attente au repos.'
+);
+requireDomainCompatibility(
+    onlineEventReconnectDelayMilliseconds('connexion-a')
+        === onlineEventReconnectDelayMilliseconds('connexion-a'),
+    'La désynchronisation SSE doit rester stable pour une connexion donnée.'
+);
+$reconnectDelay = onlineEventReconnectDelayMilliseconds('connexion-a');
+requireDomainCompatibility(
+    $reconnectDelay >= 250 && $reconnectDelay <= 900,
+    'La reconnexion SSE doit rester dans sa fenêtre bornée.'
+);
+
+unset($_GET['since']);
+requireDomainCompatibility(
+    requestedOnlineStateRevision() === null,
+    'Une lecture d’état ordinaire ne doit pas activer le chemin conditionnel.'
+);
+$_GET['since'] = '42';
+requireDomainCompatibility(
+    requestedOnlineStateRevision() === 42,
+    'Une révision conditionnelle valide doit être conservée exactement.'
+);
+unset($_GET['since']);
+
 fwrite(STDOUT, "Compatibilité rétroactive des domaines : OK" . PHP_EOL);

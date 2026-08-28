@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.12.15",
+  "backendVersion": "0.12.16",
   "announcedApplicationVersion": "2.5.2",
   "apiVersion": "v1",
   "publicOrigin": "https://regie-xar-tsaroth.fr",
   "documentRoot": "regie",
   "privateConfigDirectory": "regie-private",
   "applicationIntegration": "revisioned-domains",
-  "databaseSchemaVersion": 11,
+  "databaseSchemaVersion": 12,
   "minimumApplicationVersion": "1.16.0",
   "imageStudioMinimumApplicationVersion": "2.1.0"
 }

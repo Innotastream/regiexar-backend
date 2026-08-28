@@ -6,6 +6,7 @@ const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_SESSION_SCHEMA_VERSION = 11;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
+const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
 
 function validApplicationDomainKey(string $key): bool
 {
@@ -1490,19 +1491,27 @@ function patchApplicationDomains(PDO $connection): never
 
 function cleanupApplicationDomainHistory(PDO $connection): void
 {
+    $lockName = 'xar-regie-domain-cleanup';
     try {
-        if (random_int(1, 25) !== 1) {
+        if (random_int(1, 25) !== 1 || !acquireMaintenanceLock($connection, $lockName)) {
             return;
         }
-        $connection->exec(
-            'DELETE FROM application_domain_changes WHERE global_revision < '
-            . '(SELECT cutoff FROM (SELECT GREATEST(0, global_revision - 2000) AS cutoff '
-            . 'FROM application_domain_clock WHERE singleton_id = 1) AS retained)'
-        );
-        $connection->exec(
-            'DELETE FROM application_domain_history WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY)'
-        );
-        cleanupExpiredMediaRetention($connection);
+        try {
+            $connection->exec(
+                'DELETE FROM application_domain_changes WHERE global_revision < '
+                . '(SELECT cutoff FROM (SELECT GREATEST(0, global_revision - 2000) AS cutoff '
+                . 'FROM application_domain_clock WHERE singleton_id = 1) AS retained) '
+                . 'LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
+            );
+            $connection->exec(
+                'DELETE FROM application_domain_history '
+                . 'WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
+                . 'LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
+            );
+            cleanupExpiredMediaRetention($connection);
+        } finally {
+            releaseMaintenanceLock($connection, $lockName);
+        }
     } catch (Throwable $error) {
         error_log('[xar-regie-api] domain history cleanup failed: ' . get_class($error));
     }
