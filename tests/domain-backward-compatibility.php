@@ -78,10 +78,8 @@ $reorderedToken = [
     'id' => 'legacy-token',
 ];
 requireDomainCompatibility(
-    prepareApplicationDomainUpsert('token:scene-1:legacy-token', $reorderedToken, [
-        'payload' => $orderedToken,
-        'revision' => 12,
-    ]) === null,
+    applicationDomainPayloadForComparison('token:scene-1:legacy-token', $reorderedToken)
+        === applicationDomainPayloadForComparison('token:scene-1:legacy-token', $orderedToken),
     'L’ordre des propriétés et resourcePulse null ne doivent pas créer un faux changement de token.'
 );
 
@@ -102,10 +100,8 @@ $normalizedAudio = [
     ]],
 ];
 requireDomainCompatibility(
-    prepareApplicationDomainUpsert('audio', $normalizedAudio, [
-        'payload' => $legacyAudio,
-        'revision' => 8,
-    ]) === null,
+    applicationDomainPayloadForComparison('audio', $normalizedAudio)
+        === applicationDomainPayloadForComparison('audio', $legacyAudio),
     'Les valeurs de classement médias absentes et leurs valeurs vides normalisées doivent être équivalentes.'
 );
 
