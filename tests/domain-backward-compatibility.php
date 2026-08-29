@@ -281,6 +281,63 @@ requireDomainCompatibility(
     'Deux anciens identifiants équivalents doivent rester ambigus et non fusionnés.'
 );
 
+$adaLegacyId = 'player-7fd6193e-b970-4d76-bbb9-11fc8ef8d386';
+$adaAccountId = 'usr_ada_12345678';
+$adaRoster = [
+    'playerPreferences' => [$adaLegacyId => ['activePage' => 'characters']],
+    'playerTombstones' => [],
+    'characterTombstones' => [],
+];
+$adaRecords = [
+    'character:character-ada-12345678' => [
+        'revision' => 3,
+        'payload' => [
+            'id' => 'character-ada-12345678',
+            'ownerPlayerId' => $adaLegacyId,
+            'name' => 'Ada',
+            '_updatedAt' => 100,
+        ],
+    ],
+    'character:character-vraska-12345678' => [
+        'revision' => 5,
+        'payload' => [
+            'id' => 'character-vraska-12345678',
+            'ownerPlayerId' => $adaLegacyId,
+            'name' => 'Vraska',
+            '_updatedAt' => 100,
+        ],
+    ],
+    'character:character-autre-12345678' => [
+        'revision' => 2,
+        'payload' => [
+            'id' => 'character-autre-12345678',
+            'ownerPlayerId' => 'player-autre',
+            'name' => 'Autre',
+            '_updatedAt' => 100,
+        ],
+    ],
+];
+$adaPending = [];
+queueOnlinePlayerOwnershipRepair(
+    $adaPending,
+    $adaRecords,
+    $adaRoster,
+    $adaLegacyId,
+    $adaAccountId,
+    200
+);
+requireDomainCompatibility(
+    ($adaPending['character:character-ada-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
+        && ($adaPending['character:character-vraska-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId,
+    'Le compte Ada doit récupérer ensemble ses fiches Ada et Vraska.'
+);
+requireDomainCompatibility(
+    !isset($adaPending['character:character-autre-12345678'])
+        && !isset($adaRoster['playerPreferences'][$adaLegacyId])
+        && ($adaRoster['playerPreferences'][$adaAccountId]['activePage'] ?? null) === 'characters',
+    'La réparation d’Ada ne doit toucher ni les autres joueurs ni perdre ses préférences.'
+);
+
 unset($_GET['since']);
 requireDomainCompatibility(
     requestedOnlineStateRevision() === null,
