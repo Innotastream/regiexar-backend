@@ -373,6 +373,55 @@ requireDomainCompatibility(
     ) === $inhoLegacyId,
     'Le compte Innota doit retrouver explicitement la fiche Inho même si les noms du compte et du roster diffèrent.'
 );
+$globalRepairRecords = [
+    'roster' => [
+        'revision' => 9,
+        'payload' => [
+            'players' => [
+                ['id' => $adaAccountId, 'name' => 'Ada'],
+                ['id' => $adaLegacyId, 'name' => 'À renseigner'],
+                ['id' => $inhoAccountId, 'name' => 'Innota'],
+                ['id' => $inhoLegacyId, 'name' => 'À renseigner'],
+                ['id' => 'player-autre', 'name' => 'Autre'],
+            ],
+            'characterOrder' => [
+                'character-ada-12345678',
+                'character-vraska-12345678',
+                'character-inho-12345678',
+                'character-autre-12345678',
+            ],
+            'playerPreferences' => [],
+            'playerTombstones' => [],
+            'characterTombstones' => [],
+        ],
+    ],
+    'character:character-ada-12345678' => $adaRecords['character:character-ada-12345678'],
+    'character:character-vraska-12345678' => $adaRecords['character:character-vraska-12345678'],
+    'character:character-inho-12345678' => $inhoRecords['character:character-inho-12345678'],
+    'character:character-autre-12345678' => $adaRecords['character:character-autre-12345678'],
+];
+$globalAccounts = [
+    ['id' => $adaAccountId, 'username' => 'ada', 'display_name' => 'Ada'],
+    ['id' => $inhoAccountId, 'username' => 'Innota', 'display_name' => 'Jonathan'],
+    ['id' => 'usr_autre_12345678', 'username' => 'sans-fiche', 'display_name' => 'Sans fiche'],
+];
+$globalProposals = onlineRosterOwnershipProposals($globalRepairRecords, $globalAccounts);
+requireDomainCompatibility(
+    ($globalProposals[$adaAccountId]['oldId'] ?? null) === $adaLegacyId
+        && ($globalProposals[$inhoAccountId]['oldId'] ?? null) === $inhoLegacyId
+        && !isset($globalProposals['usr_autre_12345678']),
+    'La réconciliation globale doit préparer Ada et Innota ensemble sans inventer de propriétaire au compte sans fiche.'
+);
+$ambiguousGlobalProposals = onlineRosterOwnershipProposals($globalRepairRecords, [
+    ...$globalAccounts,
+    ['id' => 'usr_ada_homonyme_12345678', 'username' => 'ada', 'display_name' => 'Ada'],
+]);
+requireDomainCompatibility(
+    !isset($ambiguousGlobalProposals[$adaAccountId])
+        && !isset($ambiguousGlobalProposals['usr_ada_homonyme_12345678'])
+        && ($ambiguousGlobalProposals[$inhoAccountId]['oldId'] ?? null) === $inhoLegacyId,
+    'Deux comptes homonymes ne doivent jamais se partager le même ancien propriétaire, sans bloquer Innota.'
+);
 $adaPending = [];
 queueOnlinePlayerOwnershipRepair(
     $adaPending,

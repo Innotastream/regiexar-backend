@@ -7,7 +7,7 @@ const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 1500000;
-const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 2;
+const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 3;
 
 function requireIdentity(PDO $connection): array
 {
@@ -776,8 +776,8 @@ function readOnlineState(PDO $connection, bool $headOnly = false): never
     // La réparation doit précéder le chemin `since`, sinon un joueur déjà
     // connecté peut recevoir "unchanged" indéfiniment et ne jamais revoir ses
     // fiches. Une lecture HEAD reste strictement sans effet de bord.
-    if (!$headOnly && (string) $identity['effective_mode'] !== 'gm') {
-        repairOnlinePlayerIdentityOnRead($connection, $identity);
+    if (!$headOnly) {
+        repairOnlineRosterOwnershipsOnRead($connection, $identity);
     }
     $since = requestedOnlineStateRevision();
     if ($since !== null) {
@@ -887,12 +887,9 @@ function rosterMigrationCandidateIndex(
     return count($candidates) === 1 ? (int) array_key_first($candidates) : -1;
 }
 
-function onlineIdentityRepairVersion(array $roster, string $accountId): int
+function onlineRosterOwnershipRepairVersion(array $roster): int
 {
-    $preferences = is_array($roster['playerPreferences'][$accountId] ?? null)
-        ? $roster['playerPreferences'][$accountId]
-        : [];
-    return max(0, (int) ($preferences['_ownershipRepairVersion'] ?? 0));
+    return max(0, (int) ($roster['_ownershipRepairVersion'] ?? 0));
 }
 
 function onlineIdentityLegacyOwnerId(array $records, string $accountId, array $identity): string
@@ -939,6 +936,57 @@ function onlineIdentityLegacyOwnerId(array $records, string $accountId, array $i
         }
     }
     return count($candidates) === 1 ? (string) array_key_first($candidates) : '';
+}
+
+function onlineRosterOwnershipProposals(array $records, array $accounts): array
+{
+    $accountIds = [];
+    foreach ($accounts as $account) {
+        if (is_array($account) && (string) ($account['id'] ?? '') !== '') {
+            $accountIds[(string) $account['id']] = true;
+        }
+    }
+
+    $characterCounts = [];
+    foreach ($records as $key => $record) {
+        if (!str_starts_with($key, 'character:')) {
+            continue;
+        }
+        $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
+        if ($ownerPlayerId !== '') {
+            $characterCounts[$ownerPlayerId] = ($characterCounts[$ownerPlayerId] ?? 0) + 1;
+        }
+    }
+
+    $proposals = [];
+    $claims = [];
+    foreach ($accounts as $account) {
+        if (!is_array($account)) {
+            continue;
+        }
+        $accountId = (string) ($account['id'] ?? '');
+        if ($accountId === '' || ($characterCounts[$accountId] ?? 0) > 0) {
+            continue;
+        }
+        $candidateIdentity = [
+            'id' => $accountId,
+            'username' => (string) ($account['username'] ?? ''),
+            'display_name' => (string) ($account['display_name'] ?? ''),
+        ];
+        $oldId = onlineIdentityLegacyOwnerId($records, $accountId, $candidateIdentity);
+        if ($oldId === '' || $oldId === $accountId || isset($accountIds[$oldId])
+            || ($characterCounts[$oldId] ?? 0) === 0) {
+            continue;
+        }
+        $proposals[$accountId] = ['oldId' => $oldId, 'identity' => $candidateIdentity];
+        $claims[$oldId][] = $accountId;
+    }
+    foreach ($proposals as $accountId => $proposal) {
+        if (count($claims[(string) $proposal['oldId']] ?? []) !== 1) {
+            unset($proposals[$accountId]);
+        }
+    }
+    return $proposals;
 }
 
 function queueOnlinePlayerOwnershipRepair(
@@ -1022,26 +1070,18 @@ function queueOnlinePlayerOwnershipRepair(
     }
 }
 
-function repairOnlinePlayerIdentityOnRead(PDO $connection, array $identity): bool
+function repairOnlineRosterOwnershipsOnRead(PDO $connection, array $identity): int
 {
-    $accountId = (string) ($identity['id'] ?? '');
-    if ($accountId === '') {
-        return false;
-    }
-
-    // Une seule inspection complète par compte et par version de réparation.
-    // Le marqueur vit dans les préférences du roster afin de ne pas modifier le
-    // schéma SQL ni les sessions en cours.
+    // Une seule réconciliation globale par version. Le marqueur reste dans le
+    // roster et n'impose ni migration SQL ni révocation des sessions.
     ensureDomainStoreInitialized($connection);
     $rosterRecords = applicationDomainRecords($connection, ['roster']);
     $roster = applicationDomainPayload($rosterRecords, 'roster');
-    $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
-    if (findEntryIndex($players, $accountId) < 0
-        || onlineIdentityRepairVersion($roster, $accountId) >= XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION) {
-        return false;
+    if (onlineRosterOwnershipRepairVersion($roster) >= XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION) {
+        return 0;
     }
 
-    $repaired = false;
+    $repaired = 0;
     $changed = false;
     $connection->beginTransaction();
     try {
@@ -1051,46 +1091,40 @@ function repairOnlinePlayerIdentityOnRead(PDO $connection, array $identity): boo
             'players' => [], 'characterOrder' => [], 'playerPreferences' => [],
             'playerTombstones' => [], 'characterTombstones' => [],
         ]);
-        $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
-        $accountIndex = findEntryIndex($players, $accountId);
-        if ($accountIndex >= 0
-            && onlineIdentityRepairVersion($roster, $accountId) < XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION) {
-            $oldId = onlineIdentityLegacyOwnerId($records, $accountId, $identity);
-            $accountCharacters = 0;
-            $legacyCharacters = 0;
-            foreach ($records as $key => $record) {
-                if (!str_starts_with($key, 'character:')) {
+        if (onlineRosterOwnershipRepairVersion($roster) < XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION) {
+            $accountsStatement = $connection->query(
+                'SELECT id, username, display_name FROM accounts WHERE revoked_at IS NULL ORDER BY id'
+            );
+            $accounts = $accountsStatement === false ? [] : $accountsStatement->fetchAll();
+            // Préparer toutes les propositions avant d'écrire empêche deux
+            // comptes homonymes de réclamer le même propriétaire historique.
+            $proposals = onlineRosterOwnershipProposals($records, $accounts);
+            $pending = [];
+            $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
+            $now = (int) floor(microtime(true) * 1000);
+            foreach ($proposals as $accountId => $proposal) {
+                $oldId = (string) $proposal['oldId'];
+                $pendingIndex = findEntryIndex($players, $oldId);
+                if ($pendingIndex < 0) {
                     continue;
                 }
-                $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
-                $accountCharacters += $ownerPlayerId === $accountId ? 1 : 0;
-                $legacyCharacters += $ownerPlayerId === $oldId ? 1 : 0;
-            }
-
-            $pending = [];
-            // Le propriétaire peut être retrouvé soit par l'identité du roster,
-            // soit par une fiche homonyme unique. `Innota -> Inho` reste une
-            // correspondance déclarée dans rosterRepairAliases. Une fois le
-            // propriétaire trouvé, toutes ses fiches sont transférées ensemble.
-            if ($oldId !== '' && $oldId !== $accountId
-                && $accountCharacters === 0 && $legacyCharacters > 0) {
-                $now = (int) floor(microtime(true) * 1000);
-                $players[$accountIndex]['name'] = (string) $identity['display_name'];
-                $players[$accountIndex]['_updatedAt'] = $now;
-                $pendingIndex = findEntryIndex($players, $oldId);
-                if ($pendingIndex >= 0) {
+                $accountIndex = findEntryIndex($players, (string) $accountId);
+                $displayName = (string) ($proposal['identity']['display_name'] ?? 'Compte relié');
+                if ($accountIndex < 0) {
+                    $players[$pendingIndex]['id'] = (string) $accountId;
+                    $players[$pendingIndex]['name'] = $displayName;
+                    $players[$pendingIndex]['_updatedAt'] = $now;
+                } else {
+                    $players[$accountIndex]['name'] = $displayName;
+                    $players[$accountIndex]['_updatedAt'] = $now;
                     array_splice($players, $pendingIndex, 1);
                 }
-                $roster['players'] = $players;
-                queueOnlinePlayerOwnershipRepair($pending, $records, $roster, $oldId, $accountId, $now);
-                $repaired = true;
+                queueOnlinePlayerOwnershipRepair($pending, $records, $roster, $oldId, (string) $accountId, $now);
+                $repaired++;
             }
 
-            $preferences = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
-            $accountPreferences = is_array($preferences[$accountId] ?? null) ? $preferences[$accountId] : [];
-            $accountPreferences['_ownershipRepairVersion'] = XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION;
-            $preferences[$accountId] = $accountPreferences;
-            $roster['playerPreferences'] = $preferences;
+            $roster['players'] = $players;
+            $roster['_ownershipRepairVersion'] = XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION;
             queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
             if ($pending !== []) {
                 persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
