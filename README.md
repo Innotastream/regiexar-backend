@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.20
+# Backend OVH — Régie du Seuil 0.12.21
 
-La 0.12.20 annonce le MSIX `2.5.6` comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve les optimisations de simultanéité de la 0.12.16, le bail mobile du worker Studio et le signal de carte idempotent, puis répare à la reconnexion les anciens rattachements `player-<identifiant>` restés en double sans jamais fusionner un simple homonyme ni un cas ambigu.
+La 0.12.21 annonce le MSIX `2.5.7` comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve les optimisations de simultanéité de la 0.12.16, le bail mobile du worker Studio, le signal de carte idempotent et la réparation contrôlée des anciens rattachements `player-<identifiant>`. La 2.5.7 garantit en plus le premier rendu des fiches Joueur dans la fenêtre Electron masquée, sans migration de données ni changement de schéma.
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 

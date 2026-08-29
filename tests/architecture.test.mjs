@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.20 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.21 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.20'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-4'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.21'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-7-release-20260829-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -81,8 +81,8 @@ test("le backend 0.12.20 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.20");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.6");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.21");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.7");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -142,7 +142,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.6'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.7'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
