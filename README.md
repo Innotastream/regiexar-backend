@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.18
+# Backend OVH — Régie du Seuil 0.12.19
 
-La 0.12.18 annonce le MSIX `2.5.5` comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve les optimisations de simultanéité de la 0.12.16, autorise le signal de carte pour une session MJ et ajoute le bail mobile du worker Studio : un nouveau poste peut prendre le relais sans attendre l’expiration de quinze minutes, tandis que l’ancien processus ne peut plus publier un résultat tardif.
+La 0.12.19 annonce le MSIX `2.5.6` comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve les optimisations de simultanéité de la 0.12.16 et le bail mobile du worker Studio, puis rend le signal de carte idempotent : un ping brièvement retenu pendant une reconnexion peut être renvoyé sans apparaître deux fois.
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 

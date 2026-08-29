@@ -1839,7 +1839,26 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
             $activity = applicationDomainPayload($records, 'activity');
             $now = (int) floor(microtime(true) * 1000);
-            $ping = [
+            $requestId = trim((string) ($arguments['requestId'] ?? ''));
+            if ($requestId !== '' && preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
+                rejectOnlineCommand($connection, 400, 'Référence de signal invalide.', 'invalid_ping_request');
+            }
+            $receipts = array_values(array_filter(
+                is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
+                static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+            ));
+            $receipt = null;
+            if ($requestId !== '') {
+                foreach ($receipts as $entry) {
+                    if ((string) ($entry['requestId'] ?? '') === $requestId
+                        && (string) ($entry['accountId'] ?? '') === $accountId
+                        && is_array($entry['ping'] ?? null)) {
+                        $receipt = $entry;
+                        break;
+                    }
+                }
+            }
+            $ping = is_array($receipt['ping'] ?? null) ? $receipt['ping'] : [
                 'id' => 'ping-' . randomToken(9),
                 'x' => max(0.0, min(100.0, (float) ($arguments['x'] ?? 50))),
                 'y' => max(0.0, min(100.0, (float) ($arguments['y'] ?? 50))),
@@ -1848,12 +1867,27 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'expiresAt' => $now + 4200,
                 'author' => $isGm ? 'MJ' : (string) $identity['display_name'],
                 'color' => $isGm ? '#ffd782' : '#8d72cb',
+                'requestId' => $requestId,
             ];
             $pings = array_values(array_filter(
                 is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
                 static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
             ));
-            $activity['mapPings'] = [...array_slice($pings, -19), $ping];
+            if ($receipt === null) {
+                $activity['mapPings'] = [...array_slice($pings, -19), $ping];
+                if ($requestId !== '') {
+                    $receipts[] = [
+                        'requestId' => $requestId,
+                        'accountId' => $accountId,
+                        'expiresAt' => $now + 30_000,
+                        'ping' => $ping,
+                    ];
+                }
+            } else {
+                $activity['mapPings'] = $pings;
+                $result['deduplicated'] = true;
+            }
+            $activity['pingReceipts'] = array_slice($receipts, -256);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['ping'] = $ping;
         } elseif ($command === 'token.roll') {

@@ -584,6 +584,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
         && (!validApplicationDomainObjectList($payload['actionTimers'] ?? null, 300)
             || !validApplicationDomainObjectList($payload['actionTimerTombstones'] ?? null, 1000)
             || !validApplicationDomainObjectList($payload['mapPings'] ?? null, 20)
+            || !validApplicationDomainObjectList($payload['pingReceipts'] ?? [], 256)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
@@ -946,6 +947,7 @@ function legacyStateToDomains(array $state): array
             'actionTimers' => is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [],
             'actionTimerTombstones' => is_array($state['actionTimerTombstones'] ?? null) ? $state['actionTimerTombstones'] : [],
             'mapPings' => is_array($state['mapPings'] ?? null) ? $state['mapPings'] : [],
+            'pingReceipts' => is_array($state['pingReceipts'] ?? null) ? $state['pingReceipts'] : [],
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
         ],
@@ -1120,6 +1122,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'actionTimers' => is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [],
         'actionTimerTombstones' => is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
+        'pingReceipts' => is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'shortcuts' => is_array($activity['shortcuts'] ?? null) ? $activity['shortcuts'] : [],
         'rolls' => is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [],

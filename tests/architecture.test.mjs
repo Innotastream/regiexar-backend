@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.18 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.19 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.18'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.19'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,8 +79,8 @@ test("le backend 0.12.18 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.18");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.5");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.19");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.6");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -140,7 +140,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.5'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.6'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -318,10 +318,16 @@ test("le worker Régie change de poste avec un bail éphémère et clôture l’
 });
 
 test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
-  const online = await read("api/v1/online.php");
+  const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
   assert.match(online, /'token\.resource\.adjust', 'ping'/);
   assert.match(online, /'author' => \$isGm \? 'MJ'/);
   assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
+  assert.match(online, /\$requestId = trim/);
+  assert.match(online, /\$entry\['requestId'\][\s\S]*?\$entry\['accountId'\]/);
+  assert.match(online, /\$result\['deduplicated'\] = true/);
+  assert.match(online, /'expiresAt' => \$now \+ 30_000/);
+  assert.match(online, /array_slice\(\$receipts, -256\)/);
+  assert.match(domains, /\$payload\['pingReceipts'\][\s\S]*?256/);
 });
 
 test("le studio sépare les secrets Codex, les propriétaires et l’audit administrateur", async () => {
