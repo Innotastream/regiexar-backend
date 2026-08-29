@@ -284,11 +284,25 @@ requireDomainCompatibility(
 $adaLegacyId = 'player-7fd6193e-b970-4d76-bbb9-11fc8ef8d386';
 $adaAccountId = 'usr_ada_12345678';
 $adaRoster = [
+    'players' => [
+        ['id' => $adaAccountId, 'name' => 'Ada'],
+        ['id' => $adaLegacyId, 'name' => 'À renseigner'],
+        ['id' => 'player-autre', 'name' => 'Autre'],
+    ],
+    'characterOrder' => [
+        'character-ada-12345678',
+        'character-vraska-12345678',
+        'character-autre-12345678',
+    ],
     'playerPreferences' => [$adaLegacyId => ['activePage' => 'characters']],
     'playerTombstones' => [],
     'characterTombstones' => [],
 ];
 $adaRecords = [
+    'roster' => [
+        'revision' => 7,
+        'payload' => $adaRoster,
+    ],
     'character:character-ada-12345678' => [
         'revision' => 3,
         'payload' => [
@@ -317,6 +331,48 @@ $adaRecords = [
         ],
     ],
 ];
+requireDomainCompatibility(
+    onlineIdentityLegacyOwnerId(
+        $adaRecords,
+        $adaAccountId,
+        ['id' => $adaAccountId, 'username' => 'ada', 'display_name' => 'Ada']
+    ) === $adaLegacyId,
+    'Ada doit retrouver son ancien propriétaire grâce à la fiche homonyme, même si le roster affiche « À renseigner ».'
+);
+$inhoLegacyId = 'player-f11f894b-660c-4d2d-97e6-5de1b2b785e7';
+$inhoAccountId = 'usr_innota_12345678';
+$inhoRecords = [
+    'roster' => [
+        'revision' => 2,
+        'payload' => [
+            'players' => [
+                ['id' => $inhoAccountId, 'name' => 'Innota'],
+                ['id' => $inhoLegacyId, 'name' => 'À renseigner'],
+            ],
+            'characterOrder' => ['character-inho-12345678'],
+            'playerPreferences' => [],
+            'playerTombstones' => [],
+            'characterTombstones' => [],
+        ],
+    ],
+    'character:character-inho-12345678' => [
+        'revision' => 4,
+        'payload' => [
+            'id' => 'character-inho-12345678',
+            'ownerPlayerId' => $inhoLegacyId,
+            'name' => 'Inho',
+            '_updatedAt' => 100,
+        ],
+    ],
+];
+requireDomainCompatibility(
+    onlineIdentityLegacyOwnerId(
+        $inhoRecords,
+        $inhoAccountId,
+        ['id' => $inhoAccountId, 'username' => 'Innota', 'display_name' => 'Jonathan']
+    ) === $inhoLegacyId,
+    'Le compte Innota doit retrouver explicitement la fiche Inho même si les noms du compte et du roster diffèrent.'
+);
 $adaPending = [];
 queueOnlinePlayerOwnershipRepair(
     $adaPending,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
 const XAR_BACKEND_VERSION = '0.12.20';
+const XAR_BACKEND_BUILD = 'ownership-explicit-20260829-1';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.6';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 13;
@@ -1704,6 +1705,7 @@ if ($route === '/api/v1/health') {
             'service' => 'xar-tsaroth-regie',
             'api' => 'v1',
             'version' => XAR_BACKEND_VERSION,
+            'build' => XAR_BACKEND_BUILD,
             'clientPolicy' => clientPolicy($configuration),
         ], $headOnly);
     } catch (Throwable $error) {

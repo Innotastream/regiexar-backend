@@ -67,6 +67,8 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
 test("le backend 0.12.20 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.20'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-explicit-20260829-1'/);
+  assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -463,6 +465,9 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   const ensurePlayer = command.slice(command.indexOf("$command === 'ensure-player'"), command.indexOf("$command === 'preferences.update'"));
   assert.match(online, /function rosterRepairAliases[\s\S]*?return rosterAliases\(\$identity\)/);
   assert.match(online, /function rosterMigrationCandidateIndex/);
+  assert.match(online, /function onlineIdentityLegacyOwnerId/);
+  assert.match(online, /\$characterNameOwners\[\$ownerPlayerId\] = true/);
+  assert.match(online, /username[^\n]*=== 'innota'[\s\S]*?\$aliases\[\] = 'inho'/);
   assert.match(online, /\$matchesDeterministicId/);
   assert.match(online, /\$matchesUniqueName = \$name === \$alias/);
   assert.match(online, /count\(\$candidates\) === 1/);
@@ -470,6 +475,8 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(reader, /repairOnlinePlayerIdentityOnRead\(\$connection, \$identity\)[\s\S]*?requestedOnlineStateRevision/);
   const repair = online.slice(online.indexOf("function repairOnlinePlayerIdentityOnRead"), online.indexOf("function cleanPlayerCharacter"));
   assert.match(repair, /\$accountCharacters === 0 && \$legacyCharacters > 0/);
+  assert.match(repair, /onlineIdentityLegacyOwnerId\(\$records, \$accountId, \$identity\)/);
+  assert.match(repair, /_ownershipRepairVersion/);
   assert.match(repair, /queueOnlinePlayerOwnershipRepair/);
   assert.match(repair, /persistDomainChangesInTransaction/);
   assert.match(ensurePlayer, /\$accountIndex = findEntryIndex\(\$players, \$accountId\)/);
