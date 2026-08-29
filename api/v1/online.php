@@ -770,6 +770,14 @@ function requestedOnlineStateRevision(): ?int
 function readOnlineState(PDO $connection, bool $headOnly = false): never
 {
     $identity = requireIdentity($connection);
+    // Certains comptes ont été ajoutés une seconde fois au roster avant que
+    // l'ancien propriétaire player-... ne soit rapproché du compte authentifié.
+    // La réparation doit précéder le chemin `since`, sinon un joueur déjà
+    // connecté peut recevoir "unchanged" indéfiniment et ne jamais revoir ses
+    // fiches. Une lecture HEAD reste strictement sans effet de bord.
+    if (!$headOnly && (string) $identity['effective_mode'] !== 'gm') {
+        repairOnlinePlayerIdentityOnRead($connection, $identity);
+    }
     $since = requestedOnlineStateRevision();
     if ($since !== null) {
         $clock = domainClockRecord($connection);
@@ -868,14 +876,169 @@ function rosterMigrationCandidateIndex(
         foreach ($aliases as $alias) {
             $legacyId = rosterLegacyIdForAlias($alias);
             $matchesDeterministicId = $legacyId !== '' && $id === $legacyId;
-            $matchesUnlinkedName = !$accountAlreadyPresent && $name === $alias;
-            if ($matchesDeterministicId || $matchesUnlinkedName) {
+            $matchesUniqueName = $name === $alias;
+            if ($matchesDeterministicId || $matchesUniqueName) {
                 $candidates[(int) $index] = true;
                 break;
             }
         }
     }
     return count($candidates) === 1 ? (int) array_key_first($candidates) : -1;
+}
+
+function queueOnlinePlayerOwnershipRepair(
+    array &$pending,
+    array $records,
+    array &$roster,
+    string $oldId,
+    string $accountId,
+    int $now
+): void {
+    $preferences = is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [];
+    if (isset($preferences[$oldId]) && !isset($preferences[$accountId])) {
+        $preferences[$accountId] = $preferences[$oldId];
+    }
+    unset($preferences[$oldId]);
+    $roster['playerPreferences'] = $preferences;
+    foreach (['playerTombstones', 'characterTombstones'] as $listKey) {
+        if (!is_array($roster[$listKey] ?? null)) {
+            continue;
+        }
+        foreach ($roster[$listKey] as &$entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            if (($entry['ownerPlayerId'] ?? null) === $oldId) {
+                $entry['ownerPlayerId'] = $accountId;
+            }
+            if ($listKey === 'playerTombstones' && ($entry['id'] ?? null) === $oldId) {
+                $entry['id'] = $accountId;
+            }
+        }
+        unset($entry);
+    }
+    foreach ($records as $key => $record) {
+        if (str_starts_with($key, 'character:')) {
+            $payload = applicationDomainPayload($records, $key);
+            if (($payload['ownerPlayerId'] ?? null) === $oldId) {
+                $payload['ownerPlayerId'] = $accountId;
+                $payload['_updatedAt'] = $now;
+                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+            }
+        } elseif (str_starts_with($key, 'token:')) {
+            $payload = applicationDomainPayload($records, $key);
+            if (($payload['controllerPlayerId'] ?? null) === $oldId) {
+                $payload['controllerPlayerId'] = $accountId;
+                $payload['_updatedAt'] = $now;
+                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+            }
+        } elseif (str_starts_with($key, 'presentation:') || $key === 'detached-combat') {
+            $payload = applicationDomainPayload($records, $key);
+            if (!is_array($payload['map']['tokens'] ?? null)) {
+                continue;
+            }
+            $changed = false;
+            foreach ($payload['map']['tokens'] as &$token) {
+                if (is_array($token) && ($token['controllerPlayerId'] ?? null) === $oldId) {
+                    $token['controllerPlayerId'] = $accountId;
+                    $token['_updatedAt'] = $now;
+                    $changed = true;
+                }
+            }
+            unset($token);
+            if ($changed) {
+                queueOnlineDomainUpsert($pending, $records, $key, $payload);
+            }
+        }
+    }
+    $activity = applicationDomainPayload($records, 'activity');
+    $activityChanged = false;
+    foreach (is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [] as $index => $timer) {
+        if (is_array($timer) && ($timer['ownerPlayerId'] ?? null) === $oldId) {
+            $activity['actionTimers'][$index]['ownerPlayerId'] = $accountId;
+            $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
+            $activityChanged = true;
+        }
+    }
+    if ($activityChanged) {
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    }
+}
+
+function repairOnlinePlayerIdentityOnRead(PDO $connection, array $identity): bool
+{
+    $accountId = (string) ($identity['id'] ?? '');
+    if ($accountId === '') {
+        return false;
+    }
+
+    // Chemin rapide sans verrou : si le compte n'est pas dupliqué avec une
+    // unique ancienne entrée de même identité, la lecture reste inchangée.
+    ensureDomainStoreInitialized($connection);
+    $rosterRecords = applicationDomainRecords($connection, ['roster']);
+    $roster = applicationDomainPayload($rosterRecords, 'roster');
+    $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
+    if (findEntryIndex($players, $accountId) < 0
+        || rosterMigrationCandidateIndex($players, $accountId, $identity, true) < 0) {
+        return false;
+    }
+
+    $repaired = false;
+    $connection->beginTransaction();
+    try {
+        $clock = domainClockRecord($connection, true);
+        $records = applicationDomainRecords($connection);
+        $roster = applicationDomainPayload($records, 'roster', [
+            'players' => [], 'characterOrder' => [], 'playerPreferences' => [],
+            'playerTombstones' => [], 'characterTombstones' => [],
+        ]);
+        $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
+        $accountIndex = findEntryIndex($players, $accountId);
+        $pendingIndex = rosterMigrationCandidateIndex($players, $accountId, $identity, true);
+        if ($accountIndex >= 0 && $pendingIndex >= 0) {
+            $oldId = (string) ($players[$pendingIndex]['id'] ?? '');
+            $accountCharacters = 0;
+            $legacyCharacters = 0;
+            foreach ($records as $key => $record) {
+                if (!str_starts_with($key, 'character:')) {
+                    continue;
+                }
+                $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
+                $accountCharacters += $ownerPlayerId === $accountId ? 1 : 0;
+                $legacyCharacters += $ownerPlayerId === $oldId ? 1 : 0;
+            }
+
+            // Aucun rapprochement par simple nom si le compte possède déjà
+            // une fiche, si l'ancienne entrée n'en possède aucune, ou si le
+            // candidat est ambigu. Ada récupère ainsi ensemble Ada et Vraska,
+            // toutes deux détenues par le même ancien propriétaire.
+            if ($oldId !== '' && $oldId !== $accountId
+                && $accountCharacters === 0 && $legacyCharacters > 0) {
+                $now = (int) floor(microtime(true) * 1000);
+                $players[$accountIndex]['name'] = (string) $identity['display_name'];
+                $players[$accountIndex]['_updatedAt'] = $now;
+                array_splice($players, $pendingIndex, 1);
+                $roster['players'] = $players;
+                $pending = [];
+                queueOnlinePlayerOwnershipRepair($pending, $records, $roster, $oldId, $accountId, $now);
+                queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
+                if ($pending !== []) {
+                    persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
+                    $repaired = true;
+                }
+            }
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+    if ($repaired) {
+        cleanupApplicationDomainHistory($connection);
+    }
+    return $repaired;
 }
 
 function cleanPlayerCharacter(array $character, string $accountId): array
@@ -1510,16 +1673,31 @@ function commandOnlineState(PDO $connection, array $configuration): never
             ]);
             $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
             $accountIndex = findEntryIndex($players, $accountId);
-            // Un compte déjà présent ne peut absorber que l'ancien identifiant
-            // déterministe player-<identifiant>. Les noms seuls et les cas
-            // ambigus restent refusés afin de ne jamais attribuer la fiche d'un
-            // homonyme au mauvais compte.
+            // Un compte déjà présent peut aussi absorber une ancienne entrée
+            // de même nom uniquement si celle-ci est unique. La réparation à
+            // la lecture ajoute en plus les gardes de propriété des fiches.
             $pendingIndex = rosterMigrationCandidateIndex(
                 $players,
                 $accountId,
                 $identity,
                 $accountIndex >= 0
             );
+            if ($accountIndex >= 0 && $pendingIndex >= 0) {
+                $candidateId = (string) ($players[$pendingIndex]['id'] ?? '');
+                $accountCharacters = 0;
+                $candidateCharacters = 0;
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'character:')) {
+                        continue;
+                    }
+                    $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
+                    $accountCharacters += $ownerPlayerId === $accountId ? 1 : 0;
+                    $candidateCharacters += $ownerPlayerId === $candidateId ? 1 : 0;
+                }
+                if ($accountCharacters !== 0 || $candidateCharacters === 0) {
+                    $pendingIndex = -1;
+                }
+            }
             $now = (int) floor(microtime(true) * 1000);
             $oldId = '';
             $rosterChanged = false;

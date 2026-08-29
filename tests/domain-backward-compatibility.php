@@ -251,7 +251,7 @@ $hiraIdentity = ['id' => 'usr_hira_12345678', 'username' => 'hira', 'display_nam
 $duplicateRoster = [
     ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
     ['id' => 'player-hira', 'name' => 'Hira'],
-    ['id' => 'player-other', 'name' => 'Hira'],
+    ['id' => 'player-other', 'name' => 'Autre'],
 ];
 requireDomainCompatibility(
     rosterMigrationCandidateIndex($duplicateRoster, 'usr_hira_12345678', $hiraIdentity, true) === 1,
@@ -261,8 +261,16 @@ requireDomainCompatibility(
     rosterMigrationCandidateIndex([
         ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
         ['id' => 'player-other', 'name' => 'Hira'],
+    ], 'usr_hira_12345678', $hiraIdentity, true) === 1,
+    'Une unique ancienne entrée de même identité doit être retrouvée même si le compte est déjà présent.'
+);
+requireDomainCompatibility(
+    rosterMigrationCandidateIndex([
+        ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
+        ['id' => 'player-other-a', 'name' => 'Hira'],
+        ['id' => 'player-other-b', 'name' => 'Hira'],
     ], 'usr_hira_12345678', $hiraIdentity, true) === -1,
-    'Un simple homonyme ne doit jamais être absorbé par un compte déjà présent.'
+    'Deux anciennes entrées homonymes doivent rester ambiguës et non fusionnées.'
 );
 requireDomainCompatibility(
     rosterMigrationCandidateIndex([

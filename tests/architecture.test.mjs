@@ -464,10 +464,17 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(online, /function rosterRepairAliases[\s\S]*?return rosterAliases\(\$identity\)/);
   assert.match(online, /function rosterMigrationCandidateIndex/);
   assert.match(online, /\$matchesDeterministicId/);
-  assert.match(online, /\$matchesUnlinkedName = !\$accountAlreadyPresent/);
+  assert.match(online, /\$matchesUniqueName = \$name === \$alias/);
   assert.match(online, /count\(\$candidates\) === 1/);
+  const reader = online.slice(online.indexOf("function readOnlineState"), online.indexOf("function rejectLegacyOnlineState"));
+  assert.match(reader, /repairOnlinePlayerIdentityOnRead\(\$connection, \$identity\)[\s\S]*?requestedOnlineStateRevision/);
+  const repair = online.slice(online.indexOf("function repairOnlinePlayerIdentityOnRead"), online.indexOf("function cleanPlayerCharacter"));
+  assert.match(repair, /\$accountCharacters === 0 && \$legacyCharacters > 0/);
+  assert.match(repair, /queueOnlinePlayerOwnershipRepair/);
+  assert.match(repair, /persistDomainChangesInTransaction/);
   assert.match(ensurePlayer, /\$accountIndex = findEntryIndex\(\$players, \$accountId\)/);
   assert.match(ensurePlayer, /rosterMigrationCandidateIndex\([\s\S]*?\$accountIndex >= 0/);
+  assert.match(ensurePlayer, /\$accountCharacters !== 0 \|\| \$candidateCharacters === 0/);
   assert.match(ensurePlayer, /\$rosterChanged = false/);
   assert.match(ensurePlayer, /if \(\$pendingIndex >= 0\)[\s\S]*?array_splice\(\$players, \$pendingIndex, 1\)/);
   assert.match(ensurePlayer, /\$oldId[\s\S]*?\$payload\['ownerPlayerId'\] = \$accountId/);
