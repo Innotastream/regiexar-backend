@@ -450,6 +450,11 @@ $wrongActiveOwnerRecords['activity'] = ['revision' => 1, 'payload' => [
     'actionTimers' => [[
         'id' => 'timer-ada', 'characterId' => 'character-ada-12345678', 'ownerPlayerId' => $inhoAccountId,
     ]],
+    'actionTimerTombstones' => [],
+    'mapPings' => [],
+    'pingReceipts' => [],
+    'shortcuts' => [],
+    'rolls' => [],
 ]];
 $wrongOwnerPending = [];
 $wrongOwnerRepair = queueOnlineDeclaredCharacterAssignments(
