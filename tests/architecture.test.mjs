@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.17 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.18 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.17'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.18'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,9 +79,9 @@ test("le backend 0.12.17 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.17");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.4");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 12);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.18");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.5");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -130,7 +130,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /!\$isGm[\s\S]*?controllerPlayerId[\s\S]*?hidden/);
   assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$x\)/);
   assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$y\)/);
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust'\]/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -140,7 +140,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.4'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.5'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -298,6 +298,32 @@ test("la pause du Compte de la Régie ne bloque jamais les générations personn
   assert.doesNotMatch(studio, /WHERE author_account_id = :account_id AND status IN \('queued', 'generating'\)/);
 });
 
+test("le worker Régie change de poste avec un bail éphémère et clôture l’ancien processus", async () => {
+  const [index, studio] = await Promise.all([read("api/v1/index.php"), read("api/v1/image-studio.php")]);
+  assert.match(index, /portable_regie_worker_lease/);
+  assert.match(index, /image_studio_regie_service ADD COLUMN worker_lease_id/);
+  assert.match(index, /image_studio_messages ADD COLUMN worker_lease_id/);
+  assert.match(studio, /function requiredImageStudioWorkerLeaseId/);
+  assert.match(studio, /function recoverReplacedImageStudioRegieJobs/);
+  assert.match(studio, /worker_lease_id IS NULL OR worker_lease_id <> :worker_lease_id/);
+  assert.match(studio, /worker_lease_replaced/);
+  assert.match(studio, /\$differentLiveWorker[\s\S]*?!\$takeover/);
+  assert.match(studio, /array_key_exists\('takeover', \$payload\)/);
+  assert.match(studio, /\$takeover && \$differentLiveWorker[\s\S]*?recoverReplacedImageStudioRegieJobs/);
+  assert.ok((studio.match(/Ce worker a été remplacé par un autre poste\./g) ?? []).length >= 2);
+  assert.ok((studio.match(/imageStudioRegieServiceRecord\(\$connection, true\)/g) ?? []).length >= 4);
+  assert.match(studio, /AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id/);
+  assert.match(studio, /hash_equals\(\$workerLeaseId, \(string\) \(\$message\['worker_lease_id'\]/);
+  assert.doesNotMatch(`${index}\n${studio}`, /machine[_-]?id|device[_-]?id|hardware[_-]?id/i);
+});
+
+test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
+  const online = await read("api/v1/online.php");
+  assert.match(online, /'token\.resource\.adjust', 'ping'/);
+  assert.match(online, /'author' => \$isGm \? 'MJ'/);
+  assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
+});
+
 test("le studio sépare les secrets Codex, les propriétaires et l’audit administrateur", async () => {
   const [studio, online, index] = await Promise.all([
     read("api/v1/image-studio.php"), read("api/v1/online.php"), read("api/v1/index.php")
@@ -393,7 +419,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust'\]/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
@@ -611,4 +637,8 @@ test("le workflow backend épingle l’action de lecture du dépôt", async () =
   assert.match(workflow, /actions\/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8/);
   assert.doesNotMatch(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /php tests\/domain-backward-compatibility\.php/);
+  assert.match(workflow, /statuses: write/);
+  assert.match(workflow, /context="backend-check"/);
+  assert.match(workflow, /GITHUB_RUN_ID/);
+  assert.match(workflow, /\$\{\{ job\.status \}\}/);
 });

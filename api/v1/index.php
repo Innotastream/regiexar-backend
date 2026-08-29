@@ -3,10 +3,10 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.12.17';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.4';
+const XAR_BACKEND_VERSION = '0.12.18';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.5';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 12;
+const XAR_DATABASE_SCHEMA_VERSION = 13;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -656,6 +656,27 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(12, 'bounded_runtime_maintenance_and_release_cleanup', "
                 . "'6656df3ebbbacdc1f1bebdd0c17db0f7cf4851935ea0dfec66906139d498fbbc')"
+            );
+            $version = 12;
+        }
+
+        if ($version < 13) {
+            if (!schemaColumnExists($connection, 'image_studio_regie_service', 'worker_lease_id')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_regie_service ADD COLUMN worker_lease_id '
+                    . 'VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER worker_account_id'
+                );
+            }
+            if (!schemaColumnExists($connection, 'image_studio_messages', 'worker_lease_id')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_messages ADD COLUMN worker_lease_id '
+                    . 'VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER worker_account_id'
+                );
+            }
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(13, 'portable_regie_worker_lease', "
+                . "'3ad43fa633a08f25f588703e3f90b0449f169ec79cdf0e9d236c42c509206536')"
             );
         }
     } finally {

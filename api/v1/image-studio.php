@@ -190,6 +190,15 @@ function validImageStudioMessageId(string $id): bool
     return preg_match('/^[A-Za-z0-9_-]{24}$/D', $id) === 1;
 }
 
+function requiredImageStudioWorkerLeaseId(array $payload): string
+{
+    $leaseId = trim((string) ($payload['workerLeaseId'] ?? ''));
+    if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $leaseId) !== 1) {
+        sendError(400, 'Bail du worker invalide.', 'invalid_worker_lease');
+    }
+    return $leaseId;
+}
+
 function imageStudioConversationRecord(PDO $connection, string $id): ?array
 {
     if (!validImageStudioConversationId($id)) {
@@ -574,7 +583,7 @@ function requireRegieCodexOwner(PDO $connection): array
 function imageStudioRegieServiceRecord(PDO $connection, bool $forUpdate = false): array
 {
     $statement = $connection->query(
-        'SELECT singleton_id, paused, worker_ready, worker_account_id, worker_last_seen_at, updated_at, '
+        'SELECT singleton_id, paused, worker_ready, worker_account_id, worker_lease_id, worker_last_seen_at, updated_at, '
         . '(worker_ready = 1 AND worker_last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL '
         . XAR_IMAGE_STUDIO_WORKER_ONLINE_SECONDS . ' SECOND)) AS worker_online '
         . 'FROM image_studio_regie_service WHERE singleton_id = 1'
@@ -660,6 +669,7 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
 {
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(8192);
+    $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
     if (!array_key_exists('ready', $payload) || !is_bool($payload['ready'])) {
         sendError(400, 'État du worker invalide.', 'invalid_worker_state');
     }
@@ -667,25 +677,53 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
     if ($activeMessageId !== '' && !validImageStudioMessageId($activeMessageId)) {
         sendError(400, 'Travail actif du worker invalide.', 'invalid_worker_job');
     }
-    $statement = $connection->prepare(
-        'UPDATE image_studio_regie_service SET worker_ready = :ready, worker_account_id = :account_id, '
-        . 'worker_last_seen_at = UTC_TIMESTAMP(3) WHERE singleton_id = 1'
-    );
-    $statement->execute([
-        ':ready' => $payload['ready'] ? 1 : 0,
-        ':account_id' => (string) $identity['id'],
-    ]);
-    if ($payload['ready'] && $activeMessageId !== '') {
-        $renew = $connection->prepare(
-            'UPDATE image_studio_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
-            . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
-            . "WHERE id = :id AND execution_mode = 'regie' AND status = 'generating' "
-            . 'AND worker_account_id = :account_id'
+    if (array_key_exists('takeover', $payload) && !is_bool($payload['takeover'])) {
+        sendError(400, 'Demande de relais du worker invalide.', 'invalid_worker_takeover');
+    }
+    $takeover = ($payload['takeover'] ?? false) === true && $payload['ready'] === true;
+    $connection->beginTransaction();
+    try {
+        $service = imageStudioRegieServiceRecord($connection, true);
+        $currentLeaseId = (string) ($service['worker_lease_id'] ?? '');
+        $differentLiveWorker = (bool) $service['worker_online']
+            && $currentLeaseId !== ''
+            && !hash_equals($workerLeaseId, $currentLeaseId);
+        if ($differentLiveWorker && !$takeover) {
+            $connection->rollBack();
+            sendError(409, 'Un autre poste exécute déjà la file de la Régie.', 'worker_lease_replaced');
+        }
+        $statement = $connection->prepare(
+            'UPDATE image_studio_regie_service SET worker_ready = :ready, worker_account_id = :account_id, '
+            . 'worker_lease_id = :worker_lease_id, '
+            . 'worker_last_seen_at = UTC_TIMESTAMP(3) WHERE singleton_id = 1'
         );
-        $renew->execute([
-            ':id' => $activeMessageId,
+        $statement->execute([
+            ':ready' => $payload['ready'] ? 1 : 0,
             ':account_id' => (string) $identity['id'],
+            ':worker_lease_id' => $workerLeaseId,
         ]);
+        if ($takeover && $differentLiveWorker) {
+            recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
+        }
+        if ($payload['ready'] && $activeMessageId !== '') {
+            $renew = $connection->prepare(
+                'UPDATE image_studio_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+                . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
+                . "WHERE id = :id AND execution_mode = 'regie' AND status = 'generating' "
+                . 'AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id'
+            );
+            $renew->execute([
+                ':id' => $activeMessageId,
+                ':account_id' => (string) $identity['id'],
+                ':worker_lease_id' => $workerLeaseId,
+            ]);
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
     }
     sendJson(200, [
         'ok' => true,
@@ -698,13 +736,13 @@ function recoverExpiredImageStudioRegieJobs(PDO $connection): void
     $fail = $connection->prepare(
         "UPDATE image_studio_messages SET status = 'failed', error_code = 'worker_interrupted', "
         . "error_detail = 'Le worker de la Régie a été interrompu à plusieurs reprises.', "
-        . 'worker_account_id = NULL, worker_lease_expires_at = NULL, completed_at = UTC_TIMESTAMP(3) '
+        . 'worker_account_id = NULL, worker_lease_id = NULL, worker_lease_expires_at = NULL, completed_at = UTC_TIMESTAMP(3) '
         . "WHERE execution_mode = 'regie' AND status = 'generating' "
         . 'AND worker_lease_expires_at < UTC_TIMESTAMP(3) AND worker_attempts >= :maximum_attempts'
     );
     $fail->execute([':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS]);
     $retry = $connection->prepare(
-        "UPDATE image_studio_messages SET status = 'queued', worker_account_id = NULL, "
+        "UPDATE image_studio_messages SET status = 'queued', worker_account_id = NULL, worker_lease_id = NULL, "
         . 'worker_lease_expires_at = NULL, started_at = NULL, error_code = NULL, error_detail = NULL '
         . "WHERE execution_mode = 'regie' AND status = 'generating' "
         . 'AND worker_lease_expires_at < UTC_TIMESTAMP(3) AND worker_attempts < :maximum_attempts'
@@ -712,15 +750,47 @@ function recoverExpiredImageStudioRegieJobs(PDO $connection): void
     $retry->execute([':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS]);
 }
 
+function recoverReplacedImageStudioRegieJobs(PDO $connection, string $workerLeaseId): void
+{
+    $fail = $connection->prepare(
+        "UPDATE image_studio_messages SET status = 'failed', error_code = 'worker_interrupted', "
+        . "error_detail = 'Le worker de la Régie a été interrompu à plusieurs reprises.', "
+        . 'worker_account_id = NULL, worker_lease_id = NULL, worker_lease_expires_at = NULL, '
+        . 'completed_at = UTC_TIMESTAMP(3) '
+        . "WHERE execution_mode = 'regie' AND status = 'generating' "
+        . 'AND (worker_lease_id IS NULL OR worker_lease_id <> :worker_lease_id) '
+        . 'AND worker_attempts >= :maximum_attempts'
+    );
+    $fail->execute([
+        ':worker_lease_id' => $workerLeaseId,
+        ':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS,
+    ]);
+    $retry = $connection->prepare(
+        "UPDATE image_studio_messages SET status = 'queued', worker_account_id = NULL, worker_lease_id = NULL, "
+        . 'worker_lease_expires_at = NULL, started_at = NULL, error_code = NULL, error_detail = NULL '
+        . "WHERE execution_mode = 'regie' AND status = 'generating' "
+        . 'AND (worker_lease_id IS NULL OR worker_lease_id <> :worker_lease_id) '
+        . 'AND worker_attempts < :maximum_attempts'
+    );
+    $retry->execute([
+        ':worker_lease_id' => $workerLeaseId,
+        ':maximum_attempts' => XAR_IMAGE_STUDIO_WORKER_MAX_ATTEMPTS,
+    ]);
+}
+
 function claimImageStudioRegieJob(PDO $connection): never
 {
     $identity = requireRegieCodexOwner($connection);
+    $payload = readJsonBody(8192);
+    $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
     $messageId = null;
     $connection->beginTransaction();
     try {
         $service = imageStudioRegieServiceRecord($connection, true);
         recoverExpiredImageStudioRegieJobs($connection);
-        if (!(bool) $service['paused'] && (bool) $service['worker_online']) {
+        $ownsActiveLease = hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''));
+        if (!(bool) $service['paused'] && (bool) $service['worker_online'] && $ownsActiveLease) {
+            recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
             $active = $connection->query(
                 "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
                 . "AND status = 'generating' ORDER BY started_at, id LIMIT 1 FOR UPDATE"
@@ -735,6 +805,7 @@ function claimImageStudioRegieJob(PDO $connection): never
                 if (is_string($candidate) && validImageStudioMessageId($candidate)) {
                     $claim = $connection->prepare(
                         "UPDATE image_studio_messages SET status = 'generating', worker_account_id = :account_id, "
+                        . 'worker_lease_id = :worker_lease_id, '
                         . 'worker_attempts = worker_attempts + 1, started_at = UTC_TIMESTAMP(3), '
                         . 'worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
                         . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
@@ -742,6 +813,7 @@ function claimImageStudioRegieJob(PDO $connection): never
                     );
                     $claim->execute([
                         ':account_id' => (string) $identity['id'],
+                        ':worker_lease_id' => $workerLeaseId,
                         ':id' => $candidate,
                     ]);
                     if ($claim->rowCount() === 1) {
@@ -1046,6 +1118,7 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
 {
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(65536);
+    $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
     $mediaId = trim((string) ($payload['mediaId'] ?? ''));
     if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
         sendError(400, 'Résultat média invalide.', 'invalid_media');
@@ -1064,6 +1137,11 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
 
     $connection->beginTransaction();
     try {
+        $service = imageStudioRegieServiceRecord($connection, true);
+        if (!hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''))) {
+            $connection->rollBack();
+            sendError(409, 'Ce worker a été remplacé par un autre poste.', 'worker_lease_replaced');
+        }
         $selectMessage = $connection->prepare('SELECT * FROM image_studio_messages WHERE id = :id LIMIT 1 FOR UPDATE');
         $selectMessage->execute([':id' => $id]);
         $message = $selectMessage->fetch();
@@ -1079,7 +1157,8 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
             sendError(409, 'Cette demande a été annulée par son auteur.', 'generation_cancelled');
         }
         if ((string) $message['status'] !== 'generating'
-            || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']) {
+            || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']
+            || !hash_equals($workerLeaseId, (string) ($message['worker_lease_id'] ?? ''))) {
             sendError(409, 'Ce travail n’est pas attribué à ce worker.', 'worker_job_not_claimed');
         }
         $selectMedia = $connection->prepare(
@@ -1105,9 +1184,9 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
         $complete = $connection->prepare(
             "UPDATE image_studio_messages SET status = 'succeeded', media_id = :media_id, "
             . 'revised_prompt = :revised_prompt, width = :width, height = :height, '
-            . 'error_code = NULL, error_detail = NULL, worker_account_id = NULL, '
+            . 'error_code = NULL, error_detail = NULL, worker_account_id = NULL, worker_lease_id = NULL, '
             . 'worker_lease_expires_at = NULL, completed_at = UTC_TIMESTAMP(3) '
-            . "WHERE id = :id AND status = 'generating'"
+            . "WHERE id = :id AND status = 'generating' AND worker_lease_id = :worker_lease_id"
         );
         $complete->execute([
             ':media_id' => $mediaId,
@@ -1115,6 +1194,7 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
             ':width' => $width,
             ':height' => $height,
             ':id' => $id,
+            ':worker_lease_id' => $workerLeaseId,
         ]);
         $connection->commit();
     } catch (Throwable $error) {
@@ -1129,18 +1209,8 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
 function failImageStudioRegieJob(PDO $connection, string $id): never
 {
     $identity = requireRegieCodexOwner($connection);
-    $message = imageStudioMessageRecord($connection, $id);
-    if (!is_array($message) || (string) ($message['execution_mode'] ?? '') !== 'regie') {
-        sendError(404, 'Travail du Compte de la Régie introuvable.', 'message_missing');
-    }
-    if (in_array((string) $message['status'], ['succeeded', 'failed', 'rejected', 'cancelled'], true)) {
-        sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload($message)]);
-    }
-    if ((string) $message['status'] !== 'generating'
-        || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']) {
-        sendError(409, 'Ce travail n’est pas attribué à ce worker.', 'worker_job_not_claimed');
-    }
     $payload = readJsonBody(8192);
+    $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
     $code = strtolower(trim((string) ($payload['code'] ?? 'generation_failed')));
     if (preg_match('/^[a-z0-9_]{3,64}$/D', $code) !== 1) {
         $code = 'generation_failed';
@@ -1152,19 +1222,51 @@ function failImageStudioRegieJob(PDO $connection, string $id): never
         'invalid_error_detail'
     );
     $status = $code === 'request_rejected' ? 'rejected' : 'failed';
-    $statement = $connection->prepare(
-        'UPDATE image_studio_messages SET status = :status, error_code = :error_code, '
-        . 'error_detail = :error_detail, worker_account_id = NULL, worker_lease_expires_at = NULL, '
-        . "completed_at = UTC_TIMESTAMP(3) WHERE id = :id AND status = 'generating' "
-        . 'AND worker_account_id = :account_id'
-    );
-    $statement->execute([
-        ':status' => $status,
-        ':error_code' => $code,
-        ':error_detail' => $detail,
-        ':id' => $id,
-        ':account_id' => (string) $identity['id'],
-    ]);
+    $connection->beginTransaction();
+    try {
+        $service = imageStudioRegieServiceRecord($connection, true);
+        if (!hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''))) {
+            $connection->rollBack();
+            sendError(409, 'Ce worker a été remplacé par un autre poste.', 'worker_lease_replaced');
+        }
+        $select = $connection->prepare('SELECT * FROM image_studio_messages WHERE id = :id LIMIT 1 FOR UPDATE');
+        $select->execute([':id' => $id]);
+        $message = $select->fetch();
+        if (!is_array($message) || (string) ($message['execution_mode'] ?? '') !== 'regie') {
+            $connection->rollBack();
+            sendError(404, 'Travail du Compte de la Régie introuvable.', 'message_missing');
+        }
+        if (in_array((string) $message['status'], ['succeeded', 'failed', 'rejected', 'cancelled'], true)) {
+            $connection->commit();
+            sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload($message)]);
+        }
+        if ((string) $message['status'] !== 'generating'
+            || (string) ($message['worker_account_id'] ?? '') !== (string) $identity['id']
+            || !hash_equals($workerLeaseId, (string) ($message['worker_lease_id'] ?? ''))) {
+            $connection->rollBack();
+            sendError(409, 'Ce travail n’est pas attribué à ce worker.', 'worker_job_not_claimed');
+        }
+        $statement = $connection->prepare(
+            'UPDATE image_studio_messages SET status = :status, error_code = :error_code, '
+            . 'error_detail = :error_detail, worker_account_id = NULL, worker_lease_id = NULL, worker_lease_expires_at = NULL, '
+            . "completed_at = UTC_TIMESTAMP(3) WHERE id = :id AND status = 'generating' "
+            . 'AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id'
+        );
+        $statement->execute([
+            ':status' => $status,
+            ':error_code' => $code,
+            ':error_detail' => $detail,
+            ':id' => $id,
+            ':account_id' => (string) $identity['id'],
+            ':worker_lease_id' => $workerLeaseId,
+        ]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
     sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
 }
 
@@ -1180,7 +1282,7 @@ function hideImageStudioMessage(PDO $connection, string $id): never
         . "THEN 'La demande a été annulée par son auteur.' ELSE error_detail END, "
         . "completed_at = CASE WHEN status IN ('queued', 'generating') THEN UTC_TIMESTAMP(3) ELSE completed_at END, "
         . "status = CASE WHEN status IN ('queued', 'generating') THEN 'cancelled' ELSE status END, "
-        . 'worker_account_id = NULL, worker_lease_expires_at = NULL WHERE id = :id'
+        . 'worker_account_id = NULL, worker_lease_id = NULL, worker_lease_expires_at = NULL WHERE id = :id'
     );
     $statement->execute([':id' => $id]);
     $mediaScheduled = false;

@@ -1,6 +1,6 @@
-# Backend OVH — Régie du Seuil 0.12.17
+# Backend OVH — Régie du Seuil 0.12.18
 
-La 0.12.17 annonce le MSIX `2.5.4` construit et techniquement contrôlé comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve sans modification les optimisations de simultanéité de la 0.12.16 : absence de verrous globaux en régime stable, maintenances non bloquantes et bornées, SSE adaptatif avec reprise, lectures conditionnelles et déplacement MJ ciblé sans recomposition complète de la table.
+La 0.12.18 annonce le MSIX `2.5.5` comme unique version applicative autorisée ; toute version antérieure ou supérieure non annoncée reçoit `426 client_update_required`. Elle conserve les optimisations de simultanéité de la 0.12.16, autorise le signal de carte pour une session MJ et ajoute le bail mobile du worker Studio : un nouveau poste peut prendre le relais sans attendre l’expiration de quinze minutes, tandis que l’ancien processus ne peut plus publier un résultat tardif.
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 
@@ -70,7 +70,7 @@ Routes principales :
 
 « Retirer » masque une entrée au propriétaire sans supprimer l’audit administrateur. Un média encore attaché au résultat ou aux références d’un message conservé reste protégé par cet audit. Le fichier privé réellement orphelin, lorsqu’il n’est ni publié, ni utilisé par un domaine, ni actif dans le catalogue, entre dans la rétention média de trente jours. Une image ne devient publique qu’après l’action distincte de publication.
 
-Le heartbeat transporte uniquement le booléen `ready` et, pendant une exécution, la référence de la demande déjà connue du backend, avec la session MJ d’Innota. Aucun identifiant matériel, cookie ChatGPT, mot de passe, fichier `auth.json`, jeton Codex ou secret OpenAI n’est accepté ni stocké. Mettre l’accès en pause refuse les nouvelles demandes et les nouvelles prises, mais ne détruit pas le travail déjà lancé.
+Le heartbeat transporte uniquement le booléen `ready`, un bail aléatoire de processus et, pendant une exécution, la référence de la demande déjà connue du backend, avec la session MJ d’Innota. Le bail n’identifie ni un PC ni un utilisateur : il sert uniquement à clôturer l’ancien processus lors d’un relais et disparaît avec lui. Aucun identifiant matériel, cookie ChatGPT, mot de passe, fichier `auth.json`, jeton Codex ou secret OpenAI n’est accepté ni stocké. Mettre l’accès en pause refuse les nouvelles demandes et les nouvelles prises, mais ne détruit pas le travail déjà lancé.
 
 Chaque écriture modifie uniquement les domaines concernés, incrémente l’horloge globale et conserve l’ancienne valeur dans l’historique. Une collision de révision renvoie `409 domain_revision_conflict`. Les deltas sont conservés sur 2 000 révisions et l’historique trente jours.
 

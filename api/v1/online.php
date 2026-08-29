@@ -1461,7 +1461,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -1846,8 +1846,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'sceneId' => $sceneId !== '' ? $sceneId : null,
                 'createdAt' => $now,
                 'expiresAt' => $now + 4200,
-                'author' => (string) $identity['display_name'],
-                'color' => '#8d72cb',
+                'author' => $isGm ? 'MJ' : (string) $identity['display_name'],
+                'color' => $isGm ? '#ffd782' : '#8d72cb',
             ];
             $pings = array_values(array_filter(
                 is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
