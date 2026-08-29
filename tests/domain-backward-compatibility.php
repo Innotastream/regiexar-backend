@@ -373,6 +373,12 @@ requireDomainCompatibility(
     ) === $inhoLegacyId,
     'Le compte Innota doit retrouver explicitement la fiche Inho même si les noms du compte et du roster diffèrent.'
 );
+requireDomainCompatibility(
+    rosterRepairAliases(['username' => 'Goldark', 'display_name' => 'Goldark']) === ['goldark', 'kokaku']
+        && rosterRepairAliases(['username' => 'Hohachu', 'display_name' => 'Hohachu'])
+            === ['hohachu', 'gohachu', 'gohachu forgefer'],
+    'Les rattachements déclarés Goldark vers Kokaku et Hohachu vers Gohachu doivent rester explicites.'
+);
 $globalRepairRecords = [
     'roster' => [
         'revision' => 9,

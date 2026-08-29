@@ -836,12 +836,18 @@ function findEntryIndex(array $entries, string $id): int
 function rosterAliases(array $identity): array
 {
     $normalize = static fn (mixed $value): string => strtolower(trim((string) $value));
-    $aliases = array_filter([
-        $normalize($identity['display_name'] ?? ''),
-        $normalize($identity['username'] ?? ''),
-    ]);
-    if ($normalize($identity['username'] ?? '') === 'innota') {
-        $aliases[] = 'inho';
+    $displayName = $normalize($identity['display_name'] ?? '');
+    $username = $normalize($identity['username'] ?? '');
+    $aliases = array_filter([$displayName, $username]);
+    $declaredMappings = [
+        'goldark' => ['kokaku'],
+        'innota' => ['inho'],
+        'hohachu' => ['gohachu', 'gohachu forgefer'],
+    ];
+    foreach (array_unique([$username, $displayName]) as $accountAlias) {
+        foreach ($declaredMappings[$accountAlias] ?? [] as $characterAlias) {
+            $aliases[] = $characterAlias;
+        }
     }
     return array_values(array_unique($aliases));
 }

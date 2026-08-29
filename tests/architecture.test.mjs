@@ -468,7 +468,9 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(online, /function onlineIdentityLegacyOwnerId/);
   assert.match(online, /function onlineRosterOwnershipProposals/);
   assert.match(online, /\$characterNameOwners\[\$ownerPlayerId\] = true/);
-  assert.match(online, /username[^\n]*=== 'innota'[\s\S]*?\$aliases\[\] = 'inho'/);
+  assert.match(online, /'goldark' => \['kokaku'\]/);
+  assert.match(online, /'innota' => \['inho'\]/);
+  assert.match(online, /'hohachu' => \['gohachu', 'gohachu forgefer'\]/);
   assert.match(online, /\$matchesDeterministicId/);
   assert.match(online, /\$matchesUniqueName = \$name === \$alias/);
   assert.match(online, /count\(\$candidates\) === 1/);
