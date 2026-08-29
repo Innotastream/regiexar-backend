@@ -64,9 +64,9 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.19 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.20 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.19'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.20'/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
   assert.match(index, /shared_regie_codex_queue/);
@@ -79,7 +79,7 @@ test("le backend 0.12.19 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.19");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.20");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.6");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
@@ -461,9 +461,13 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   const online = await read("api/v1/online.php");
   const command = online.slice(online.indexOf("function commandOnlineState"), online.indexOf("function openOnlineConnection"));
   const ensurePlayer = command.slice(command.indexOf("$command === 'ensure-player'"), command.indexOf("$command === 'preferences.update'"));
-  assert.match(online, /function rosterRepairAliases[\s\S]*?\$username === 'innota' \? \['inho'\] : \[\]/);
+  assert.match(online, /function rosterRepairAliases[\s\S]*?return rosterAliases\(\$identity\)/);
+  assert.match(online, /function rosterMigrationCandidateIndex/);
+  assert.match(online, /\$matchesDeterministicId/);
+  assert.match(online, /\$matchesUnlinkedName = !\$accountAlreadyPresent/);
+  assert.match(online, /count\(\$candidates\) === 1/);
   assert.match(ensurePlayer, /\$accountIndex = findEntryIndex\(\$players, \$accountId\)/);
-  assert.match(ensurePlayer, /\$aliases = \$accountIndex >= 0 \? rosterRepairAliases\(\$identity\) : rosterAliases\(\$identity\)/);
+  assert.match(ensurePlayer, /rosterMigrationCandidateIndex\([\s\S]*?\$accountIndex >= 0/);
   assert.match(ensurePlayer, /\$rosterChanged = false/);
   assert.match(ensurePlayer, /if \(\$pendingIndex >= 0\)[\s\S]*?array_splice\(\$players, \$pendingIndex, 1\)/);
   assert.match(ensurePlayer, /\$oldId[\s\S]*?\$payload\['ownerPlayerId'\] = \$accountId/);

@@ -839,8 +839,43 @@ function rosterAliases(array $identity): array
 
 function rosterRepairAliases(array $identity): array
 {
-    $username = strtolower(trim((string) ($identity['username'] ?? '')));
-    return $username === 'innota' ? ['inho'] : [];
+    return rosterAliases($identity);
+}
+
+function rosterLegacyIdForAlias(string $alias): string
+{
+    $slug = trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower(trim($alias))), '-');
+    return $slug === '' ? '' : 'player-' . $slug;
+}
+
+function rosterMigrationCandidateIndex(
+    array $players,
+    string $accountId,
+    array $identity,
+    bool $accountAlreadyPresent
+): int {
+    $aliases = $accountAlreadyPresent ? rosterRepairAliases($identity) : rosterAliases($identity);
+    $candidates = [];
+    foreach ($players as $index => $player) {
+        if (!is_array($player)) {
+            continue;
+        }
+        $name = strtolower(trim((string) ($player['name'] ?? '')));
+        $id = strtolower(trim((string) ($player['id'] ?? '')));
+        if ($id === strtolower($accountId)) {
+            continue;
+        }
+        foreach ($aliases as $alias) {
+            $legacyId = rosterLegacyIdForAlias($alias);
+            $matchesDeterministicId = $legacyId !== '' && $id === $legacyId;
+            $matchesUnlinkedName = !$accountAlreadyPresent && $name === $alias;
+            if ($matchesDeterministicId || $matchesUnlinkedName) {
+                $candidates[(int) $index] = true;
+                break;
+            }
+        }
+    }
+    return count($candidates) === 1 ? (int) array_key_first($candidates) : -1;
 }
 
 function cleanPlayerCharacter(array $character, string $accountId): array
@@ -1475,27 +1510,16 @@ function commandOnlineState(PDO $connection, array $configuration): never
             ]);
             $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
             $accountIndex = findEntryIndex($players, $accountId);
-            // Lorsqu'un compte existe déjà dans le roster, seule une migration
-            // historique explicitement connue peut absorber une seconde entrée.
-            // Un simple homonyme ne doit jamais être fusionné silencieusement.
-            $aliases = $accountIndex >= 0 ? rosterRepairAliases($identity) : rosterAliases($identity);
-            $pendingIndex = -1;
-            foreach ($players as $index => $player) {
-                if (!is_array($player)) {
-                    continue;
-                }
-                $name = strtolower(trim((string) ($player['name'] ?? '')));
-                $id = strtolower(trim((string) ($player['id'] ?? '')));
-                if ($id === strtolower($accountId)) {
-                    continue;
-                }
-                foreach ($aliases as $alias) {
-                    if ($name === $alias || $id === 'player-' . preg_replace('/[^a-z0-9]+/', '-', $alias)) {
-                        $pendingIndex = (int) $index;
-                        break 2;
-                    }
-                }
-            }
+            // Un compte déjà présent ne peut absorber que l'ancien identifiant
+            // déterministe player-<identifiant>. Les noms seuls et les cas
+            // ambigus restent refusés afin de ne jamais attribuer la fiche d'un
+            // homonyme au mauvais compte.
+            $pendingIndex = rosterMigrationCandidateIndex(
+                $players,
+                $accountId,
+                $identity,
+                $accountIndex >= 0
+            );
             $now = (int) floor(microtime(true) * 1000);
             $oldId = '';
             $rosterChanged = false;

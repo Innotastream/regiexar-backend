@@ -247,6 +247,32 @@ requireDomainCompatibility(
     'La reconnexion SSE doit rester dans sa fenêtre bornée.'
 );
 
+$hiraIdentity = ['id' => 'usr_hira_12345678', 'username' => 'hira', 'display_name' => 'Hira'];
+$duplicateRoster = [
+    ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
+    ['id' => 'player-hira', 'name' => 'Hira'],
+    ['id' => 'player-other', 'name' => 'Hira'],
+];
+requireDomainCompatibility(
+    rosterMigrationCandidateIndex($duplicateRoster, 'usr_hira_12345678', $hiraIdentity, true) === 1,
+    'Un compte déjà présent doit retrouver son ancien identifiant player-<identifiant> exact.'
+);
+requireDomainCompatibility(
+    rosterMigrationCandidateIndex([
+        ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
+        ['id' => 'player-other', 'name' => 'Hira'],
+    ], 'usr_hira_12345678', $hiraIdentity, true) === -1,
+    'Un simple homonyme ne doit jamais être absorbé par un compte déjà présent.'
+);
+requireDomainCompatibility(
+    rosterMigrationCandidateIndex([
+        ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
+        ['id' => 'player-hira', 'name' => 'Hira'],
+        ['id' => 'PLAYER-HIRA', 'name' => 'Hira bis'],
+    ], 'usr_hira_12345678', $hiraIdentity, true) === -1,
+    'Deux anciens identifiants équivalents doivent rester ambigus et non fusionnés.'
+);
+
 unset($_GET['since']);
 requireDomainCompatibility(
     requestedOnlineStateRevision() === null,
