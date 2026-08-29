@@ -7,7 +7,7 @@ const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 1500000;
-const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 5;
+const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 6;
 
 function requireIdentity(PDO $connection): array
 {
@@ -578,6 +578,42 @@ function normalizeOnlineTokenFrameVariant(mixed $value, bool $playerControlled =
         : ($playerControlled ? 'player' : 'creature');
 }
 
+function onlineCharacterOwnerIndex(array $characters): array
+{
+    $owners = [];
+    foreach ($characters as $character) {
+        if (!is_array($character)) {
+            continue;
+        }
+        $characterId = trim((string) ($character['id'] ?? ''));
+        $ownerPlayerId = trim((string) ($character['ownerPlayerId'] ?? ''));
+        if ($characterId !== '' && $ownerPlayerId !== '') {
+            $owners[$characterId] = $ownerPlayerId;
+        }
+    }
+    return $owners;
+}
+
+function onlineEffectiveTokenControllerId(array $token, array $characterOwners): string
+{
+    $characterId = trim((string) ($token['characterId'] ?? ''));
+    if ($characterId !== '' && trim((string) ($characterOwners[$characterId] ?? '')) !== '') {
+        return trim((string) $characterOwners[$characterId]);
+    }
+    return trim((string) ($token['controllerPlayerId'] ?? ''));
+}
+
+function onlineTokenControllerIdFromRecords(PDO $connection, array &$records, array $token): string
+{
+    $characterId = trim((string) ($token['characterId'] ?? ''));
+    $characterKey = 'character:' . $characterId;
+    if ($characterId !== '' && validApplicationDomainKey($characterKey) && !isset($records[$characterKey])) {
+        $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+    }
+    $character = $characterId === '' ? [] : applicationDomainPayload($records, $characterKey);
+    return onlineEffectiveTokenControllerId($token, onlineCharacterOwnerIndex($character === [] ? [] : [$character]));
+}
+
 function publicPlayerState(array $fullState, array $identity, array $presence): array
 {
     $accountId = (string) $identity['id'];
@@ -602,13 +638,15 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
     $activeTokenId = $active ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
     $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
+    $characterOwners = onlineCharacterOwnerIndex(is_array($fullState['characters'] ?? null) ? $fullState['characters'] : []);
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
         if (!is_array($token) || ($token['hidden'] ?? false) === true) {
             continue;
         }
-        $owned = ($token['controllerPlayerId'] ?? null) === $accountId;
-        $allied = is_string($token['controllerPlayerId'] ?? null) && (string) $token['controllerPlayerId'] !== '';
+        $effectiveControllerId = onlineEffectiveTokenControllerId($token, $characterOwners);
+        $owned = $effectiveControllerId === $accountId;
+        $allied = $effectiveControllerId !== '';
         $details = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
         $temporaryMovementAllowed = $active && ($movementOverrides[(string) ($token['id'] ?? '')] ?? false) === true;
         $visible = [
@@ -906,11 +944,14 @@ function onlineRosterOwnershipRepairStatus(PDO $connection): array
         'version' => onlineRosterOwnershipRepairVersion($roster),
         'appliedAccounts' => max(0, (int) ($roster['_ownershipRepairAppliedAccounts'] ?? 0)),
         'appliedCharacters' => max(0, (int) ($roster['_ownershipRepairAppliedCharacters'] ?? 0)),
+        'appliedTokens' => max(0, (int) ($roster['_ownershipRepairAppliedTokens'] ?? 0)),
         'declaredCharacters' => max(0, (int) ($roster['_ownershipRepairDeclaredCharacters'] ?? 0)),
         'declaredCharactersMissing' => max(0, (int) ($roster['_ownershipRepairDeclaredCharactersMissing'] ?? 0)),
         'unassignedCharacters' => max(0, (int) ($roster['_ownershipRepairUnassignedCharacters'] ?? 0)),
         'removedRosterGhosts' => max(0, (int) ($roster['_ownershipRepairRemovedRosterGhosts'] ?? 0)),
         'duplicateActiveAccountDisplays' => max(0, (int) ($roster['_ownershipRepairDuplicateActiveAccountDisplays'] ?? 0)),
+        'declaredTokens' => max(0, (int) ($roster['_ownershipRepairDeclaredTokens'] ?? 0)),
+        'declaredTokensIncorrect' => max(0, (int) ($roster['_ownershipRepairDeclaredTokensIncorrect'] ?? 0)),
     ];
 }
 
@@ -1088,6 +1129,82 @@ function onlinePendingDomainPayload(array $pending, array $records, string $key)
     return applicationDomainPayload($records, $key);
 }
 
+function onlineDeclaredTokenTargets(array $records, array $assignments): array
+{
+    $byCharacterId = [];
+    $byLinkedTokenId = [];
+    $byCharacterName = [];
+    foreach ($assignments as $key => $accountId) {
+        $character = applicationDomainPayload($records, (string) $key);
+        $characterId = trim((string) ($character['id'] ?? substr((string) $key, strlen('character:'))));
+        $accountId = trim((string) $accountId);
+        if ($characterId === '' || $accountId === '') {
+            continue;
+        }
+        $byCharacterId[$characterId] = $accountId;
+        $name = strtolower(trim((string) ($character['name'] ?? '')));
+        if ($name !== '') {
+            $byCharacterName[$name] = !isset($byCharacterName[$name]) || $byCharacterName[$name] === $accountId
+                ? $accountId : '';
+        }
+        foreach (is_array($character['linkedTokens'] ?? null) ? $character['linkedTokens'] : [] as $linkedToken) {
+            $linkedTokenId = is_array($linkedToken) ? trim((string) ($linkedToken['id'] ?? '')) : '';
+            if ($linkedTokenId !== '') {
+                $byLinkedTokenId[$linkedTokenId] = !isset($byLinkedTokenId[$linkedTokenId]) || $byLinkedTokenId[$linkedTokenId] === $accountId
+                    ? $accountId : '';
+            }
+        }
+    }
+    return compact('byCharacterId', 'byLinkedTokenId', 'byCharacterName');
+}
+
+function onlineDeclaredTokenTargetAccountId(array $token, array $targets): string
+{
+    $characterId = trim((string) ($token['characterId'] ?? ''));
+    $target = trim((string) ($targets['byCharacterId'][$characterId] ?? ''));
+    if ($target !== '') {
+        return $target;
+    }
+    $linkedTokenId = trim((string) ($token['linkedTokenId'] ?? ''));
+    $target = trim((string) ($targets['byLinkedTokenId'][$linkedTokenId] ?? ''));
+    if ($linkedTokenId !== '' && $target !== '') {
+        return $target;
+    }
+    if (($token['followCharacter'] ?? true) === false) {
+        return '';
+    }
+    $name = strtolower(trim((string) ($token['name'] ?? '')));
+    return trim((string) ($targets['byCharacterName'][$name] ?? ''));
+}
+
+function onlineDeclaredTokenOwnershipStatus(array $records, array $pending, array $assignments): array
+{
+    $effectiveRecords = $records;
+    foreach ($pending as $key => $change) {
+        if (is_array($change['payload'] ?? null)) {
+            $effectiveRecords[(string) $key] = ['payload' => $change['payload']];
+        }
+    }
+    $targets = onlineDeclaredTokenTargets($effectiveRecords, $assignments);
+    $matched = 0;
+    $correct = 0;
+    foreach ($effectiveRecords as $key => $record) {
+        if (!str_starts_with((string) $key, 'token:')) {
+            continue;
+        }
+        $token = applicationDomainPayload($effectiveRecords, (string) $key);
+        $target = onlineDeclaredTokenTargetAccountId($token, $targets);
+        if ($target === '') {
+            continue;
+        }
+        $matched++;
+        if ((string) ($token['controllerPlayerId'] ?? '') === $target) {
+            $correct++;
+        }
+    }
+    return ['matched' => $matched, 'correct' => $correct, 'incorrect' => max(0, $matched - $correct)];
+}
+
 function queueOnlineDeclaredCharacterAssignments(
     array &$pending,
     array $records,
@@ -1095,14 +1212,11 @@ function queueOnlineDeclaredCharacterAssignments(
     int $now
 ): array {
     $changedCharacters = 0;
+    $changedTokens = 0;
     $changedAccounts = [];
-    $targetsByCharacterId = [];
+    $targets = onlineDeclaredTokenTargets($records, $assignments);
     foreach ($assignments as $key => $accountId) {
         $character = onlinePendingDomainPayload($pending, $records, (string) $key);
-        $characterId = (string) ($character['id'] ?? substr((string) $key, strlen('character:')));
-        if ($characterId !== '') {
-            $targetsByCharacterId[$characterId] = (string) $accountId;
-        }
         if ((string) ($character['ownerPlayerId'] ?? '') === (string) $accountId) {
             continue;
         }
@@ -1116,11 +1230,12 @@ function queueOnlineDeclaredCharacterAssignments(
     foreach ($records as $key => $record) {
         if (str_starts_with($key, 'token:')) {
             $token = onlinePendingDomainPayload($pending, $records, $key);
-            $target = (string) ($targetsByCharacterId[(string) ($token['characterId'] ?? '')] ?? '');
+            $target = onlineDeclaredTokenTargetAccountId($token, $targets);
             if ($target !== '' && (string) ($token['controllerPlayerId'] ?? '') !== $target) {
                 $token['controllerPlayerId'] = $target;
                 $token['_updatedAt'] = $now;
                 queueOnlineDomainUpsert($pending, $records, $key, $token);
+                $changedTokens++;
             }
             continue;
         }
@@ -1136,7 +1251,7 @@ function queueOnlineDeclaredCharacterAssignments(
             if (!is_array($token)) {
                 continue;
             }
-            $target = (string) ($targetsByCharacterId[(string) ($token['characterId'] ?? '')] ?? '');
+            $target = onlineDeclaredTokenTargetAccountId($token, $targets);
             if ($target !== '' && (string) ($token['controllerPlayerId'] ?? '') !== $target) {
                 $token['controllerPlayerId'] = $target;
                 $token['_updatedAt'] = $now;
@@ -1155,7 +1270,7 @@ function queueOnlineDeclaredCharacterAssignments(
         if (!is_array($timer)) {
             continue;
         }
-        $target = (string) ($targetsByCharacterId[(string) ($timer['characterId'] ?? '')] ?? '');
+        $target = (string) ($targets['byCharacterId'][(string) ($timer['characterId'] ?? '')] ?? '');
         if ($target !== '' && (string) ($timer['ownerPlayerId'] ?? '') !== $target) {
             $activity['actionTimers'][$index]['ownerPlayerId'] = $target;
             $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
@@ -1165,7 +1280,7 @@ function queueOnlineDeclaredCharacterAssignments(
     if ($activityChanged) {
         queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     }
-    return ['characters' => $changedCharacters, 'accounts' => array_keys($changedAccounts)];
+    return ['characters' => $changedCharacters, 'tokens' => $changedTokens, 'accounts' => array_keys($changedAccounts)];
 }
 
 function onlineIdentityLegacyOwnerId(array $records, string $accountId, array $identity): string
@@ -1458,6 +1573,7 @@ function repairOnlineRosterOwnershipsOnRead(PDO $connection, array $identity): i
             $roster['_ownershipRepairVersion'] = XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION;
             $roster['_ownershipRepairAppliedAccounts'] = $repaired;
             $roster['_ownershipRepairAppliedCharacters'] = (int) $declaredRepair['characters'];
+            $roster['_ownershipRepairAppliedTokens'] = (int) $declaredRepair['tokens'];
             $roster['_ownershipRepairDeclaredCharacters'] = count($declaredAssignments);
             $roster['_ownershipRepairDeclaredCharactersMissing'] = 0;
             $roster['_ownershipRepairRemovedRosterGhosts'] = $removedRosterGhosts;
@@ -1468,6 +1584,9 @@ function repairOnlineRosterOwnershipsOnRead(PDO $connection, array $identity): i
                 $proposals,
                 $declaredAssignments
             );
+            $tokenOwnershipStatus = onlineDeclaredTokenOwnershipStatus($records, $pending, $declaredAssignments);
+            $roster['_ownershipRepairDeclaredTokens'] = (int) $tokenOwnershipStatus['matched'];
+            $roster['_ownershipRepairDeclaredTokensIncorrect'] = (int) $tokenOwnershipStatus['incorrect'];
             queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
             if ($pending !== []) {
                 persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
@@ -2361,8 +2480,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $initiativeKey = 'initiative:' . $sceneId;
             $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+            $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
             if ($token === [] || (!$isGm
-                && (($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true))) {
+                && ($effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true))) {
                 rejectOnlineCommand($connection, 403, 'Déplacement refusé.', 'token_forbidden');
             }
             $initiative = applicationDomainPayload($records, $initiativeKey);
@@ -2402,7 +2522,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if ($token === []) {
                 rejectOnlineCommand($connection, 404, 'Token introuvable.', 'token_missing');
             }
-            if (!$isGm && (($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true)) {
+            $effectiveControllerId = onlineTokenControllerIdFromRecords($connection, $records, $token);
+            if (!$isGm && ($effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true)) {
                 rejectOnlineCommand($connection, 403, 'Vous ne pouvez pas modifier les ressources de ce token.', 'token_forbidden');
             }
             $maximumKey = $resource === 'mana' ? 'maxMana' : 'maxHp';
@@ -2551,7 +2672,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $tokenKey = onlineTokenDomainKey($sceneId, $tokenId);
                 $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity']));
                 $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
-                if ($token === [] || ($token['controllerPlayerId'] ?? null) !== $accountId || ($token['hidden'] ?? false) === true) {
+                $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
+                if ($token === [] || $effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true) {
                     rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
                 }
             } else {
@@ -2731,7 +2853,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     }
                     $candidate = applicationDomainPayload($records, $key);
                     if (($candidate['characterId'] ?? null) === $characterId
-                        && ($candidate['controllerPlayerId'] ?? null) === $accountId
+                        && onlineEffectiveTokenControllerId($candidate, [$characterId => $accountId]) === $accountId
                         && ($candidate['hidden'] ?? false) !== true) {
                         $controlledTokenKey = $key;
                         $controlledToken = $candidate;

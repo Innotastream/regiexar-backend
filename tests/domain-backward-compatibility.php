@@ -309,6 +309,7 @@ $adaRecords = [
             'id' => 'character-ada-12345678',
             'ownerPlayerId' => $adaLegacyId,
             'name' => 'Ada',
+            'linkedTokens' => [['id' => 'linked-ada-wolf', 'name' => 'Loup d’Ada']],
             '_updatedAt' => 100,
         ],
     ],
@@ -433,6 +434,23 @@ requireDomainCompatibility(
 $wrongActiveOwnerRecords = $globalRepairRecords;
 $wrongActiveOwnerRecords['character:character-ada-12345678']['payload']['ownerPlayerId'] = $inhoAccountId;
 $wrongActiveOwnerRecords['character:character-vraska-12345678']['payload']['ownerPlayerId'] = $inhoAccountId;
+$wrongActiveOwnerRecords['token:scene-1:token-ada'] = ['revision' => 1, 'payload' => [
+    'id' => 'token-ada', 'characterId' => 'character-ada-12345678', 'controllerPlayerId' => $inhoAccountId,
+    'name' => 'Ada', 'hidden' => false,
+]];
+$wrongActiveOwnerRecords['token:scene-1:token-vraska-legacy'] = ['revision' => 1, 'payload' => [
+    'id' => 'token-vraska-legacy', 'controllerPlayerId' => $inhoAccountId,
+    'name' => 'Vraska', 'hidden' => false,
+]];
+$wrongActiveOwnerRecords['token:scene-1:token-ada-wolf'] = ['revision' => 1, 'payload' => [
+    'id' => 'token-ada-wolf', 'linkedTokenId' => 'linked-ada-wolf', 'controllerPlayerId' => $inhoAccountId,
+    'name' => 'Loup d’Ada', 'hidden' => false,
+]];
+$wrongActiveOwnerRecords['activity'] = ['revision' => 1, 'payload' => [
+    'actionTimers' => [[
+        'id' => 'timer-ada', 'characterId' => 'character-ada-12345678', 'ownerPlayerId' => $inhoAccountId,
+    ]],
+]];
 $wrongOwnerPending = [];
 $wrongOwnerRepair = queueOnlineDeclaredCharacterAssignments(
     $wrongOwnerPending,
@@ -443,8 +461,45 @@ $wrongOwnerRepair = queueOnlineDeclaredCharacterAssignments(
 requireDomainCompatibility(
     ($wrongOwnerPending['character:character-ada-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
         && ($wrongOwnerPending['character:character-vraska-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
-        && (int) ($wrongOwnerRepair['characters'] ?? 0) === 3,
+        && ($wrongOwnerPending['token:scene-1:token-ada']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
+        && ($wrongOwnerPending['token:scene-1:token-vraska-legacy']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
+        && ($wrongOwnerPending['token:scene-1:token-ada-wolf']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
+        && ($wrongOwnerPending['activity']['payload']['actionTimers'][0]['ownerPlayerId'] ?? null) === $adaAccountId
+        && (int) ($wrongOwnerRepair['characters'] ?? 0) === 3
+        && (int) ($wrongOwnerRepair['tokens'] ?? 0) === 3,
     'Une fiche attachée au mauvais compte actif doit être réattribuée au compte déclaré, sans ambiguïté.'
+);
+$wrongTokenStatus = onlineDeclaredTokenOwnershipStatus(
+    $wrongActiveOwnerRecords,
+    $wrongOwnerPending,
+    onlineDeclaredCharacterAssignments($wrongActiveOwnerRecords, $globalAccounts)
+);
+requireDomainCompatibility(
+    $wrongTokenStatus === ['matched' => 3, 'correct' => 3, 'incorrect' => 0],
+    'La réparation doit prouver que tous les tokens directs, historiques et liés utilisent le bon compte.'
+);
+requireDomainCompatibility(
+    onlineEffectiveTokenControllerId(
+        ['characterId' => 'character-ada-12345678', 'controllerPlayerId' => $inhoAccountId],
+        ['character-ada-12345678' => $adaAccountId]
+    ) === $adaAccountId,
+    'Le propriétaire autoritaire de la fiche doit prévaloir immédiatement sur un contrôleur de token périmé.'
+);
+$adaProjection = publicPlayerState([
+    'session' => ['name' => 'Recette'],
+    'characters' => [$wrongOwnerPending['character:character-ada-12345678']['payload']],
+    'map' => ['tokens' => [$wrongActiveOwnerRecords['token:scene-1:token-ada']['payload']], 'background' => null],
+    'initiative' => ['active' => false, 'order' => [], 'currentIndex' => 0],
+    'tacticalSync' => ['paused' => false],
+    'playerPreferences' => [],
+    'rolls' => [],
+    'actionTimers' => [],
+    'mapPings' => [],
+], ['id' => $adaAccountId, 'display_name' => 'Ada'], []);
+requireDomainCompatibility(
+    ($adaProjection['map']['tokens'][0]['ownedByYou'] ?? false) === true
+        && ($adaProjection['map']['tokens'][0]['controllable'] ?? false) === true,
+    'La vue Joueur doit rendre immédiatement déplaçable un token dont la fiche lui appartient, même avant la migration physique.'
 );
 $rosterWithGhosts = $globalRepairRecords['roster']['payload'];
 $rosterWithGhosts['players'][] = ['id' => $adaAccountId, 'name' => 'Ada en double'];

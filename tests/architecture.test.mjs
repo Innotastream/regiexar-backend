@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.21 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.22 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.21'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-7-release-20260829-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.22'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-8-release-20260829-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -81,8 +81,8 @@ test("le backend 0.12.21 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.21");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.7");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.22");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.8");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -129,7 +129,8 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$movementOverrides = is_array\(\$initiative\['movementOverrides'\]/);
   assert.match(command, /if \(!\$isGm && \(\$initiative\['active'\] \?\? false\) === true\)/);
   assert.match(command, /\$activeId !== \(\$token\['id'\] \?\? null\) && !\$movementOverride/);
-  assert.match(command, /!\$isGm[\s\S]*?controllerPlayerId[\s\S]*?hidden/);
+  assert.match(command, /onlineTokenControllerIdFromRecords/);
+  assert.match(command, /!\$isGm[\s\S]*?effectiveControllerId[\s\S]*?hidden/);
   assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$x\)/);
   assert.match(command, /max\(0\.0, min\(100\.0, is_finite\(\$y\)/);
   assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'ping'\]/);
@@ -142,7 +143,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.7'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.8'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -438,7 +439,8 @@ test("les PV et le mana d’un token sont ajustés atomiquement sans élargir le
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
   const command = online.slice(online.indexOf("$command === 'token.resource.adjust'"), online.indexOf("$command === 'ping'"));
   assert.match(command, /\$isGm \? trim\(\(string\) \(\$arguments\['sceneId'\]/);
-  assert.match(command, /\!\$isGm && \(\(\$token\['controllerPlayerId'\]/);
+  assert.match(command, /onlineTokenControllerIdFromRecords/);
+  assert.match(command, /\!\$isGm && \(\$effectiveControllerId/);
   assert.match(command, /\(\$token\['hidden'\] \?\? false\) === true/);
   assert.match(command, /\$current = max\(0, min\(\$maximum, \$previous \+ \$requestedDelta\)\)/);
   assert.match(command, /applicationCharacterTokenDomainRecords\(\$connection, \$characterId\)/);
@@ -483,6 +485,8 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(repair, /_ownershipRepairVersion/);
   assert.match(repair, /_ownershipRepairAppliedAccounts/);
   assert.match(repair, /_ownershipRepairAppliedCharacters/);
+  assert.match(repair, /_ownershipRepairAppliedTokens/);
+  assert.match(repair, /_ownershipRepairDeclaredTokensIncorrect/);
   assert.match(repair, /_ownershipRepairUnassignedCharacters/);
   assert.match(online, /function onlineDeclaredCharacterAssignments/);
   assert.match(online, /function cleanupOnlinePhantomRosterPlayers/);
@@ -607,7 +611,8 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
 test("la projection joueur partage les statuts, réserve les stats aux alliés et mémorise le personnage actif", async () => {
   const online = await read("api/v1/online.php");
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
-  assert.match(projection, /\$allied = is_string\(\$token\['controllerPlayerId'\]/);
+  assert.match(projection, /\$effectiveControllerId = onlineEffectiveTokenControllerId/);
+  assert.match(projection, /\$allied = \$effectiveControllerId !== ''/);
   assert.match(projection, /'condition' => substr/);
   assert.match(projection, /\$details = \$allied \|\|/);
   assert.match(projection, /'bonuses', 'penalties'/);
