@@ -67,7 +67,7 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
 test("le backend 0.12.20 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.20'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-2'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-3'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -481,6 +481,11 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(online, /onlineIdentityLegacyOwnerId\(\$records, \$accountId, \$candidateIdentity\)/);
   assert.match(repair, /onlineRosterOwnershipProposals\(\$records, \$accounts\)/);
   assert.match(repair, /_ownershipRepairVersion/);
+  assert.match(repair, /_ownershipRepairAppliedAccounts/);
+  assert.match(repair, /_ownershipRepairUnassignedCharacters/);
+  assert.doesNotMatch(online.slice(online.indexOf("function onlineRosterOwnershipProposals"), online.indexOf("function queueOnlinePlayerOwnershipRepair")), /characterCounts\[\$accountId\].*continue/);
+  assert.match(repair, /elseif \(\$pendingIndex >= 0\)/);
+  assert.match(repair, /\$players\[\] = \[/);
   assert.match(online, /count\(\$claims\[\(string\) \$proposal\['oldId'\]\] \?\? \[\]\) !== 1/);
   assert.match(online, /isset\(\$accountIds\[\$oldId\]\)/);
   assert.match(repair, /foreach \(\$proposals as \$accountId => \$proposal\)/);
@@ -494,6 +499,10 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(ensurePlayer, /\$oldId[\s\S]*?\$payload\['ownerPlayerId'\] = \$accountId/);
   assert.match(ensurePlayer, /str_starts_with\(\$key, 'presentation:'\) \|\| \$key === 'detached-combat'/);
   assert.match(ensurePlayer, /\$activity\['actionTimers'\]\[\$index\]\['ownerPlayerId'\] = \$accountId/);
+  const index = await read("api/v1/index.php");
+  const health = index.slice(index.indexOf("if ($route === '/api/v1/health')"), index.indexOf("try {", index.indexOf("if ($route === '/api/v1/health')") + 20));
+  assert.match(index, /repairOnlineRosterOwnershipsOnRead\(\$connection, \[\]\)/);
+  assert.match(index, /'ownershipRepair' => onlineRosterOwnershipRepairStatus\(\$connection\)/);
 });
 
 test("SSE et vue joueur évitent la reconstruction de toutes les scènes", async () => {

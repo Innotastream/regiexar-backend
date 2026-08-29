@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
 const XAR_BACKEND_VERSION = '0.12.20';
-const XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-2';
+const XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-3';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '2.5.6';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 13;
@@ -1700,6 +1700,13 @@ if ($route === '/api/v1/health') {
         if ($statement === false || (int) $statement->fetchColumn() !== 1) {
             throw new RuntimeException('database_unreachable');
         }
+        // La réparation de données est une migration idempotente et versionnée.
+        // L'exécuter sur le GET de santé permet au déploiement de la déclencher
+        // et de la contrôler sans attendre une action d'un joueur. HEAD demeure
+        // strictement sans effet de bord.
+        if (!$headOnly) {
+            repairOnlineRosterOwnershipsOnRead($connection, []);
+        }
         sendJson(200, [
             'status' => 'ok',
             'service' => 'xar-tsaroth-regie',
@@ -1707,6 +1714,7 @@ if ($route === '/api/v1/health') {
             'version' => XAR_BACKEND_VERSION,
             'build' => XAR_BACKEND_BUILD,
             'clientPolicy' => clientPolicy($configuration),
+            'ownershipRepair' => onlineRosterOwnershipRepairStatus($connection),
         ], $headOnly);
     } catch (Throwable $error) {
         error_log('[xar-regie-api] database health check failed: ' . get_class($error));

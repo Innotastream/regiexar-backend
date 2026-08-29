@@ -418,6 +418,28 @@ requireDomainCompatibility(
         && !isset($globalProposals['usr_autre_12345678']),
     'La réconciliation globale doit préparer Ada et Innota ensemble sans inventer de propriétaire au compte sans fiche.'
 );
+requireDomainCompatibility(
+    onlineUnassignedCharacterCountAfterRepair($globalRepairRecords, $globalAccounts, $globalProposals) === 1,
+    'Le contrôle de migration doit encore signaler la seule fiche sans compte correspondant.'
+);
+$globalRepairWithCurrentCharacter = $globalRepairRecords;
+$globalRepairWithCurrentCharacter['character:character-ada-nouvelle'] = [
+    'revision' => 1,
+    'payload' => [
+        'id' => 'character-ada-nouvelle',
+        'ownerPlayerId' => $adaAccountId,
+        'name' => 'Brouillon après incident',
+        '_updatedAt' => 100,
+    ],
+];
+$proposalsWithCurrentCharacter = onlineRosterOwnershipProposals(
+    $globalRepairWithCurrentCharacter,
+    $globalAccounts
+);
+requireDomainCompatibility(
+    ($proposalsWithCurrentCharacter[$adaAccountId]['oldId'] ?? null) === $adaLegacyId,
+    'Une fiche créée après l’incident ne doit pas empêcher Ada de récupérer ses anciennes fiches.'
+);
 $ambiguousGlobalProposals = onlineRosterOwnershipProposals($globalRepairRecords, [
     ...$globalAccounts,
     ['id' => 'usr_ada_homonyme_12345678', 'username' => 'ada', 'display_name' => 'Ada'],
