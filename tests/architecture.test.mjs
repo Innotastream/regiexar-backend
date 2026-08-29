@@ -67,7 +67,7 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
 test("le backend 0.12.20 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.20'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-3'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'ownership-global-reconcile-20260829-4'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -482,7 +482,17 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(repair, /onlineRosterOwnershipProposals\(\$records, \$accounts\)/);
   assert.match(repair, /_ownershipRepairVersion/);
   assert.match(repair, /_ownershipRepairAppliedAccounts/);
+  assert.match(repair, /_ownershipRepairAppliedCharacters/);
   assert.match(repair, /_ownershipRepairUnassignedCharacters/);
+  assert.match(online, /function onlineDeclaredCharacterAssignments/);
+  assert.match(online, /function cleanupOnlinePhantomRosterPlayers/);
+  assert.match(repair, /_ownershipRepairRemovedRosterGhosts/);
+  assert.match(repair, /_ownershipRepairDuplicateActiveAccountDisplays/);
+  assert.match(online, /'vraska' => 'ada'/);
+  assert.match(online, /'kokaku' => 'goldark'/);
+  assert.match(online, /'inho' => 'innota'/);
+  assert.match(online, /'gohachu' => 'hohachu'/);
+  assert.match(repair, /queueOnlineDeclaredCharacterAssignments/);
   assert.doesNotMatch(online.slice(online.indexOf("function onlineRosterOwnershipProposals"), online.indexOf("function queueOnlinePlayerOwnershipRepair")), /characterCounts\[\$accountId\].*continue/);
   assert.match(repair, /elseif \(\$pendingIndex >= 0\)/);
   assert.match(repair, /\$players\[\] = \[/);

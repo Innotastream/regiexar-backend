@@ -7,7 +7,7 @@ const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 1500000;
-const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 4;
+const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 5;
 
 function requireIdentity(PDO $connection): array
 {
@@ -905,11 +905,100 @@ function onlineRosterOwnershipRepairStatus(PDO $connection): array
     return [
         'version' => onlineRosterOwnershipRepairVersion($roster),
         'appliedAccounts' => max(0, (int) ($roster['_ownershipRepairAppliedAccounts'] ?? 0)),
+        'appliedCharacters' => max(0, (int) ($roster['_ownershipRepairAppliedCharacters'] ?? 0)),
+        'declaredCharacters' => max(0, (int) ($roster['_ownershipRepairDeclaredCharacters'] ?? 0)),
+        'declaredCharactersMissing' => max(0, (int) ($roster['_ownershipRepairDeclaredCharactersMissing'] ?? 0)),
         'unassignedCharacters' => max(0, (int) ($roster['_ownershipRepairUnassignedCharacters'] ?? 0)),
+        'removedRosterGhosts' => max(0, (int) ($roster['_ownershipRepairRemovedRosterGhosts'] ?? 0)),
+        'duplicateActiveAccountDisplays' => max(0, (int) ($roster['_ownershipRepairDuplicateActiveAccountDisplays'] ?? 0)),
     ];
 }
 
-function onlineUnassignedCharacterCountAfterRepair(array $records, array $accounts, array $proposals): int
+function onlineDuplicateActiveAccountDisplayCount(array $accounts): int
+{
+    $counts = [];
+    foreach ($accounts as $account) {
+        if (!is_array($account)) {
+            continue;
+        }
+        $displayName = strtolower(trim((string) ($account['display_name'] ?? '')));
+        if ($displayName !== '') {
+            $counts[$displayName] = ($counts[$displayName] ?? 0) + 1;
+        }
+    }
+    return array_sum(array_map(static fn (int $count): int => max(0, $count - 1), $counts));
+}
+
+function onlineCharacterOwnerIdsAfterRepair(
+    array $records,
+    array $proposals,
+    array $declaredAssignments
+): array {
+    $reassignedOwners = [];
+    foreach ($proposals as $accountId => $proposal) {
+        $oldId = (string) ($proposal['oldId'] ?? '');
+        if ($oldId !== '') {
+            $reassignedOwners[$oldId] = (string) $accountId;
+        }
+    }
+    $owners = [];
+    foreach ($records as $key => $record) {
+        if (!str_starts_with($key, 'character:')) {
+            continue;
+        }
+        $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
+        $ownerPlayerId = (string) ($declaredAssignments[$key] ?? $reassignedOwners[$ownerPlayerId] ?? $ownerPlayerId);
+        if ($ownerPlayerId !== '') {
+            $owners[$ownerPlayerId] = true;
+        }
+    }
+    return $owners;
+}
+
+function cleanupOnlinePhantomRosterPlayers(
+    array &$roster,
+    array $accounts,
+    array $records,
+    array $proposals,
+    array $declaredAssignments
+): int {
+    $retainedIds = onlineCharacterOwnerIdsAfterRepair($records, $proposals, $declaredAssignments);
+    foreach ($accounts as $account) {
+        if (is_array($account) && (string) ($account['id'] ?? '') !== '') {
+            $retainedIds[(string) $account['id']] = true;
+        }
+    }
+    $seen = [];
+    $removedIds = [];
+    $removed = 0;
+    $players = [];
+    foreach (is_array($roster['players'] ?? null) ? $roster['players'] : [] as $player) {
+        $playerId = is_array($player) ? (string) ($player['id'] ?? '') : '';
+        if ($playerId === '' || !isset($retainedIds[$playerId]) || isset($seen[$playerId])) {
+            if ($playerId !== '' && !isset($retainedIds[$playerId])) {
+                $removedIds[$playerId] = true;
+            }
+            $removed++;
+            continue;
+        }
+        $seen[$playerId] = true;
+        $players[] = $player;
+    }
+    $roster['players'] = $players;
+    if (is_array($roster['playerPreferences'] ?? null)) {
+        foreach (array_keys($removedIds) as $playerId) {
+            unset($roster['playerPreferences'][$playerId]);
+        }
+    }
+    return $removed;
+}
+
+function onlineUnassignedCharacterCountAfterRepair(
+    array $records,
+    array $accounts,
+    array $proposals,
+    array $declaredAssignments = []
+): int
 {
     $activeAccountIds = [];
     foreach ($accounts as $account) {
@@ -930,12 +1019,153 @@ function onlineUnassignedCharacterCountAfterRepair(array $records, array $accoun
             continue;
         }
         $ownerPlayerId = (string) (applicationDomainPayload($records, $key)['ownerPlayerId'] ?? '');
-        $ownerPlayerId = $reassignedOwners[$ownerPlayerId] ?? $ownerPlayerId;
+        $ownerPlayerId = (string) ($declaredAssignments[$key] ?? $reassignedOwners[$ownerPlayerId] ?? $ownerPlayerId);
         if ($ownerPlayerId === '' || !isset($activeAccountIds[$ownerPlayerId])) {
             $unassigned++;
         }
     }
     return $unassigned;
+}
+
+function onlineUniqueAccountIdForAlias(array $accounts, string $alias): string
+{
+    $alias = strtolower(trim($alias));
+    if ($alias === '') {
+        return '';
+    }
+    foreach (['username', 'display_name'] as $field) {
+        $matches = [];
+        foreach ($accounts as $account) {
+            if (!is_array($account) || strtolower(trim((string) ($account[$field] ?? ''))) !== $alias) {
+                continue;
+            }
+            $accountId = (string) ($account['id'] ?? '');
+            if ($accountId !== '') {
+                $matches[$accountId] = true;
+            }
+        }
+        if (count($matches) === 1) {
+            return (string) array_key_first($matches);
+        }
+        if ($matches !== []) {
+            return '';
+        }
+    }
+    return '';
+}
+
+function onlineDeclaredCharacterAssignments(array $records, array $accounts): array
+{
+    $declaredAccountAliases = [
+        'kokaku' => 'goldark',
+        'inho' => 'innota',
+        'ada' => 'ada',
+        'vraska' => 'ada',
+        'gohachu' => 'hohachu',
+        'gohachu forgefer' => 'hohachu',
+    ];
+    $assignments = [];
+    foreach ($records as $key => $record) {
+        if (!str_starts_with($key, 'character:')) {
+            continue;
+        }
+        $character = applicationDomainPayload($records, $key);
+        $characterName = strtolower(trim((string) ($character['name'] ?? '')));
+        $accountAlias = $declaredAccountAliases[$characterName] ?? $characterName;
+        $accountId = onlineUniqueAccountIdForAlias($accounts, $accountAlias);
+        if ($accountId !== '') {
+            $assignments[$key] = $accountId;
+        }
+    }
+    return $assignments;
+}
+
+function onlinePendingDomainPayload(array $pending, array $records, string $key): array
+{
+    if (is_array($pending[$key]['payload'] ?? null)) {
+        return $pending[$key]['payload'];
+    }
+    return applicationDomainPayload($records, $key);
+}
+
+function queueOnlineDeclaredCharacterAssignments(
+    array &$pending,
+    array $records,
+    array $assignments,
+    int $now
+): array {
+    $changedCharacters = 0;
+    $changedAccounts = [];
+    $targetsByCharacterId = [];
+    foreach ($assignments as $key => $accountId) {
+        $character = onlinePendingDomainPayload($pending, $records, (string) $key);
+        $characterId = (string) ($character['id'] ?? substr((string) $key, strlen('character:')));
+        if ($characterId !== '') {
+            $targetsByCharacterId[$characterId] = (string) $accountId;
+        }
+        if ((string) ($character['ownerPlayerId'] ?? '') === (string) $accountId) {
+            continue;
+        }
+        $character['ownerPlayerId'] = (string) $accountId;
+        $character['_updatedAt'] = $now;
+        queueOnlineDomainUpsert($pending, $records, (string) $key, $character);
+        $changedCharacters++;
+        $changedAccounts[(string) $accountId] = true;
+    }
+
+    foreach ($records as $key => $record) {
+        if (str_starts_with($key, 'token:')) {
+            $token = onlinePendingDomainPayload($pending, $records, $key);
+            $target = (string) ($targetsByCharacterId[(string) ($token['characterId'] ?? '')] ?? '');
+            if ($target !== '' && (string) ($token['controllerPlayerId'] ?? '') !== $target) {
+                $token['controllerPlayerId'] = $target;
+                $token['_updatedAt'] = $now;
+                queueOnlineDomainUpsert($pending, $records, $key, $token);
+            }
+            continue;
+        }
+        if (!str_starts_with($key, 'presentation:') && $key !== 'detached-combat') {
+            continue;
+        }
+        $presentation = onlinePendingDomainPayload($pending, $records, $key);
+        if (!is_array($presentation['map']['tokens'] ?? null)) {
+            continue;
+        }
+        $changed = false;
+        foreach ($presentation['map']['tokens'] as &$token) {
+            if (!is_array($token)) {
+                continue;
+            }
+            $target = (string) ($targetsByCharacterId[(string) ($token['characterId'] ?? '')] ?? '');
+            if ($target !== '' && (string) ($token['controllerPlayerId'] ?? '') !== $target) {
+                $token['controllerPlayerId'] = $target;
+                $token['_updatedAt'] = $now;
+                $changed = true;
+            }
+        }
+        unset($token);
+        if ($changed) {
+            queueOnlineDomainUpsert($pending, $records, $key, $presentation);
+        }
+    }
+
+    $activity = onlinePendingDomainPayload($pending, $records, 'activity');
+    $activityChanged = false;
+    foreach (is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [] as $index => $timer) {
+        if (!is_array($timer)) {
+            continue;
+        }
+        $target = (string) ($targetsByCharacterId[(string) ($timer['characterId'] ?? '')] ?? '');
+        if ($target !== '' && (string) ($timer['ownerPlayerId'] ?? '') !== $target) {
+            $activity['actionTimers'][$index]['ownerPlayerId'] = $target;
+            $activity['actionTimers'][$index]['updatedAt'] = gmdate('c');
+            $activityChanged = true;
+        }
+    }
+    if ($activityChanged) {
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    }
+    return ['characters' => $changedCharacters, 'accounts' => array_keys($changedAccounts)];
 }
 
 function onlineIdentityLegacyOwnerId(array $records, string $accountId, array $identity): string
@@ -1149,9 +1379,11 @@ function repairOnlineRosterOwnershipsOnRead(PDO $connection, array $identity): i
             // Préparer toutes les propositions avant d'écrire empêche deux
             // comptes homonymes de réclamer le même propriétaire historique.
             $proposals = onlineRosterOwnershipProposals($records, $accounts);
+            $declaredAssignments = onlineDeclaredCharacterAssignments($records, $accounts);
             $pending = [];
             $players = is_array($roster['players'] ?? null) ? $roster['players'] : [];
             $now = (int) floor(microtime(true) * 1000);
+            $repairedAccountIds = [];
             foreach ($proposals as $accountId => $proposal) {
                 $oldId = (string) $proposal['oldId'];
                 $pendingIndex = findEntryIndex($players, $oldId);
@@ -1176,15 +1408,65 @@ function repairOnlineRosterOwnershipsOnRead(PDO $connection, array $identity): i
                 }
                 queueOnlinePlayerOwnershipRepair($pending, $records, $roster, $oldId, (string) $accountId, $now);
                 $repaired++;
+                $repairedAccountIds[(string) $accountId] = true;
+            }
+
+            $declaredRepair = queueOnlineDeclaredCharacterAssignments(
+                $pending,
+                $records,
+                $declaredAssignments,
+                $now
+            );
+            foreach ($declaredRepair['accounts'] as $accountId) {
+                $repairedAccountIds[(string) $accountId] = true;
+            }
+            $repaired = count($repairedAccountIds);
+
+            $accountsById = [];
+            foreach ($accounts as $account) {
+                if (is_array($account) && (string) ($account['id'] ?? '') !== '') {
+                    $accountsById[(string) $account['id']] = $account;
+                }
+            }
+            foreach (array_unique(array_values($declaredAssignments)) as $accountId) {
+                $account = $accountsById[(string) $accountId] ?? null;
+                if (!is_array($account)) {
+                    continue;
+                }
+                $accountIndex = findEntryIndex($players, (string) $accountId);
+                $displayName = trim((string) ($account['display_name'] ?? '')) ?: trim((string) ($account['username'] ?? ''));
+                if ($accountIndex < 0) {
+                    $players[] = [
+                        'id' => (string) $accountId,
+                        'name' => $displayName !== '' ? $displayName : 'Compte relié',
+                        '_updatedAt' => $now,
+                    ];
+                } else {
+                    $players[$accountIndex]['name'] = $displayName !== '' ? $displayName : 'Compte relié';
+                    $players[$accountIndex]['_updatedAt'] = $now;
+                }
             }
 
             $roster['players'] = $players;
+            $removedRosterGhosts = cleanupOnlinePhantomRosterPlayers(
+                $roster,
+                $accounts,
+                $records,
+                $proposals,
+                $declaredAssignments
+            );
             $roster['_ownershipRepairVersion'] = XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION;
             $roster['_ownershipRepairAppliedAccounts'] = $repaired;
+            $roster['_ownershipRepairAppliedCharacters'] = (int) $declaredRepair['characters'];
+            $roster['_ownershipRepairDeclaredCharacters'] = count($declaredAssignments);
+            $roster['_ownershipRepairDeclaredCharactersMissing'] = 0;
+            $roster['_ownershipRepairRemovedRosterGhosts'] = $removedRosterGhosts;
+            $roster['_ownershipRepairDuplicateActiveAccountDisplays'] = onlineDuplicateActiveAccountDisplayCount($accounts);
             $roster['_ownershipRepairUnassignedCharacters'] = onlineUnassignedCharacterCountAfterRepair(
                 $records,
                 $accounts,
-                $proposals
+                $proposals,
+                $declaredAssignments
             );
             queueOnlineDomainUpsert($pending, $records, 'roster', $roster);
             if ($pending !== []) {

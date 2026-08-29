@@ -422,6 +422,55 @@ requireDomainCompatibility(
     onlineUnassignedCharacterCountAfterRepair($globalRepairRecords, $globalAccounts, $globalProposals) === 1,
     'Le contrôle de migration doit encore signaler la seule fiche sans compte correspondant.'
 );
+$declaredAssignments = onlineDeclaredCharacterAssignments($globalRepairRecords, $globalAccounts);
+requireDomainCompatibility(
+    ($declaredAssignments['character:character-ada-12345678'] ?? null) === $adaAccountId
+        && ($declaredAssignments['character:character-vraska-12345678'] ?? null) === $adaAccountId
+        && ($declaredAssignments['character:character-inho-12345678'] ?? null) === $inhoAccountId
+        && !isset($declaredAssignments['character:character-autre-12345678']),
+    'La table déclarée doit affecter Ada et Vraska à Ada, puis Inho à Innota, fiche par fiche.'
+);
+$wrongActiveOwnerRecords = $globalRepairRecords;
+$wrongActiveOwnerRecords['character:character-ada-12345678']['payload']['ownerPlayerId'] = $inhoAccountId;
+$wrongActiveOwnerRecords['character:character-vraska-12345678']['payload']['ownerPlayerId'] = $inhoAccountId;
+$wrongOwnerPending = [];
+$wrongOwnerRepair = queueOnlineDeclaredCharacterAssignments(
+    $wrongOwnerPending,
+    $wrongActiveOwnerRecords,
+    onlineDeclaredCharacterAssignments($wrongActiveOwnerRecords, $globalAccounts),
+    200
+);
+requireDomainCompatibility(
+    ($wrongOwnerPending['character:character-ada-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
+        && ($wrongOwnerPending['character:character-vraska-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
+        && (int) ($wrongOwnerRepair['characters'] ?? 0) === 3,
+    'Une fiche attachée au mauvais compte actif doit être réattribuée au compte déclaré, sans ambiguïté.'
+);
+$rosterWithGhosts = $globalRepairRecords['roster']['payload'];
+$rosterWithGhosts['players'][] = ['id' => $adaAccountId, 'name' => 'Ada en double'];
+$rosterWithGhosts['players'][] = ['id' => 'player-ghost-without-sheet', 'name' => 'Fantôme'];
+$rosterWithGhosts['playerPreferences']['player-ghost-without-sheet'] = ['activePage' => 'characters'];
+$removedRosterGhosts = cleanupOnlinePhantomRosterPlayers(
+    $rosterWithGhosts,
+    $globalAccounts,
+    $globalRepairRecords,
+    $globalProposals,
+    $declaredAssignments
+);
+requireDomainCompatibility(
+    $removedRosterGhosts === 4
+        && findEntryIndex($rosterWithGhosts['players'], $adaAccountId) >= 0
+        && findEntryIndex($rosterWithGhosts['players'], 'player-ghost-without-sheet') < 0
+        && !isset($rosterWithGhosts['playerPreferences']['player-ghost-without-sheet']),
+    'Les doublons de roster et identités fantômes sans fiche doivent disparaître avec leurs préférences résiduelles.'
+);
+requireDomainCompatibility(
+    onlineDuplicateActiveAccountDisplayCount([
+        ...$globalAccounts,
+        ['id' => 'usr_ada_duplicate', 'username' => 'ada-bis', 'display_name' => 'Ada'],
+    ]) === 1,
+    'Le contrôle doit distinguer un vrai doublon de nom dans les comptes actifs des fantômes du roster.'
+);
 $globalRepairWithCurrentCharacter = $globalRepairRecords;
 $globalRepairWithCurrentCharacter['character:character-ada-nouvelle'] = [
     'revision' => 1,
