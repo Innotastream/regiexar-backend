@@ -114,6 +114,84 @@ $currentCharacterRecord = [
         '_updatedAt' => 200,
     ],
 ];
+$genericCharacterPatch = playerCharacterPatch([
+    'id' => 'character-any-player',
+    'ownerPlayerId' => 'account-any-player',
+    'resources' => ['hp' => 42, 'maxHp' => 80, 'mana' => 69, 'maxMana' => 100],
+    'stats' => ['force' => 61, 'dexterity' => 52, 'agility' => 48, 'intelligence' => 73],
+    'fatigue' => ['current' => 12, 'max' => 100],
+], [
+    'resources' => ['mana' => 70],
+    'stats' => ['force' => 62],
+    'fatigue' => ['current' => 13],
+]);
+requireDomainCompatibility(
+    ($genericCharacterPatch['resources'] ?? null) === ['hp' => 42, 'maxHp' => 80, 'mana' => 70, 'maxMana' => 100]
+        && ($genericCharacterPatch['stats'] ?? null) === ['force' => 62, 'dexterity' => 52, 'agility' => 48, 'intelligence' => 73]
+        && ($genericCharacterPatch['fatigue'] ?? null) === ['current' => 13, 'max' => 100],
+    'Un patch partiel de n’importe quelle fiche doit préserver toutes les autres ressources, stats et valeurs de fatigue.'
+);
+$visibleNpcProjection = publicPlayerState([
+    'session' => ['name' => 'Recette tactique'],
+    'characters' => [],
+    'map' => ['tokens' => [[
+        'id' => 'token-visible-npc',
+        'name' => 'Créature visible',
+        'hidden' => false,
+        'controllerPlayerId' => null,
+        'revealDetailsToPlayers' => false,
+        'hp' => 40,
+        'maxHp' => 50,
+        'mana' => 7,
+        'maxMana' => 10,
+        'stats' => [['id' => 'vigueur', 'label' => 'Vigueur', 'value' => '70']],
+        'notes' => 'Note partageable désactivée',
+        'gmNotes' => 'Secret MJ absolu',
+    ]], 'background' => null],
+    'initiative' => ['active' => false, 'order' => [], 'currentIndex' => 0],
+    'tacticalSync' => ['paused' => false],
+    'playerPreferences' => [],
+    'rolls' => [],
+    'actionTimers' => [],
+    'mapPings' => [],
+], ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+$visibleNpc = $visibleNpcProjection['map']['tokens'][0] ?? [];
+requireDomainCompatibility(
+    ($visibleNpc['detailsVisible'] ?? false) === true
+        && ($visibleNpc['hp'] ?? null) === 40
+        && ($visibleNpc['stats'][0]['value'] ?? null) === '70'
+        && !array_key_exists('notes', $visibleNpc)
+        && !array_key_exists('gmNotes', $visibleNpc)
+        && ($visibleNpc['ownedByYou'] ?? true) === false
+        && ($visibleNpc['controllable'] ?? true) === false,
+    'Tout token visible doit exposer sa fiche tactique en lecture seule sans notes privées ni droit de contrôle.'
+);
+$d100Attempts = [
+    ['total' => 44, 'rawD100' => 44],
+    ['total' => 2, 'rawD100' => 2],
+];
+requireDomainCompatibility(
+    selectOnlineRollAttemptIndex($d100Attempts, 'advantage') === 1,
+    'L’avantage d100 doit toujours retenir le plus petit dé brut, même face à une ancienne catégorie critique.'
+);
+requireDomainCompatibility(
+    selectOnlineRollAttemptIndex([
+        ['total' => 66, 'rawD100' => 66],
+        ['total' => 100, 'rawD100' => 100],
+    ], 'disadvantage') === 1,
+    'Le désavantage d100 doit toujours retenir le plus grand dé brut, avant toute classification du résultat.'
+);
+requireDomainCompatibility(
+    selectOnlineRollAttemptIndex([
+        ['total' => 7, 'rawD100' => null],
+        ['total' => 12, 'rawD100' => null],
+    ], 'advantage') === 1
+        && selectOnlineRollAttemptIndex([
+            ['total' => 7, 'rawD100' => null],
+            ['total' => 12, 'rawD100' => null],
+        ], 'disadvantage') === 0,
+    'Les formules hors d100 doivent conserver le total haut sous avantage et le total bas sous désavantage.'
+);
 $staleCharacter = [
     'id' => 'character-hira',
     'resources' => ['hp' => 0, 'maxHp' => 0, 'mana' => 0, 'maxMana' => 0],

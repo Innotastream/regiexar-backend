@@ -647,7 +647,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         $effectiveControllerId = onlineEffectiveTokenControllerId($token, $characterOwners);
         $owned = $effectiveControllerId === $accountId;
         $allied = $effectiveControllerId !== '';
-        $details = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
+        $notesVisible = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
+        $details = true;
         $temporaryMovementAllowed = $active && ($movementOverrides[(string) ($token['id'] ?? '')] ?? false) === true;
         $visible = [
             'id' => $token['id'] ?? null,
@@ -668,11 +669,14 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId || $temporaryMovementAllowed),
         ];
         if ($details) {
-            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'notes', 'resourcePulse'] as $key) {
+            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'resourcePulse'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
                 }
             }
+        }
+        if ($notesVisible && array_key_exists('notes', $token)) {
+            $visible['notes'] = $token['notes'];
         }
         $tokens[] = $visible;
     }
@@ -1714,6 +1718,12 @@ function playerCharacterPatch(array $current, array $patch): array
                     $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
                     return $entry;
                 }, array_slice($linked, 0, 200)) : [];
+            } elseif (in_array($key, ['resources', 'stats', 'fatigue'], true)) {
+                $nestedPatch = stripForbiddenPlayerData($patch[$key]);
+                if (is_array($nestedPatch)) {
+                    $nestedCurrent = is_array($current[$key] ?? null) ? $current[$key] : [];
+                    $current[$key] = array_replace($nestedCurrent, $nestedPatch);
+                }
             } else {
                 $current[$key] = stripForbiddenPlayerData($patch[$key]);
             }
@@ -1794,17 +1804,22 @@ function normalizeOnlineRollMode(mixed $value): string
     return in_array($mode, ['advantage', 'disadvantage'], true) ? $mode : 'normal';
 }
 
-function onlineOutcomeDesirability(array $rolled, ?int $threshold, int $modifier): int
+function selectOnlineRollAttemptIndex(array $attempts, mixed $mode): int
 {
-    $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier);
-    return match ($outcome['code'] ?? '') {
-        'critical-success' => 5,
-        'special-success' => 4,
-        'success' => 3,
-        'failure' => 1,
-        'critical-failure' => 0,
-        default => 2,
-    };
+    $rollMode = normalizeOnlineRollMode($mode);
+    if ($rollMode === 'normal' || count($attempts) < 2) {
+        return 0;
+    }
+    $first = is_array($attempts[0] ?? null) ? $attempts[0] : [];
+    $second = is_array($attempts[1] ?? null) ? $attempts[1] : [];
+    if (is_int($first['rawD100'] ?? null) && is_int($second['rawD100'] ?? null)) {
+        return $rollMode === 'advantage'
+            ? ((int) $second['rawD100'] < (int) $first['rawD100'] ? 1 : 0)
+            : ((int) $second['rawD100'] > (int) $first['rawD100'] ? 1 : 0);
+    }
+    return $rollMode === 'advantage'
+        ? ((int) ($second['total'] ?? 0) > (int) ($first['total'] ?? 0) ? 1 : 0)
+        : ((int) ($second['total'] ?? 0) < (int) ($first['total'] ?? 0) ? 1 : 0);
 }
 
 function onlineRollFormulaWithMode(string $formula, mixed $mode, ?int $threshold = null, int $modifier = 0): array
@@ -1814,28 +1829,7 @@ function onlineRollFormulaWithMode(string $formula, mixed $mode, ?int $threshold
     if ($rollMode !== 'normal') {
         $attempts[] = onlineRollFormula($formula);
     }
-    $selectedIndex = 0;
-    if (count($attempts) === 2) {
-        $first = $attempts[0];
-        $second = $attempts[1];
-        if (is_int($first['rawD100'] ?? null) && is_int($second['rawD100'] ?? null)) {
-            $firstRank = onlineOutcomeDesirability($first, $threshold, $modifier);
-            $secondRank = onlineOutcomeDesirability($second, $threshold, $modifier);
-            if ($firstRank !== $secondRank) {
-                $selectedIndex = $rollMode === 'advantage'
-                    ? ($secondRank > $firstRank ? 1 : 0)
-                    : ($secondRank < $firstRank ? 1 : 0);
-            } else {
-                $selectedIndex = $rollMode === 'advantage'
-                    ? ((int) $second['rawD100'] < (int) $first['rawD100'] ? 1 : 0)
-                    : ((int) $second['rawD100'] > (int) $first['rawD100'] ? 1 : 0);
-            }
-        } else {
-            $selectedIndex = $rollMode === 'advantage'
-                ? ((int) $second['total'] > (int) $first['total'] ? 1 : 0)
-                : ((int) $second['total'] < (int) $first['total'] ? 1 : 0);
-        }
-    }
+    $selectedIndex = selectOnlineRollAttemptIndex($attempts, $rollMode);
     $selected = $attempts[$selectedIndex];
     $selected['rollMode'] = $rollMode;
     $selected['selectedIndex'] = $selectedIndex;

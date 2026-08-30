@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.22 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.23 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.22'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-8-release-20260829-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.23'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-9-release-20260830-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -81,8 +81,8 @@ test("le backend 0.12.22 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.22");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.8");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.23");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.9");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -143,7 +143,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
 
 test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   const index = await read("api/v1/index.php");
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.8'/);
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.9'/);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -446,7 +446,8 @@ test("les PV et le mana d’un token sont ajustés atomiquement sans élargir le
   assert.match(command, /applicationCharacterTokenDomainRecords\(\$connection, \$characterId\)/);
   assert.match(command, /queueOnlineDomainUpsert\(\$pending, \$records, \$characterKey, \$character\)/);
   assert.match(command, /'resourcePulse' => \$pulse/);
-  assert.match(online, /'notes', 'resourcePulse'/);
+  assert.match(online, /'resourcePulse'/);
+  assert.match(online, /array_key_exists\('notes', \$token\)/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\)/);
   assert.match(domains, /\['hp', 'mana'\]/);
 });
@@ -459,6 +460,13 @@ test("une ancienne restauration complète ne peut plus remettre une fiche joueur
   assert.match(patch, /legacyWholePlayerCharacterPatch\(\$patch\)/);
   assert.match(patch, /stale_full_character_patch/);
   assert.match(patch, /if \(!\$legacyWholePatch\)[\s\S]*?playerCharacterPatch/);
+});
+
+test("un patch partiel conserve les autres ressources, stats et valeurs de fatigue", async () => {
+  const online = await read("api/v1/online.php");
+  const patcher = online.slice(online.indexOf("function playerCharacterPatch"), online.indexOf("function legacyWholePlayerCharacterPatch"));
+  assert.match(patcher, /in_array\(\$key, \['resources', 'stats', 'fatigue'\], true\)/);
+  assert.match(patcher, /array_replace\(\$nestedCurrent, \$nestedPatch\)/);
 });
 
 test("le rapprochement automatique répare aussi un compte déjà présent en double", async () => {
@@ -592,7 +600,8 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /\[10, 66, 77, 88, 99\]/);
   assert.match(online, /function onlineRollFormulaWithMode/);
   assert.match(online, /normalizeOnlineRollMode/);
-  assert.match(online, /onlineOutcomeDesirability/);
+  assert.match(online, /selectOnlineRollAttemptIndex/);
+  assert.doesNotMatch(online, /onlineOutcomeDesirability/);
   assert.match(online, /'attempts'/);
   assert.match(domains, /\['normal', 'advantage', 'disadvantage'\]/);
   assert.match(domains, /'bonuses' => 1000/);
@@ -608,13 +617,15 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /timer_limit/);
 });
 
-test("la projection joueur partage les statuts, réserve les stats aux alliés et mémorise le personnage actif", async () => {
+test("la projection joueur partage toute fiche tactique visible sans élargir les droits de contrôle", async () => {
   const online = await read("api/v1/online.php");
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /\$effectiveControllerId = onlineEffectiveTokenControllerId/);
   assert.match(projection, /\$allied = \$effectiveControllerId !== ''/);
   assert.match(projection, /'condition' => substr/);
-  assert.match(projection, /\$details = \$allied \|\|/);
+  assert.match(projection, /\$notesVisible = \$allied \|\|/);
+  assert.match(projection, /\$details = true/);
+  assert.match(projection, /if \(\$notesVisible && array_key_exists\('notes'/);
   assert.match(projection, /'bonuses', 'penalties'/);
   assert.match(projection, /'activeCharacterId'/);
   const preferences = online.slice(online.indexOf("\$command === 'preferences.update'"), online.indexOf("\$command === 'character.create'"));
@@ -646,7 +657,7 @@ test("la réutilisation d’un minuteur reste liée au combat et à sa scène", 
   assert.match(timerCommands, /\$command === 'timer\.update'[\s\S]*?\$timers\[\$index\]\['sceneId'\][\s\S]*?\$sceneId/);
 });
 
-test("les variantes de cadre sont bornées et restent publiques sans élargir les détails tactiques", async () => {
+test("les variantes de cadre sont bornées et les détails tactiques restent en lecture seule", async () => {
   const [domains, online] = await Promise.all([read("api/v1/domains.php"), read("api/v1/online.php")]);
   assert.match(domains, /frameVariant/);
   assert.match(domains, /\['player', 'creature', 'elite', 'boss', 'apostle'\]/);
@@ -654,7 +665,8 @@ test("les variantes de cadre sont bornées et restent publiques sans élargir le
   assert.match(online, /\$playerControlled \? 'player' : 'creature'/);
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /'frameVariant' => normalizeOnlineTokenFrameVariant/);
-  assert.match(projection, /\$details = \$allied \|\|/);
+  assert.match(projection, /\$details = true/);
+  assert.match(projection, /'controllable' => \$owned && !\$paused/);
 });
 
 test("plusieurs MJ sont sérialisés par transaction sans verrou de session global", async () => {
