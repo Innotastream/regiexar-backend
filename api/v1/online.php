@@ -660,7 +660,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'frameVariant' => normalizeOnlineTokenFrameVariant($token['frameVariant'] ?? null, $allied),
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
-            'size' => (float) ($token['size'] ?? 30),
+            'size' => (float) ($token['size'] ?? 45),
             'initiative' => $token['initiative'] ?? null,
             'condition' => substr((string) ($token['condition'] ?? ''), 0, 200),
             'detailsVisible' => $details,
