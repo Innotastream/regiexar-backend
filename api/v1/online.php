@@ -708,6 +708,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative = stripForbiddenPlayerData($initiative);
     $map = is_array($map) ? $map : [];
     $initiative = is_array($initiative) ? $initiative : [];
+    unset($map['layers']);
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
@@ -2049,7 +2050,7 @@ function normalizeOnlineD100Modifier(mixed $value): int
     return max(-100, min(100, is_numeric($value) ? (int) $value : 0));
 }
 
-function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0): ?array
+function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0, mixed $resultModifier = 0): ?array
 {
     if (!is_numeric($rawValue)) {
         return null;
@@ -2060,13 +2061,19 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
     }
     $baseThreshold = $threshold === null ? null : max(0, min(100, (int) $threshold));
     $appliedModifier = normalizeOnlineD100Modifier($modifier);
+    $appliedResultModifier = normalizeOnlineD100Modifier($resultModifier);
     $effectiveThreshold = $baseThreshold === null ? null : max(0, min(100, $baseThreshold + $appliedModifier));
+    $comparedResult = $raw + $appliedResultModifier;
     $common = [
         'raw' => $raw,
         'baseThreshold' => $baseThreshold,
         'modifier' => $appliedModifier,
         'threshold' => $effectiveThreshold,
     ];
+    if ($appliedResultModifier !== 0) {
+        $common['resultModifier'] = $appliedResultModifier;
+        $common['result'] = $comparedResult;
+    }
     if (in_array($raw, [1, 11, 22, 33, 44], true)) {
         return [...$common, 'code' => 'critical-success', 'label' => 'RÉUSSITE CRITIQUE', 'success' => true, 'effect' => true];
     }
@@ -2079,7 +2086,7 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
     if ($effectiveThreshold === null) {
         return null;
     }
-    $success = $raw <= $effectiveThreshold;
+    $success = $comparedResult <= $effectiveThreshold;
     return [...$common, 'code' => $success ? 'success' : 'failure', 'label' => $success ? 'RÉUSSITE' : 'ÉCHEC', 'success' => $success, 'effect' => false];
 }
 
@@ -2140,10 +2147,17 @@ function onlineDiscordRollContent(array $roll): string
             . (string) ($outcome['raw'] ?? '') . '**';
         if (($outcome['threshold'] ?? null) !== null) {
             $modifier = (int) ($outcome['modifier'] ?? 0);
-            $content .= $modifier !== 0
-                ? ' · seuil ajusté **' . (string) $outcome['threshold'] . '** (base **'
-                    . (string) ($outcome['baseThreshold'] ?? '') . '**, **' . ($modifier > 0 ? '+' : '') . (string) $modifier . '**)'
-                : ' · seuil **' . (string) $outcome['threshold'] . '**';
+            $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
+            if ($resultModifier !== 0) {
+                $content .= ' · résultat personnalisé **' . (string) ($outcome['result'] ?? '')
+                    . '** (**' . ($resultModifier > 0 ? '+' : '') . (string) $resultModifier
+                    . '**) · seuil **' . (string) $outcome['threshold'] . '**';
+            } else {
+                $content .= $modifier !== 0
+                    ? ' · seuil ajusté **' . (string) $outcome['threshold'] . '** (base **'
+                        . (string) ($outcome['baseThreshold'] ?? '') . '**, **' . ($modifier > 0 ? '+' : '') . (string) $modifier . '**)'
+                    : ' · seuil **' . (string) $outcome['threshold'] . '**';
+            }
         }
     }
     return substr($content, 0, 1900);
@@ -2694,6 +2708,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $formula = '1d100';
             $threshold = null;
             $modifier = 0;
+            $resultModifier = 0;
             $rollMode = $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
             if ($kind === 'luck') {
                 $label = 'Chance';
@@ -2705,17 +2720,23 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');
                 }
                 $threshold = max(0, min(100, (int) $stats[$statIndex]['value']));
-                $modifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $normalizedModifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $modifierMode = ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
+                $modifier = $modifierMode === 'threshold' ? $normalizedModifier : 0;
+                $resultModifier = $modifierMode === 'result' ? $normalizedModifier : 0;
                 $label = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
-                $formula = '1d100';
+                $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . (string) $resultModifier : '');
             } elseif ($kind === 'hit') {
                 $threshold = normalizeOnlineD100Difficulty($token['hitThreshold'] ?? null);
                 if ($threshold === null) {
                     rejectOnlineCommand($connection, 400, 'La difficulté de Touché n’est pas renseignée sur ce personnage.', 'token_hit_missing');
                 }
-                $modifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $normalizedModifier = normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
+                $modifierMode = ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
+                $modifier = $modifierMode === 'threshold' ? $normalizedModifier : 0;
+                $resultModifier = $modifierMode === 'result' ? $normalizedModifier : 0;
                 $label = 'Touché';
-                $formula = '1d100';
+                $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . (string) $resultModifier : '');
             } elseif ($kind === 'initiative') {
                 $bonus = is_numeric($token['initiativeBonus'] ?? null) ? (int) $token['initiativeBonus'] : 0;
                 $label = 'Initiative';
@@ -2757,7 +2778,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
             $outcome = in_array($kind, ['stat', 'hit'], true)
-                ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier)
+                ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier)
                 : classifyOnlineD100Outcome($rolled['rawD100'] ?? null);
             $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
             $activity = applicationDomainPayload($records, 'activity');

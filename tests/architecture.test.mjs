@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.12.26 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.12.27 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.26'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-12-release-20260831-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.12\.27'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-2-5-13-release-20260831-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -81,8 +81,8 @@ test("le backend 0.12.26 conserve la file Codex partagée et la migration révis
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.12.26");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.12");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.12.27");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "2.5.13");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -147,8 +147,8 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
     read("README.md"),
     read("manifest.json")
   ]);
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.12'/);
-  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "2.5.12");
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '2\.5\.13'/);
+  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "2.5.13");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -161,9 +161,9 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   assert.match(enforcement, /sendJson\(426/);
   assert.match(enforcement, /'exactVersion' => true/);
   assert.doesNotMatch(enforcement, /version_compare/);
-  assert.equal("2.5.11" === "2.5.12", false, "le MSIX précédent doit être refusé");
-  assert.equal("2.5.12" === "2.5.12", true, "seul le MSIX annoncé doit franchir le verrou");
-  assert.equal("2.5.13" === "2.5.12", false, "un MSIX futur non annoncé doit être refusé");
+  assert.equal("2.5.12" === "2.5.13", false, "le MSIX précédent doit être refusé");
+  assert.equal("2.5.13" === "2.5.13", true, "seul le MSIX annoncé doit franchir le verrou");
+  assert.equal("2.5.14" === "2.5.13", false, "un MSIX futur non annoncé doit être refusé");
   assert.match(readme, /tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production/);
   assert.match(readme, /matrice ancienne\/exacte\/future `426\/401\/426`/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
