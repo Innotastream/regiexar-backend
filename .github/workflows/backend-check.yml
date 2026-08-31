@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/backend-0.12.27
   workflow_dispatch:
 
 permissions:
