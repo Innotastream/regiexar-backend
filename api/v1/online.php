@@ -708,6 +708,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative = stripForbiddenPlayerData($initiative);
     $map = is_array($map) ? $map : [];
     $initiative = is_array($initiative) ? $initiative : [];
+    unset($map['layers']);
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
