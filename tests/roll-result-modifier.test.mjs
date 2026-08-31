@@ -19,4 +19,5 @@ test("le backend distingue modification de seuil et personnalisation du résulta
   assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\] \?\? null, \$threshold, \$modifier, \$resultModifier\)/);
   assert.match(domains, /'resultModifier'/);
   assert.match(domains, /\$outcome\['result'\]/);
+  assert.match(online, /unset\(\$map\['layers'\]\)/, "les préréglages inactifs doivent rester privés au MJ");
 });
