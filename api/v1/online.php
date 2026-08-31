@@ -6,7 +6,8 @@ const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
-const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 1500000;
+const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 750000;
+const XAR_SSE_FLUSH_PADDING_BYTES = 8192;
 const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 6;
 
 function requireIdentity(PDO $connection): array
@@ -3213,12 +3214,6 @@ function onlineEventPollDelayMicroseconds(int $idleChecks): int
     if ($idleChecks <= 4) {
         return 500000;
     }
-    if ($idleChecks <= 10) {
-        return 750000;
-    }
-    if ($idleChecks <= 20) {
-        return 1000000;
-    }
     return XAR_SSE_MAXIMUM_POLL_MICROSECONDS;
 }
 
@@ -3236,6 +3231,13 @@ function writeOnlineEvent(string $event, array $payload, ?int $id = null): void
     }
     echo 'event: ' . $event . "\n";
     echo 'data: ' . json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n\n";
+    // Certains relais FastCGI ignorent flush() tant que leur tampon n'est pas
+    // rempli. Le commentaire SSE est ignoré par EventSource, mais garantit que
+    // chaque révision franchit immédiatement un tampon intermédiaire de 8 Kio.
+    echo ':' . str_repeat(' ', XAR_SSE_FLUSH_PADDING_BYTES) . "\n\n";
+    if (ob_get_level() > 0) {
+        @ob_flush();
+    }
     @flush();
 }
 
@@ -3286,17 +3288,22 @@ function streamOnlineEvents(PDO $connection): never
     $presence = liveOnlinePresence($connection);
     $presenceFingerprint = hash('sha256', json_encode($presence, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
+    @ini_set('output_buffering', '0');
+    @ini_set('implicit_flush', '1');
     @ini_set('zlib.output_compression', '0');
     @set_time_limit(30);
     while (ob_get_level() > 0) {
         @ob_end_clean();
     }
+    @ob_implicit_flush(true);
     header('Content-Type: text/event-stream; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, no-transform');
     header('Connection: keep-alive');
     header('X-Accel-Buffering: no');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
+    echo ':' . str_repeat(' ', XAR_SSE_FLUSH_PADDING_BYTES) . "\n\n";
+    @flush();
 
     if ($currentRevision !== $knownRevision) {
         writeOnlineEvent('revision', ['revision' => $currentRevision], $currentRevision);

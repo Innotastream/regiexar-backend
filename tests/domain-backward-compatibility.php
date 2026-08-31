@@ -311,7 +311,7 @@ requireDomainCompatibility(
 
 $pollDelays = array_map('onlineEventPollDelayMicroseconds', [0, 2, 5, 11, 21, 1000]);
 requireDomainCompatibility(
-    $pollDelays === [250000, 500000, 750000, 1000000, 1500000, 1500000],
+    $pollDelays === [250000, 500000, 750000, 750000, 750000, 750000],
     'Le flux SSE doit accélérer après une action puis plafonner son attente au repos.'
 );
 requireDomainCompatibility(
