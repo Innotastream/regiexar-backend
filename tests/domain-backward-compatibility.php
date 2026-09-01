@@ -14,6 +14,100 @@ function requireDomainCompatibility(bool $condition, string $message): void
     exit(1);
 }
 
+$wallState = emptyApplicationWallState(1600, 900);
+$wallBytes = applicationWallMaskBytes($wallState);
+requireDomainCompatibility(is_string($wallBytes), 'Le masque de murs vide doit être décodable.');
+$wallCenterX = (int) round(((int) $wallState['width'] - 1) / 2);
+for ($wallY = 0; $wallY < (int) $wallState['height']; $wallY += 1) {
+    for ($wallX = $wallCenterX - 1; $wallX <= $wallCenterX + 1; $wallX += 1) {
+        applicationSetMaskBit($wallBytes, $wallY * (int) $wallState['width'] + $wallX, true);
+    }
+}
+$wallState['mask'] = rtrim(strtr(base64_encode($wallBytes), '+/', '-_'), '=');
+$blockedMovement = applicationResolveWallCollision(
+    $wallState,
+    ['x' => 25.0, 'y' => 50.0],
+    ['x' => 75.0, 'y' => 50.0],
+    50,
+    1600,
+    900
+);
+requireDomainCompatibility(
+    ($blockedMovement['blocked'] ?? false) === true && (float) ($blockedMovement['x'] ?? 100) < 50.0,
+    'Un déplacement envoyé directement au-delà d’un mur doit rester bloqué avant celui-ci.'
+);
+$trappedPlayerMovement = applicationResolveWallCollision(
+    $wallState,
+    ['x' => 50.0, 'y' => 50.0],
+    ['x' => 75.0, 'y' => 50.0],
+    50,
+    1600,
+    900,
+    false
+);
+requireDomainCompatibility(
+    ($trappedPlayerMovement['blocked'] ?? false) === true
+        && (float) ($trappedPlayerMovement['x'] ?? 0) === 50.0,
+    'Un joueur déjà recouvert par un mur doit attendre une ouverture ou une intervention MJ.'
+);
+
+$openingBytes = $wallBytes;
+$wallCenterY = (int) round(((int) $wallState['height'] - 1) / 2);
+for ($wallY = $wallCenterY - 12; $wallY <= $wallCenterY + 12; $wallY += 1) {
+    for ($wallX = $wallCenterX - 1; $wallX <= $wallCenterX + 1; $wallX += 1) {
+        applicationSetMaskBit($openingBytes, $wallY * (int) $wallState['width'] + $wallX, false);
+    }
+}
+$openWallState = $wallState;
+$openWallState['mask'] = rtrim(strtr(base64_encode($openingBytes), '+/', '-_'), '=');
+$openMovement = applicationResolveWallCollision(
+    $openWallState,
+    ['x' => 25.0, 'y' => 50.0],
+    ['x' => 75.0, 'y' => 50.0],
+    50,
+    1600,
+    900
+);
+requireDomainCompatibility(
+    ($openMovement['blocked'] ?? true) === false && (float) ($openMovement['x'] ?? 0) === 75.0,
+    'Une ouverture volontaire assez large doit laisser passer le gabarit du token.'
+);
+
+$pillarState = emptyApplicationWallState(1000, 1000);
+$pillarBytes = applicationWallMaskBytes($pillarState);
+requireDomainCompatibility(is_string($pillarBytes), 'Le masque du pilier doit être décodable.');
+$pillarCenter = (int) round(((int) $pillarState['width'] - 1) / 2);
+for ($pillarY = $pillarCenter - 13; $pillarY <= $pillarCenter + 13; $pillarY += 1) {
+    for ($pillarX = $pillarCenter - 1; $pillarX <= $pillarCenter + 1; $pillarX += 1) {
+        applicationSetMaskBit($pillarBytes, $pillarY * (int) $pillarState['width'] + $pillarX, true);
+    }
+}
+$pillarState['mask'] = rtrim(strtr(base64_encode($pillarBytes), '+/', '-_'), '=');
+$pillarOcclusion = [
+    'walls' => $pillarState,
+    'vision' => ['version' => 1, 'enabled' => true, 'distance' => 5],
+    'naturalWidth' => 1000,
+    'naturalHeight' => 1000,
+];
+$visionFromLeft = applicationComputeVisionMask($pillarOcclusion, [['x' => 25, 'y' => 50]], 100);
+requireDomainCompatibility(
+    !applicationVisionCoversPoint($visionFromLeft, 40, 50)
+        && applicationVisionCoversPoint($visionFromLeft, 70, 50),
+    'Un pilier doit laisser son avant visible et masquer son arrière depuis la gauche.'
+);
+$visionFromAbove = applicationComputeVisionMask($pillarOcclusion, [['x' => 50, 'y' => 25]], 100);
+requireDomainCompatibility(
+    !applicationVisionCoversPoint($visionFromAbove, 50, 40)
+        && applicationVisionCoversPoint($visionFromAbove, 50, 70),
+    'L’ombre du pilier doit tourner lorsque l’origine de vision passe au-dessus.'
+);
+$partyVision = applicationComputeVisionMask($pillarOcclusion, [['x' => 25, 'y' => 50], ['x' => 75, 'y' => 50]], 100);
+requireDomainCompatibility(
+    !applicationVisionCoversPoint($partyVision, 40, 50)
+        && !applicationVisionCoversPoint($partyVision, 70, 50),
+    'Les champs de vision des tokens appartenant au même joueur doivent s’unir.'
+);
+
 $musicFolders = [[
     'id' => 'music-campaign',
     'name' => 'Campagne',

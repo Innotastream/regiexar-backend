@@ -633,6 +633,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         ? $fullState['tacticalSync']['publishedMap']
         : ($fullState['map'] ?? []);
     $fog = applicationActiveMapFogState(is_array($map) ? $map : []);
+    $occlusion = applicationActiveMapOcclusionState(is_array($map) ? $map : []);
     $initiative = $paused && is_array($fullState['tacticalSync']['publishedInitiative'] ?? null)
         ? $fullState['tacticalSync']['publishedInitiative']
         : ($fullState['initiative'] ?? []);
@@ -641,6 +642,18 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $activeTokenId = $active ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
     $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
     $characterOwners = onlineCharacterOwnerIndex(is_array($fullState['characters'] ?? null) ? $fullState['characters'] : []);
+    $visionOrigins = [];
+    foreach (($map['tokens'] ?? []) as $candidateToken) {
+        if (!is_array($candidateToken) || ($candidateToken['hidden'] ?? false) === true) {
+            continue;
+        }
+        if (onlineEffectiveTokenControllerId($candidateToken, $characterOwners) === $accountId) {
+            $visionOrigins[] = ['x' => $candidateToken['x'] ?? 50, 'y' => $candidateToken['y'] ?? 50];
+        }
+    }
+    $visionMask = applicationComputeVisionMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
+    $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
+        || applicationVisionCoversPoint($visionMask, $x, $y);
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
         if (!is_array($token) || ($token['hidden'] ?? false) === true) {
@@ -648,7 +661,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         }
         $effectiveControllerId = onlineEffectiveTokenControllerId($token, $characterOwners);
         $owned = $effectiveControllerId === $accountId;
-        if (!$owned && applicationFogCoversPoint($fog, $token['x'] ?? 0, $token['y'] ?? 0)) {
+        if (!$owned && $pointIsHidden($token['x'] ?? 0, $token['y'] ?? 0)) {
             continue;
         }
         $allied = $effectiveControllerId !== '';
@@ -713,11 +726,14 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $map = is_array($map) ? $map : [];
     $initiative = is_array($initiative) ? $initiative : [];
     unset($map['layers']);
+    unset($map['walls']);
     if (is_array($fog)) {
         $map['fog'] = $fog;
     } else {
         unset($map['fog']);
     }
+    $map['vision'] = $occlusion['vision'];
+    $map['visionMask'] = $visionMask;
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
@@ -760,7 +776,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         if (!is_array($ping)
             || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
             || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds
-            || applicationFogCoversPoint($fog, $ping['x'] ?? 0, $ping['y'] ?? 0)) {
+            || $pointIsHidden($ping['x'] ?? 0, $ping['y'] ?? 0)) {
             continue;
         }
         $visibleMapPings[] = [
@@ -2497,7 +2513,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $tokenKey = onlineTokenDomainKey($sceneId, $arguments['tokenId'] ?? '');
             $initiativeKey = 'initiative:' . $sceneId;
-            $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey]));
+            $mapKey = 'map:' . $sceneId;
+            $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $mapKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
             $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
             if ($token === [] || (!$isGm
@@ -2516,11 +2533,27 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $x = is_numeric($arguments['x'] ?? null) ? (float) $arguments['x'] : (float) ($token['x'] ?? 50);
             $y = is_numeric($arguments['y'] ?? null) ? (float) $arguments['y'] : (float) ($token['y'] ?? 50);
-            $token['x'] = max(0.0, min(100.0, is_finite($x) ? $x : 50.0));
-            $token['y'] = max(0.0, min(100.0, is_finite($y) ? $y : 50.0));
+            $desired = [
+                'x' => max(0.0, min(100.0, is_finite($x) ? $x : 50.0)),
+                'y' => max(0.0, min(100.0, is_finite($y) ? $y : 50.0)),
+            ];
+            $map = applicationDomainPayload($records, $mapKey);
+            $occlusion = applicationActiveMapOcclusionState($map);
+            $resolved = applicationResolveWallCollision(
+                $occlusion['walls'],
+                ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)],
+                $desired,
+                $token['size'] ?? 50,
+                $occlusion['naturalWidth'],
+                $occlusion['naturalHeight'],
+                $isGm
+            );
+            $token['x'] = $resolved['x'];
+            $token['y'] = $resolved['y'];
             $token['_movedAt'] = (int) floor(microtime(true) * 1000);
             queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
             $result['token'] = $token;
+            $result['blockedByWall'] = $resolved['blocked'];
         } elseif ($command === 'token.resource.adjust') {
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'Les ressources sont verrouillées pendant la préparation du MJ.', 'table_locked');

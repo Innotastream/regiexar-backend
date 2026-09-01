@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.13.0 conserve la file Codex partagée et la migration révisionnée 1.15", async () => {
+test("le backend 0.14.0 conserve la file Codex partagée et migre les cartes au schéma 12", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.13\.0'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-0-0-fog-release-20260901-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.14\.0'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-1-0-walls-vision-release-20260901-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -79,11 +79,13 @@ test("le backend 0.13.0 conserve la file Codex partagée et la migration révisi
   assert.match(index, /image_reference_catalog/);
   assert.match(index, /application_domain_clock/);
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 11/);
+  assert.match(index, /session_schema_12_map_walls_and_dynamic_vision/);
+  assert.match(index, /state_schema_version = 12/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 12/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.13.0");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.0.0");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 13);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.14.0");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.1.0");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 14);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -148,8 +150,8 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
     read("README.md"),
     read("manifest.json")
   ]);
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.0\.0'/);
-  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.0.0");
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.1\.0'/);
+  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.1.0");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -162,9 +164,9 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   assert.match(enforcement, /sendJson\(426/);
   assert.match(enforcement, /'exactVersion' => true/);
   assert.doesNotMatch(enforcement, /version_compare/);
-  assert.equal("2.5.14" === "3.0.0", false, "le MSIX précédent doit être refusé");
-  assert.equal("3.0.0" === "3.0.0", true, "seul le MSIX annoncé doit franchir le verrou");
-  assert.equal("3.0.1" === "3.0.0", false, "un MSIX futur non annoncé doit être refusé");
+  assert.equal("3.0.0" === "3.1.0", false, "le MSIX précédent doit être refusé");
+  assert.equal("3.1.0" === "3.1.0", true, "seul le MSIX annoncé doit franchir le verrou");
+  assert.equal("3.1.1" === "3.1.0", false, "un MSIX futur non annoncé doit être refusé");
   assert.match(readme, /tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production/);
   assert.match(readme, /matrice ancienne\/exacte\/future `426\/401\/426`/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);

@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.13.0';
-const XAR_BACKEND_BUILD = 'client-3-0-0-fog-release-20260901-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.0.0';
+const XAR_BACKEND_VERSION = '0.14.0';
+const XAR_BACKEND_BUILD = 'client-3-1-0-walls-vision-release-20260901-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.0';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 13;
+const XAR_DATABASE_SCHEMA_VERSION = 14;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -378,7 +378,7 @@ function ensureCurrentSchema(PDO $connection): void
                 'CREATE TABLE IF NOT EXISTS application_domain_clock ('
                 . 'singleton_id TINYINT UNSIGNED NOT NULL DEFAULT 1, '
                 . 'global_revision BIGINT UNSIGNED NOT NULL DEFAULT 0, '
-                . 'state_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 11, '
+                . 'state_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 12, '
                 . 'domain_schema_version SMALLINT UNSIGNED NOT NULL DEFAULT 1, '
                 . 'legacy_revision BIGINT UNSIGNED NULL, initialized_at DATETIME(3) NULL, '
                 . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
@@ -421,7 +421,7 @@ function ensureCurrentSchema(PDO $connection): void
             );
             $connection->exec(
                 'INSERT INTO application_domain_clock '
-                . '(singleton_id, global_revision, state_schema_version, domain_schema_version) VALUES (1, 0, 11, 1) '
+                . '(singleton_id, global_revision, state_schema_version, domain_schema_version) VALUES (1, 0, 12, 1) '
                 . 'ON DUPLICATE KEY UPDATE singleton_id = VALUES(singleton_id)'
             );
             $connection->exec(
@@ -678,6 +678,22 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(13, 'portable_regie_worker_lease', "
                 . "'3ad43fa633a08f25f588703e3f90b0449f169ec79cdf0e9d236c42c509206536')"
+            );
+            $version = 13;
+        }
+
+        if ($version < 14) {
+            $connection->exec(
+                'ALTER TABLE application_domain_clock MODIFY COLUMN state_schema_version '
+                . 'SMALLINT UNSIGNED NOT NULL DEFAULT 12'
+            );
+            $connection->exec(
+                'UPDATE application_domain_clock SET state_schema_version = 12 WHERE singleton_id = 1'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(14, 'session_schema_12_map_walls_and_dynamic_vision', "
+                . "'cfb4bb87e41f0c7f75cdb05fcdbdbf9850273f5bab61448da83694baec25787e')"
             );
         }
     } finally {

@@ -3,13 +3,17 @@
 declare(strict_types=1);
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 11;
+const XAR_SESSION_SCHEMA_VERSION = 12;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
 const XAR_FOG_MASK_VERSION = 1;
 const XAR_FOG_RASTER_MINIMUM = 32;
 const XAR_FOG_RASTER_MAXIMUM = 256;
+const XAR_WALL_MASK_VERSION = 1;
+const XAR_VISION_SETTINGS_VERSION = 1;
+const XAR_VISION_DEFAULT_DISTANCE = 8;
+const XAR_VISION_MAXIMUM_DISTANCE = 40;
 
 function validApplicationDomainKey(string $key): bool
 {
@@ -186,6 +190,12 @@ function validApplicationMapFogState(array $map): bool
     if (array_key_exists('fog', $map) && !validApplicationFogState($map['fog'])) {
         return false;
     }
+    if (array_key_exists('walls', $map) && !validApplicationWallState($map['walls'])) {
+        return false;
+    }
+    if (array_key_exists('vision', $map) && !validApplicationVisionSettings($map['vision'])) {
+        return false;
+    }
     if (!array_key_exists('layers', $map)) {
         return true;
     }
@@ -195,7 +205,9 @@ function validApplicationMapFogState(array $map): bool
     foreach ($map['layers'] as $layerId => $layer) {
         if (!in_array($layerId, ['basement', 'ground', 'upper'], true)
             || !is_array($layer)
-            || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))) {
+            || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))
+            || (array_key_exists('walls', $layer) && !validApplicationWallState($layer['walls']))
+            || (array_key_exists('vision', $layer) && !validApplicationVisionSettings($layer['vision']))) {
             return false;
         }
     }
@@ -226,6 +238,338 @@ function applicationFogCoversPoint(mixed $value, mixed $xPercent, mixed $yPercen
     $row = (int) round(($y / 100) * ($value['height'] - 1));
     $index = $row * $value['width'] + $column;
     return (ord($bytes[intdiv($index, 8)]) & (1 << ($index % 8))) !== 0;
+}
+
+function applicationWallMaskBytes(mixed $value): ?string
+{
+    if (!is_array($value)
+        || ($value['version'] ?? null) !== XAR_WALL_MASK_VERSION
+        || !is_int($value['width'] ?? null)
+        || !is_int($value['height'] ?? null)
+        || $value['width'] < XAR_FOG_RASTER_MINIMUM
+        || $value['width'] > XAR_FOG_RASTER_MAXIMUM
+        || $value['height'] < XAR_FOG_RASTER_MINIMUM
+        || $value['height'] > XAR_FOG_RASTER_MAXIMUM
+        || !is_string($value['mask'] ?? null)
+        || strlen($value['mask']) > 11000
+        || preg_match('/^[A-Za-z0-9_-]*$/D', $value['mask']) !== 1) {
+        return null;
+    }
+    $expectedLength = (int) ceil(($value['width'] * $value['height']) / 8);
+    if ($value['mask'] === '') {
+        return str_repeat("\0", $expectedLength);
+    }
+    $base64 = strtr($value['mask'], '-_', '+/');
+    $base64 .= str_repeat('=', (4 - strlen($base64) % 4) % 4);
+    $decoded = base64_decode($base64, true);
+    return is_string($decoded) && strlen($decoded) === $expectedLength ? $decoded : null;
+}
+
+function validApplicationWallState(mixed $value): bool
+{
+    return applicationWallMaskBytes($value) !== null;
+}
+
+function normalizeApplicationVisionSettings(mixed $value): array
+{
+    $distance = is_numeric(is_array($value) ? ($value['distance'] ?? null) : null)
+        ? (int) round((float) $value['distance'])
+        : XAR_VISION_DEFAULT_DISTANCE;
+    return [
+        'version' => XAR_VISION_SETTINGS_VERSION,
+        'enabled' => is_array($value) && ($value['enabled'] ?? false) === true,
+        'distance' => max(1, min(XAR_VISION_MAXIMUM_DISTANCE, $distance)),
+    ];
+}
+
+function validApplicationVisionSettings(mixed $value): bool
+{
+    return is_array($value)
+        && ($value['version'] ?? null) === XAR_VISION_SETTINGS_VERSION
+        && is_bool($value['enabled'] ?? null)
+        && is_int($value['distance'] ?? null)
+        && $value['distance'] >= 1
+        && $value['distance'] <= XAR_VISION_MAXIMUM_DISTANCE;
+}
+
+function applicationRasterDimensions(mixed $naturalWidth, mixed $naturalHeight): array
+{
+    $width = is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0;
+    $height = is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0;
+    if ($width >= $height) {
+        return [
+            'width' => XAR_FOG_RASTER_MAXIMUM,
+            'height' => max(XAR_FOG_RASTER_MINIMUM, min(XAR_FOG_RASTER_MAXIMUM, (int) round(XAR_FOG_RASTER_MAXIMUM * $height / $width))),
+        ];
+    }
+    return [
+        'width' => max(XAR_FOG_RASTER_MINIMUM, min(XAR_FOG_RASTER_MAXIMUM, (int) round(XAR_FOG_RASTER_MAXIMUM * $width / $height))),
+        'height' => XAR_FOG_RASTER_MAXIMUM,
+    ];
+}
+
+function emptyApplicationWallState(mixed $naturalWidth = 1600, mixed $naturalHeight = 900): array
+{
+    $dimensions = applicationRasterDimensions($naturalWidth, $naturalHeight);
+    return ['version' => XAR_WALL_MASK_VERSION, 'width' => $dimensions['width'], 'height' => $dimensions['height'], 'mask' => ''];
+}
+
+function applicationActiveMapOcclusionState(array $map): array
+{
+    $activeLayerId = in_array($map['activeLayerId'] ?? null, ['basement', 'ground', 'upper'], true)
+        ? $map['activeLayerId']
+        : 'ground';
+    $activeLayer = is_array($map['layers'][$activeLayerId] ?? null) ? $map['layers'][$activeLayerId] : [];
+    $naturalWidth = $activeLayer['naturalWidth'] ?? ($map['naturalWidth'] ?? 1600);
+    $naturalHeight = $activeLayer['naturalHeight'] ?? ($map['naturalHeight'] ?? 900);
+    $walls = $activeLayer['walls'] ?? ($map['walls'] ?? null);
+    if (!validApplicationWallState($walls)) {
+        $walls = emptyApplicationWallState($naturalWidth, $naturalHeight);
+    }
+    return [
+        'walls' => $walls,
+        'vision' => normalizeApplicationVisionSettings($activeLayer['vision'] ?? ($map['vision'] ?? null)),
+        'naturalWidth' => is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0,
+        'naturalHeight' => is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0,
+    ];
+}
+
+function applicationMaskBit(string $bytes, int $index): bool
+{
+    $byteIndex = intdiv($index, 8);
+    return isset($bytes[$byteIndex]) && (ord($bytes[$byteIndex]) & (1 << ($index % 8))) !== 0;
+}
+
+function applicationSetMaskBit(string &$bytes, int $index, bool $value): void
+{
+    $byteIndex = intdiv($index, 8);
+    if (!isset($bytes[$byteIndex])) {
+        return;
+    }
+    $bit = 1 << ($index % 8);
+    $current = ord($bytes[$byteIndex]);
+    $bytes[$byteIndex] = chr($value ? ($current | $bit) : ($current & ~$bit));
+}
+
+function applicationWallCollisionAt(
+    string $bytes,
+    array $walls,
+    float $centerX,
+    float $centerY,
+    float $radiusX,
+    float $radiusY
+): bool {
+    $effectiveRadiusX = max(0.75, $radiusX);
+    $effectiveRadiusY = max(0.75, $radiusY);
+    $minimumX = max(0, (int) floor($centerX - $effectiveRadiusX - 1));
+    $maximumX = min((int) $walls['width'] - 1, (int) ceil($centerX + $effectiveRadiusX + 1));
+    $minimumY = max(0, (int) floor($centerY - $effectiveRadiusY - 1));
+    $maximumY = min((int) $walls['height'] - 1, (int) ceil($centerY + $effectiveRadiusY + 1));
+    for ($y = $minimumY; $y <= $maximumY; $y += 1) {
+        for ($x = $minimumX; $x <= $maximumX; $x += 1) {
+            if (!applicationMaskBit($bytes, $y * (int) $walls['width'] + $x)) {
+                continue;
+            }
+            $normalizedX = ($x - $centerX) / ($effectiveRadiusX + 0.5);
+            $normalizedY = ($y - $centerY) / ($effectiveRadiusY + 0.5);
+            if ($normalizedX * $normalizedX + $normalizedY * $normalizedY <= 1.0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function applicationResolveWallCollision(
+    mixed $rawWalls,
+    array $start,
+    array $desired,
+    mixed $tokenSize,
+    mixed $naturalWidth,
+    mixed $naturalHeight,
+    bool $allowEscape = true
+): array {
+    if (!validApplicationWallState($rawWalls) || (string) ($rawWalls['mask'] ?? '') === '') {
+        return ['x' => (float) $desired['x'], 'y' => (float) $desired['y'], 'blocked' => false];
+    }
+    $bytes = applicationWallMaskBytes($rawWalls);
+    if ($bytes === null) {
+        return ['x' => (float) $desired['x'], 'y' => (float) $desired['y'], 'blocked' => false];
+    }
+    $width = (int) $rawWalls['width'];
+    $height = (int) $rawWalls['height'];
+    $safeNaturalWidth = is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0;
+    $safeNaturalHeight = is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0;
+    $diameter = max(10.0, min(220.0, is_numeric($tokenSize) ? (float) $tokenSize : 50.0));
+    $startX = max(0.0, min(100.0, (float) ($start['x'] ?? 0)));
+    $startY = max(0.0, min(100.0, (float) ($start['y'] ?? 0)));
+    $desiredX = max(0.0, min(100.0, (float) ($desired['x'] ?? 0)));
+    $desiredY = max(0.0, min(100.0, (float) ($desired['y'] ?? 0)));
+    $startRasterX = $startX / 100 * max(1, $width - 1);
+    $startRasterY = $startY / 100 * max(1, $height - 1);
+    $desiredRasterX = $desiredX / 100 * max(1, $width - 1);
+    $desiredRasterY = $desiredY / 100 * max(1, $height - 1);
+    $radiusX = $diameter / 2 / $safeNaturalWidth * max(1, $width - 1);
+    $radiusY = $diameter / 2 / $safeNaturalHeight * max(1, $height - 1);
+    $collides = static function (float $progress) use (
+        $bytes, $rawWalls, $startRasterX, $startRasterY, $desiredRasterX, $desiredRasterY, $radiusX, $radiusY
+    ): bool {
+        return applicationWallCollisionAt(
+            $bytes,
+            $rawWalls,
+            $startRasterX + ($desiredRasterX - $startRasterX) * $progress,
+            $startRasterY + ($desiredRasterY - $startRasterY) * $progress,
+            $radiusX,
+            $radiusY
+        );
+    };
+    $steps = max(1, min(2048, (int) ceil(max(abs($desiredRasterX - $startRasterX), abs($desiredRasterY - $startRasterY)) * 2)));
+    $startsInsideWall = $collides(0.0);
+    if ($startsInsideWall && !$allowEscape) {
+        return ['x' => $startX, 'y' => $startY, 'blocked' => true];
+    }
+    $escapedInitialWall = !$startsInsideWall;
+    $safeProgress = 0.0;
+    for ($index = 1; $index <= $steps; $index += 1) {
+        $progress = $index / $steps;
+        $blocked = $collides($progress);
+        if (!$escapedInitialWall) {
+            if (!$blocked) {
+                $escapedInitialWall = true;
+                $safeProgress = $progress;
+            }
+            continue;
+        }
+        if (!$blocked) {
+            $safeProgress = $progress;
+            continue;
+        }
+        $low = $safeProgress;
+        $high = $progress;
+        for ($iteration = 0; $iteration < 10; $iteration += 1) {
+            $middle = ($low + $high) / 2;
+            if ($collides($middle)) {
+                $high = $middle;
+            } else {
+                $low = $middle;
+            }
+        }
+        return [
+            'x' => round($startX + ($desiredX - $startX) * $low, 3),
+            'y' => round($startY + ($desiredY - $startY) * $low, 3),
+            'blocked' => true,
+        ];
+    }
+    if ($startsInsideWall && !$escapedInitialWall) {
+        return ['x' => $startX, 'y' => $startY, 'blocked' => true];
+    }
+    return ['x' => $desiredX, 'y' => $desiredY, 'blocked' => false];
+}
+
+function applicationComputeVisionMask(array $occlusion, array $origins, mixed $gridSize): array
+{
+    $walls = $occlusion['walls'];
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $width = (int) $walls['width'];
+    $height = (int) $walls['height'];
+    if (!$vision['enabled']) {
+        return ['version' => XAR_WALL_MASK_VERSION, 'enabled' => false, 'width' => $width, 'height' => $height, 'mask' => ''];
+    }
+    $wallBytes = applicationWallMaskBytes($walls) ?? str_repeat("\0", (int) ceil(($width * $height) / 8));
+    $hiddenBytes = str_repeat("\xff", (int) ceil(($width * $height) / 8));
+    $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
+    $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
+    $safeGridSize = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
+    $radiusNatural = $vision['distance'] * $safeGridSize;
+    $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
+    $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
+    $clearCell = static function (string &$bytes, float $x, float $y) use ($width, $height): void {
+        $column = (int) round($x);
+        $row = (int) round($y);
+        if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
+            return;
+        }
+        applicationSetMaskBit($bytes, $row * $width + $column, false);
+    };
+    foreach (array_slice($origins, 0, 40) as $origin) {
+        if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) {
+            continue;
+        }
+        $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
+        $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
+        $clearCell($hiddenBytes, $centerX, $centerY);
+        if (($walls['mask'] ?? '') === '') {
+            $minimumX = max(0, (int) floor($centerX - $radiusX));
+            $maximumX = min($width - 1, (int) ceil($centerX + $radiusX));
+            $minimumY = max(0, (int) floor($centerY - $radiusY));
+            $maximumY = min($height - 1, (int) ceil($centerY + $radiusY));
+            for ($y = $minimumY; $y <= $maximumY; $y += 1) {
+                for ($x = $minimumX; $x <= $maximumX; $x += 1) {
+                    $deltaX = ($x - $centerX) / $radiusX;
+                    $deltaY = ($y - $centerY) / $radiusY;
+                    if ($deltaX * $deltaX + $deltaY * $deltaY <= 1.0) {
+                        $clearCell($hiddenBytes, (float) $x, (float) $y);
+                    }
+                }
+            }
+            continue;
+        }
+        $maximumRadius = max($radiusX, $radiusY);
+        $rayCount = max(96, min(1536, (int) ceil(M_PI * 2 * $maximumRadius * 1.6)));
+        $raySteps = max(8, min(1024, (int) ceil($maximumRadius * 2.5)));
+        for ($ray = 0; $ray < $rayCount; $ray += 1) {
+            $angle = $ray / $rayCount * M_PI * 2;
+            $cosine = cos($angle);
+            $sine = sin($angle);
+            $previousIndex = -1;
+            for ($step = 0; $step <= $raySteps; $step += 1) {
+                $progress = $step / $raySteps;
+                $column = (int) round($centerX + $cosine * $radiusX * $progress);
+                $row = (int) round($centerY + $sine * $radiusY * $progress);
+                if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
+                    break;
+                }
+                $cellIndex = $row * $width + $column;
+                if ($cellIndex === $previousIndex) {
+                    continue;
+                }
+                $previousIndex = $cellIndex;
+                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
+                if ($step > 0 && applicationMaskBit($wallBytes, $cellIndex)) {
+                    break;
+                }
+            }
+        }
+    }
+    return [
+        'version' => XAR_WALL_MASK_VERSION,
+        'enabled' => true,
+        'width' => $width,
+        'height' => $height,
+        'mask' => rtrim(strtr(base64_encode($hiddenBytes), '+/', '-_'), '='),
+    ];
+}
+
+function applicationVisionCoversPoint(mixed $value, mixed $xPercent, mixed $yPercent): bool
+{
+    if (!is_array($value) || ($value['enabled'] ?? false) !== true) {
+        return false;
+    }
+    $bytes = applicationFogMaskBytes([
+        'version' => XAR_FOG_MASK_VERSION,
+        'enabled' => true,
+        'width' => $value['width'] ?? null,
+        'height' => $value['height'] ?? null,
+        'mask' => $value['mask'] ?? null,
+    ]);
+    if ($bytes === null) {
+        return false;
+    }
+    $x = max(0.0, min(100.0, is_numeric($xPercent) ? (float) $xPercent : 0.0));
+    $y = max(0.0, min(100.0, is_numeric($yPercent) ? (float) $yPercent : 0.0));
+    $column = (int) round(($x / 100) * ($value['width'] - 1));
+    $row = (int) round(($y / 100) * ($value['height'] - 1));
+    return applicationMaskBit($bytes, $row * (int) $value['width'] + $column);
 }
 
 function validApplicationTokenStats(mixed $value): bool
