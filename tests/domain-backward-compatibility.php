@@ -166,6 +166,65 @@ requireDomainCompatibility(
         && ($visibleNpc['controllable'] ?? true) === false,
     'Tout token visible doit exposer sa fiche tactique en lecture seule sans notes privées ni droit de contrôle.'
 );
+
+$fogWidth = 32;
+$fogHeight = 32;
+$fogBytes = str_repeat("\0", (int) ceil(($fogWidth * $fogHeight) / 8));
+$fogIndex = ((int) round(50 / 100 * ($fogHeight - 1))) * $fogWidth
+    + (int) round(50 / 100 * ($fogWidth - 1));
+$fogByteIndex = intdiv($fogIndex, 8);
+$fogBytes[$fogByteIndex] = chr(ord($fogBytes[$fogByteIndex]) | (1 << ($fogIndex % 8)));
+$fogMask = rtrim(strtr(base64_encode($fogBytes), '+/', '-_'), '=');
+$fog = [
+    'version' => 1,
+    'enabled' => true,
+    'width' => $fogWidth,
+    'height' => $fogHeight,
+    'mask' => $fogMask,
+];
+requireDomainCompatibility(
+    validApplicationFogState($fog)
+        && applicationFogCoversPoint($fog, 50, 50)
+        && !applicationFogCoversPoint($fog, 10, 10)
+        && !validApplicationFogState([...$fog, 'mask' => 'masque!invalide']),
+    'Le backend doit valider strictement le masque binaire et lire les mêmes cellules que le client.'
+);
+$fogProjection = publicPlayerState([
+    'session' => ['name' => 'Recette brouillard'],
+    'characters' => [],
+    'activeSceneId' => 'scene-fog',
+    'activeScene' => ['id' => 'scene-fog', 'name' => 'Crypte'],
+    'map' => [
+        'background' => '/media/abcdefghijklmnopqrstuvwx',
+        'layers' => [
+            'ground' => ['fog' => $fog],
+            'upper' => ['fog' => [...$fog, 'mask' => '']],
+        ],
+        'tokens' => [
+            ['id' => 'enemy-fogged', 'name' => 'Adversaire caché', 'x' => 50, 'y' => 50, 'hidden' => false],
+            ['id' => 'owned-fogged', 'name' => 'Mon pion', 'x' => 50, 'y' => 50, 'hidden' => false, 'controllerPlayerId' => 'account-player'],
+            ['id' => 'enemy-clear', 'name' => 'Adversaire révélé', 'x' => 10, 'y' => 10, 'hidden' => false],
+        ],
+    ],
+    'initiative' => ['active' => false, 'order' => ['enemy-fogged', 'owned-fogged', 'enemy-clear'], 'currentIndex' => 0],
+    'tacticalSync' => ['paused' => false],
+    'playerPreferences' => [],
+    'rolls' => [],
+    'actionTimers' => [],
+    'mapPings' => [
+        ['id' => 'ping-fogged', 'sceneId' => 'scene-fog', 'x' => 50, 'y' => 50, 'expiresAt' => PHP_INT_MAX],
+        ['id' => 'ping-clear', 'sceneId' => 'scene-fog', 'x' => 10, 'y' => 10, 'expiresAt' => PHP_INT_MAX],
+    ],
+], ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+$fogTokenIds = array_column($fogProjection['map']['tokens'] ?? [], 'id');
+requireDomainCompatibility(
+    $fogTokenIds === ['owned-fogged', 'enemy-clear']
+        && !array_key_exists('layers', $fogProjection['map'] ?? [])
+        && ($fogProjection['map']['fog']['mask'] ?? null) === $fogMask
+        && (($fogProjection['map']['tokens'][0]['size'] ?? null) === 50.0)
+        && array_column($fogProjection['mapPings'] ?? [], 'id') === ['ping-clear'],
+    'Le brouillard actif doit masquer adversaires et signaux côté serveur, conserver le pion possédé et ne jamais exposer les autres niveaux.'
+);
 $d100Attempts = [
     ['total' => 44, 'rawD100' => 44],
     ['total' => 2, 'rawD100' => 2],

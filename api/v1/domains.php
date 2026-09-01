@@ -7,6 +7,9 @@ const XAR_SESSION_SCHEMA_VERSION = 11;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
+const XAR_FOG_MASK_VERSION = 1;
+const XAR_FOG_RASTER_MINIMUM = 32;
+const XAR_FOG_RASTER_MAXIMUM = 256;
 
 function validApplicationDomainKey(string $key): bool
 {
@@ -145,6 +148,84 @@ function validApplicationDomainNumber(mixed $value, float $minimum = -1000000000
         && is_finite((float) $value)
         && (float) $value >= $minimum
         && (float) $value <= $maximum;
+}
+
+function applicationFogMaskBytes(mixed $value): ?string
+{
+    if (!is_array($value)
+        || ($value['version'] ?? null) !== XAR_FOG_MASK_VERSION
+        || !is_bool($value['enabled'] ?? null)
+        || !is_int($value['width'] ?? null)
+        || !is_int($value['height'] ?? null)
+        || $value['width'] < XAR_FOG_RASTER_MINIMUM
+        || $value['width'] > XAR_FOG_RASTER_MAXIMUM
+        || $value['height'] < XAR_FOG_RASTER_MINIMUM
+        || $value['height'] > XAR_FOG_RASTER_MAXIMUM
+        || !is_string($value['mask'] ?? null)
+        || strlen($value['mask']) > 11000
+        || preg_match('/^[A-Za-z0-9_-]*$/D', $value['mask']) !== 1) {
+        return null;
+    }
+    $expectedLength = (int) ceil(($value['width'] * $value['height']) / 8);
+    if ($value['mask'] === '') {
+        return str_repeat("\0", $expectedLength);
+    }
+    $base64 = strtr($value['mask'], '-_', '+/');
+    $base64 .= str_repeat('=', (4 - strlen($base64) % 4) % 4);
+    $decoded = base64_decode($base64, true);
+    return is_string($decoded) && strlen($decoded) === $expectedLength ? $decoded : null;
+}
+
+function validApplicationFogState(mixed $value): bool
+{
+    return applicationFogMaskBytes($value) !== null;
+}
+
+function validApplicationMapFogState(array $map): bool
+{
+    if (array_key_exists('fog', $map) && !validApplicationFogState($map['fog'])) {
+        return false;
+    }
+    if (!array_key_exists('layers', $map)) {
+        return true;
+    }
+    if (!is_array($map['layers']) || count($map['layers']) > 3) {
+        return false;
+    }
+    foreach ($map['layers'] as $layerId => $layer) {
+        if (!in_array($layerId, ['basement', 'ground', 'upper'], true)
+            || !is_array($layer)
+            || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function applicationActiveMapFogState(array $map): mixed
+{
+    $activeLayerId = in_array($map['activeLayerId'] ?? null, ['basement', 'ground', 'upper'], true)
+        ? $map['activeLayerId']
+        : 'ground';
+    $activeLayer = is_array($map['layers'][$activeLayerId] ?? null) ? $map['layers'][$activeLayerId] : [];
+    return array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null);
+}
+
+function applicationFogCoversPoint(mixed $value, mixed $xPercent, mixed $yPercent): bool
+{
+    if (!is_array($value) || ($value['enabled'] ?? false) !== true || ($value['mask'] ?? '') === '') {
+        return false;
+    }
+    $bytes = applicationFogMaskBytes($value);
+    if ($bytes === null) {
+        return false;
+    }
+    $x = max(0.0, min(100.0, is_numeric($xPercent) ? (float) $xPercent : 0.0));
+    $y = max(0.0, min(100.0, is_numeric($yPercent) ? (float) $yPercent : 0.0));
+    $column = (int) round(($x / 100) * ($value['width'] - 1));
+    $row = (int) round(($y / 100) * ($value['height'] - 1));
+    $index = $row * $value['width'] + $column;
+    return (ord($bytes[intdiv($index, 8)]) & (1 << ($index % 8))) !== 0;
 }
 
 function validApplicationTokenStats(mixed $value): bool
@@ -625,6 +706,9 @@ function validatedDomainPayload(string $key, mixed $payload): array
             sendError(400, 'Index de tokens incohérent.', 'invalid_token_index_domain');
         }
     }
+    if (str_starts_with($key, 'map:') && !validApplicationMapFogState($payload)) {
+        sendError(400, 'Brouillard de carte incohérent.', 'invalid_map_fog');
+    }
     if (str_starts_with($key, 'initiative:')
         && (!validApplicationDomainIdentifierList($payload['order'] ?? [], 2000)
             || (array_key_exists('movementOverrides', $payload)
@@ -633,6 +717,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
     }
     if (str_starts_with($key, 'presentation:')
         && (!is_array($payload['map'] ?? null)
+            || !validApplicationMapFogState($payload['map'])
             || !validApplicationTokenList($payload['map']['tokens'] ?? [], 2000)
             || !is_array($payload['initiative'] ?? null)
             || !validApplicationDomainIdentifierList($payload['initiative']['order'] ?? [], 2000)

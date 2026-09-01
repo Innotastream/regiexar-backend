@@ -632,6 +632,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $map = $paused && is_array($fullState['tacticalSync']['publishedMap'] ?? null)
         ? $fullState['tacticalSync']['publishedMap']
         : ($fullState['map'] ?? []);
+    $fog = applicationActiveMapFogState(is_array($map) ? $map : []);
     $initiative = $paused && is_array($fullState['tacticalSync']['publishedInitiative'] ?? null)
         ? $fullState['tacticalSync']['publishedInitiative']
         : ($fullState['initiative'] ?? []);
@@ -647,6 +648,9 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         }
         $effectiveControllerId = onlineEffectiveTokenControllerId($token, $characterOwners);
         $owned = $effectiveControllerId === $accountId;
+        if (!$owned && applicationFogCoversPoint($fog, $token['x'] ?? 0, $token['y'] ?? 0)) {
+            continue;
+        }
         $allied = $effectiveControllerId !== '';
         $notesVisible = $allied || ($token['revealDetailsToPlayers'] ?? false) === true;
         $details = true;
@@ -660,7 +664,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'frameVariant' => normalizeOnlineTokenFrameVariant($token['frameVariant'] ?? null, $allied),
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
-            'size' => (float) ($token['size'] ?? 45),
+            'size' => (float) ($token['size'] ?? 50),
             'initiative' => $token['initiative'] ?? null,
             'condition' => substr((string) ($token['condition'] ?? ''), 0, 200),
             'detailsVisible' => $details,
@@ -709,6 +713,11 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $map = is_array($map) ? $map : [];
     $initiative = is_array($initiative) ? $initiative : [];
     unset($map['layers']);
+    if (is_array($fog)) {
+        $map['fog'] = $fog;
+    } else {
+        unset($map['fog']);
+    }
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
@@ -750,7 +759,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     foreach (is_array($fullState['mapPings'] ?? null) ? $fullState['mapPings'] : [] as $ping) {
         if (!is_array($ping)
             || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
-            || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds) {
+            || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds
+            || applicationFogCoversPoint($fog, $ping['x'] ?? 0, $ping['y'] ?? 0)) {
             continue;
         }
         $visibleMapPings[] = [
