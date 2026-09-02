@@ -143,7 +143,14 @@ requireDomainCompatibility(
     'Un token recouvert par un mur ne doit projeter aucun rayon de vision hors de sa cellule.'
 );
 
-$presetFog = emptyApplicationFogState(1600, 900);
+$presetFogDimensions = applicationRasterDimensions(1600, 900);
+$presetFog = [
+    'version' => XAR_FOG_MASK_VERSION,
+    'enabled' => true,
+    'width' => $presetFogDimensions['width'],
+    'height' => $presetFogDimensions['height'],
+    'mask' => '',
+];
 $presetWalls = emptyApplicationWallState(1600, 900);
 $validPreset = [
     'version' => 1,
