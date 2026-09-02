@@ -50,6 +50,34 @@ requireDomainCompatibility(
         && (float) ($trappedPlayerMovement['x'] ?? 0) === 50.0,
     'Un joueur déjà recouvert par un mur doit attendre une ouverture ou une intervention MJ.'
 );
+$rescuedByGm = applicationResolveWallCollision(
+    $wallState,
+    ['x' => 50.0, 'y' => 50.0],
+    ['x' => 25.0, 'y' => 50.0],
+    50,
+    1600,
+    900,
+    true
+);
+requireDomainCompatibility(
+    ($rescuedByGm['blocked'] ?? true) === false
+        && (float) ($rescuedByGm['x'] ?? 0) === 25.0,
+    'Le MJ doit pouvoir extraire un token recouvert après avoir peint un mur sur lui.'
+);
+$placementOnWall = applicationResolveWallCollision(
+    $wallState,
+    ['x' => 25.0, 'y' => 50.0],
+    ['x' => 50.0, 'y' => 50.0],
+    50,
+    1600,
+    900,
+    false
+);
+requireDomainCompatibility(
+    ($placementOnWall['blocked'] ?? false) === true
+        && (float) ($placementOnWall['x'] ?? 100) < 50.0,
+    'La hitbox du token doit empêcher tout placement sur une cellule murée.'
+);
 
 $openingBytes = $wallBytes;
 $wallCenterY = (int) round(((int) $wallState['height'] - 1) / 2);
@@ -106,6 +134,48 @@ requireDomainCompatibility(
     !applicationVisionCoversPoint($partyVision, 40, 50)
         && !applicationVisionCoversPoint($partyVision, 70, 50),
     'Les champs de vision des tokens appartenant au même joueur doivent s’unir.'
+);
+$visionFromWall = applicationComputeVisionMask($pillarOcclusion, [['x' => 50, 'y' => 50]], 100);
+requireDomainCompatibility(
+    !applicationVisionCoversPoint($visionFromWall, 50, 50)
+        && applicationVisionCoversPoint($visionFromWall, 45, 50)
+        && applicationVisionCoversPoint($visionFromWall, 55, 50),
+    'Un token recouvert par un mur ne doit projeter aucun rayon de vision hors de sa cellule.'
+);
+
+$presetFog = emptyApplicationFogState(1600, 900);
+$presetWalls = emptyApplicationWallState(1600, 900);
+$validPreset = [
+    'version' => 1,
+    'id' => 'preset-crypt',
+    'name' => 'Crypte',
+    'naturalWidth' => 1600,
+    'naturalHeight' => 900,
+    'fog' => $presetFog,
+    'walls' => $presetWalls,
+    'vision' => ['version' => 1, 'enabled' => true, 'distance' => 8],
+    'sourceSceneId' => 'scene-1',
+    'sourceLayerId' => 'ground',
+    'automatic' => false,
+    'createdAt' => '2026-09-02T10:00:00.000Z',
+    'updatedAt' => '2026-09-02T10:00:00.000Z',
+];
+requireDomainCompatibility(
+    validApplicationMapEffectPresets([$validPreset])
+        && !validApplicationMapEffectPresets([$validPreset, $validPreset])
+        && !validApplicationMapEffectPresets([[...$validPreset, 'walls' => [...$presetWalls, 'mask' => 'invalide!']]]),
+    'Les préréglages fog/murs/vision doivent être validés, uniques et strictement bornés.'
+);
+$presetDomains = legacyStateToDomains(['mapEffectPresets' => [$validPreset]]);
+$presetRecords = array_map(
+    static fn (array $payload): array => ['revision' => 1, 'payload' => $payload],
+    $presetDomains
+);
+$presetRoundTrip = domainsToApplicationState($presetRecords, 1);
+requireDomainCompatibility(
+    ($presetDomains['library']['mapEffectPresets'][0]['id'] ?? null) === 'preset-crypt'
+        && ($presetRoundTrip['mapEffectPresets'][0]['vision']['distance'] ?? null) === 8,
+    'Une migration vers les domaines puis une recomposition doit conserver les préréglages.'
 );
 
 $musicFolders = [[

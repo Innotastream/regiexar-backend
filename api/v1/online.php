@@ -2505,15 +2505,20 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $result['character'] = visibleCharacter($character);
         } elseif ($command === 'token.move') {
-            if (($table['tacticalSync']['paused'] ?? false) === true) {
+            if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             }
-            if ($sceneId === '') {
+            $requestedSceneId = trim((string) ($arguments['sceneId'] ?? ''));
+            if ($requestedSceneId === '' || (!$isGm && $requestedSceneId !== $sceneId)) {
+                rejectOnlineCommand($connection, 409, 'La scène a changé avant la fin du déplacement.', 'stale_scene');
+            }
+            $moveSceneId = $requestedSceneId;
+            if ($moveSceneId === '' || !validApplicationDomainKey('scene:' . $moveSceneId)) {
                 rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
             }
-            $tokenKey = onlineTokenDomainKey($sceneId, $arguments['tokenId'] ?? '');
-            $initiativeKey = 'initiative:' . $sceneId;
-            $mapKey = 'map:' . $sceneId;
+            $tokenKey = onlineTokenDomainKey($moveSceneId, $arguments['tokenId'] ?? '');
+            $initiativeKey = 'initiative:' . $moveSceneId;
+            $mapKey = 'map:' . $moveSceneId;
             $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $mapKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
             $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);

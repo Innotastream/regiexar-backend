@@ -40,7 +40,9 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
 test("la commande de déplacement recalcule tout le trajet avec le mur autoritaire", async () => {
   const online = await source("api/v1/online.php");
   const movement = online.slice(online.indexOf("} elseif ($command === 'token.move')"), online.indexOf("} elseif ($command === 'token.resource.adjust')"));
-  assert.match(movement, /\$mapKey = 'map:' \. \$sceneId/);
+  assert.match(movement, /\$mapKey = 'map:' \. \$moveSceneId/);
+  assert.match(movement, /\$moveSceneId = \$requestedSceneId/);
+  assert.match(movement, /\$isGm\s*\n\s*\);/);
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map\)/);
   assert.match(movement, /applicationResolveWallCollision/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);

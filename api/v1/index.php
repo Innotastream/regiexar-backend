@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.14.0';
-const XAR_BACKEND_BUILD = 'client-3-1-0-walls-vision-release-20260901-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.0';
+const XAR_BACKEND_VERSION = '0.14.1';
+const XAR_BACKEND_BUILD = 'client-3-1-1-map-effects-scene-release-20260902-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.1';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 14;
+const XAR_DATABASE_SCHEMA_VERSION = 15;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -694,6 +694,22 @@ function ensureCurrentSchema(PDO $connection): void
                 "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
                 . "(14, 'session_schema_12_map_walls_and_dynamic_vision', "
                 . "'cfb4bb87e41f0c7f75cdb05fcdbdbf9850273f5bab61448da83694baec25787e')"
+            );
+            $version = 14;
+        }
+
+        if ($version < 15) {
+            $connection->exec(
+                'ALTER TABLE application_domain_clock MODIFY COLUMN state_schema_version '
+                . 'SMALLINT UNSIGNED NOT NULL DEFAULT 13'
+            );
+            $connection->exec(
+                'UPDATE application_domain_clock SET state_schema_version = 13 WHERE singleton_id = 1'
+            );
+            $connection->exec(
+                "INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES "
+                . "(15, 'session_schema_13_map_effect_presets_and_scene_bound_moves', "
+                . "'1dbd0cf59d63be1fad4d285c74ae0ba0cbc5e74806a4aa674d07bdecaa8c59fc')"
             );
         }
     } finally {

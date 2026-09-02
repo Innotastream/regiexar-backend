@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 12;
+const XAR_SESSION_SCHEMA_VERSION = 13;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -292,6 +292,39 @@ function validApplicationVisionSettings(mixed $value): bool
         && $value['distance'] <= XAR_VISION_MAXIMUM_DISTANCE;
 }
 
+function validApplicationMapEffectPresets(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, 40)) {
+        return false;
+    }
+    $seen = [];
+    foreach ($value as $preset) {
+        $id = $preset['id'] ?? null;
+        if (($preset['version'] ?? null) !== 1
+            || !validApplicationDomainIdentifier($id, 120)
+            || isset($seen[$id])
+            || !validApplicationDomainText($preset['name'] ?? null, 120, false)
+            || !is_int($preset['naturalWidth'] ?? null)
+            || !is_int($preset['naturalHeight'] ?? null)
+            || $preset['naturalWidth'] < 1 || $preset['naturalWidth'] > 8192
+            || $preset['naturalHeight'] < 1 || $preset['naturalHeight'] > 8192
+            || !validApplicationFogState($preset['fog'] ?? null)
+            || !validApplicationWallState($preset['walls'] ?? null)
+            || !validApplicationVisionSettings($preset['vision'] ?? null)
+            || !is_bool($preset['automatic'] ?? null)
+            || !validApplicationDomainText($preset['createdAt'] ?? null, 80, false)
+            || !validApplicationDomainText($preset['updatedAt'] ?? null, 80, false)
+            || (array_key_exists('sourceSceneId', $preset)
+                && !validApplicationDomainIdentifier($preset['sourceSceneId'], 80, true))
+            || (array_key_exists('sourceLayerId', $preset)
+                && !validApplicationDomainIdentifier($preset['sourceLayerId'], 80, true))) {
+            return false;
+        }
+        $seen[$id] = true;
+    }
+    return true;
+}
+
 function applicationRasterDimensions(mixed $naturalWidth, mixed $naturalHeight): array
 {
     $width = is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0;
@@ -498,6 +531,11 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
         $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
         $clearCell($hiddenBytes, $centerX, $centerY);
+        $originColumn = (int) round($centerX);
+        $originRow = (int) round($centerY);
+        if (applicationMaskBit($wallBytes, $originRow * $width + $originColumn)) {
+            continue;
+        }
         if (($walls['mask'] ?? '') === '') {
             $minimumX = max(0, (int) floor($centerX - $radiusX));
             $maximumX = min($width - 1, (int) ceil($centerX + $radiusX));
@@ -514,18 +552,34 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
             }
             continue;
         }
-        $maximumRadius = max($radiusX, $radiusY);
-        $rayCount = max(96, min(1536, (int) ceil(M_PI * 2 * $maximumRadius * 1.6)));
-        $raySteps = max(8, min(1024, (int) ceil($maximumRadius * 2.5)));
+        $maximumRadius = min(max($radiusX, $radiusY), sqrt($width * $width + $height * $height));
+        $rayCount = max(96, min(2048, (int) ceil(M_PI * 2 * $maximumRadius * 1.8)));
         for ($ray = 0; $ray < $rayCount; $ray += 1) {
             $angle = $ray / $rayCount * M_PI * 2;
             $cosine = cos($angle);
             $sine = sin($angle);
+            $fullDeltaX = $cosine * $radiusX;
+            $fullDeltaY = $sine * $radiusY;
+            $visibleProgress = 1.0;
+            if ($fullDeltaX > 0) {
+                $visibleProgress = min($visibleProgress, ($width - 1 - $centerX) / $fullDeltaX);
+            } elseif ($fullDeltaX < 0) {
+                $visibleProgress = min($visibleProgress, $centerX / -$fullDeltaX);
+            }
+            if ($fullDeltaY > 0) {
+                $visibleProgress = min($visibleProgress, ($height - 1 - $centerY) / $fullDeltaY);
+            } elseif ($fullDeltaY < 0) {
+                $visibleProgress = min($visibleProgress, $centerY / -$fullDeltaY);
+            }
+            $visibleProgress = max(0.0, min(1.0, $visibleProgress));
+            $deltaX = $fullDeltaX * $visibleProgress;
+            $deltaY = $fullDeltaY * $visibleProgress;
+            $raySteps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
             $previousIndex = -1;
             for ($step = 0; $step <= $raySteps; $step += 1) {
                 $progress = $step / $raySteps;
-                $column = (int) round($centerX + $cosine * $radiusX * $progress);
-                $row = (int) round($centerY + $sine * $radiusY * $progress);
+                $column = (int) round($centerX + $deltaX * $progress);
+                $row = (int) round($centerY + $deltaY * $progress);
                 if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
                     break;
                 }
@@ -1017,7 +1071,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
     }
     if ($key === 'library'
-        && !validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)) {
+        && (!validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)
+            || !validApplicationMapEffectPresets($payload['mapEffectPresets'] ?? []))) {
         sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
     if ($key === 'audio'
@@ -1382,7 +1437,10 @@ function legacyStateToDomains(array $state): array
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
         ],
-        'library' => ['tokenLibrary' => is_array($state['tokenLibrary'] ?? null) ? $state['tokenLibrary'] : []],
+        'library' => [
+            'tokenLibrary' => is_array($state['tokenLibrary'] ?? null) ? $state['tokenLibrary'] : [],
+            'mapEffectPresets' => is_array($state['mapEffectPresets'] ?? null) ? $state['mapEffectPresets'] : [],
+        ],
         'audio' => [
             'folders' => is_array($state['mediaFolders'] ?? null) ? $state['mediaFolders'] : [],
             'tracks' => is_array($state['tracks'] ?? null) ? $state['tracks'] : [],
@@ -1555,6 +1613,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
         'pingReceipts' => is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
+        'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],
         'shortcuts' => is_array($activity['shortcuts'] ?? null) ? $activity['shortcuts'] : [],
         'rolls' => is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [],
         'mediaFolders' => is_array($audio['folders'] ?? null) ? $audio['folders'] : [],
