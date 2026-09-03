@@ -32,6 +32,9 @@ jobs:
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 
+      - name: Barrière publique 3.1.2
+        run: node .github/scripts/verify-live-release-policy.mjs 3.1.2
+
       - name: Publier le résultat des contrôles backend
         if: always()
         env:
