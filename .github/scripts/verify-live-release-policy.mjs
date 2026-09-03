@@ -48,6 +48,8 @@ try {
   requireValue(health.status === 200, `/health répond ${health.status} au lieu de 200.`);
   const policy = health.body?.clientPolicy;
   requireValue(health.body?.status === "ok", "/health n’annonce pas status=ok.");
+  requireValue(health.body?.version === "0.14.2", `/health version=${health.body?.version ?? "absent"}, attendu 0.14.2.`);
+  requireValue(health.body?.build === "client-3-1-2-map-effects-menu-release-20260903-1", `/health build=${health.body?.build ?? "absent"}, attendu client-3-1-2-map-effects-menu-release-20260903-1.`);
   requireValue(policy?.enforce === true, "/health n’impose pas la politique cliente.");
   requireValue(policy?.exactVersion === true, "/health n’impose pas une version exacte.");
   requireValue(policy?.minimumVersion === requestedVersion, `minimumVersion=${policy?.minimumVersion ?? "absent"}, attendu ${requestedVersion}.`);
@@ -72,6 +74,7 @@ try {
     );
   }
 
+  console.log(`Santé publique vérifiée : version=${health.body.version}, build=${health.body.build}, ownershipRepair=${JSON.stringify(health.body.ownershipRepair ?? null)}.`);
   console.log(
     `Politique publique vérifiée pour ${requestedVersion}: `
     + `${previousVersion}=426, ${requestedVersion}=401, ${futureVersion}=426.`
