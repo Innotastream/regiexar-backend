@@ -84,9 +84,12 @@ requireDomainCompatibility(
 $thinWallState = emptyApplicationWallState(800, 250);
 $thinWallBytes = applicationWallMaskBytes($thinWallState);
 requireDomainCompatibility(is_string($thinWallBytes), 'Le masque fin doit être décodable.');
-$thinWallX = (int) round(((int) $thinWallState['width'] - 1) / 2);
+$thinWallLeft = (int) floor(((int) $thinWallState['width'] - 1) / 2);
+$thinWallRight = (int) ceil(((int) $thinWallState['width'] - 1) / 2);
 for ($thinWallY = 0; $thinWallY < (int) $thinWallState['height']; $thinWallY += 1) {
-    applicationSetMaskBit($thinWallBytes, $thinWallY * (int) $thinWallState['width'] + $thinWallX, true);
+    for ($thinWallX = $thinWallLeft; $thinWallX <= $thinWallRight; $thinWallX += 1) {
+        applicationSetMaskBit($thinWallBytes, $thinWallY * (int) $thinWallState['width'] + $thinWallX, true);
+    }
 }
 $thinWallState['mask'] = rtrim(strtr(base64_encode($thinWallBytes), '+/', '-_'), '=');
 $thinWallContact = applicationResolveWallCollision(
