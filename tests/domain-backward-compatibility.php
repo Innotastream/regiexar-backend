@@ -81,6 +81,62 @@ requireDomainCompatibility(
     'La hitbox du token doit empêcher tout placement sur une cellule murée.'
 );
 
+$thinWallState = emptyApplicationWallState(800, 250);
+$thinWallBytes = applicationWallMaskBytes($thinWallState);
+requireDomainCompatibility(is_string($thinWallBytes), 'Le masque fin doit être décodable.');
+$thinWallX = (int) round(((int) $thinWallState['width'] - 1) / 2);
+for ($thinWallY = 0; $thinWallY < (int) $thinWallState['height']; $thinWallY += 1) {
+    applicationSetMaskBit($thinWallBytes, $thinWallY * (int) $thinWallState['width'] + $thinWallX, true);
+}
+$thinWallState['mask'] = rtrim(strtr(base64_encode($thinWallBytes), '+/', '-_'), '=');
+$thinWallContact = applicationResolveWallCollision(
+    $thinWallState,
+    ['x' => 25.0, 'y' => 50.0],
+    ['x' => 99.0, 'y' => 50.0],
+    30,
+    800,
+    250,
+    false
+);
+$thinWallRetreat = applicationResolveWallCollision(
+    $thinWallState,
+    $thinWallContact,
+    ['x' => 25.0, 'y' => 50.0],
+    30,
+    800,
+    250,
+    false
+);
+$legacyThinWallRetreat = applicationResolveWallCollision(
+    $thinWallState,
+    ['x' => 47.932, 'y' => 50.0],
+    ['x' => 25.0, 'y' => 50.0],
+    30,
+    800,
+    250,
+    false
+);
+$legacyThinWallIntrusion = applicationResolveWallCollision(
+    $thinWallState,
+    ['x' => 47.932, 'y' => 50.0],
+    ['x' => 99.0, 'y' => 50.0],
+    30,
+    800,
+    250,
+    false
+);
+requireDomainCompatibility(
+    ($thinWallContact['blocked'] ?? false) === true
+        && (float) ($thinWallContact['x'] ?? 0) > 25.0
+        && ($thinWallRetreat['blocked'] ?? true) === false
+        && (float) ($thinWallRetreat['x'] ?? 0) === 25.0
+        && ($legacyThinWallRetreat['blocked'] ?? true) === false
+        && (float) ($legacyThinWallRetreat['x'] ?? 0) === 25.0
+        && ($legacyThinWallIntrusion['blocked'] ?? false) === true
+        && (float) ($legacyThinWallIntrusion['x'] ?? 0) === 47.932,
+    'Le dernier point sûr, y compris arrondi par la 0.14.3, doit reculer sans autoriser une traversée.'
+);
+
 $openingBytes = $wallBytes;
 $wallCenterY = (int) round(((int) $wallState['height'] - 1) / 2);
 for ($wallY = $wallCenterY - 24; $wallY <= $wallCenterY + 24; $wallY += 1) {

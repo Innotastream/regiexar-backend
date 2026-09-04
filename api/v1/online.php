@@ -2565,15 +2565,20 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $occlusion['naturalHeight'],
                 $isGm
             );
-            $token['x'] = $resolved['x'];
-            $token['y'] = $resolved['y'];
-            $token['_movedAt'] = (int) floor(microtime(true) * 1000);
-            queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+            $positionChanged = (float) ($token['x'] ?? 50) !== (float) $resolved['x']
+                || (float) ($token['y'] ?? 50) !== (float) $resolved['y'];
+            if ($positionChanged) {
+                $token['x'] = $resolved['x'];
+                $token['y'] = $resolved['y'];
+                $token['_movedAt'] = (int) floor(microtime(true) * 1000);
+                queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+            }
             $result['token'] = $token;
             $result['blockedByWall'] = $resolved['blocked'];
+            $result['positionChanged'] = $positionChanged;
             $result['tokenDomain'] = [
                 'key' => $tokenKey,
-                'revision' => (int) ($records[$tokenKey]['revision'] ?? 0) + 1,
+                'revision' => (int) ($records[$tokenKey]['revision'] ?? 0) + ($positionChanged ? 1 : 0),
             ];
         } elseif ($command === 'token.resource.adjust') {
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {

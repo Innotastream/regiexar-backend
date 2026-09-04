@@ -474,13 +474,45 @@ function applicationResolveWallCollision(
             $radiusY
         );
     };
+    $pointAt = static function (float $progress, ?int $precision = null) use (
+        $startX, $startY, $desiredX, $desiredY
+    ): array {
+        $point = [
+            'x' => $startX + ($desiredX - $startX) * $progress,
+            'y' => $startY + ($desiredY - $startY) * $progress,
+        ];
+        if ($precision === null) {
+            return $point;
+        }
+        return ['x' => round($point['x'], $precision), 'y' => round($point['y'], $precision)];
+    };
+    $collidesPoint = static function (array $point) use (
+        $bytes, $rawWalls, $width, $height, $radiusX, $radiusY
+    ): bool {
+        return applicationWallCollisionAt(
+            $bytes,
+            $rawWalls,
+            (float) $point['x'] / 100 * max(1, $width - 1),
+            (float) $point['y'] / 100 * max(1, $height - 1),
+            $radiusX,
+            $radiusY
+        );
+    };
     $steps = max(1, min(2048, (int) ceil(max(abs($desiredRasterX - $startRasterX), abs($desiredRasterY - $startRasterY)) * 2)));
     $startsInsideWall = $collides(0.0);
-    if ($startsInsideWall && !$allowEscape) {
+    $rasterDistance = hypot($desiredRasterX - $startRasterX, $desiredRasterY - $startRasterY);
+    $shallowRecoveryProgress = $startsInsideWall && !$allowEscape && $rasterDistance > 0
+        ? min(1.0, 0.02 / $rasterDistance)
+        : 0.0;
+    // Compatibilité 0.14.3 : seules les pénétrations numériques superficielles
+    // créées par l'ancien arrondi peuvent ressortir dans le sens immédiatement
+    // libre. Un token réellement couvert reste sous contrôle exclusif du MJ.
+    $recoversShallowContact = $shallowRecoveryProgress > 0.0 && !$collides($shallowRecoveryProgress);
+    if ($startsInsideWall && !$allowEscape && !$recoversShallowContact) {
         return ['x' => $startX, 'y' => $startY, 'blocked' => true];
     }
-    $escapedInitialWall = !$startsInsideWall;
-    $safeProgress = 0.0;
+    $escapedInitialWall = !$startsInsideWall || $recoversShallowContact;
+    $safeProgress = $recoversShallowContact ? $shallowRecoveryProgress : 0.0;
     for ($index = 1; $index <= $steps; $index += 1) {
         $progress = $index / $steps;
         $blocked = $collides($progress);
@@ -505,9 +537,22 @@ function applicationResolveWallCollision(
                 $low = $middle;
             }
         }
+        // La valeur enregistrée doit rester hors du mur après son passage en
+        // JSON. Un arrondi à trois décimales pouvait transformer le dernier
+        // point sûr en position piégée et interdire ensuite tout recul Joueur.
+        $safePoint = $pointAt($low, 6);
+        if ($collidesPoint($safePoint)) {
+            $safePoint = $pointAt($safeProgress, 6);
+        }
+        if ($collidesPoint($safePoint)) {
+            $safePoint = $pointAt($safeProgress);
+        }
+        if ($collidesPoint($safePoint) && !$startsInsideWall) {
+            $safePoint = ['x' => $startX, 'y' => $startY];
+        }
         return [
-            'x' => round($startX + ($desiredX - $startX) * $low, 3),
-            'y' => round($startY + ($desiredY - $startY) * $low, 3),
+            'x' => $safePoint['x'],
+            'y' => $safePoint['y'],
             'blocked' => true,
         ];
     }

@@ -14,6 +14,9 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   assert.match(domains, /function applicationActiveMapFogState/);
   assert.match(domains, /function applicationActiveMapOcclusionState/);
   assert.match(domains, /function applicationResolveWallCollision/);
+  assert.match(domains, /0\.02 \/ \$rasterDistance/);
+  assert.match(domains, /\$pointAt\(\$low, 6\)/);
+  assert.match(domains, /\$collidesPoint\(\$safePoint\)/);
   assert.match(domains, /function applicationComputeVisionMask/);
   assert.match(domains, /preg_match\('\/\^\[A-Za-z0-9_-\]\*\$\/D'/);
   assert.match(domains, /strlen\(\$decoded\) === \$expectedLength/);
@@ -50,6 +53,10 @@ test("la commande de déplacement recalcule tout le trajet avec le mur autoritai
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map\)/);
   assert.match(movement, /applicationResolveWallCollision/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);
+  assert.match(movement, /\$positionChanged/);
+  assert.match(movement, /if \(\$positionChanged\)[\s\S]*?\$token\['_movedAt'\]/);
+  assert.doesNotMatch(movement, /\$token\['_movedAt'\][\s\S]*?if \(\$positionChanged\)/);
   assert.match(movement, /\$result\['blockedByWall'\] = \$resolved\['blocked'\]/);
+  assert.match(movement, /\$result\['positionChanged'\] = \$positionChanged/);
   assert.match(movement, /\$result\['tokenDomain'\]/);
 });
