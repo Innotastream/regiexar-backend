@@ -9,7 +9,8 @@ const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
 const XAR_FOG_MASK_VERSION = 1;
 const XAR_FOG_RASTER_MINIMUM = 32;
-const XAR_FOG_RASTER_MAXIMUM = 256;
+const XAR_FOG_RASTER_MAXIMUM = 512;
+const XAR_FOG_MASK_MAXIMUM_LENGTH = 44000;
 const XAR_WALL_MASK_VERSION = 1;
 const XAR_VISION_SETTINGS_VERSION = 1;
 const XAR_VISION_DEFAULT_DISTANCE = 8;
@@ -166,7 +167,7 @@ function applicationFogMaskBytes(mixed $value): ?string
         || $value['height'] < XAR_FOG_RASTER_MINIMUM
         || $value['height'] > XAR_FOG_RASTER_MAXIMUM
         || !is_string($value['mask'] ?? null)
-        || strlen($value['mask']) > 11000
+        || strlen($value['mask']) > XAR_FOG_MASK_MAXIMUM_LENGTH
         || preg_match('/^[A-Za-z0-9_-]*$/D', $value['mask']) !== 1) {
         return null;
     }
@@ -251,7 +252,7 @@ function applicationWallMaskBytes(mixed $value): ?string
         || $value['height'] < XAR_FOG_RASTER_MINIMUM
         || $value['height'] > XAR_FOG_RASTER_MAXIMUM
         || !is_string($value['mask'] ?? null)
-        || strlen($value['mask']) > 11000
+        || strlen($value['mask']) > XAR_FOG_MASK_MAXIMUM_LENGTH
         || preg_match('/^[A-Za-z0-9_-]*$/D', $value['mask']) !== 1) {
         return null;
     }
@@ -275,10 +276,24 @@ function normalizeApplicationVisionSettings(mixed $value): array
     $distance = is_numeric(is_array($value) ? ($value['distance'] ?? null) : null)
         ? (int) round((float) $value['distance'])
         : XAR_VISION_DEFAULT_DISTANCE;
+    $isolatedPlayerIds = [];
+    foreach (is_array($value) && is_array($value['isolatedPlayerIds'] ?? null) ? $value['isolatedPlayerIds'] : [] as $playerId) {
+        $playerId = is_string($playerId) ? trim($playerId) : '';
+        if ($playerId !== '' && strlen($playerId) <= 128
+            && preg_match('/^[A-Za-z0-9_-]+$/D', $playerId) === 1
+            && !in_array($playerId, $isolatedPlayerIds, true)) {
+            $isolatedPlayerIds[] = $playerId;
+            if (count($isolatedPlayerIds) >= 200) {
+                break;
+            }
+        }
+    }
     return [
         'version' => XAR_VISION_SETTINGS_VERSION,
         'enabled' => is_array($value) && ($value['enabled'] ?? false) === true,
         'distance' => max(1, min(XAR_VISION_MAXIMUM_DISTANCE, $distance)),
+        'shared' => is_array($value) && ($value['shared'] ?? false) === true,
+        'isolatedPlayerIds' => $isolatedPlayerIds,
     ];
 }
 
@@ -289,7 +304,10 @@ function validApplicationVisionSettings(mixed $value): bool
         && is_bool($value['enabled'] ?? null)
         && is_int($value['distance'] ?? null)
         && $value['distance'] >= 1
-        && $value['distance'] <= XAR_VISION_MAXIMUM_DISTANCE;
+        && $value['distance'] <= XAR_VISION_MAXIMUM_DISTANCE
+        && (!array_key_exists('shared', $value) || is_bool($value['shared']))
+        && (!array_key_exists('isolatedPlayerIds', $value)
+            || validApplicationDomainIdentifierList($value['isolatedPlayerIds'], 200, 128));
 }
 
 function validApplicationMapEffectPresets(mixed $value): bool

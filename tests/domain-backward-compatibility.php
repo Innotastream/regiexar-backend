@@ -33,8 +33,10 @@ $blockedMovement = applicationResolveWallCollision(
     900
 );
 requireDomainCompatibility(
-    ($blockedMovement['blocked'] ?? false) === true && (float) ($blockedMovement['x'] ?? 100) < 50.0,
-    'Un déplacement envoyé directement au-delà d’un mur doit rester bloqué avant celui-ci.'
+    ($blockedMovement['blocked'] ?? false) === true
+        && (float) ($blockedMovement['x'] ?? 100) < 50.0
+        && (float) ($blockedMovement['x'] ?? 0) > 25.0,
+    'Un déplacement envoyé au-delà d’un mur doit avancer jusqu’au contact, sans le traverser ni revenir au départ.'
 );
 $trappedPlayerMovement = applicationResolveWallCollision(
     $wallState,
@@ -81,7 +83,7 @@ requireDomainCompatibility(
 
 $openingBytes = $wallBytes;
 $wallCenterY = (int) round(((int) $wallState['height'] - 1) / 2);
-for ($wallY = $wallCenterY - 12; $wallY <= $wallCenterY + 12; $wallY += 1) {
+for ($wallY = $wallCenterY - 24; $wallY <= $wallCenterY + 24; $wallY += 1) {
     for ($wallX = $wallCenterX - 1; $wallX <= $wallCenterX + 1; $wallX += 1) {
         applicationSetMaskBit($openingBytes, $wallY * (int) $wallState['width'] + $wallX, false);
     }
@@ -99,6 +101,20 @@ $openMovement = applicationResolveWallCollision(
 requireDomainCompatibility(
     ($openMovement['blocked'] ?? true) === false && (float) ($openMovement['x'] ?? 0) === 75.0,
     'Une ouverture volontaire assez large doit laisser passer le gabarit du token.'
+);
+
+$legacyVision = ['version' => 1, 'enabled' => true, 'distance' => 8];
+$sharedVision = normalizeApplicationVisionSettings([
+    ...$legacyVision,
+    'shared' => true,
+    'isolatedPlayerIds' => ['account-c', 'account-c', 'identifiant invalide'],
+]);
+requireDomainCompatibility(
+    validApplicationVisionSettings($legacyVision)
+        && validApplicationVisionSettings($sharedVision)
+        && ($sharedVision['shared'] ?? false) === true
+        && ($sharedVision['isolatedPlayerIds'] ?? []) === ['account-c'],
+    'La vision 3.1.2 doit rester lisible par la 3.1.3 et la vision commune doit normaliser ses exceptions.'
 );
 
 $pillarState = emptyApplicationWallState(1000, 1000);
@@ -336,6 +352,46 @@ requireDomainCompatibility(
         && ($visibleNpc['ownedByYou'] ?? true) === false
         && ($visibleNpc['controllable'] ?? true) === false,
     'Tout token visible doit exposer sa fiche tactique en lecture seule sans notes privées ni droit de contrôle.'
+);
+
+$sharedVisionState = [
+    'session' => ['name' => 'Recette vision commune'],
+    'characters' => [],
+    'activeSceneId' => 'scene-shared-vision',
+    'activeScene' => ['id' => 'scene-shared-vision', 'name' => 'Galerie'],
+    'map' => [
+        'background' => '/media/abcdefghijklmnopqrstuvwx',
+        'naturalWidth' => 1000,
+        'naturalHeight' => 1000,
+        'vision' => [
+            'version' => 1,
+            'enabled' => true,
+            'distance' => 1,
+            'shared' => true,
+            'isolatedPlayerIds' => ['account-c'],
+        ],
+        'tokens' => [
+            ['id' => 'token-a', 'name' => 'A', 'x' => 10, 'y' => 10, 'hidden' => false, 'controllerPlayerId' => 'account-a'],
+            ['id' => 'token-b', 'name' => 'B', 'x' => 50, 'y' => 50, 'hidden' => false, 'controllerPlayerId' => 'account-b'],
+            ['id' => 'token-c', 'name' => 'C', 'x' => 90, 'y' => 90, 'hidden' => false, 'controllerPlayerId' => 'account-c'],
+        ],
+    ],
+    'initiative' => ['active' => false, 'order' => ['token-a', 'token-b', 'token-c'], 'currentIndex' => 0],
+    'tacticalSync' => ['paused' => false],
+    'playerPreferences' => [],
+    'rolls' => [],
+    'actionTimers' => [],
+    'mapPings' => [],
+];
+$sharedProjection = publicPlayerState($sharedVisionState, ['id' => 'account-a', 'display_name' => 'A'], []);
+$isolatedProjection = publicPlayerState($sharedVisionState, ['id' => 'account-c', 'display_name' => 'C'], []);
+requireDomainCompatibility(
+    array_column($sharedProjection['map']['tokens'] ?? [], 'id') === ['token-a', 'token-b']
+        && array_column($isolatedProjection['map']['tokens'] ?? [], 'id') === ['token-c']
+        && ($sharedProjection['map']['vision']['shared'] ?? false) === true
+        && ($isolatedProjection['map']['vision']['shared'] ?? true) === false
+        && !array_key_exists('isolatedPlayerIds', $sharedProjection['map']['vision'] ?? []),
+    'La vision commune doit unir le groupe, isoler les exceptions et ne jamais divulguer leur liste au joueur.'
 );
 
 $fogWidth = 32;

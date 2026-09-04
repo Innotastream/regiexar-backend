@@ -642,12 +642,19 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $activeTokenId = $active ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
     $movementOverrides = is_array($initiative['movementOverrides'] ?? null) ? $initiative['movementOverrides'] : [];
     $characterOwners = onlineCharacterOwnerIndex(is_array($fullState['characters'] ?? null) ? $fullState['characters'] : []);
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $isolatedPlayerIds = array_fill_keys($vision['isolatedPlayerIds'], true);
+    $viewerIsIsolated = isset($isolatedPlayerIds[$accountId]);
     $visionOrigins = [];
     foreach (($map['tokens'] ?? []) as $candidateToken) {
         if (!is_array($candidateToken) || ($candidateToken['hidden'] ?? false) === true) {
             continue;
         }
-        if (onlineEffectiveTokenControllerId($candidateToken, $characterOwners) === $accountId) {
+        $controllerId = onlineEffectiveTokenControllerId($candidateToken, $characterOwners);
+        $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
+            ? $controllerId !== '' && !isset($isolatedPlayerIds[$controllerId])
+            : $controllerId === $accountId;
+        if ($sharesWithViewer) {
             $visionOrigins[] = ['x' => $candidateToken['x'] ?? 50, 'y' => $candidateToken['y'] ?? 50];
         }
     }
@@ -732,7 +739,12 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     } else {
         unset($map['fog']);
     }
-    $map['vision'] = $occlusion['vision'];
+    $map['vision'] = [
+        'version' => $vision['version'],
+        'enabled' => $vision['enabled'],
+        'distance' => $vision['distance'],
+        'shared' => $vision['shared'] && !$viewerIsIsolated,
+    ];
     $map['visionMask'] = $visionMask;
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
@@ -2559,6 +2571,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
             queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
             $result['token'] = $token;
             $result['blockedByWall'] = $resolved['blocked'];
+            $result['tokenDomain'] = [
+                'key' => $tokenKey,
+                'revision' => (int) ($records[$tokenKey]['revision'] ?? 0) + 1,
+            ];
         } elseif ($command === 'token.resource.adjust') {
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'Les ressources sont verrouillées pendant la préparation du MJ.', 'table_locked');

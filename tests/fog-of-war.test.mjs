@@ -9,7 +9,8 @@ async function source(path) {
 test("le contrat backend borne les masques de brume, murs et vision par niveau", async () => {
   const domains = await source("api/v1/domains.php");
   assert.match(domains, /XAR_FOG_RASTER_MINIMUM = 32/);
-  assert.match(domains, /XAR_FOG_RASTER_MAXIMUM = 256/);
+  assert.match(domains, /XAR_FOG_RASTER_MAXIMUM = 512/);
+  assert.match(domains, /XAR_FOG_MASK_MAXIMUM_LENGTH = 44000/);
   assert.match(domains, /function applicationActiveMapFogState/);
   assert.match(domains, /function applicationActiveMapOcclusionState/);
   assert.match(domains, /function applicationResolveWallCollision/);
@@ -27,6 +28,9 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
   assert.match(projection, /\$fog = applicationActiveMapFogState/);
   assert.match(projection, /\$occlusion = applicationActiveMapOcclusionState/);
   assert.match(projection, /\$visionMask = applicationComputeVisionMask/);
+  assert.match(projection, /\$viewerIsIsolated/);
+  assert.match(projection, /\$vision\['shared'\]/);
+  assert.match(projection, /\$isolatedPlayerIds\[\$controllerId\]/);
   assert.match(projection, /\$pointIsHidden = static fn/);
   assert.match(projection, /!\$owned && \$pointIsHidden/);
   assert.match(projection, /unset\(\$map\['layers'\]\)/);
@@ -47,4 +51,5 @@ test("la commande de déplacement recalcule tout le trajet avec le mur autoritai
   assert.match(movement, /applicationResolveWallCollision/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);
   assert.match(movement, /\$result\['blockedByWall'\] = \$resolved\['blocked'\]/);
+  assert.match(movement, /\$result\['tokenDomain'\]/);
 });
