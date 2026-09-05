@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 13;
+const XAR_SESSION_SCHEMA_VERSION = 14;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -743,7 +743,24 @@ function validApplicationAbilities(mixed $value): bool
             || !validApplicationDomainText($entry['name'] ?? null, 120, false)
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
+            || (array_key_exists('damageType', $entry) && !in_array($entry['damageType'], ['physical', 'magical', 'ignore'], true))
             || (array_key_exists('description', $entry) && !validApplicationDomainText($entry['description'], 2000))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function validApplicationWeaponAttacks(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, 30)) {
+        return false;
+    }
+    foreach ($value as $entry) {
+        if (!validApplicationDomainIdentifier($entry['id'] ?? null, 120)
+            || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
+            || !validApplicationAbilityFormula($entry['formula'] ?? null)
+            || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)) {
             return false;
         }
     }
@@ -778,10 +795,26 @@ function validApplicationTokenDomain(array $payload): bool
             || !in_array($payload['frameVariant'], ['player', 'creature', 'elite', 'boss', 'apostle'], true))) {
         return false;
     }
-    foreach (['hp', 'maxHp', 'mana', 'maxMana', 'armor', 'speed', 'initiativeBonus'] as $key) {
+    foreach (['hp', 'maxHp', 'mana', 'maxMana', 'initiativeBonus'] as $key) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key])) {
             return false;
         }
+    }
+    foreach (['armor', 'magicArmor'] as $key) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key], 0, 100)) {
+            return false;
+        }
+    }
+    foreach (['armorCategory', 'magicArmorCategory'] as $key) {
+        if (array_key_exists($key, $payload) && !in_array($payload[$key], ['none', 'light', 'medium', 'heavy', 'special'], true)) {
+            return false;
+        }
+    }
+    if (array_key_exists('damageType', $payload) && !in_array($payload['damageType'], ['physical', 'magical', 'ignore'], true)) {
+        return false;
+    }
+    if (array_key_exists('temporalPerception', $payload) && !in_array($payload['temporalPerception'], ['normal', 'fast'], true)) {
+        return false;
     }
     if (array_key_exists('hitThreshold', $payload)
         && $payload['hitThreshold'] !== null
@@ -815,7 +848,8 @@ function validApplicationTokenDomain(array $payload): bool
         }
     }
     return (!array_key_exists('stats', $payload) || validApplicationTokenStats($payload['stats']))
-        && (!array_key_exists('abilities', $payload) || validApplicationAbilities($payload['abilities']));
+        && (!array_key_exists('abilities', $payload) || validApplicationAbilities($payload['abilities']))
+        && (!array_key_exists('weaponAttacks', $payload) || validApplicationWeaponAttacks($payload['weaponAttacks']));
 }
 
 function validApplicationTokenList(mixed $value, int $maximumCount): bool
@@ -989,7 +1023,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 3)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 4)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationDomainStringList($payload['conditions'], 100, 240)) {
@@ -1006,6 +1040,22 @@ function validApplicationCharacterDomain(array $payload): bool
         }
     }
     if (isset($payload['abilities']) && !validApplicationAbilities($payload['abilities'])) {
+        return false;
+    }
+    if (isset($payload['weaponAttacks']) && !validApplicationWeaponAttacks($payload['weaponAttacks'])) {
+        return false;
+    }
+    foreach (['armor', 'magicArmor'] as $key) {
+        if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key], 0, 100)) {
+            return false;
+        }
+    }
+    foreach (['armorCategory', 'magicArmorCategory'] as $key) {
+        if (array_key_exists($key, $payload) && !in_array($payload[$key], ['none', 'light', 'medium', 'heavy', 'special'], true)) {
+            return false;
+        }
+    }
+    if (array_key_exists('temporalPerception', $payload) && !in_array($payload['temporalPerception'], ['normal', 'fast'], true)) {
         return false;
     }
     foreach (['resources', 'stats', 'fatigue', 'secret'] as $key) {
@@ -1129,6 +1179,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['actionTimerTombstones'] ?? null, 1000)
             || !validApplicationDomainObjectList($payload['mapPings'] ?? null, 20)
             || !validApplicationDomainObjectList($payload['pingReceipts'] ?? [], 256)
+            || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], 100)
+            || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], 256)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
@@ -1497,6 +1549,8 @@ function legacyStateToDomains(array $state): array
             'actionTimerTombstones' => is_array($state['actionTimerTombstones'] ?? null) ? $state['actionTimerTombstones'] : [],
             'mapPings' => is_array($state['mapPings'] ?? null) ? $state['mapPings'] : [],
             'pingReceipts' => is_array($state['pingReceipts'] ?? null) ? $state['pingReceipts'] : [],
+            'pendingAttacks' => is_array($state['pendingAttacks'] ?? null) ? $state['pendingAttacks'] : [],
+            'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
         ],
@@ -1675,6 +1729,8 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'actionTimerTombstones' => is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
         'pingReceipts' => is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
+        'pendingAttacks' => is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [],
+        'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],
         'shortcuts' => is_array($activity['shortcuts'] ?? null) ? $activity['shortcuts'] : [],

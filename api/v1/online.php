@@ -690,11 +690,12 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'detailsVisible' => $details,
             'ownedByYou' => $owned,
             'playerControlled' => $allied,
+            'usesCharacterSheet' => ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '',
             'temporaryMovementAllowed' => $temporaryMovementAllowed,
             'controllable' => $owned && !$paused && (!$active || ($token['id'] ?? null) === $activeTokenId || $temporaryMovementAllowed),
         ];
         if ($details) {
-            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'hitThreshold', 'armor', 'speed', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'resourcePulse'] as $key) {
+            foreach (['hp', 'maxHp', 'mana', 'maxMana', 'damageDice', 'damageType', 'weaponAttacks', 'hitThreshold', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'resourcePulse'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
                 }
@@ -1692,6 +1693,109 @@ function validOnlineRollFormula(string $formula): bool
     return true;
 }
 
+function normalizeOnlineDamageType(mixed $value): string
+{
+    $type = strtolower(trim((string) $value));
+    return in_array($type, ['physical', 'magical', 'ignore'], true) ? $type : 'physical';
+}
+
+function normalizeOnlineTemporalPerception(mixed $value): string
+{
+    return strtolower(trim((string) $value)) === 'fast' ? 'fast' : 'normal';
+}
+
+function normalizeOnlineArmorProfile(mixed $category, mixed $value): array
+{
+    $percent = max(0, min(100, is_numeric($value) ? (int) $value : 0));
+    $fixed = ['none' => 0, 'light' => 10, 'medium' => 20, 'heavy' => 30];
+    $requested = strtolower(trim((string) $category));
+    if (!array_key_exists($requested, $fixed) && $requested !== 'special') {
+        $requested = array_search($percent, $fixed, true);
+        $requested = is_string($requested) ? $requested : 'special';
+    }
+    return ['category' => $requested, 'percent' => $requested === 'special' ? $percent : $fixed[$requested]];
+}
+
+function extractOnlineDamageFormulas(mixed $value): array
+{
+    $text = (string) $value;
+    preg_match_all('/(?:^|[^A-Za-z0-9_])([+\-]?(?:\d*)d\d+(?:\s*[+\-]\s*(?:(?:\d*)d\d+|\d+))*)(?=$|[^A-Za-z0-9_])/i', $text, $matches);
+    $formulas = [];
+    foreach ($matches[1] ?? [] as $candidate) {
+        $formula = strtolower(str_replace(' ', '', (string) $candidate));
+        if (validOnlineRollFormula($formula) && !in_array($formula, $formulas, true)) {
+            $formulas[] = $formula;
+        }
+    }
+    return array_slice($formulas, 0, 30);
+}
+
+function normalizeOnlineWeaponAttacks(mixed $value, array $formulas): array
+{
+    $entries = is_array($value) ? array_values($value) : [];
+    $byFormula = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) continue;
+        $formula = strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? '')));
+        if ($formula !== '' && !isset($byFormula[$formula])) $byFormula[$formula] = $entry;
+    }
+    $normalized = [];
+    $seen = [];
+    foreach (array_slice(array_values(array_unique($formulas)), 0, 30) as $index => $formula) {
+        $source = is_array($byFormula[$formula] ?? null) ? $byFormula[$formula] : (is_array($entries[$index] ?? null) ? $entries[$index] : []);
+        $fallback = 'weapon-' . ($index + 1);
+        $id = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($source['id'] ?? $fallback), 0, 120)) ?: $fallback;
+        if (isset($seen[$id])) $id = $fallback . '-' . ($index + 1);
+        $seen[$id] = true;
+        $normalized[] = ['id' => $id, 'formula' => $formula, 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null)];
+    }
+    return $normalized;
+}
+
+function migrateOnlineCombatCharacterPayload(array $character): array
+{
+    $physical = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
+    $magical = normalizeOnlineArmorProfile($character['magicArmorCategory'] ?? null, $character['magicArmor'] ?? 0);
+    $character['characterSchema'] = 'xar-tsaroth.character-sheet';
+    $character['characterSchemaVersion'] = 4;
+    $character['armorCategory'] = $physical['category'];
+    $character['armor'] = $physical['percent'];
+    $character['magicArmorCategory'] = $magical['category'];
+    $character['magicArmor'] = $magical['percent'];
+    $character['temporalPerception'] = 'normal';
+    $character['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
+    $character['weaponAttacks'] = normalizeOnlineWeaponAttacks($character['weaponAttacks'] ?? [], extractOnlineDamageFormulas($character['weaponText'] ?? ''));
+    unset($character['speed']);
+    return $character;
+}
+
+function migrateOnlineCombatTokenPayload(array $token, ?array $character = null): array
+{
+    if (is_array($character) && ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '') {
+        $token = synchronizeOnlineCharacterToken($token, $character);
+    } else {
+        $physical = normalizeOnlineArmorProfile($token['armorCategory'] ?? null, $token['armor'] ?? 0);
+        $magical = normalizeOnlineArmorProfile($token['magicArmorCategory'] ?? null, $token['magicArmor'] ?? 0);
+        $token['armorCategory'] = $physical['category'];
+        $token['armor'] = $physical['percent'];
+        $token['magicArmorCategory'] = $magical['category'];
+        $token['magicArmor'] = $magical['percent'];
+        $token['temporalPerception'] = 'normal';
+        $token['abilities'] = normalizeOnlineAbilities($token['abilities'] ?? []);
+        $formula = strtolower(str_replace(' ', '', (string) ($token['damageDice'] ?? '')));
+        $formulas = validOnlineRollFormula($formula) ? [$formula] : array_values(array_filter(array_map(
+            static fn (mixed $entry): string => is_array($entry) ? strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? ''))) : '',
+            is_array($token['weaponAttacks'] ?? null) ? $token['weaponAttacks'] : []
+        ), 'validOnlineRollFormula'));
+        $seed = $token['weaponAttacks'] ?? ($formulas !== [] ? [['id' => 'weapon-1', 'formula' => $formula, 'damageType' => $token['damageType'] ?? null]] : []);
+        $token['weaponAttacks'] = normalizeOnlineWeaponAttacks($seed, $formulas);
+        $token['damageType'] = normalizeOnlineDamageType($token['damageType'] ?? null);
+    }
+    $token['temporalPerception'] = 'normal';
+    unset($token['speed']);
+    return $token;
+}
+
 function normalizeOnlineAbilities(mixed $value): array
 {
     if (!is_array($value)) {
@@ -1718,6 +1822,7 @@ function normalizeOnlineAbilities(mixed $value): array
             'id' => $id,
             'name' => $name !== '' ? $name : 'Nouvelle capacité',
             'formula' => $formula,
+            'damageType' => normalizeOnlineDamageType($entry['damageType'] ?? null),
             'description' => substr((string) ($entry['description'] ?? ''), 0, 2000),
         ];
     }
@@ -1737,7 +1842,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $allowed = [
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'fatigue', 'morale',
-        'armor', 'speed', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText',
+        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
         'shortcuts', 'abilities', 'linkedTokens',
     ];
@@ -1747,6 +1852,20 @@ function playerCharacterPatch(array $current, array $patch): array
                 $current[$key] = normalizePersistedImageReference($patch[$key]);
             } elseif ($key === 'abilities') {
                 $current[$key] = normalizeOnlineAbilities($patch[$key]);
+            } elseif ($key === 'weaponAttacks') {
+                $current[$key] = normalizeOnlineWeaponAttacks($patch[$key], extractOnlineDamageFormulas($patch['weaponText'] ?? $current['weaponText'] ?? ''));
+            } elseif ($key === 'temporalPerception') {
+                $current[$key] = normalizeOnlineTemporalPerception($patch[$key]);
+            } elseif (in_array($key, ['armorCategory', 'magicArmorCategory'], true)) {
+                $valueKey = $key === 'armorCategory' ? 'armor' : 'magicArmor';
+                $profile = normalizeOnlineArmorProfile($patch[$key], $patch[$valueKey] ?? $current[$valueKey] ?? 0);
+                $current[$key] = $profile['category'];
+                $current[$valueKey] = $profile['percent'];
+            } elseif (in_array($key, ['armor', 'magicArmor'], true)) {
+                $categoryKey = $key === 'armor' ? 'armorCategory' : 'magicArmorCategory';
+                $profile = normalizeOnlineArmorProfile($patch[$categoryKey] ?? $current[$categoryKey] ?? null, $patch[$key]);
+                $current[$categoryKey] = $profile['category'];
+                $current[$key] = $profile['percent'];
             } elseif ($key === 'hitThreshold') {
                 $current[$key] = normalizeOnlineD100Difficulty($patch[$key]);
             } elseif ($key === 'linkedTokens') {
@@ -1770,26 +1889,44 @@ function playerCharacterPatch(array $current, array $patch): array
         }
     }
     $current['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $current['characterSchemaVersion'] = 3;
+    $physicalArmor = normalizeOnlineArmorProfile($current['armorCategory'] ?? null, $current['armor'] ?? 0);
+    $magicalArmor = normalizeOnlineArmorProfile($current['magicArmorCategory'] ?? null, $current['magicArmor'] ?? 0);
+    $current['armorCategory'] = $physicalArmor['category'];
+    $current['armor'] = $physicalArmor['percent'];
+    $current['magicArmorCategory'] = $magicalArmor['category'];
+    $current['magicArmor'] = $magicalArmor['percent'];
+    $current['temporalPerception'] = normalizeOnlineTemporalPerception($current['temporalPerception'] ?? null);
+    $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
+    unset($current['speed']);
+    $current['characterSchemaVersion'] = 4;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
 
 function legacyWholePlayerCharacterPatch(array $patch): bool
 {
-    $signature = [
+    $legacySignature = [
         'name', 'color', 'portrait', 'resources', 'stats', 'fatigue', 'armor', 'speed',
         'initiativeBonus', 'conditions', 'armorText', 'hitThreshold', 'weaponText',
         'inventory', 'shortcuts', 'abilities', 'linkedTokens',
     ];
-    return count($patch) >= 24
-        && count(array_intersect($signature, array_keys($patch))) === count($signature);
+    $currentSignature = [
+        'name', 'color', 'portrait', 'resources', 'stats', 'fatigue', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception',
+        'initiativeBonus', 'conditions', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
+        'inventory', 'shortcuts', 'abilities', 'linkedTokens',
+    ];
+    $keys = array_keys($patch);
+    return count($patch) >= 24 && (
+        count(array_intersect($legacySignature, $keys)) === count($legacySignature)
+        || count(array_intersect($currentSignature, $keys)) === count($currentSignature)
+    );
 }
 
 function playerCharacterPatchChangesCurrent(array $current, array $patch): bool
 {
     $candidate = playerCharacterPatch($current, $patch);
     foreach (array_keys($patch) as $key) {
+        if ($key === 'speed') continue;
         $candidateValue = array_key_exists($key, $candidate) ? $candidate[$key] : null;
         $currentValue = array_key_exists($key, $current) ? $current[$key] : null;
         if (canonicalApplicationDomainValue($candidateValue) !== canonicalApplicationDomainValue($currentValue)) {
@@ -2015,6 +2152,124 @@ function sortedOnlineInitiativeOrder(array $order, array $records, string $scene
     return $ids;
 }
 
+function onlineAttackTargetVisible(PDO $connection, array &$records, array $map, array $target, string $accountId, string $sceneId): bool
+{
+    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+    $fog = applicationActiveMapFogState($map);
+    $occlusion = applicationActiveMapOcclusionState($map);
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $isolated = array_fill_keys($vision['isolatedPlayerIds'], true);
+    $viewerIsIsolated = isset($isolated[$accountId]);
+    $origins = [];
+    foreach ($records as $key => $record) {
+        if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
+        $candidate = applicationDomainPayload($records, $key);
+        if ($candidate === [] || ($candidate['hidden'] ?? false) === true) continue;
+        $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
+        $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
+            ? $controllerId !== '' && !isset($isolated[$controllerId])
+            : $controllerId === $accountId;
+        if ($sharesWithViewer) $origins[] = ['x' => $candidate['x'] ?? 50, 'y' => $candidate['y'] ?? 50];
+    }
+    $visionMask = applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50);
+    return !applicationFogCoversPoint($fog, $target['x'] ?? 0, $target['y'] ?? 0)
+        && !applicationVisionCoversPoint($visionMask, $target['x'] ?? 0, $target['y'] ?? 0);
+}
+
+function onlineAttackArmorPercent(array $target, string $damageType): int
+{
+    if ($damageType === 'ignore') return 0;
+    $profile = $damageType === 'magical'
+        ? normalizeOnlineArmorProfile($target['magicArmorCategory'] ?? null, $target['magicArmor'] ?? 0)
+        : normalizeOnlineArmorProfile($target['armorCategory'] ?? null, $target['armor'] ?? 0);
+    return (int) $profile['percent'];
+}
+
+function onlineAttackDamageSummary(int $rawDamage, int $armorPercent): array
+{
+    $raw = max(0, $rawDamage);
+    $armor = max(0, min(100, $armorPercent));
+    $final = max(0, (int) round($raw * (100 - $armor) / 100));
+    return ['rawDamage' => $raw, 'armorPercent' => $armor, 'preventedDamage' => $raw - $final, 'finalDamage' => $final];
+}
+
+function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pending, string $tokenKey, array $token, int $damage): array
+{
+    $character = null;
+    $characterKey = '';
+    $characterId = trim((string) ($token['characterId'] ?? ''));
+    $followsCharacter = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
+    if ($followsCharacter && $characterId !== '') {
+        $characterKey = 'character:' . $characterId;
+        if (validApplicationDomainKey($characterKey)) {
+            $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+            $candidate = applicationDomainPayload($records, $characterKey);
+            if ($candidate !== []) {
+                $character = $candidate;
+                $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+                $token['hp'] = $resources['hp'] ?? ($token['hp'] ?? 0);
+                $token['maxHp'] = $resources['maxHp'] ?? ($token['maxHp'] ?? 0);
+            }
+        }
+    }
+    $maximum = max(0, min(1000000000, is_numeric($token['maxHp'] ?? null) ? (int) $token['maxHp'] : 0));
+    if ($maximum <= 0) rejectOnlineCommand($connection, 409, 'Cette cible ne possède pas de points de vie.', 'target_health_missing');
+    $previous = max(0, min($maximum, is_numeric($token['hp'] ?? null) ? (int) $token['hp'] : 0));
+    $current = max(0, $previous - max(0, $damage));
+    $applied = $previous - $current;
+    $now = (int) floor(microtime(true) * 1000);
+    $pulse = ['id' => 'resource-' . randomToken(12), 'resource' => 'hp', 'delta' => -$applied, 'at' => $now];
+    $token['hp'] = $current;
+    if ($applied > 0) $token['resourcePulse'] = $pulse;
+    $token['_updatedAt'] = $now;
+    if (is_array($character)) {
+        $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+        $resources['hp'] = $current;
+        $character['resources'] = $resources;
+        $character['_updatedAt'] = $now;
+        queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
+        $relatedRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
+        $records = array_replace($records, $relatedRecords);
+        foreach ($relatedRecords as $relatedTokenKey => $record) {
+            $related = applicationDomainPayload($records, $relatedTokenKey);
+            if (($related['followCharacter'] ?? true) === false || trim((string) ($related['linkedTokenId'] ?? '')) !== '') continue;
+            $related['hp'] = $current;
+            $related['maxHp'] = $maximum;
+            $related['_updatedAt'] = $now;
+            if ($relatedTokenKey === $tokenKey && $applied > 0) {
+                $related['resourcePulse'] = $pulse;
+                $token = $related;
+            }
+            queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $related);
+        }
+    } else {
+        queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+    }
+    return ['previousHp' => $previous, 'currentHp' => $current, 'maximumHp' => $maximum, 'appliedDamage' => $applied, 'resourcePulse' => $applied > 0 ? $pulse : null];
+}
+
+function onlineAttackDiscordContent(array $attack): string
+{
+    $types = ['physical' => 'physiques', 'magical' => 'magiques', 'ignore' => 'ignorant l’armure'];
+    $hit = is_array($attack['hit'] ?? null) ? $attack['hit'] : [];
+    $damage = is_array($attack['damage'] ?? null) ? $attack['damage'] : [];
+    $outcome = is_array($hit['outcome'] ?? null) ? $hit['outcome'] : [];
+    $status = ($outcome['success'] ?? false) === true ? (string) ($outcome['label'] ?? 'RÉUSSITE') : (string) ($outcome['label'] ?? 'ÉCHEC');
+    $content = '**' . safeOnlineDiscordLabel($attack['playerName'] ?? 'Joueur') . '** · **' . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant')
+        . '** attaque **' . safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible') . '** avec **' . safeOnlineDiscordLabel($attack['attackName'] ?? 'Attaque') . '**\n'
+        . 'Attaque : d100 brut **' . (string) ($hit['raw'] ?? '—') . '** / seuil **' . (string) ($outcome['threshold'] ?? '—') . '** · **' . safeOnlineDiscordLabel($status) . '**';
+    if (($outcome['success'] ?? false) === true) {
+        $type = normalizeOnlineDamageType($attack['damageType'] ?? null);
+        $content .= '\nDégâts : **' . (string) ($damage['rawDamage'] ?? 0) . '** ' . ($types[$type] ?? 'physiques')
+            . ' · armure **' . (string) ($damage['armorPercent'] ?? 0) . ' %** · dégâts finaux **'
+            . (string) ($attack['appliedDamage'] ?? $damage['finalDamage'] ?? 0) . '**';
+        if (isset($attack['currentHp'], $attack['maximumHp'])) {
+            $content .= ' · PV **' . (string) $attack['currentHp'] . '/' . (string) $attack['maximumHp'] . '**';
+        }
+    }
+    return substr($content, 0, 1900);
+}
+
 function synchronizeOnlineCharacterToken(array $token, array $character): array
 {
     $updatedAt = (int) ($character['_updatedAt'] ?? floor(microtime(true) * 1000));
@@ -2057,10 +2312,15 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
             $token[$key] = (float) $resources[$key];
         }
     }
-    foreach (['armor', 'speed', 'initiativeBonus'] as $key) {
-        if (is_numeric($character[$key] ?? null)) {
-            $token[$key] = (float) $character[$key];
-        }
+    $physicalArmor = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
+    $magicalArmor = normalizeOnlineArmorProfile($character['magicArmorCategory'] ?? null, $character['magicArmor'] ?? 0);
+    $token['armorCategory'] = $physicalArmor['category'];
+    $token['armor'] = $physicalArmor['percent'];
+    $token['magicArmorCategory'] = $magicalArmor['category'];
+    $token['magicArmor'] = $magicalArmor['percent'];
+    $token['temporalPerception'] = normalizeOnlineTemporalPerception($character['temporalPerception'] ?? null);
+    if (is_numeric($character['initiativeBonus'] ?? null)) {
+        $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
     if (is_array($character['stats'] ?? null)) {
         $labels = [
@@ -2079,6 +2339,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     }
     $token['hitThreshold'] = normalizeOnlineD100Difficulty($character['hitThreshold'] ?? null);
     $token['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
+    $token['weaponAttacks'] = normalizeOnlineWeaponAttacks($character['weaponAttacks'] ?? [], extractOnlineDamageFormulas($character['weaponText'] ?? ''));
     $token['_updatedAt'] = $updatedAt;
     return $token;
 }
@@ -2271,7 +2532,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -2506,7 +2767,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $character = playerCharacterPatch($character, $patch);
             }
             queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
-            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armor', 'speed', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
+            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'weaponText', 'weaponAttacks', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
             if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {
                 $tokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
                 $records = array_replace($records, $tokenRecords);
@@ -2682,6 +2943,225 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $result['appliedDelta'] = $appliedDelta;
             $result['current'] = $current;
             $result['maximum'] = $maximum;
+        } elseif ($command === 'token.attack') {
+            if ($isGm) rejectOnlineCommand($connection, 403, 'L’attaque ciblée doit être portée par un joueur.', 'player_mode_required');
+            if (($table['tacticalSync']['paused'] ?? false) === true) {
+                rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
+            }
+            if ($sceneId === '') rejectOnlineCommand($connection, 409, 'Aucune scène active.', 'combat_scene_required');
+            $requestId = trim((string) ($arguments['requestId'] ?? ''));
+            if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
+                rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack_request');
+            }
+            $sourceKey = onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? '');
+            $targetKey = onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? '');
+            if ($sourceKey === '' || $targetKey === '' || $sourceKey === $targetKey) {
+                rejectOnlineCommand($connection, 400, 'Attaquant ou cible invalide.', 'invalid_attack_target');
+            }
+            $initiativeKey = 'initiative:' . $sceneId;
+            $mapKey = 'map:' . $sceneId;
+            $records = array_replace($records, applicationDomainRecords($connection, [$sourceKey, $targetKey, $initiativeKey, $mapKey, 'activity']));
+            $activity = applicationDomainPayload($records, 'activity');
+            $now = (int) floor(microtime(true) * 1000);
+            $receipts = array_values(array_filter(
+                is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
+                static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+            ));
+            $deduplicatedAttack = null;
+            foreach ($receipts as $receipt) {
+                if ((string) ($receipt['requestId'] ?? '') === $requestId
+                    && (string) ($receipt['accountId'] ?? '') === $accountId
+                    && is_array($receipt['attack'] ?? null)) {
+                    $deduplicatedAttack = $receipt['attack'];
+                    break;
+                }
+            }
+            if ($deduplicatedAttack === null) {
+                foreach (is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [] as $entry) {
+                    if (is_array($entry) && (string) ($entry['requestId'] ?? '') === $requestId
+                        && (string) ($entry['accountId'] ?? '') === $accountId) {
+                        $deduplicatedAttack = $entry;
+                        break;
+                    }
+                }
+            }
+            if (is_array($deduplicatedAttack)) {
+                $result['attack'] = $deduplicatedAttack;
+                $result['deduplicated'] = true;
+            } else {
+                $source = applicationDomainPayload($records, $sourceKey);
+                $target = applicationDomainPayload($records, $targetKey);
+                $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
+                $targetController = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
+                if ($source === [] || $sourceController !== $accountId || ($source['hidden'] ?? false) === true) {
+                    rejectOnlineCommand($connection, 403, 'Ce token attaquant ne vous appartient pas.', 'attack_source_forbidden');
+                }
+                if ($target === [] || ($target['hidden'] ?? false) === true || $targetController === $accountId) {
+                    rejectOnlineCommand($connection, 403, 'Cette cible ne peut pas être attaquée.', 'attack_target_forbidden');
+                }
+                $targetCharacterId = trim((string) ($target['characterId'] ?? ''));
+                if ($targetCharacterId !== '' && isset($records['character:' . $targetCharacterId])) {
+                    $targetCharacter = applicationDomainPayload($records, 'character:' . $targetCharacterId);
+                    if ($targetCharacter !== []) $target = synchronizeOnlineCharacterToken($target, $targetCharacter);
+                }
+                if (!is_numeric($target['maxHp'] ?? null) || (int) $target['maxHp'] <= 0) {
+                    rejectOnlineCommand($connection, 409, 'Cette cible ne possède pas de points de vie.', 'target_health_missing');
+                }
+                $map = applicationDomainPayload($records, $mapKey);
+                if (!onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
+                    rejectOnlineCommand($connection, 403, 'Cette cible n’est pas visible par votre joueur.', 'attack_target_hidden');
+                }
+                $characterId = trim((string) ($source['characterId'] ?? ''));
+                if ($characterId !== '' && isset($records['character:' . $characterId])) {
+                    $character = applicationDomainPayload($records, 'character:' . $characterId);
+                    if ($character !== []) $source = synchronizeOnlineCharacterToken($source, $character);
+                }
+                $attackKind = ($arguments['attackKind'] ?? '') === 'ability' ? 'ability' : 'weapon';
+                $attackId = trim((string) ($arguments['attackId'] ?? ''));
+                $attackName = 'Attaque de base';
+                $damageFormula = '';
+                $damageType = 'physical';
+                if ($attackKind === 'ability') {
+                    $abilities = normalizeOnlineAbilities($source['abilities'] ?? []);
+                    $abilityIndex = findEntryIndex($abilities, $attackId);
+                    if ($abilityIndex < 0) rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus sur le token.', 'attack_ability_missing');
+                    $attackName = (string) $abilities[$abilityIndex]['name'];
+                    $damageFormula = (string) $abilities[$abilityIndex]['formula'];
+                    $damageType = normalizeOnlineDamageType($abilities[$abilityIndex]['damageType'] ?? null);
+                } else {
+                    $storedWeaponAttacks = is_array($source['weaponAttacks'] ?? null) ? $source['weaponAttacks'] : [];
+                    $weaponFormulas = array_values(array_filter(array_map(
+                        static fn (mixed $entry): string => is_array($entry) ? strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? ''))) : '',
+                        $storedWeaponAttacks
+                    )));
+                    $manualFormula = strtolower(str_replace(' ', '', (string) ($source['damageDice'] ?? '')));
+                    if ($weaponFormulas === [] && validOnlineRollFormula($manualFormula)) $weaponFormulas = [$manualFormula];
+                    $seed = $storedWeaponAttacks;
+                    if ($seed === [] && $weaponFormulas !== []) {
+                        $seed = [['id' => 'weapon-1', 'formula' => $weaponFormulas[0], 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null)]];
+                    }
+                    $weapons = normalizeOnlineWeaponAttacks($seed, $weaponFormulas);
+                    $weaponIndex = findEntryIndex($weapons, $attackId);
+                    if ($weaponIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque de base n’existe plus sur le token.', 'attack_weapon_missing');
+                    $attackName = count($weapons) > 1 ? 'Attaque de base ' . ($weaponIndex + 1) : 'Attaque de base';
+                    $damageFormula = (string) $weapons[$weaponIndex]['formula'];
+                    $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);
+                }
+                $stats = is_array($source['stats'] ?? null) ? $source['stats'] : [];
+                $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
+                if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
+                    rejectOnlineCommand($connection, 404, 'Cette statistique d’attaque n’existe plus sur le token.', 'attack_stat_missing');
+                }
+                $threshold = max(0, min(100, (int) $stats[$statIndex]['value']));
+                $hitModifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0);
+                $hitModifierMode = ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
+                $thresholdModifier = $hitModifierMode === 'threshold' ? $hitModifierValue : 0;
+                $resultModifier = $hitModifierMode === 'result' ? $hitModifierValue : 0;
+                $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+                $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
+                $hitRolled = onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier);
+                $hitOutcome = classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier);
+                $statLabel = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
+                $hitRoll = onlineRollEntry($identity, $hitRolled, $attackName . ' · ' . $statLabel, (string) ($source['name'] ?? 'Token'), $hitOutcome);
+                $damageModifier = normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0);
+                $damageFormulaWithModifier = $damageFormula . ($damageModifier !== 0 ? ($damageModifier > 0 ? '+' : '') . $damageModifier : '');
+                if (strlen($damageFormulaWithModifier) > 100 || !validOnlineRollFormula($damageFormulaWithModifier)) {
+                    rejectOnlineCommand($connection, 400, 'Le modificateur rend la formule de dégâts invalide.', 'invalid_attack_damage');
+                }
+                $damageRoll = null;
+                $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
+                $activityRolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
+                array_unshift($activityRolls, $hitRoll);
+                if (($hitOutcome['success'] ?? false) === true) {
+                    $damageRolled = onlineRollFormulaWithMode($damageFormulaWithModifier, $rollMode);
+                    $damageSummary = onlineAttackDamageSummary(max(0, (int) $damageRolled['total']), onlineAttackArmorPercent($target, $damageType));
+                    $damageRoll = onlineRollEntry($identity, $damageRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Token'));
+                    array_unshift($activityRolls, $damageRoll);
+                }
+                $activity['rolls'] = array_slice($activityRolls, 0, 100);
+                $attack = [
+                    'id' => 'attack-' . randomToken(12),
+                    'requestId' => $requestId,
+                    'sceneId' => $sceneId,
+                    'sourceTokenId' => (string) ($source['id'] ?? ''),
+                    'sourceName' => substr((string) ($source['name'] ?? 'Attaquant'), 0, 120),
+                    'targetTokenId' => (string) ($target['id'] ?? ''),
+                    'targetName' => substr((string) ($target['name'] ?? 'Cible'), 0, 120),
+                    'accountId' => $accountId,
+                    'playerName' => substr((string) ($identity['display_name'] ?? 'Joueur'), 0, 120),
+                    'attackName' => substr($attackName, 0, 120),
+                    'attackKind' => $attackKind,
+                    'attackId' => $attackId,
+                    'damageType' => $damageType,
+                    'hit' => ['statId' => (string) ($stats[$statIndex]['id'] ?? ''), 'statLabel' => $statLabel, 'raw' => $hitRolled['rawD100'] ?? null, 'formula' => $hitRolled['formula'], 'breakdown' => $hitRolled['breakdown'], 'outcome' => $hitOutcome],
+                    'damage' => $damageRoll === null ? $damageSummary : [...$damageSummary, 'formula' => $damageRoll['formula'], 'breakdown' => $damageRoll['breakdown']],
+                    'finalDamage' => (int) $damageSummary['finalDamage'],
+                    'createdAt' => $now,
+                ];
+                $initiative = applicationDomainPayload($records, $initiativeKey);
+                $combatActive = ($initiative['active'] ?? false) === true;
+                if (($hitOutcome['success'] ?? false) !== true) {
+                    $attack['status'] = 'missed';
+                    $result['discordContent'] = onlineAttackDiscordContent($attack);
+                } elseif ((int) $damageSummary['finalDamage'] <= 0) {
+                    $attack['status'] = 'blocked';
+                    $result['discordContent'] = onlineAttackDiscordContent($attack);
+                } elseif ($combatActive) {
+                    $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $damageSummary['finalDamage']);
+                    $attack = [...$attack, ...$health, 'status' => 'applied'];
+                    $result['discordContent'] = onlineAttackDiscordContent($attack);
+                } else {
+                    $attack['status'] = 'pending';
+                    $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [];
+                    $pendingAttacks[] = $attack;
+                    $activity['pendingAttacks'] = array_slice($pendingAttacks, -100);
+                }
+                $receipts[] = ['requestId' => $requestId, 'accountId' => $accountId, 'expiresAt' => $now + 86_400_000, 'attack' => $attack];
+                $activity['attackReceipts'] = array_slice($receipts, -256);
+                queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                $result['attack'] = $attack;
+            }
+        } elseif ($command === 'token.attack.resolve') {
+            if (!$isGm) rejectOnlineCommand($connection, 403, 'La validation des dégâts est réservée au MJ.', 'gm_required');
+            $attackId = trim((string) ($arguments['attackId'] ?? ''));
+            $decision = ($arguments['decision'] ?? '') === 'reject' ? 'reject' : 'approve';
+            if (preg_match('/^attack-[A-Za-z0-9_-]{12,80}$/D', $attackId) !== 1) {
+                rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack');
+            }
+            if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) {
+                rejectOnlineCommand($connection, 400, 'Cochez explicitement l’autorisation de perte de PV.', 'attack_confirmation_required');
+            }
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+            $activity = applicationDomainPayload($records, 'activity');
+            $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? array_values($activity['pendingAttacks']) : [];
+            $pendingIndex = findEntryIndex($pendingAttacks, $attackId);
+            if ($pendingIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
+            $attack = $pendingAttacks[$pendingIndex];
+            if (!is_array($attack)) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
+            array_splice($pendingAttacks, $pendingIndex, 1);
+            $activity['pendingAttacks'] = $pendingAttacks;
+            if ($decision === 'approve') {
+                $attackSceneId = trim((string) ($attack['sceneId'] ?? ''));
+                $targetKey = onlineTokenDomainKey($attackSceneId, $attack['targetTokenId'] ?? '');
+                $records = array_replace($records, applicationDomainRecords($connection, $targetKey !== '' ? [$targetKey] : []));
+                $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
+                if ($target === []) rejectOnlineCommand($connection, 404, 'La cible de cette attaque n’existe plus.', 'attack_target_missing');
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, max(0, (int) ($attack['finalDamage'] ?? 0)));
+                $attack = [...$attack, ...$health, 'status' => 'applied', 'resolvedAt' => (int) floor(microtime(true) * 1000)];
+                $result['discordContent'] = onlineAttackDiscordContent($attack);
+            } else {
+                $attack['status'] = 'rejected';
+                $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+            }
+            $receipts = is_array($activity['attackReceipts'] ?? null) ? array_values($activity['attackReceipts']) : [];
+            foreach ($receipts as $index => $receipt) {
+                if (is_array($receipt) && (string) ($receipt['requestId'] ?? '') === (string) ($attack['requestId'] ?? '')) {
+                    $receipts[$index]['attack'] = $attack;
+                }
+            }
+            $activity['attackReceipts'] = array_slice($receipts, -256);
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+            $result['attack'] = $attack;
         } elseif ($command === 'ping') {
             $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
             $activity = applicationDomainPayload($records, 'activity');
@@ -3077,6 +3557,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
             $records = array_replace($records, $characterTokenRecords);
             $tokenIdsByScene = [];
+            $removedTokenIds = [];
             foreach ($characterTokenRecords as $tokenKey => $tokenRecord) {
                 $segments = explode(':', (string) $tokenKey, 3);
                 if (count($segments) !== 3) {
@@ -3084,6 +3565,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $tokenIdsByScene[$segments[1]] ??= [];
                 $tokenIdsByScene[$segments[1]][] = $segments[2];
+                $removedTokenIds[$segments[2]] = true;
             }
             $combatKeys = [];
             foreach (array_keys($tokenIdsByScene) as $affectedSceneId) {
@@ -3157,6 +3639,40 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $removedTimerCount = 0;
             if (isset($records['activity'])) {
                 $activity = applicationDomainPayload($records, 'activity');
+                $activityChanged = false;
+                $removedAttackRequestIds = [];
+                $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? array_values($activity['pendingAttacks']) : [];
+                $retainedPendingAttacks = array_values(array_filter(
+                    $pendingAttacks,
+                    static function (mixed $attack) use ($removedTokenIds, &$removedAttackRequestIds): bool {
+                        if (!is_array($attack)) return true;
+                        $removed = isset($removedTokenIds[(string) ($attack['sourceTokenId'] ?? '')])
+                            || isset($removedTokenIds[(string) ($attack['targetTokenId'] ?? '')]);
+                        if ($removed && trim((string) ($attack['requestId'] ?? '')) !== '') {
+                            $removedAttackRequestIds[(string) $attack['requestId']] = true;
+                        }
+                        return !$removed;
+                    }
+                ));
+                if (count($retainedPendingAttacks) !== count($pendingAttacks)) {
+                    $activity['pendingAttacks'] = $retainedPendingAttacks;
+                    $activityChanged = true;
+                }
+                $attackReceipts = is_array($activity['attackReceipts'] ?? null) ? array_values($activity['attackReceipts']) : [];
+                $retainedAttackReceipts = array_values(array_filter(
+                    $attackReceipts,
+                    static function (mixed $receipt) use ($removedTokenIds, $removedAttackRequestIds): bool {
+                        if (!is_array($receipt)) return true;
+                        $attack = is_array($receipt['attack'] ?? null) ? $receipt['attack'] : [];
+                        return !isset($removedAttackRequestIds[(string) ($receipt['requestId'] ?? '')])
+                            && !isset($removedTokenIds[(string) ($attack['sourceTokenId'] ?? '')])
+                            && !isset($removedTokenIds[(string) ($attack['targetTokenId'] ?? '')]);
+                    }
+                ));
+                if (count($retainedAttackReceipts) !== count($attackReceipts)) {
+                    $activity['attackReceipts'] = $retainedAttackReceipts;
+                    $activityChanged = true;
+                }
                 $timers = is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [];
                 $removedTimers = array_values(array_filter(
                     $timers,
@@ -3183,8 +3699,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $timerTombstones[] = ['id' => $timerId, 'deletedAt' => $deletedAt];
                     }
                     $activity['actionTimerTombstones'] = array_slice($timerTombstones, -1000);
-                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                    $activityChanged = true;
                 }
+                if ($activityChanged) queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             }
             queueOnlineDomainDelete($pending, $records, $characterKey);
             $result['character'] = [
@@ -3208,6 +3725,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordRollContent($result['roll']));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];
+        }
+        if (is_string($result['discordContent'] ?? null) && $result['discordContent'] !== '') {
+            $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', $result['discordContent']);
+            $result['discordPosted'] = $discord['posted'];
+            $result['discordError'] = $discord['error'];
+            unset($result['discordContent']);
         }
         sendJson(200, ['ok' => true, 'revision' => $revision, ...$result]);
     } catch (Throwable $error) {

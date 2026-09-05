@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.14.4 conserve la file Codex et le schéma 13", async () => {
+test("le backend 0.14.6 conserve la file Codex et porte le schéma 14", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.14\.4'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-1-4-wall-contact-recovery-release-20260904-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.14\.6'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-1-6-visible-wall-surface-release-20260905-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -81,12 +81,13 @@ test("le backend 0.14.4 conserve la file Codex et le schéma 13", async () => {
   assert.match(index, /bounded_runtime_maintenance_and_release_cleanup/);
   assert.match(index, /session_schema_12_map_walls_and_dynamic_vision/);
   assert.match(index, /session_schema_13_map_effect_presets_and_scene_bound_moves/);
-  assert.match(index, /state_schema_version = 13/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 13/);
+  assert.match(index, /session_schema_14_typed_damage_armor_and_targeted_attacks/);
+  assert.match(index, /state_schema_version = :state_schema_version/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 14/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.14.4");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.1.4");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 15);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.14.6");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.1.6");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 16);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -109,6 +110,7 @@ test("les calques PV sont publics en lecture seule, stables et gérés uniquemen
   assert.match(overlays, /frame-ancestors 'none'/);
   assert.match(rules, /\^health\/\[A-Za-z0-9_-\]\{43\}/);
   assert.match(online, /'playerControlled' => \$allied/);
+  assert.match(online, /'usesCharacterSheet' => \(\$token\['followCharacter'\]/);
   assert.match(online, /'size' => \(float\) \(\$token\['size'\] \?\? 50\)/);
 });
 
@@ -123,6 +125,29 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
   assert.match(command, /\$kind === 'luck' \? 'normal' : normalizeOnlineRollMode/);
   assert.match(command, /\$kind === 'luck'[\s\S]*?\$label = 'Chance'[\s\S]*?\$formula = '1d100'/);
   assert.match(command, /\$tokenKey !== '' && \$kind === 'initiative'/);
+});
+
+test("les attaques ciblées restent autoritaires et les dégâts hors combat exigent la case MJ", async () => {
+  const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
+  const attack = online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
+  assert.match(attack, /onlineTokenControllerIdFromRecords/);
+  assert.match(attack, /onlineAttackTargetVisible/);
+  assert.match(attack, /normalizeOnlineWeaponAttacks/);
+  assert.match(attack, /normalizeOnlineAbilities/);
+  assert.match(attack, /findEntryIndex\(\$stats/);
+  assert.match(attack, /onlineAttackArmorPercent\(\$target, \$damageType\)/);
+  assert.match(attack, /\$combatActive = \(\$initiative\['active'\] \?\? false\) === true/);
+  assert.match(attack, /elseif \(\$combatActive\)[\s\S]*?applyOnlineAttackDamage/);
+  assert.match(attack, /else \{[\s\S]*?\$attack\['status'\] = 'pending'[\s\S]*?\$activity\['pendingAttacks'\]/);
+  assert.match(attack, /\$command === 'token\.attack\.resolve'/);
+  assert.match(attack, /\$arguments\['confirmed'\][\s\S]*?attack_confirmation_required/);
+  assert.match(attack, /if \(\$decision === 'approve'\)[\s\S]*?applyOnlineAttackDamage/);
+  assert.match(attack, /else \{[\s\S]*?\$attack\['status'\] = 'rejected'/);
+  assert.match(online, /'token\.attack\.resolve'/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 14/);
+  assert.match(domains, /pendingAttacks/);
+  assert.match(domains, /attackReceipts/);
+  assert.match(domains, /\['physical', 'magical', 'ignore'\]/);
 });
 
 test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les droits Joueur", async () => {
@@ -147,7 +172,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$result\['tokenDomain'\]/);
   assert.match(command, /'revision' => \(int\) \(\$records\[\$tokenKey\]\['revision'\] \?\? 0\) \+ \(\$positionChanged \? 1 : 0\)/);
   assert.match(command, /if \(\$positionChanged\)[\s\S]*?queueOnlineDomainUpsert/);
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'ping'\]/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -161,8 +186,8 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
     read("README.md"),
     read("manifest.json")
   ]);
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.1\.4'/);
-  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.1.4");
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.1\.6'/);
+  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.1.6");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -175,9 +200,9 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   assert.match(enforcement, /sendJson\(426/);
   assert.match(enforcement, /'exactVersion' => true/);
   assert.doesNotMatch(enforcement, /version_compare/);
-  assert.equal("3.1.3" === "3.1.4", false, "le MSIX précédent doit être refusé");
-  assert.equal("3.1.4" === "3.1.4", true, "seul le MSIX annoncé doit franchir le verrou");
-  assert.equal("3.1.5" === "3.1.4", false, "un MSIX futur non annoncé doit être refusé");
+  assert.equal("3.1.5" === "3.1.6", false, "le MSIX précédent doit être refusé");
+  assert.equal("3.1.6" === "3.1.6", true, "seul le MSIX annoncé doit franchir le verrou");
+  assert.equal("3.1.7" === "3.1.6", false, "un MSIX futur non annoncé doit être refusé");
   assert.match(readme, /tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production/);
   assert.match(readme, /matrice ancienne\/exacte\/future `426\/401\/426`/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
@@ -354,7 +379,7 @@ test("le worker Régie change de poste avec un bail éphémère et clôture l’
 
 test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
-  assert.match(online, /'token\.resource\.adjust', 'ping'/);
+  assert.match(online, /'token\.resource\.adjust', 'token\.attack\.resolve', 'ping'/);
   assert.match(online, /'author' => \$isGm \? 'MJ'/);
   assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
   assert.match(online, /\$requestId = trim/);
@@ -460,7 +485,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'ping'\]/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.resource\.adjust', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
@@ -622,7 +647,7 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 3/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 4/);
   assert.match(online, /normalizeOnlineAbilities/);
   assert.match(online, /'hitThreshold'/);
   assert.match(online, /\['stat', 'hit'\]/);

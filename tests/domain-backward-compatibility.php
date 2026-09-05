@@ -176,6 +176,53 @@ requireDomainCompatibility(
     'La vision 3.1.2 doit rester lisible par la 3.1.3 et la vision commune doit normaliser ses exceptions.'
 );
 
+$fixedArmor = normalizeOnlineArmorProfile('heavy', 99);
+$specialArmor = normalizeOnlineArmorProfile('special', 47);
+$magicalDamage = onlineAttackDamageSummary(11, (int) $specialArmor['percent']);
+$ignoredDamage = onlineAttackDamageSummary(11, onlineAttackArmorPercent([
+    'armorCategory' => 'heavy', 'armor' => 30,
+    'magicArmorCategory' => 'special', 'magicArmor' => 47,
+], 'ignore'));
+requireDomainCompatibility(
+    $fixedArmor === ['category' => 'heavy', 'percent' => 30]
+        && $specialArmor === ['category' => 'special', 'percent' => 47]
+        && $magicalDamage === ['rawDamage' => 11, 'armorPercent' => 47, 'preventedDamage' => 5, 'finalDamage' => 6]
+        && $ignoredDamage['armorPercent'] === 0
+        && $ignoredDamage['finalDamage'] === 11,
+    'Les armures fixes, spéciales, magiques et les dégâts ignorant l’armure doivent appliquer le même arrondi que le client.'
+);
+$migratedCombatCharacter = migrateOnlineCombatCharacterPayload([
+    'id' => 'character-combat-test',
+    'characterSchemaVersion' => 3,
+    'speed' => 88,
+    'temporalPerception' => 'fast',
+    'armor' => 20,
+    'magicArmor' => 17,
+    'weaponText' => 'Lame 2d6+4 ; Rune 1d10',
+    'weaponAttacks' => [
+        ['id' => 'lame', 'formula' => '2d6+4', 'damageType' => 'physical'],
+        ['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical'],
+    ],
+    'abilities' => [['id' => 'pur', 'name' => 'Pur', 'formula' => '1d8', 'damageType' => 'ignore']],
+]);
+$migratedStandaloneToken = migrateOnlineCombatTokenPayload([
+    'id' => 'token-typed-attacks',
+    'followCharacter' => false,
+    'weaponAttacks' => [['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical']],
+]);
+requireDomainCompatibility(
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 4
+        && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
+        && !array_key_exists('speed', $migratedCombatCharacter)
+        && ($migratedCombatCharacter['armorCategory'] ?? '') === 'medium'
+        && ($migratedCombatCharacter['magicArmorCategory'] ?? '') === 'special'
+        && ($migratedCombatCharacter['weaponAttacks'][1]['damageType'] ?? '') === 'magical'
+        && ($migratedCombatCharacter['abilities'][0]['damageType'] ?? '') === 'ignore'
+        && ($migratedStandaloneToken['weaponAttacks'][0]['damageType'] ?? '') === 'magical'
+        && validApplicationCharacterDomain($migratedCombatCharacter),
+    'La migration 3.1.5 doit mettre tout le monde en perception normale et conserver les types de dégâts valides.'
+);
+
 $pillarState = emptyApplicationWallState(1000, 1000);
 $pillarBytes = applicationWallMaskBytes($pillarState);
 requireDomainCompatibility(is_string($pillarBytes), 'Le masque du pilier doit être décodable.');
@@ -625,6 +672,15 @@ $wholeCharacterPatch = [
     'inventory' => '', 'personalAdvantageStock' => 1, 'shortcuts' => [],
     'abilities' => [], 'linkedTokens' => [],
 ];
+$currentWholeCharacterPatch = [
+    ...$wholeCharacterPatch,
+    'armorCategory' => 'none',
+    'magicArmorCategory' => 'none',
+    'magicArmor' => 0,
+    'temporalPerception' => 'normal',
+    'weaponAttacks' => [],
+];
+unset($currentWholeCharacterPatch['speed']);
 $currentHira = [
     ...$wholeCharacterPatch,
     'id' => 'character-hira',
@@ -637,6 +693,10 @@ $currentHira = [
 requireDomainCompatibility(
     legacyWholePlayerCharacterPatch($wholeCharacterPatch),
     'La réécriture complète produite par la restauration automatique 2.5.2 doit être reconnue.'
+);
+requireDomainCompatibility(
+    legacyWholePlayerCharacterPatch($currentWholeCharacterPatch),
+    'Une réécriture complète 3.1.5 doit rester reconnue sans dépendre de l’ancien champ Vitesse.'
 );
 requireDomainCompatibility(
     playerCharacterPatchChangesCurrent($currentHira, $wholeCharacterPatch),

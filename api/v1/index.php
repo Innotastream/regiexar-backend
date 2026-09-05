@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.14.4';
-const XAR_BACKEND_BUILD = 'client-3-1-4-wall-contact-recovery-release-20260904-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.4';
+const XAR_BACKEND_VERSION = '0.14.6';
+const XAR_BACKEND_BUILD = 'client-3-1-6-visible-wall-surface-release-20260905-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.6';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 15;
+const XAR_DATABASE_SCHEMA_VERSION = 16;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -711,6 +711,73 @@ function ensureCurrentSchema(PDO $connection): void
                 . "(15, 'session_schema_13_map_effect_presets_and_scene_bound_moves', "
                 . "'1dbd0cf59d63be1fad4d285c74ae0ba0cbc5e74806a4aa674d07bdecaa8c59fc')"
             );
+            $version = 15;
+        }
+
+        if ($version < 16) {
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true);
+                $records = array_replace(
+                    applicationDomainRecordsByPrefix($connection, 'character:'),
+                    applicationDomainRecordsByPrefix($connection, 'token:'),
+                    applicationDomainRecords($connection, ['library', 'activity'])
+                );
+                $pending = [];
+                $charactersById = [];
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'character:')) continue;
+                    $character = migrateOnlineCombatCharacterPayload(applicationDomainPayload($records, $key));
+                    $charactersById[(string) ($character['id'] ?? '')] = $character;
+                    $change = prepareApplicationDomainUpsert($key, $character, $record);
+                    if ($change !== null) $pending[$key] = $change;
+                }
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'token:')) continue;
+                    $token = applicationDomainPayload($records, $key);
+                    $characterId = trim((string) ($token['characterId'] ?? ''));
+                    $token = migrateOnlineCombatTokenPayload($token, $charactersById[$characterId] ?? null);
+                    $change = prepareApplicationDomainUpsert($key, $token, $record);
+                    if ($change !== null) $pending[$key] = $change;
+                }
+                if (isset($records['library'])) {
+                    $library = applicationDomainPayload($records, 'library');
+                    $templates = [];
+                    foreach (is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [] as $template) {
+                        if (is_array($template)) $templates[] = migrateOnlineCombatTokenPayload($template);
+                    }
+                    $library['tokenLibrary'] = $templates;
+                    $change = prepareApplicationDomainUpsert('library', $library, $records['library']);
+                    if ($change !== null) $pending['library'] = $change;
+                }
+                if (isset($records['activity'])) {
+                    $activity = applicationDomainPayload($records, 'activity');
+                    $activity['pendingAttacks'] = is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [];
+                    $activity['attackReceipts'] = is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [];
+                    $change = prepareApplicationDomainUpsert('activity', $activity, $records['activity']);
+                    if ($change !== null) $pending['activity'] = $change;
+                }
+                if ($pending !== []) {
+                    persistDomainChangesInTransaction($connection, [], $clock, array_values($pending));
+                } else {
+                    $updateClock = $connection->prepare(
+                        'UPDATE application_domain_clock SET state_schema_version = :state_schema_version '
+                        . 'WHERE singleton_id = 1'
+                    );
+                    $updateClock->execute([':state_schema_version' => XAR_SESSION_SCHEMA_VERSION]);
+                }
+                $insertMigration = $connection->prepare(
+                    'INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES (16, :name, :checksum)'
+                );
+                $insertMigration->execute([
+                    ':name' => 'session_schema_14_typed_damage_armor_and_targeted_attacks',
+                    ':checksum' => '4581954f89e55ce67c441dd101793d6af131bb8d90ef9435f3594045dd32f04c',
+                ]);
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
         }
     } finally {
         try {
