@@ -15,6 +15,8 @@ const XAR_WALL_MASK_VERSION = 1;
 const XAR_VISION_SETTINGS_VERSION = 1;
 const XAR_VISION_DEFAULT_DISTANCE = 8;
 const XAR_VISION_MAXIMUM_DISTANCE = 40;
+const XAR_PENDING_ATTACK_MAXIMUM = 100;
+const XAR_ATTACK_RECEIPT_MAXIMUM = 1024;
 
 function validApplicationDomainKey(string $key): bool
 {
@@ -572,6 +574,14 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
         return ['version' => XAR_WALL_MASK_VERSION, 'enabled' => false, 'width' => $width, 'height' => $height, 'mask' => ''];
     }
     $wallBytes = applicationWallMaskBytes($walls) ?? str_repeat("\0", (int) ceil(($width * $height) / 8));
+    $wallCellIndexes = [];
+    if (($walls['mask'] ?? '') !== '') {
+        for ($index = 0; $index < $width * $height; $index += 1) {
+            if (applicationMaskBit($wallBytes, $index)) {
+                $wallCellIndexes[] = $index;
+            }
+        }
+    }
     $hiddenBytes = str_repeat("\xff", (int) ceil(($width * $height) / 8));
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
@@ -579,6 +589,47 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
     $radiusNatural = $vision['distance'] * $safeGridSize;
     $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
     $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
+    $ellipseContainsCell = static function (int $column, int $row, float $centerX, float $centerY) use ($radiusX, $radiusY): bool {
+        $deltaX = ($column - $centerX) / $radiusX;
+        $deltaY = ($row - $centerY) / $radiusY;
+        return $deltaX * $deltaX + $deltaY * $deltaY <= 1.0 + 1.0e-12;
+    };
+    $firstWallBodyReachesCell = static function (
+        float $centerX,
+        float $centerY,
+        int $targetColumn,
+        int $targetRow
+    ) use ($wallBytes, $width, $height): bool {
+        $deltaX = $targetColumn - $centerX;
+        $deltaY = $targetRow - $centerY;
+        $steps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
+        $previousIndex = -1;
+        $wallEncountered = false;
+        for ($step = 1; $step <= $steps; $step += 1) {
+            $progress = $step / $steps;
+            $column = (int) round($centerX + $deltaX * $progress);
+            $row = (int) round($centerY + $deltaY * $progress);
+            if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
+                return false;
+            }
+            $cellIndex = $row * $width + $column;
+            if ($cellIndex === $previousIndex) {
+                continue;
+            }
+            $previousIndex = $cellIndex;
+            $cellIsWall = applicationMaskBit($wallBytes, $cellIndex);
+            if ($wallEncountered && !$cellIsWall) {
+                return false;
+            }
+            if ($cellIsWall) {
+                $wallEncountered = true;
+            }
+            if ($column === $targetColumn && $row === $targetRow) {
+                return $cellIsWall;
+            }
+        }
+        return false;
+    };
     $clearCell = static function (string &$bytes, float $x, float $y) use ($width, $height): void {
         $column = (int) round($x);
         $row = (int) round($y);
@@ -639,6 +690,7 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
             $deltaY = $fullDeltaY * $visibleProgress;
             $raySteps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
             $previousIndex = -1;
+            $wallEncountered = false;
             for ($step = 0; $step <= $raySteps; $step += 1) {
                 $progress = $step / $raySteps;
                 $column = (int) round($centerX + $deltaX * $progress);
@@ -651,10 +703,34 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
                     continue;
                 }
                 $previousIndex = $cellIndex;
-                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
-                if ($step > 0 && applicationMaskBit($wallBytes, $cellIndex)) {
+                if (!$ellipseContainsCell($column, $row, $centerX, $centerY)) {
                     break;
                 }
+                $cellIsWall = applicationMaskBit($wallBytes, $cellIndex);
+                if ($wallEncountered && !$cellIsWall) {
+                    break;
+                }
+                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
+                if ($step > 0 && $cellIsWall) {
+                    $wallEncountered = true;
+                }
+            }
+        }
+        // Le balayage angulaire garde le coût faible pour l'espace libre. Les
+        // cellules du mur encore noires sont ensuite testées sur leur segment
+        // exact : seul le premier corps solide rencontré est révélé, jamais un
+        // second mur séparé par une cellule libre ni l'espace situé derrière.
+        foreach ($wallCellIndexes as $cellIndex) {
+            if (!applicationMaskBit($hiddenBytes, $cellIndex)) {
+                continue;
+            }
+            $column = $cellIndex % $width;
+            $row = intdiv($cellIndex, $width);
+            if (!$ellipseContainsCell($column, $row, $centerX, $centerY)) {
+                continue;
+            }
+            if ($firstWallBodyReachesCell($centerX, $centerY, $column, $row)) {
+                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
             }
         }
     }
@@ -1179,8 +1255,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['actionTimerTombstones'] ?? null, 1000)
             || !validApplicationDomainObjectList($payload['mapPings'] ?? null, 20)
             || !validApplicationDomainObjectList($payload['pingReceipts'] ?? [], 256)
-            || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], 100)
-            || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], 256)
+            || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], XAR_PENDING_ATTACK_MAXIMUM)
+            || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], XAR_ATTACK_RECEIPT_MAXIMUM)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');

@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.14.6';
-const XAR_BACKEND_BUILD = 'client-3-1-6-visible-wall-surface-release-20260905-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.6';
+const XAR_BACKEND_VERSION = '0.14.7';
+const XAR_BACKEND_BUILD = 'client-3-1-7-wall-and-damage-integrity-release-20260905-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.7';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 16;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;

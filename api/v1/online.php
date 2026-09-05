@@ -1744,10 +1744,41 @@ function normalizeOnlineWeaponAttacks(mixed $value, array $formulas): array
     foreach (array_slice(array_values(array_unique($formulas)), 0, 30) as $index => $formula) {
         $source = is_array($byFormula[$formula] ?? null) ? $byFormula[$formula] : (is_array($entries[$index] ?? null) ? $entries[$index] : []);
         $fallback = 'weapon-' . ($index + 1);
-        $id = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($source['id'] ?? $fallback), 0, 120)) ?: $fallback;
-        if (isset($seen[$id])) $id = $fallback . '-' . ($index + 1);
+        $baseId = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($source['id'] ?? $fallback), 0, 120)) ?: $fallback;
+        $id = $baseId;
+        for ($suffix = 2; isset($seen[$id]); $suffix += 1) {
+            $suffixText = '-' . $suffix;
+            $id = substr($baseId, 0, 120 - strlen($suffixText)) . $suffixText;
+        }
         $seen[$id] = true;
         $normalized[] = ['id' => $id, 'formula' => $formula, 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null)];
+    }
+    return $normalized;
+}
+
+function normalizeOnlineLinkedTokens(mixed $value): array
+{
+    $value = stripForbiddenPlayerData($value);
+    if (!is_array($value)) {
+        return [];
+    }
+    $normalized = [];
+    $seen = [];
+    foreach (array_slice($value, 0, 200) as $index => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $fallback = 'linked-token-' . ((int) $index + 1);
+        $baseId = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($entry['id'] ?? $fallback), 0, 120)) ?: $fallback;
+        $id = $baseId;
+        for ($suffix = (int) $index + 1; isset($seen[$id]); $suffix += 1) {
+            $suffixText = '-' . $suffix;
+            $id = substr($baseId, 0, 120 - strlen($suffixText)) . $suffixText;
+        }
+        $seen[$id] = true;
+        $entry['id'] = $id;
+        $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
+        $normalized[] = $entry;
     }
     return $normalized;
 }
@@ -1763,6 +1794,7 @@ function migrateOnlineCombatCharacterPayload(array $character): array
     $character['magicArmorCategory'] = $magical['category'];
     $character['magicArmor'] = $magical['percent'];
     $character['temporalPerception'] = 'normal';
+    $character['linkedTokens'] = normalizeOnlineLinkedTokens($character['linkedTokens'] ?? []);
     $character['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
     $character['weaponAttacks'] = normalizeOnlineWeaponAttacks($character['weaponAttacks'] ?? [], extractOnlineDamageFormulas($character['weaponText'] ?? ''));
     unset($character['speed']);
@@ -1808,9 +1840,11 @@ function normalizeOnlineAbilities(mixed $value): array
             continue;
         }
         $fallback = 'ability-' . ((int) $index + 1);
-        $id = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($entry['id'] ?? $fallback), 0, 120)) ?: $fallback;
-        if (isset($seen[$id])) {
-            $id = substr($id, 0, 108) . '-' . ((int) $index + 1);
+        $baseId = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($entry['id'] ?? $fallback), 0, 120)) ?: $fallback;
+        $id = $baseId;
+        for ($suffix = (int) $index + 1; isset($seen[$id]); $suffix += 1) {
+            $suffixText = '-' . $suffix;
+            $id = substr($baseId, 0, 120 - strlen($suffixText)) . $suffixText;
         }
         $seen[$id] = true;
         $name = substr(trim((string) ($entry['name'] ?? $entry['label'] ?? 'Nouvelle capacité')), 0, 120);
@@ -1869,14 +1903,7 @@ function playerCharacterPatch(array $current, array $patch): array
             } elseif ($key === 'hitThreshold') {
                 $current[$key] = normalizeOnlineD100Difficulty($patch[$key]);
             } elseif ($key === 'linkedTokens') {
-                $linked = stripForbiddenPlayerData($patch[$key]);
-                $current[$key] = is_array($linked) ? array_map(static function (mixed $entry): mixed {
-                    if (!is_array($entry)) {
-                        return $entry;
-                    }
-                    $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
-                    return $entry;
-                }, array_slice($linked, 0, 200)) : [];
+                $current[$key] = normalizeOnlineLinkedTokens($patch[$key]);
             } elseif (in_array($key, ['resources', 'stats', 'fatigue'], true)) {
                 $nestedPatch = stripForbiddenPlayerData($patch[$key]);
                 if (is_array($nestedPatch)) {
@@ -2215,7 +2242,10 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
     $maximum = max(0, min(1000000000, is_numeric($token['maxHp'] ?? null) ? (int) $token['maxHp'] : 0));
     if ($maximum <= 0) rejectOnlineCommand($connection, 409, 'Cette cible ne possède pas de points de vie.', 'target_health_missing');
     $previous = max(0, min($maximum, is_numeric($token['hp'] ?? null) ? (int) $token['hp'] : 0));
-    $current = max(0, $previous - max(0, $damage));
+    if ($previous <= 0) rejectOnlineCommand($connection, 409, 'Cette cible est déjà à 0 PV.', 'target_already_defeated');
+    $requestedDamage = max(0, $damage);
+    if ($requestedDamage <= 0) rejectOnlineCommand($connection, 409, 'Aucun dégât effectif ne peut être appliqué.', 'attack_damage_not_effective');
+    $current = max(0, $previous - $requestedDamage);
     $applied = $previous - $current;
     $now = (int) floor(microtime(true) * 1000);
     $pulse = ['id' => 'resource-' . randomToken(12), 'resource' => 'hp', 'delta' => -$applied, 'at' => $now];
@@ -2890,21 +2920,27 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if ($maximum <= 0) {
                 rejectOnlineCommand($connection, 409, 'Ce token ne possède pas de maximum pour cette ressource.', 'resource_missing');
             }
-            $previous = max(0, min($maximum, is_numeric($token[$resource] ?? null) ? (int) $token[$resource] : 0));
+            $storedResource = is_numeric($token[$resource] ?? null) ? (int) $token[$resource] : 0;
+            $previous = max(0, min($maximum, $storedResource));
             $current = max(0, min($maximum, $previous + $requestedDelta));
             $appliedDelta = $current - $previous;
-            if ($appliedDelta === 0) {
+            $resourceRepaired = $storedResource !== $previous;
+            if ($appliedDelta === 0 && !$resourceRepaired) {
                 rejectOnlineCommand($connection, 409, 'La ressource est déjà à sa limite.', 'resource_limit');
             }
             $now = (int) floor(microtime(true) * 1000);
-            $pulse = [
+            $pulse = $appliedDelta !== 0 ? [
                 'id' => 'resource-' . randomToken(12),
                 'resource' => $resource,
                 'delta' => $appliedDelta,
                 'at' => $now,
-            ];
+            ] : null;
             $token[$resource] = $current;
-            $token['resourcePulse'] = $pulse;
+            if ($pulse !== null) {
+                $token['resourcePulse'] = $pulse;
+            } else {
+                unset($token['resourcePulse']);
+            }
             $token['_updatedAt'] = $now;
             if (is_array($character)) {
                 $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
@@ -2923,7 +2959,11 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $relatedToken[$maximumKey] = $maximum;
                     $relatedToken['_updatedAt'] = $now;
                     if ($relatedTokenKey === $tokenKey) {
-                        $relatedToken['resourcePulse'] = $pulse;
+                        if ($pulse !== null) {
+                            $relatedToken['resourcePulse'] = $pulse;
+                        } else {
+                            unset($relatedToken['resourcePulse']);
+                        }
                         $relatedToken['_updatedAt'] = $now;
                         $token = $relatedToken;
                     }
@@ -2941,6 +2981,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'resourcePulse' => $pulse,
             ];
             $result['appliedDelta'] = $appliedDelta;
+            $result['repaired'] = $resourceRepaired;
             $result['current'] = $current;
             $result['maximum'] = $maximum;
         } elseif ($command === 'token.attack') {
@@ -2989,6 +3030,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $result['attack'] = $deduplicatedAttack;
                 $result['deduplicated'] = true;
             } else {
+                if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) {
+                    rejectOnlineCommand(
+                        $connection,
+                        429,
+                        'Le journal de sécurité des attaques est plein. Réessayez après expiration des anciens reçus.',
+                        'attack_receipt_capacity_reached'
+                    );
+                }
                 $source = applicationDomainPayload($records, $sourceKey);
                 $target = applicationDomainPayload($records, $targetKey);
                 $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
@@ -3006,6 +3055,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 if (!is_numeric($target['maxHp'] ?? null) || (int) $target['maxHp'] <= 0) {
                     rejectOnlineCommand($connection, 409, 'Cette cible ne possède pas de points de vie.', 'target_health_missing');
+                }
+                if (max(0, min((int) $target['maxHp'], is_numeric($target['hp'] ?? null) ? (int) $target['hp'] : 0)) <= 0) {
+                    rejectOnlineCommand($connection, 409, 'Cette cible est déjà à 0 PV.', 'target_already_defeated');
                 }
                 $map = applicationDomainPayload($records, $mapKey);
                 if (!onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
@@ -3102,10 +3154,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $combatActive = ($initiative['active'] ?? false) === true;
                 if (($hitOutcome['success'] ?? false) !== true) {
                     $attack['status'] = 'missed';
-                    $result['discordContent'] = onlineAttackDiscordContent($attack);
                 } elseif ((int) $damageSummary['finalDamage'] <= 0) {
                     $attack['status'] = 'blocked';
-                    $result['discordContent'] = onlineAttackDiscordContent($attack);
                 } elseif ($combatActive) {
                     $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $damageSummary['finalDamage']);
                     $attack = [...$attack, ...$health, 'status' => 'applied'];
@@ -3113,20 +3163,31 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 } else {
                     $attack['status'] = 'pending';
                     $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [];
+                    if (count($pendingAttacks) >= XAR_PENDING_ATTACK_MAXIMUM) {
+                        rejectOnlineCommand(
+                            $connection,
+                            409,
+                            'La file des dégâts hors combat est pleine. Le MJ doit traiter une demande avant une nouvelle attaque.',
+                            'pending_attack_capacity_reached'
+                        );
+                    }
                     $pendingAttacks[] = $attack;
-                    $activity['pendingAttacks'] = array_slice($pendingAttacks, -100);
+                    $activity['pendingAttacks'] = $pendingAttacks;
                 }
                 $receipts[] = ['requestId' => $requestId, 'accountId' => $accountId, 'expiresAt' => $now + 86_400_000, 'attack' => $attack];
-                $activity['attackReceipts'] = array_slice($receipts, -256);
+                $activity['attackReceipts'] = $receipts;
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 $result['attack'] = $attack;
             }
         } elseif ($command === 'token.attack.resolve') {
             if (!$isGm) rejectOnlineCommand($connection, 403, 'La validation des dégâts est réservée au MJ.', 'gm_required');
             $attackId = trim((string) ($arguments['attackId'] ?? ''));
-            $decision = ($arguments['decision'] ?? '') === 'reject' ? 'reject' : 'approve';
             if (preg_match('/^attack-[A-Za-z0-9_-]{12,80}$/D', $attackId) !== 1) {
                 rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack');
+            }
+            $decision = $arguments['decision'] ?? null;
+            if (!is_string($decision) || !in_array($decision, ['approve', 'reject'], true)) {
+                rejectOnlineCommand($connection, 400, 'Décision d’attaque invalide.', 'invalid_attack_decision');
             }
             if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) {
                 rejectOnlineCommand($connection, 400, 'Cochez explicitement l’autorisation de perte de PV.', 'attack_confirmation_required');
@@ -3159,7 +3220,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $receipts[$index]['attack'] = $attack;
                 }
             }
-            $activity['attackReceipts'] = array_slice($receipts, -256);
+            $activity['attackReceipts'] = $receipts;
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['attack'] = $attack;
         } elseif ($command === 'ping') {

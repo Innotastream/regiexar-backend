@@ -8,6 +8,7 @@ async function source(path) {
 
 test("le contrat backend borne les masques de brume, murs et vision par niveau", async () => {
   const domains = await source("api/v1/domains.php");
+  const vision = domains.slice(domains.indexOf("function applicationComputeVisionMask"), domains.indexOf("function applicationVisionCoversPoint"));
   assert.match(domains, /XAR_FOG_RASTER_MINIMUM = 32/);
   assert.match(domains, /XAR_FOG_RASTER_MAXIMUM = 512/);
   assert.match(domains, /XAR_FOG_MASK_MAXIMUM_LENGTH = 44000/);
@@ -18,6 +19,14 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   assert.match(domains, /\$pointAt\(\$low, 6\)/);
   assert.match(domains, /\$collidesPoint\(\$safePoint\)/);
   assert.match(domains, /function applicationComputeVisionMask/);
+  assert.match(vision, /\$wallEncountered = false/);
+  assert.match(vision, /if \(\$wallEncountered && !\$cellIsWall\)[\s\S]*?break/);
+  assert.match(vision, /\$ellipseContainsCell/);
+  assert.match(vision, /if \(!\$ellipseContainsCell\(\$column, \$row, \$centerX, \$centerY\)\)[\s\S]*?break/);
+  assert.match(vision, /\$firstWallBodyReachesCell/);
+  assert.match(vision, /foreach \(\$wallCellIndexes as \$cellIndex\)/);
+  assert.match(vision, /if \(\$firstWallBodyReachesCell\(\$centerX, \$centerY, \$column, \$row\)\)/);
+  assert.doesNotMatch(vision, /if \(\$step > 0 && applicationMaskBit\([^\n]+\)\) \{\s*break;/s);
   assert.match(domains, /preg_match\('\/\^\[A-Za-z0-9_-\]\*\$\/D'/);
   assert.match(domains, /strlen\(\$decoded\) === \$expectedLength/);
   assert.match(domains, /validApplicationMapFogState\(\$payload\)/);
