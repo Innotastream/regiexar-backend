@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.14.7';
-const XAR_BACKEND_BUILD = 'client-3-1-7-wall-and-damage-integrity-release-20260905-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.7';
+const XAR_BACKEND_VERSION = '0.14.8';
+const XAR_BACKEND_BUILD = 'client-3-1-8-opposed-attacks-private-journal-and-map-effects-release-20260905-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.8';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 16;
+const XAR_DATABASE_SCHEMA_VERSION = 17;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -772,6 +772,48 @@ function ensureCurrentSchema(PDO $connection): void
                 $insertMigration->execute([
                     ':name' => 'session_schema_14_typed_damage_armor_and_targeted_attacks',
                     ':checksum' => '4581954f89e55ce67c441dd101793d6af131bb8d90ef9435f3594045dd32f04c',
+                ]);
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
+            $version = 16;
+        }
+
+        if ($version < 17) {
+            $connection->exec(
+                'ALTER TABLE application_domain_clock MODIFY COLUMN state_schema_version '
+                . 'SMALLINT UNSIGNED NOT NULL DEFAULT 15'
+            );
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true);
+                $records = applicationDomainRecords($connection, ['activity']);
+                $pending = [];
+                if (isset($records['activity'])) {
+                    $activity = applicationDomainPayload($records, 'activity');
+                    $activity['playerActions'] = is_array($activity['playerActions'] ?? null)
+                        ? array_slice(array_values($activity['playerActions']), 0, XAR_PLAYER_ACTION_MAXIMUM)
+                        : [];
+                    $change = prepareApplicationDomainUpsert('activity', $activity, $records['activity']);
+                    if ($change !== null) $pending['activity'] = $change;
+                }
+                if ($pending !== []) {
+                    persistDomainChangesInTransaction($connection, [], $clock, array_values($pending));
+                } else {
+                    $updateClock = $connection->prepare(
+                        'UPDATE application_domain_clock SET state_schema_version = :state_schema_version '
+                        . 'WHERE singleton_id = 1'
+                    );
+                    $updateClock->execute([':state_schema_version' => XAR_SESSION_SCHEMA_VERSION]);
+                }
+                $insertMigration = $connection->prepare(
+                    'INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES (17, :name, :checksum)'
+                );
+                $insertMigration->execute([
+                    ':name' => 'session_schema_15_opposed_attacks_and_private_player_activity',
+                    ':checksum' => '33d2ce8ef5cd53e5316a714938c6985336ffc0b16b93e38da2fd06eaebef3796',
                 ]);
                 $connection->commit();
             } catch (Throwable $error) {
