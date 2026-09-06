@@ -9,6 +9,7 @@ const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 750000;
 const XAR_SSE_FLUSH_PADDING_BYTES = 8192;
 const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 6;
+const XAR_ATTACK_RECEIPT_TTL_MILLISECONDS = 24 * 60 * 60 * 1000;
 
 function requireIdentity(PDO $connection): array
 {
@@ -808,9 +809,18 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     foreach (is_array($fullState['pendingAttacks'] ?? null) ? $fullState['pendingAttacks'] : [] as $attack) {
         if (!is_array($attack)
             || (string) ($attack['status'] ?? '') !== 'awaiting-opposition'
-            || (string) ($attack['defenderAccountId'] ?? '') !== $accountId) {
+            || (string) ($attack['sceneId'] ?? '') !== $visibleSceneId
+            || (string) ($attack['accountId'] ?? '') === $accountId) {
             continue;
         }
+        $oppositionTarget = null;
+        foreach ($tokens as $candidateToken) {
+            if ((string) ($candidateToken['id'] ?? '') === (string) ($attack['targetTokenId'] ?? '')) {
+                $oppositionTarget = $candidateToken;
+                break;
+            }
+        }
+        if (!is_array($oppositionTarget) || ($oppositionTarget['ownedByYou'] ?? false) !== true) continue;
         $pendingOppositions[] = [
             'id' => $attack['id'] ?? null,
             'sceneId' => $attack['sceneId'] ?? null,
@@ -3114,9 +3124,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $records = array_replace($records, applicationDomainRecords($connection, [$sourceKey, $targetKey, $initiativeKey, $mapKey, 'activity']));
             $activity = applicationDomainPayload($records, 'activity');
             $now = (int) floor(microtime(true) * 1000);
+            $pendingReceiptAttackIds = [];
+            foreach (is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [] as $pendingAttack) {
+                if (is_array($pendingAttack) && trim((string) ($pendingAttack['id'] ?? '')) !== '') {
+                    $pendingReceiptAttackIds[(string) $pendingAttack['id']] = true;
+                }
+            }
             $receipts = array_values(array_filter(
                 is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
-                static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+                static fn (mixed $entry): bool => is_array($entry) && (
+                    (int) ($entry['expiresAt'] ?? 0) > $now
+                    || isset($pendingReceiptAttackIds[(string) ($entry['attack']['id'] ?? '')])
+                )
             ));
             $deduplicatedAttack = null;
             foreach ($receipts as $receipt) {
@@ -3315,17 +3334,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $pendingAttacks[] = $attack;
                     $activity['pendingAttacks'] = $pendingAttacks;
                 }
-                $receipts[] = ['requestId' => $requestId, 'accountId' => $accountId, 'expiresAt' => $now + 86_400_000, 'attack' => $attack];
+                $receipts[] = ['requestId' => $requestId, 'accountId' => $accountId, 'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS, 'attack' => $attack];
                 $activity['attackReceipts'] = $receipts;
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                $attackActivityDetail = 'Jet ATK ' . (string) ($attack['hit']['raw'] ?? '—') . ' · ' . (string) ($attack['hit']['outcome']['label'] ?? 'ÉCHEC');
+                if ($attack['status'] === 'awaiting-opposition') $attackActivityDetail .= ' · Jet d’opposition demandé';
+                if (is_numeric($attack['damage']['rawDamage'] ?? null)) $attackActivityDetail .= ' · Jet DMG ' . max(0, (int) $attack['damage']['rawDamage']) . ' présumés';
                 onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
                     'kind' => 'attack',
                     'characterName' => $attack['sourceName'],
                     'targetName' => $attack['targetName'],
                     'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
-                    'detail' => $attack['status'] === 'awaiting-opposition'
-                        ? 'Jet d’opposition demandé'
-                        : 'Jet ATK ' . (string) ($attack['hit']['raw'] ?? '—') . ' · ' . (string) ($attack['hit']['outcome']['label'] ?? 'ÉCHEC'),
+                    'detail' => $attackActivityDetail,
                 ]);
                 $result['attack'] = publicOnlineAttackResult($attack);
             }
@@ -3351,6 +3371,13 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
             }
             if (is_array($deduplicatedAttack)) {
+                $rolledByGm = ($deduplicatedAttack['opposition']['rolledByGm'] ?? false) === true;
+                $retryAllowed = $isGm
+                    ? $rolledByGm
+                    : (!$rolledByGm && (string) ($deduplicatedAttack['defenderAccountId'] ?? '') === $accountId);
+                if (!$retryAllowed) {
+                    rejectOnlineCommand($connection, 403, 'Ce reçu d’opposition appartient à un autre intervenant.', 'opposition_receipt_forbidden');
+                }
                 $result['attack'] = $isGm ? $deduplicatedAttack : publicOnlineAttackResult($deduplicatedAttack);
                 $result['deduplicated'] = true;
             } else {
@@ -3365,20 +3392,24 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $targetKey = onlineTokenDomainKey($attackSceneId, $attack['targetTokenId'] ?? '');
                 $initiativeKey = 'initiative:' . $attackSceneId;
                 $records = array_replace($records, applicationDomainRecords($connection, array_values(array_filter([$targetKey, $initiativeKey]))));
+                $decision = ($arguments['decision'] ?? '') === 'cancel' ? 'cancel' : 'roll';
                 $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
-                if ($target === []) rejectOnlineCommand($connection, 404, 'Le token défenseur n’existe plus.', 'attack_target_missing');
-                $defenderAccountId = onlineTokenControllerIdFromRecords($connection, $records, $target);
+                if ($target === [] && $decision !== 'cancel') rejectOnlineCommand($connection, 404, 'Le token défenseur n’existe plus.', 'attack_target_missing');
+                $defenderAccountId = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
                 if (!$isGm && ($defenderAccountId === '' || $defenderAccountId !== $accountId)) {
                     rejectOnlineCommand($connection, 403, 'Cette opposition appartient au contrôleur de la cible.', 'opposition_forbidden');
                 }
-                $decision = ($arguments['decision'] ?? '') === 'cancel' ? 'cancel' : 'roll';
                 if ($decision === 'cancel') {
                     if (!$isGm) rejectOnlineCommand($connection, 403, 'Seul le MJ peut annuler une opposition.', 'gm_required');
                     array_splice($pendingAttacks, $pendingIndex, 1);
                     $attack['status'] = 'cancelled';
+                    $attack['opposition'] = ['requestId' => $requestId, 'cancelled' => true, 'rolledByGm' => true];
                     $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
                     foreach ($receipts as $index => $receipt) {
-                        if (is_array($receipt) && (string) ($receipt['attack']['id'] ?? '') === $attackId) $receipts[$index]['attack'] = $attack;
+                        if (is_array($receipt) && (string) ($receipt['attack']['id'] ?? '') === $attackId) {
+                            $receipts[$index]['attack'] = $attack;
+                            $receipts[$index]['expiresAt'] = $attack['resolvedAt'] + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
+                        }
                     }
                     $activity['pendingAttacks'] = $pendingAttacks;
                     $activity['attackReceipts'] = $receipts;
@@ -3391,6 +3422,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     ]);
                     $result['attack'] = $attack;
                 } else {
+                    if ($defenderAccountId === (string) ($attack['accountId'] ?? '')) {
+                        rejectOnlineCommand($connection, 409, 'La cible appartient désormais à l’attaquant. Le MJ doit annuler cette opposition.', 'opposition_target_no_longer_adverse');
+                    }
                     $targetCharacterId = trim((string) ($target['characterId'] ?? ''));
                     if ($targetCharacterId !== '') {
                         $characterKey = 'character:' . $targetCharacterId;
@@ -3399,6 +3433,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             $targetCharacter = applicationDomainPayload($records, $characterKey);
                             if ($targetCharacter !== []) $target = synchronizeOnlineCharacterToken($target, $targetCharacter);
                         }
+                    }
+                    if (!is_numeric($target['maxHp'] ?? null) || (int) $target['maxHp'] <= 0) {
+                        rejectOnlineCommand($connection, 409, 'Cette cible ne possède pas de points de vie.', 'target_health_missing');
+                    }
+                    if (max(0, min((int) $target['maxHp'], is_numeric($target['hp'] ?? null) ? (int) $target['hp'] : 0)) <= 0) {
+                        rejectOnlineCommand($connection, 409, 'Cette cible est déjà à 0 PV.', 'target_already_defeated');
                     }
                     $stats = is_array($target['stats'] ?? null) ? $target['stats'] : [];
                     $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
@@ -3480,19 +3520,25 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             $pendingAttacks[] = $attack;
                         }
                     }
+                    $receiptExpiry = (int) floor(microtime(true) * 1000) + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
                     foreach ($receipts as $index => $receipt) {
-                        if (is_array($receipt) && (string) ($receipt['attack']['id'] ?? '') === $attackId) $receipts[$index]['attack'] = $attack;
+                        if (is_array($receipt) && (string) ($receipt['attack']['id'] ?? '') === $attackId) {
+                            $receipts[$index]['attack'] = $attack;
+                            $receipts[$index]['expiresAt'] = $receiptExpiry;
+                        }
                     }
                     $activity['pendingAttacks'] = $pendingAttacks;
                     $activity['attackReceipts'] = $receipts;
                     $activity['rolls'] = array_slice($activityRolls, 0, 100);
                     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                    $oppositionActivityDetail = 'Jet OPP ' . (string) ($rolled['rawD100'] ?? '—') . ' · ' . (string) ($outcome['label'] ?? 'ÉCHEC') . ' · ' . ($defenderWins ? 'attaque arrêtée' : 'attaque maintenue');
+                    if (is_numeric($attack['damage']['rawDamage'] ?? null)) $oppositionActivityDetail .= ' · Jet DMG ' . max(0, (int) $attack['damage']['rawDamage']) . ' présumés';
                     onlineAppendPlayerAction($connection, $records, $pending, $identity, $attackSceneId, [
                         'kind' => 'opposition',
                         'characterName' => (string) ($target['name'] ?? 'Défenseur'),
                         'targetName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
                         'summary' => (string) ($target['name'] ?? 'Défenseur') . ' oppose ' . $statLabel . ' à ' . (string) ($attack['sourceName'] ?? 'Attaquant'),
-                        'detail' => 'Jet OPP ' . (string) ($rolled['rawD100'] ?? '—') . ' · ' . (string) ($outcome['label'] ?? 'ÉCHEC') . ' · ' . ($defenderWins ? 'attaque arrêtée' : 'attaque maintenue'),
+                        'detail' => $oppositionActivityDetail,
                     ]);
                     $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack);
                 }
@@ -3539,6 +3585,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             foreach ($receipts as $index => $receipt) {
                 if (is_array($receipt) && (string) ($receipt['requestId'] ?? '') === (string) ($attack['requestId'] ?? '')) {
                     $receipts[$index]['attack'] = $attack;
+                    $receipts[$index]['expiresAt'] = (int) floor(microtime(true) * 1000) + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
                 }
             }
             $activity['attackReceipts'] = $receipts;

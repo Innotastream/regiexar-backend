@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.14.8 conserve la file Codex et porte le schéma 15", async () => {
+test("le backend 0.14.9 conserve la file Codex et porte le schéma 15", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.14\.8'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-1-8-opposed-attacks-private-journal-and-map-effects-release-20260905-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.14\.9'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-1-9-opposition-lifecycle-hardening-release-20260906-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -86,8 +86,8 @@ test("le backend 0.14.8 conserve la file Codex et porte le schéma 15", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 15/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.14.8");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.1.8");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.14.9");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.1.9");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 17);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -131,6 +131,7 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
 test("les attaques ciblées et opposées restent autoritaires sans divulguer l’armure", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
   const attack = online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
+  const oppose = attack.slice(attack.indexOf("} elseif ($command === 'token.attack.oppose')"), attack.indexOf("} elseif ($command === 'token.attack.resolve')"));
   const applyDamage = online.slice(online.indexOf("function applyOnlineAttackDamage"), online.indexOf("function onlineAttackDiscordContent"));
   assert.match(attack, /onlineTokenControllerIdFromRecords/);
   assert.match(attack, /onlineAttackTargetVisible/);
@@ -160,6 +161,15 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /status'\] = 'blocked'[\s\S]{0,160}onlineAttackDiscordContent/);
   assert.match(attack, /\$command === 'token\.attack\.oppose'/);
   assert.match(attack, /opposition_forbidden/);
+  assert.match(attack, /opposition_receipt_forbidden/);
+  assert.match(attack, /opposition_target_no_longer_adverse/);
+  assert.match(attack, /\$pendingReceiptAttackIds[\s\S]*?XAR_ATTACK_RECEIPT_TTL_MILLISECONDS/);
+  assert.match(online, /\$attack\['status'\] \?\? ''\) !== 'awaiting-opposition'[\s\S]*?\$attack\['sceneId'\][\s\S]*?ownedByYou/);
+  assert.match(oppose, /Cette cible est déjà à 0 PV\.[\s\S]*?target_already_defeated[\s\S]*?\$stats =/);
+  assert.match(oppose, /\$target === \[\] && \$decision !== 'cancel'/);
+  assert.match(oppose, /'opposition'\] = \['requestId' => \$requestId, 'cancelled' => true, 'rolledByGm' => true\]/);
+  assert.match(attack, /Jet d’opposition demandé/);
+  assert.match(attack, /Jet DMG .* présumés/);
   assert.match(attack, /onlineDefenderWinsOpposition/);
   assert.match(attack, /\$attack\['status'\] = 'awaiting-opposition'/);
   assert.match(attack, /\$attack\['status'\] = 'defended'/);
@@ -219,8 +229,8 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
     read("README.md"),
     read("manifest.json")
   ]);
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.1\.8'/);
-  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.1.8");
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.1\.9'/);
+  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.1.9");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -233,9 +243,9 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   assert.match(enforcement, /sendJson\(426/);
   assert.match(enforcement, /'exactVersion' => true/);
   assert.doesNotMatch(enforcement, /version_compare/);
-  assert.equal("3.1.7" === "3.1.8", false, "le MSIX précédent doit être refusé");
-  assert.equal("3.1.8" === "3.1.8", true, "seul le MSIX annoncé doit franchir le verrou");
-  assert.equal("3.1.9" === "3.1.8", false, "un MSIX futur non annoncé doit être refusé");
+  assert.equal("3.1.8" === "3.1.9", false, "le MSIX précédent doit être refusé");
+  assert.equal("3.1.9" === "3.1.9", true, "seul le MSIX annoncé doit franchir le verrou");
+  assert.equal("3.1.10" === "3.1.9", false, "un MSIX futur non annoncé doit être refusé");
   assert.match(readme, /tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production/);
   assert.match(readme, /matrice ancienne\/exacte\/future `426\/401\/426`/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
