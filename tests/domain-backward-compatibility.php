@@ -1076,3 +1076,19 @@ requireDomainCompatibility(
 unset($_GET['since']);
 
 fwrite(STDOUT, "Compatibilité rétroactive des domaines : OK" . PHP_EOL);
+
+// 3.1.11 : aucun calcul d’armure implicite pour la résistance magique.
+foreach (['none', 'light', 'medium', 'heavy', 'special'] as $category) {
+    requireDomainCompatibility(onlineAttackArmorPercent(['armorCategory' => $category, 'magicArmorCategory' => 'medium'], 'magical') === 0, 'Une catégorie ne doit jamais créer de résistance magique.');
+    requireDomainCompatibility(onlineAttackArmorPercent(['armorCategory' => $category, 'magicArmorCategory' => 'medium', 'magicArmor' => 37], 'magical') === 37, 'La résistance saisie doit être conservée.');
+}
+$magicPatch = playerCharacterPatch(['armorCategory' => 'medium', 'armor' => 20, 'magicArmorCategory' => 'none', 'magicArmor' => 0], ['magicArmor' => 37]);
+requireDomainCompatibility($magicPatch['magicArmor'] === 37 && $magicPatch['armor'] === 20, 'Le joueur peut saisir librement sa résistance.');
+$modifiedDefense = classifyOnlineD100Outcome(59, 70, 0, -20);
+requireDomainCompatibility(onlineOutcomeResultLabel($modifiedDefense) === '39 · personnalisé (dé 59 − 20)', 'L’opposition affiche le score effectif.');
+foreach (['pending', 'awaiting-opposition', 'missed', 'defended', 'rejected', 'blocked', 'applied'] as $status) {
+    $projectedAttack = publicOnlineAttackResult(['status' => $status, 'damage' => ['rawDamage' => 13, 'armorPercent' => 30], 'appliedDamage' => 9]);
+    requireDomainCompatibility(!isset($projectedAttack['damage']) && !isset($projectedAttack['finalDamage']), 'Les dégâts présumés ne sont jamais projetés.');
+    requireDomainCompatibility(isset($projectedAttack['appliedDamage']) === ($status === 'applied'), 'Seule une perte appliquée est publique.');
+}
+echo "Combat 3.1.11 : résistance libre, scores effectifs et dégâts différés OK\n";
