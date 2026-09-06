@@ -10,6 +10,7 @@ const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 750000;
 const XAR_SSE_FLUSH_PADDING_BYTES = 8192;
 const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 6;
 const XAR_ATTACK_RECEIPT_TTL_MILLISECONDS = 24 * 60 * 60 * 1000;
+const XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS = 24 * 60 * 60 * 1000;
 
 function requireIdentity(PDO $connection): array
 {
@@ -810,7 +811,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         if (!is_array($attack)
             || (string) ($attack['status'] ?? '') !== 'awaiting-opposition'
             || (string) ($attack['sceneId'] ?? '') !== $visibleSceneId
-            || (string) ($attack['accountId'] ?? '') === $accountId) {
+            || (($attack['attackerRole'] ?? 'player') !== 'gm'
+                && (string) ($attack['accountId'] ?? '') === $accountId)) {
             continue;
         }
         $oppositionTarget = null;
@@ -2236,6 +2238,39 @@ function onlineAttackTargetVisible(PDO $connection, array &$records, array $map,
         && !applicationVisionCoversPoint($visionMask, $target['x'] ?? 0, $target['y'] ?? 0);
 }
 
+function onlinePendingAttackParties(PDO $connection, array &$records, array $attack): array
+{
+    $sceneId = trim((string) ($attack['sceneId'] ?? ''));
+    $sourceKey = onlineTokenDomainKey($sceneId, $attack['sourceTokenId'] ?? '');
+    $targetKey = onlineTokenDomainKey($sceneId, $attack['targetTokenId'] ?? '');
+    $records = array_replace($records, applicationDomainRecords($connection, array_values(array_filter([$sourceKey, $targetKey]))));
+    $source = $sourceKey === '' ? [] : applicationDomainPayload($records, $sourceKey);
+    $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
+    if ($source === [] || $target === []) {
+        rejectOnlineCommand($connection, 404, 'Un token de cette attaque n’existe plus.', 'attack_party_missing');
+    }
+    $sourceController = onlineTokenControllerIdFromRecords($connection, $records, $source);
+    $targetController = onlineTokenControllerIdFromRecords($connection, $records, $target);
+    if (($attack['attackerRole'] ?? 'player') === 'gm') {
+        if (($source['hidden'] ?? false) === true || $sourceController !== ''
+            || ($target['hidden'] ?? false) === true || $targetController === '') {
+            rejectOnlineCommand($connection, 409, 'La créature ou le pion joueur de cette attaque a changé d’affectation.', 'attack_parties_changed');
+        }
+    } elseif (($source['hidden'] ?? false) === true || $sourceController !== (string) ($attack['accountId'] ?? '')
+        || ($target['hidden'] ?? false) === true
+        || $targetController === (string) ($attack['accountId'] ?? '')) {
+        rejectOnlineCommand($connection, 409, 'L’attaquant et la cible ne sont plus adversaires.', 'attack_parties_changed');
+    }
+    return [
+        'sourceKey' => $sourceKey,
+        'targetKey' => $targetKey,
+        'source' => $source,
+        'target' => $target,
+        'sourceController' => $sourceController,
+        'targetController' => $targetController,
+    ];
+}
+
 function onlineAttackArmorPercent(array $target, string $damageType): int
 {
     if ($damageType === 'ignore') return 0;
@@ -2304,7 +2339,7 @@ function publicOnlineAttackResult(array $attack): array
     return $public;
 }
 
-function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pending, array $identity, string $sceneId, array $action): void
+function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pending, array $identity, string $sceneId, array $action): array
 {
     if (!isset($records['activity'])) {
         $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
@@ -2325,9 +2360,184 @@ function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pend
         'sceneId' => substr($sceneId, 0, 80),
         'createdAt' => gmdate('c'),
     ];
+    if (is_array($action['operation'] ?? null)) {
+        $entry['operation'] = $action['operation'];
+    }
+    if (is_array($action['undo'] ?? null)) {
+        $entry['undo'] = $action['undo'];
+    }
     array_unshift($entries, $entry);
     $activity['playerActions'] = array_slice($entries, 0, XAR_PLAYER_ACTION_MAXIMUM);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    return $entry;
+}
+
+function applyOnlineTokenResourceAdjustment(
+    PDO $connection,
+    array &$records,
+    array &$pending,
+    string $sceneId,
+    mixed $tokenId,
+    string $resource,
+    int $requestedDelta,
+    string $accountId,
+    bool $isGm,
+    ?string $characterIdFallback = null,
+    bool $allowNoopAtLimit = false
+): array {
+    if ($sceneId === '' || !validApplicationDomainKey('scene:' . $sceneId)) {
+        rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
+    }
+    $requestedDelta = max(-1000000000, min(1000000000, $requestedDelta));
+    if (!in_array($resource, ['hp', 'mana'], true) || $requestedDelta === 0) {
+        rejectOnlineCommand($connection, 400, 'Indiquez une ressource et une variation numérique non nulle.', 'invalid_resource_delta');
+    }
+    $tokenKey = onlineTokenDomainKey($sceneId, $tokenId);
+    $records = array_replace($records, applicationDomainRecords($connection, $tokenKey !== '' ? [$tokenKey] : []));
+    $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+    $currentCharacterId = $token !== []
+        && ($token['followCharacter'] ?? true) !== false
+        && trim((string) ($token['linkedTokenId'] ?? '')) === ''
+        ? trim((string) ($token['characterId'] ?? ''))
+        : '';
+    if ($characterIdFallback !== null) {
+        $expectedCharacterId = trim($characterIdFallback);
+        if ($expectedCharacterId === '' && $currentCharacterId !== '') {
+            rejectOnlineCommand($connection, 409, 'Le pion autonome de cette action est désormais lié à une autre fiche.', 'resource_target_changed');
+        }
+        if ($expectedCharacterId !== '' && $currentCharacterId !== $expectedCharacterId) $token = [];
+    }
+    if ($token === [] && (!$isGm || $characterIdFallback === null || trim($characterIdFallback) === '')) {
+        rejectOnlineCommand($connection, 404, 'Token introuvable.', 'token_missing');
+    }
+    if ($token !== []) {
+        $effectiveControllerId = onlineTokenControllerIdFromRecords($connection, $records, $token);
+        if (!$isGm && ($effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true)) {
+            rejectOnlineCommand($connection, 403, 'Vous ne pouvez pas modifier les ressources de ce token.', 'token_forbidden');
+        }
+    }
+    $maximumKey = $resource === 'mana' ? 'maxMana' : 'maxHp';
+    $character = null;
+    $characterKey = '';
+    $characterId = $characterIdFallback !== null ? trim($characterIdFallback) : $currentCharacterId;
+    if ($characterId !== '') {
+        $characterKey = 'character:' . $characterId;
+        if (validApplicationDomainKey($characterKey)) {
+            $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+            $candidate = applicationDomainPayload($records, $characterKey);
+            if ($candidate !== []) {
+                if (!$isGm && ($candidate['ownerPlayerId'] ?? null) !== $accountId) {
+                    rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
+                }
+                $character = $candidate;
+                $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+                $token[$resource] = $resources[$resource] ?? ($token[$resource] ?? 0);
+                $token[$maximumKey] = $resources[$maximumKey] ?? ($token[$maximumKey] ?? 0);
+            }
+        }
+    }
+    if ($characterIdFallback !== null && $characterId !== '' && !is_array($character)) {
+        rejectOnlineCommand($connection, 404, 'La fiche originale de cette action n’existe plus.', 'resource_character_missing');
+    }
+    if ($token === [] && !is_array($character)) {
+        rejectOnlineCommand($connection, 404, 'La fiche et le token de cette action n’existent plus.', 'resource_target_missing');
+    }
+    $maximum = max(0, min(1000000000, is_numeric($token[$maximumKey] ?? null) ? (int) $token[$maximumKey] : 0));
+    if ($maximum <= 0) {
+        rejectOnlineCommand($connection, 409, 'Ce token ne possède pas de maximum pour cette ressource.', 'resource_missing');
+    }
+    $storedResource = is_numeric($token[$resource] ?? null) ? (int) $token[$resource] : 0;
+    $previous = max(0, min($maximum, $storedResource));
+    $current = max(0, min($maximum, $previous + $requestedDelta));
+    $appliedDelta = $current - $previous;
+    $resourceRepaired = $storedResource !== $previous;
+    $resourceChanged = $appliedDelta !== 0 || $resourceRepaired;
+    if (!$resourceChanged && !$allowNoopAtLimit) {
+        rejectOnlineCommand($connection, 409, 'La ressource est déjà à sa limite.', 'resource_limit');
+    }
+    $now = (int) floor(microtime(true) * 1000);
+    $pulse = $appliedDelta !== 0 ? [
+        'id' => 'resource-' . randomToken(12),
+        'resource' => $resource,
+        'delta' => $appliedDelta,
+        'at' => $now,
+    ] : null;
+    if ($resourceChanged) {
+        $token[$resource] = $current;
+        if ($pulse !== null) $token['resourcePulse'] = $pulse;
+        else unset($token['resourcePulse']);
+        $token['_updatedAt'] = $now;
+    }
+    if ($resourceChanged && is_array($character)) {
+        $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
+        $resources[$resource] = $current;
+        $character['resources'] = $resources;
+        $character['_updatedAt'] = $now;
+        queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
+        $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
+        $records = array_replace($records, $characterTokenRecords);
+        foreach ($characterTokenRecords as $relatedTokenKey => $record) {
+            $relatedToken = applicationDomainPayload($records, $relatedTokenKey);
+            if (($relatedToken['followCharacter'] ?? true) === false || trim((string) ($relatedToken['linkedTokenId'] ?? '')) !== '') continue;
+            $relatedToken[$resource] = $current;
+            $relatedToken[$maximumKey] = $maximum;
+            $relatedToken['_updatedAt'] = $now;
+            if ($relatedTokenKey === $tokenKey) {
+                if ($pulse !== null) $relatedToken['resourcePulse'] = $pulse;
+                else unset($relatedToken['resourcePulse']);
+                $token = $relatedToken;
+            }
+            queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $relatedToken);
+        }
+    } elseif ($resourceChanged && $tokenKey !== '') {
+        queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+    }
+    return [
+        'token' => [
+            'id' => $token['id'] ?? $tokenId,
+            'name' => $token['name'] ?? ($character['name'] ?? 'Token'),
+            'hp' => $token['hp'] ?? null,
+            'maxHp' => $token['maxHp'] ?? null,
+            'mana' => $token['mana'] ?? null,
+            'maxMana' => $token['maxMana'] ?? null,
+            'resourcePulse' => $pulse,
+        ],
+        'resource' => $resource,
+        'characterId' => is_array($character) ? $characterId : '',
+        'previous' => $previous,
+        'appliedDelta' => $appliedDelta,
+        'repaired' => $resourceRepaired,
+        'current' => $current,
+        'maximum' => $maximum,
+    ];
+}
+
+function onlineAppendAppliedDamageAction(PDO $connection, array &$records, array &$pending, array $identity, array $attack): ?array
+{
+    $appliedDamage = max(0, (int) ($attack['appliedDamage'] ?? 0));
+    if ($appliedDamage <= 0) return null;
+    $sceneId = (string) ($attack['sceneId'] ?? '');
+    return onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
+        'kind' => 'resource',
+        'characterName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
+        'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
+        'summary' => (string) ($attack['targetName'] ?? 'La cible') . ' perd ' . $appliedDamage . ' PV',
+        'detail' => 'Dégâts appliqués après ' . (string) ($attack['attackName'] ?? 'attaque') . ' · '
+            . (int) ($attack['currentHp'] ?? 0) . '/' . (int) ($attack['maximumHp'] ?? 0) . ' PV',
+        'operation' => [
+            'kind' => 'resource-adjust',
+            'requestId' => 'damage-' . (string) ($attack['id'] ?? randomToken(12)),
+            'sceneId' => $sceneId,
+            'tokenId' => (string) ($attack['targetTokenId'] ?? ''),
+            'characterId' => (string) ($attack['characterId'] ?? ''),
+            'resource' => 'hp',
+            'appliedDelta' => -$appliedDamage,
+            'previous' => (int) ($attack['previousHp'] ?? 0),
+            'current' => (int) ($attack['currentHp'] ?? 0),
+            'maximum' => (int) ($attack['maximumHp'] ?? 0),
+            'repaired' => false,
+        ],
+    ]);
 }
 
 function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pending, string $tokenKey, array $token, int $damage): array
@@ -2385,7 +2595,14 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
     } else {
         queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
     }
-    return ['previousHp' => $previous, 'currentHp' => $current, 'maximumHp' => $maximum, 'appliedDamage' => $applied, 'resourcePulse' => $applied > 0 ? $pulse : null];
+    return [
+        'previousHp' => $previous,
+        'currentHp' => $current,
+        'maximumHp' => $maximum,
+        'appliedDamage' => $applied,
+        'resourcePulse' => $applied > 0 ? $pulse : null,
+        'characterId' => is_array($character) ? $characterId : '',
+    ];
 }
 
 function onlineAttackDiscordContent(array $attack): string
@@ -2682,7 +2899,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.resource.adjust', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -2995,117 +3212,220 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'Les ressources sont verrouillées pendant la préparation du MJ.', 'table_locked');
             }
-            $resourceSceneId = $isGm ? trim((string) ($arguments['sceneId'] ?? '')) : $sceneId;
-            if ($resourceSceneId === '' || !validApplicationDomainKey('scene:' . $resourceSceneId)) {
-                rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
+            $requestId = trim((string) ($arguments['requestId'] ?? ''));
+            if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
+                rejectOnlineCommand($connection, 400, 'Référence de modification invalide.', 'invalid_resource_request');
             }
-            $resource = (string) ($arguments['resource'] ?? '');
-            $requestedDelta = is_numeric($arguments['delta'] ?? null) ? (int) $arguments['delta'] : 0;
-            $requestedDelta = max(-1000000000, min(1000000000, $requestedDelta));
-            if (!in_array($resource, ['hp', 'mana'], true) || $requestedDelta === 0) {
-                rejectOnlineCommand($connection, 400, 'Indiquez une ressource et une variation numérique non nulle.', 'invalid_resource_delta');
-            }
-            $tokenKey = onlineTokenDomainKey($resourceSceneId, $arguments['tokenId'] ?? '');
-            $records = array_replace($records, applicationDomainRecords($connection, $tokenKey !== '' ? [$tokenKey] : []));
-            $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
-            if ($token === []) {
-                rejectOnlineCommand($connection, 404, 'Token introuvable.', 'token_missing');
-            }
-            $effectiveControllerId = onlineTokenControllerIdFromRecords($connection, $records, $token);
-            if (!$isGm && ($effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true)) {
-                rejectOnlineCommand($connection, 403, 'Vous ne pouvez pas modifier les ressources de ce token.', 'token_forbidden');
-            }
-            $maximumKey = $resource === 'mana' ? 'maxMana' : 'maxHp';
-            $character = null;
-            $characterKey = '';
-            $characterId = trim((string) ($token['characterId'] ?? ''));
-            $followsCharacter = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
-            if ($followsCharacter && $characterId !== '') {
-                $characterKey = 'character:' . $characterId;
-                if (validApplicationDomainKey($characterKey)) {
-                    $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
-                    $candidate = applicationDomainPayload($records, $characterKey);
-                    if ($candidate !== []) {
-                        if (!$isGm && ($candidate['ownerPlayerId'] ?? null) !== $accountId) {
-                            rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
-                        }
-                        $character = $candidate;
-                        $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
-                        $token[$resource] = $resources[$resource] ?? ($token[$resource] ?? 0);
-                        $token[$maximumKey] = $resources[$maximumKey] ?? ($token[$maximumKey] ?? 0);
-                    }
-                }
-            }
-            $maximum = max(0, min(1000000000, is_numeric($token[$maximumKey] ?? null) ? (int) $token[$maximumKey] : 0));
-            if ($maximum <= 0) {
-                rejectOnlineCommand($connection, 409, 'Ce token ne possède pas de maximum pour cette ressource.', 'resource_missing');
-            }
-            $storedResource = is_numeric($token[$resource] ?? null) ? (int) $token[$resource] : 0;
-            $previous = max(0, min($maximum, $storedResource));
-            $current = max(0, min($maximum, $previous + $requestedDelta));
-            $appliedDelta = $current - $previous;
-            $resourceRepaired = $storedResource !== $previous;
-            if ($appliedDelta === 0 && !$resourceRepaired) {
-                rejectOnlineCommand($connection, 409, 'La ressource est déjà à sa limite.', 'resource_limit');
-            }
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+            $activity = applicationDomainPayload($records, 'activity');
             $now = (int) floor(microtime(true) * 1000);
-            $pulse = $appliedDelta !== 0 ? [
-                'id' => 'resource-' . randomToken(12),
-                'resource' => $resource,
-                'delta' => $appliedDelta,
-                'at' => $now,
-            ] : null;
-            $token[$resource] = $current;
-            if ($pulse !== null) {
-                $token['resourcePulse'] = $pulse;
-            } else {
-                unset($token['resourcePulse']);
+            $resourceReceipts = array_values(array_filter(
+                is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
+                static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+            ));
+            $resourceReceipt = null;
+            foreach ($resourceReceipts as $candidate) {
+                if (!is_array($candidate) || (string) ($candidate['requestId'] ?? '') !== $requestId) continue;
+                if ((string) ($candidate['accountId'] ?? '') !== $accountId) {
+                    rejectOnlineCommand($connection, 403, 'Ce reçu de ressource appartient à un autre compte.', 'resource_receipt_forbidden');
+                }
+                $resourceReceipt = $candidate;
+                break;
             }
-            $token['_updatedAt'] = $now;
-            if (is_array($character)) {
-                $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
-                $resources[$resource] = $current;
-                $character['resources'] = $resources;
-                $character['_updatedAt'] = $now;
-                queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
-                $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
-                $records = array_replace($records, $characterTokenRecords);
-                foreach ($characterTokenRecords as $relatedTokenKey => $record) {
-                    $relatedToken = applicationDomainPayload($records, $relatedTokenKey);
-                    if (($relatedToken['followCharacter'] ?? true) === false || trim((string) ($relatedToken['linkedTokenId'] ?? '')) !== '') {
-                        continue;
-                    }
-                    $relatedToken[$resource] = $current;
-                    $relatedToken[$maximumKey] = $maximum;
-                    $relatedToken['_updatedAt'] = $now;
-                    if ($relatedTokenKey === $tokenKey) {
-                        if ($pulse !== null) {
-                            $relatedToken['resourcePulse'] = $pulse;
-                        } else {
-                            unset($relatedToken['resourcePulse']);
-                        }
-                        $relatedToken['_updatedAt'] = $now;
-                        $token = $relatedToken;
-                    }
-                    queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $relatedToken);
+            if (is_array($resourceReceipt)) {
+                $operation = is_array($resourceReceipt['operation'] ?? null) ? $resourceReceipt['operation'] : [];
+                if (($operation['kind'] ?? '') !== 'resource-adjust' || (string) ($operation['requestId'] ?? '') !== $requestId) {
+                    rejectOnlineCommand($connection, 409, 'Le reçu de ressource est incohérent.', 'resource_receipt_invalid');
+                }
+                $receiptActions = is_array($activity['playerActions'] ?? null) ? array_values($activity['playerActions']) : [];
+                $receiptActionIndex = findEntryIndex($receiptActions, (string) ($resourceReceipt['actionId'] ?? ''));
+                $result['token'] = ['id' => $operation['tokenId'] ?? null];
+                $result['appliedDelta'] = (int) ($operation['appliedDelta'] ?? 0);
+                $result['repaired'] = ($operation['repaired'] ?? false) === true;
+                $result['current'] = (int) ($operation['current'] ?? 0);
+                $result['maximum'] = (int) ($operation['maximum'] ?? 0);
+                $result['deduplicated'] = true;
+                $result['action'] = $receiptActionIndex >= 0 ? $receiptActions[$receiptActionIndex] : null;
+                if (trim((string) ($operation['formula'] ?? '')) !== '') {
+                    $result['resourceRoll'] = [
+                        'formula' => (string) $operation['formula'],
+                        'total' => (int) ($operation['rollTotal'] ?? 0),
+                        'breakdown' => (string) ($operation['rollBreakdown'] ?? ''),
+                    ];
                 }
             } else {
-                queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+                if (count($resourceReceipts) >= XAR_RESOURCE_RECEIPT_MAXIMUM) {
+                    rejectOnlineCommand(
+                        $connection,
+                        429,
+                        'Le journal de sécurité des ressources est plein. Réessayez après expiration des anciens reçus.',
+                        'resource_receipt_capacity_reached'
+                    );
+                }
+                $resourceSceneId = $isGm ? trim((string) ($arguments['sceneId'] ?? '')) : $sceneId;
+                $resource = (string) ($arguments['resource'] ?? '');
+                $formula = strtolower(str_replace(' ', '', trim((string) ($arguments['formula'] ?? ''))));
+                $resourceRoll = null;
+                if ($formula !== '') {
+                    if (!str_contains($formula, 'd') || str_contains($formula, '-') || str_starts_with($formula, '+') || !validOnlineRollFormula($formula)) {
+                        rejectOnlineCommand($connection, 400, 'Utilisez une formule de dés positive, par exemple 2d6+4.', 'invalid_resource_formula');
+                    }
+                    $rolled = onlineRollFormula($formula);
+                    $direction = is_numeric($arguments['direction'] ?? null) ? (int) $arguments['direction'] : 0;
+                    if (!in_array($direction, [-1, 1], true) || (int) $rolled['total'] <= 0) {
+                        rejectOnlineCommand($connection, 400, 'Le jet de ressource doit produire une valeur positive.', 'invalid_resource_roll');
+                    }
+                    $requestedDelta = min(1000000000, (int) $rolled['total']) * $direction;
+                    $resourceRoll = [
+                        'formula' => substr((string) $rolled['formula'], 0, 100),
+                        'total' => (int) $rolled['total'],
+                        'breakdown' => substr((string) $rolled['breakdown'], 0, 500),
+                    ];
+                } else {
+                    $requestedDelta = is_numeric($arguments['delta'] ?? null) ? (int) $arguments['delta'] : 0;
+                }
+                $adjustment = applyOnlineTokenResourceAdjustment(
+                    $connection,
+                    $records,
+                    $pending,
+                    $resourceSceneId,
+                    $arguments['tokenId'] ?? '',
+                    $resource,
+                    $requestedDelta,
+                    $accountId,
+                    $isGm
+                );
+                $operation = [
+                    'kind' => 'resource-adjust',
+                    'requestId' => $requestId,
+                    'sceneId' => $resourceSceneId,
+                    'tokenId' => (string) ($arguments['tokenId'] ?? ''),
+                    'characterId' => (string) ($adjustment['characterId'] ?? ''),
+                    'resource' => $resource,
+                    'appliedDelta' => (int) $adjustment['appliedDelta'],
+                    'previous' => (int) $adjustment['previous'],
+                    'current' => (int) $adjustment['current'],
+                    'maximum' => (int) $adjustment['maximum'],
+                    'repaired' => ($adjustment['repaired'] ?? false) === true,
+                ];
+                if (is_array($resourceRoll)) {
+                    $operation['formula'] = $resourceRoll['formula'];
+                    $operation['rollTotal'] = $resourceRoll['total'];
+                    $operation['rollBreakdown'] = $resourceRoll['breakdown'];
+                }
+                $delta = (int) $adjustment['appliedDelta'];
+                $resourceLabel = $resource === 'mana' ? 'mana' : 'PV';
+                $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $resourceSceneId, [
+                    'kind' => 'resource',
+                    'characterName' => (string) ($adjustment['token']['name'] ?? 'Token'),
+                    'summary' => ($delta >= 0 ? 'Soigne / récupère ' : 'Dépense / perd ') . abs($delta) . ' ' . $resourceLabel,
+                    'detail' => (is_array($resourceRoll) ? $resourceRoll['formula'] . ' → ' . $resourceRoll['total'] . ' · ' : '')
+                        . 'Nouvelle valeur : ' . $adjustment['current'] . '/' . $adjustment['maximum'],
+                    'operation' => $operation,
+                ]);
+                $activity = is_array($pending['activity']['payload'] ?? null)
+                    ? $pending['activity']['payload']
+                    : $activity;
+                $resourceReceipts[] = [
+                    'requestId' => $requestId,
+                    'accountId' => $accountId,
+                    'actionId' => (string) ($action['id'] ?? ''),
+                    'expiresAt' => $now + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS,
+                    'operation' => $operation,
+                ];
+                $activity['resourceReceipts'] = $resourceReceipts;
+                queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                $result = [...$result, ...$adjustment];
+                $result['deduplicated'] = false;
+                $result['resourceRoll'] = $resourceRoll;
+                $result['action'] = $action;
             }
-            $result['token'] = [
-                'id' => $token['id'] ?? null,
-                'hp' => $token['hp'] ?? null,
-                'maxHp' => $token['maxHp'] ?? null,
-                'mana' => $token['mana'] ?? null,
-                'maxMana' => $token['maxMana'] ?? null,
-                'resourcePulse' => $pulse,
-            ];
-            $result['appliedDelta'] = $appliedDelta;
-            $result['repaired'] = $resourceRepaired;
-            $result['current'] = $current;
-            $result['maximum'] = $maximum;
+        } elseif ($command === 'action.undo') {
+            if (!$isGm) rejectOnlineCommand($connection, 403, 'L’annulation d’une action est réservée au MJ.', 'gm_required');
+            $requestId = trim((string) ($arguments['requestId'] ?? ''));
+            $actionId = trim((string) ($arguments['actionId'] ?? ''));
+            if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1
+                || preg_match('/^action-[A-Za-z0-9_-]{12,120}$/D', $actionId) !== 1) {
+                rejectOnlineCommand($connection, 400, 'Référence d’annulation invalide.', 'invalid_action_undo');
+            }
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+            $activity = applicationDomainPayload($records, 'activity');
+            $actions = is_array($activity['playerActions'] ?? null) ? array_values($activity['playerActions']) : [];
+            $actionIndex = findEntryIndex($actions, $actionId);
+            if ($actionIndex < 0) {
+                rejectOnlineCommand($connection, 404, 'Cette action n’est plus disponible dans l’historique.', 'action_missing');
+            }
+            $action = is_array($actions[$actionIndex] ?? null) ? $actions[$actionIndex] : [];
+            if (is_array($action['undo'] ?? null)) {
+                $undo = $action['undo'];
+                if ((string) ($undo['requestId'] ?? '') !== $requestId || (string) ($undo['actorId'] ?? '') !== $accountId) {
+                    rejectOnlineCommand($connection, 409, 'Cette action a déjà été annulée.', 'action_already_undone');
+                }
+                $result['action'] = $action;
+                $result['appliedDelta'] = (int) ($undo['appliedDelta'] ?? 0);
+                $result['current'] = (int) ($undo['current'] ?? 0);
+                $result['maximum'] = (int) ($undo['maximum'] ?? 0);
+                $result['deduplicated'] = true;
+            } else {
+                $operation = is_array($action['operation'] ?? null) ? $action['operation'] : [];
+                $originalDelta = is_numeric($operation['appliedDelta'] ?? null) ? (int) $operation['appliedDelta'] : 0;
+                if (($operation['kind'] ?? '') !== 'resource-adjust' || $originalDelta === 0) {
+                    rejectOnlineCommand($connection, 409, 'Cette action n’a pas d’effet de ressource annulable.', 'action_not_undoable');
+                }
+                $adjustment = applyOnlineTokenResourceAdjustment(
+                    $connection,
+                    $records,
+                    $pending,
+                    (string) ($operation['sceneId'] ?? ''),
+                    $operation['tokenId'] ?? '',
+                    (string) ($operation['resource'] ?? ''),
+                    -$originalDelta,
+                    $accountId,
+                    true,
+                    (string) ($operation['characterId'] ?? ''),
+                    true
+                );
+                $undo = [
+                    'requestId' => $requestId,
+                    'actorId' => $accountId,
+                    'actorName' => substr((string) ($identity['display_name'] ?? 'MJ'), 0, 120),
+                    'requestedDelta' => -$originalDelta,
+                    'appliedDelta' => (int) $adjustment['appliedDelta'],
+                    'current' => (int) $adjustment['current'],
+                    'maximum' => (int) $adjustment['maximum'],
+                    'createdAt' => gmdate('c'),
+                ];
+                $action['undo'] = $undo;
+                $actions[$actionIndex] = $action;
+                $activity['playerActions'] = $actions;
+                queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                onlineAppendPlayerAction($connection, $records, $pending, $identity, (string) ($operation['sceneId'] ?? ''), [
+                    'kind' => 'undo',
+                    'targetName' => (string) ($action['targetName'] ?? ''),
+                    'summary' => 'Annule : ' . (string) ($action['summary'] ?? 'Action de ressource'),
+                    'detail' => ((int) $adjustment['appliedDelta'] > 0 ? '+' : '') . (int) $adjustment['appliedDelta'] . ' '
+                        . (($operation['resource'] ?? '') === 'mana' ? 'mana' : 'PV') . ' · nouvelle valeur '
+                        . (int) $adjustment['current'] . '/' . (int) $adjustment['maximum'],
+                ]);
+                $updatedActivity = is_array($pending['activity']['payload'] ?? null)
+                    ? $pending['activity']['payload']
+                    : $activity;
+                $updatedActions = is_array($updatedActivity['playerActions'] ?? null)
+                    ? array_values($updatedActivity['playerActions'])
+                    : [];
+                if (findEntryIndex($updatedActions, $actionId) < 0) {
+                    if (count($updatedActions) >= XAR_PLAYER_ACTION_MAXIMUM) array_pop($updatedActions);
+                    $updatedActions[] = $action;
+                    $updatedActivity['playerActions'] = $updatedActions;
+                    queueOnlineDomainUpsert($pending, $records, 'activity', $updatedActivity);
+                }
+                $result['action'] = $action;
+                $result['appliedDelta'] = (int) $adjustment['appliedDelta'];
+                $result['current'] = (int) $adjustment['current'];
+                $result['maximum'] = (int) $adjustment['maximum'];
+                $result['deduplicated'] = false;
+            }
         } elseif ($command === 'token.attack') {
-            if ($isGm) rejectOnlineCommand($connection, 403, 'L’attaque ciblée doit être portée par un joueur.', 'player_mode_required');
             if (($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             }
@@ -3156,7 +3476,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
             }
             if (is_array($deduplicatedAttack)) {
-                $result['attack'] = publicOnlineAttackResult($deduplicatedAttack);
+                $result['attack'] = $isGm ? $deduplicatedAttack : publicOnlineAttackResult($deduplicatedAttack);
                 $result['deduplicated'] = true;
             } else {
                 if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) {
@@ -3171,11 +3491,20 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $target = applicationDomainPayload($records, $targetKey);
                 $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
                 $targetController = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
-                if ($source === [] || $sourceController !== $accountId || ($source['hidden'] ?? false) === true) {
-                    rejectOnlineCommand($connection, 403, 'Ce token attaquant ne vous appartient pas.', 'attack_source_forbidden');
-                }
-                if ($target === [] || ($target['hidden'] ?? false) === true || $targetController === $accountId) {
-                    rejectOnlineCommand($connection, 403, 'Cette cible ne peut pas être attaquée.', 'attack_target_forbidden');
+                if ($isGm) {
+                    if ($source === [] || $sourceController !== '' || ($source['hidden'] ?? false) === true) {
+                        rejectOnlineCommand($connection, 403, 'Le token attaquant doit être une créature visible non assignée à un joueur.', 'attack_source_not_gm_creature');
+                    }
+                    if ($target === [] || ($target['hidden'] ?? false) === true || $targetController === '') {
+                        rejectOnlineCommand($connection, 403, 'La cible doit être un pion joueur visible.', 'attack_target_not_player');
+                    }
+                } else {
+                    if ($source === [] || $sourceController !== $accountId || ($source['hidden'] ?? false) === true) {
+                        rejectOnlineCommand($connection, 403, 'Ce token attaquant ne vous appartient pas.', 'attack_source_forbidden');
+                    }
+                    if ($target === [] || ($target['hidden'] ?? false) === true || $targetController === $accountId) {
+                        rejectOnlineCommand($connection, 403, 'Cette cible ne peut pas être attaquée.', 'attack_target_forbidden');
+                    }
                 }
                 $targetCharacterId = trim((string) ($target['characterId'] ?? ''));
                 if ($targetCharacterId !== '' && isset($records['character:' . $targetCharacterId])) {
@@ -3189,7 +3518,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 409, 'Cette cible est déjà à 0 PV.', 'target_already_defeated');
                 }
                 $map = applicationDomainPayload($records, $mapKey);
-                if (!onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
+                if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
                     rejectOnlineCommand($connection, 403, 'Cette cible n’est pas visible par votre joueur.', 'attack_target_hidden');
                 }
                 $characterId = trim((string) ($source['characterId'] ?? ''));
@@ -3286,6 +3615,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'targetTokenId' => (string) ($target['id'] ?? ''),
                     'targetName' => substr((string) ($target['name'] ?? 'Cible'), 0, 120),
                     'accountId' => $accountId,
+                    'attackerRole' => $isGm ? 'gm' : 'player',
                     'playerName' => substr((string) ($identity['display_name'] ?? 'Joueur'), 0, 120),
                     'attackName' => substr($attackName, 0, 120),
                     'attackKind' => $attackKind,
@@ -3347,7 +3677,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
                     'detail' => $attackActivityDetail,
                 ]);
-                $result['attack'] = publicOnlineAttackResult($attack);
+                if (($attack['status'] ?? '') === 'applied') {
+                    onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $attack);
+                }
+                $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack);
             }
         } elseif ($command === 'token.attack.oppose') {
             $requestId = trim((string) ($arguments['requestId'] ?? ''));
@@ -3422,7 +3755,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     ]);
                     $result['attack'] = $attack;
                 } else {
-                    if ($defenderAccountId === (string) ($attack['accountId'] ?? '')) {
+                    $parties = onlinePendingAttackParties($connection, $records, $attack);
+                    $targetKey = $parties['targetKey'];
+                    $target = $parties['target'];
+                    $defenderAccountId = $parties['targetController'];
+                    if (($attack['attackerRole'] ?? 'player') !== 'gm'
+                        && $defenderAccountId === (string) ($attack['accountId'] ?? '')) {
                         rejectOnlineCommand($connection, 409, 'La cible appartient désormais à l’attaquant. Le MJ doit annuler cette opposition.', 'opposition_target_no_longer_adverse');
                     }
                     $targetCharacterId = trim((string) ($target['characterId'] ?? ''));
@@ -3540,6 +3878,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         'summary' => (string) ($target['name'] ?? 'Défenseur') . ' oppose ' . $statLabel . ' à ' . (string) ($attack['sourceName'] ?? 'Attaquant'),
                         'detail' => $oppositionActivityDetail,
                     ]);
+                    if (($attack['status'] ?? '') === 'applied') {
+                        onlineAppendAppliedDamageAction($connection, $records, $pending, [
+                            'id' => (string) ($attack['accountId'] ?? ''),
+                            'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
+                        ], $attack);
+                    }
                     $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack);
                 }
             }
@@ -3569,11 +3913,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             array_splice($pendingAttacks, $pendingIndex, 1);
             $activity['pendingAttacks'] = $pendingAttacks;
             if ($decision === 'approve') {
-                $attackSceneId = trim((string) ($attack['sceneId'] ?? ''));
-                $targetKey = onlineTokenDomainKey($attackSceneId, $attack['targetTokenId'] ?? '');
-                $records = array_replace($records, applicationDomainRecords($connection, $targetKey !== '' ? [$targetKey] : []));
-                $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
-                if ($target === []) rejectOnlineCommand($connection, 404, 'La cible de cette attaque n’existe plus.', 'attack_target_missing');
+                $parties = onlinePendingAttackParties($connection, $records, $attack);
+                $targetKey = $parties['targetKey'];
+                $target = $parties['target'];
                 $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, max(0, (int) ($attack['finalDamage'] ?? 0)));
                 $attack = [...$attack, ...$health, 'status' => 'applied', 'resolvedAt' => (int) floor(microtime(true) * 1000)];
                 $result['discordContent'] = onlineAttackDiscordContent($attack);
@@ -3590,6 +3932,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $activity['attackReceipts'] = $receipts;
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+            if (($attack['status'] ?? '') === 'applied') {
+                onlineAppendAppliedDamageAction($connection, $records, $pending, [
+                    'id' => (string) ($attack['accountId'] ?? ''),
+                    'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
+                ], $attack);
+            }
             $result['attack'] = $attack;
         } elseif ($command === 'ping') {
             $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
@@ -4145,7 +4493,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             rejectOnlineCommand($connection, 400, 'Commande d’état inconnue ou refusée.', 'command_rejected');
         }
 
-        if (!$isGm && !in_array($command, ['ensure-player', 'preferences.update', 'token.attack', 'token.attack.oppose'], true)) {
+        if (!$isGm && !in_array($command, ['ensure-player', 'preferences.update', 'token.resource.adjust', 'token.attack', 'token.attack.oppose'], true)) {
             $loggedAction = null;
             if (in_array($command, ['roll', 'token.roll'], true) && is_array($result['roll'] ?? null)) {
                 $loggedRoll = $result['roll'];
@@ -4155,15 +4503,6 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'summary' => 'Lance ' . (string) ($loggedRoll['label'] ?? 'un jet'),
                     'detail' => (string) ($loggedRoll['formula'] ?? '') . ' · résultat ' . (string) ($loggedRoll['total'] ?? '—')
                         . (isset($loggedRoll['outcome']['label']) ? ' · ' . (string) $loggedRoll['outcome']['label'] : ''),
-                ];
-            } elseif ($command === 'token.resource.adjust' && isset($result['appliedDelta'])) {
-                $delta = (int) $result['appliedDelta'];
-                $resourceLabel = (($arguments['resource'] ?? '') === 'mana') ? 'mana' : 'PV';
-                $loggedAction = [
-                    'kind' => 'resource',
-                    'characterName' => (string) ($token['name'] ?? 'Token'),
-                    'summary' => ($delta >= 0 ? 'Soigne / récupère ' : 'Dépense / perd ') . abs($delta) . ' ' . $resourceLabel,
-                    'detail' => 'Nouvelle valeur : ' . (string) ($result['current'] ?? '—') . '/' . (string) ($result['maximum'] ?? '—'),
                 ];
             } elseif ($command === 'token.move' && ($result['positionChanged'] ?? false) === true) {
                 $loggedAction = [

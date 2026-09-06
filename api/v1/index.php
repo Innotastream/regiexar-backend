@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.14.9';
-const XAR_BACKEND_BUILD = 'client-3-1-9-opposition-lifecycle-hardening-release-20260906-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.9';
+const XAR_BACKEND_VERSION = '0.14.10';
+const XAR_BACKEND_BUILD = 'client-3-1-10-action-undo-and-creature-attacks-release-20260906-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.1.10';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 17;
+const XAR_DATABASE_SCHEMA_VERSION = 18;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -820,6 +820,71 @@ function ensureCurrentSchema(PDO $connection): void
                 if ($connection->inTransaction()) $connection->rollBack();
                 throw $error;
             }
+            $version = 17;
+        }
+
+        if ($version < 18) {
+            $connection->exec(
+                'ALTER TABLE application_domain_clock MODIFY COLUMN state_schema_version '
+                . 'SMALLINT UNSIGNED NOT NULL DEFAULT 16'
+            );
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true);
+                $records = applicationDomainRecords($connection, ['activity']);
+                $pending = [];
+                if (isset($records['activity'])) {
+                    $activity = applicationDomainPayload($records, 'activity');
+                    $pendingAttacks = [];
+                    foreach (is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [] as $attack) {
+                        if (!is_array($attack)) continue;
+                        $attack['attackerRole'] = 'player';
+                        $pendingAttacks[] = $attack;
+                        if (count($pendingAttacks) >= XAR_PENDING_ATTACK_MAXIMUM) break;
+                    }
+                    $activity['pendingAttacks'] = $pendingAttacks;
+                    $attackReceipts = [];
+                    foreach (is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [] as $receipt) {
+                        if (!is_array($receipt)) continue;
+                        if (is_array($receipt['attack'] ?? null)) $receipt['attack']['attackerRole'] = 'player';
+                        $attackReceipts[] = $receipt;
+                        if (count($attackReceipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) break;
+                    }
+                    $activity['attackReceipts'] = $attackReceipts;
+                    $activity['resourceReceipts'] = [];
+                    $actions = [];
+                    foreach (is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [] as $entry) {
+                        if (!is_array($entry)) continue;
+                        unset($entry['operation'], $entry['undo']);
+                        $actions[] = $entry;
+                        if (count($actions) >= XAR_PLAYER_ACTION_MAXIMUM) break;
+                    }
+                    $activity['playerActions'] = $actions;
+                    $change = prepareApplicationDomainUpsert('activity', $activity, $records['activity']);
+                    if ($change !== null) $pending['activity'] = $change;
+                }
+                if ($pending !== []) {
+                    persistDomainChangesInTransaction($connection, [], $clock, array_values($pending));
+                } else {
+                    $updateClock = $connection->prepare(
+                        'UPDATE application_domain_clock SET state_schema_version = :state_schema_version '
+                        . 'WHERE singleton_id = 1'
+                    );
+                    $updateClock->execute([':state_schema_version' => XAR_SESSION_SCHEMA_VERSION]);
+                }
+                $insertMigration = $connection->prepare(
+                    'INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES (18, :name, :checksum)'
+                );
+                $insertMigration->execute([
+                    ':name' => 'session_schema_16_undoable_resources_and_gm_creature_attacks',
+                    ':checksum' => 'fbe2be5aa8eef7c8301486197c624388a787caba9af05175ac91aa4ac7e582aa',
+                ]);
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
+            $version = 18;
         }
     } finally {
         try {
