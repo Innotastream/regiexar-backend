@@ -229,4 +229,5 @@ requireTactical(onlineMapRollVisible($event,'scene-one',['source','target']), 'V
 requireTactical(!onlineMapRollVisible($event,'scene-two',['source','target']) && !onlineMapRollVisible($event,'scene-one',['source']), 'Other scenes and hidden targets do not reveal map dice.');
 requireTactical(!onlineMapRollVisible(['mapEvent'=>[...$event['mapEvent'],'kind'=>'damage','applied'=>false,'value'=>20]],'scene-one',['source','target']), 'Prospective damage never becomes a public event.');
 require __DIR__ . '/token-groups-cases.php';
-fwrite(STDOUT, 'Cycle tactique PHP 3.1.13 : ' . $GLOBALS['checks'] . " contrôles réussis\n");
+require __DIR__ . '/vision-stream-layers-cases.php';
+fwrite(STDOUT, 'Cycle tactique PHP 3.2.0 : ' . $GLOBALS['checks'] . " contrôles réussis\n");

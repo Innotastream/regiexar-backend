@@ -224,6 +224,12 @@ function onlineTokenIsDead(array $token, bool $playerControlled): bool
     return onlineHealthState($token['hp'] ?? null, $token['maxHp'] ?? null, $playerControlled, onlineManualDeath($token))['code'] === 'dead';
 }
 
+function onlineTokenVisionDistance(array $token, ?array $character = null): int
+{
+    $usesSheet = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
+    return normalizeApplicationVisionDistance($usesSheet && $character !== null ? ($character['visionDistance'] ?? null) : ($token['visionDistance'] ?? null));
+}
+
 function onlineDiceAppearance(array $token, bool $playerControlled = false, ?array $character = null): array
 {
     if (!$playerControlled) return ($token['frameVariant'] ?? '') === 'boss'
@@ -917,10 +923,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             ? $controllerId !== '' && !isset($isolatedPlayerIds[$controllerId])
             : $controllerId === $accountId;
         if ($sharesWithViewer) {
-            $visionOrigins[] = ['x' => $candidateToken['x'] ?? 50, 'y' => $candidateToken['y'] ?? 50];
+            $visionOrigins[] = ['x' => $candidateToken['x'] ?? 50, 'y' => $candidateToken['y'] ?? 50, 'visionDistance' => onlineTokenVisionDistance($candidateToken, $charactersById[(string) ($candidateToken['characterId'] ?? '')] ?? null)];
         }
     }
-    $visionMask = applicationComputeVisionMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
+    $visionMask = applicationComputeVisionRenderMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
     $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
         || applicationVisionCoversPoint($visionMask, $x, $y);
     $tokens = [];
@@ -948,6 +954,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 50),
+            'visionDistance' => onlineTokenVisionDistance($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
             'initiative' => $token['initiative'] ?? null,
             'conditions' => normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? ''),
             'condition' => implode(', ', normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? '')),
@@ -1059,6 +1066,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         if (!is_array($ping)
             || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
             || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds
+            || onlineTokenLayerId(['layerId' => $ping['layerId'] ?? 'ground']) !== onlineTokenLayerId([], $map)
             || $pointIsHidden($ping['x'] ?? 0, $ping['y'] ?? 0)) {
             continue;
         }
@@ -1069,6 +1077,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'author' => $ping['author'] ?? 'MJ',
             'color' => $ping['color'] ?? '#8d72cb',
             'expiresAt' => (int) ($ping['expiresAt'] ?? 0),
+            'createdAt' => (int) ($ping['createdAt'] ?? 0),
+            'layerId' => onlineTokenLayerId(['layerId' => $ping['layerId'] ?? 'ground']),
         ];
     }
     $pendingMapAttacks = [];
@@ -1087,6 +1097,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         if (!is_array($attack)
             || (string) ($attack['status'] ?? '') !== 'awaiting-opposition'
             || (string) ($attack['sceneId'] ?? '') !== $visibleSceneId
+            || !in_array($attack['sourceTokenId'] ?? '', $visibleAttackTokenIds, true)
+            || !in_array($attack['targetTokenId'] ?? '', $visibleAttackTokenIds, true)
             || (($attack['attackerRole'] ?? 'player') !== 'gm'
                 && (string) ($attack['accountId'] ?? '') === $accountId)) {
             continue;
@@ -2097,6 +2109,7 @@ function normalizeOnlineLinkedTokens(mixed $value): array
         $seen[$id] = true;
         $entry['id'] = $id;
         $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
+        $entry['visionDistance'] = normalizeApplicationVisionDistance($entry['visionDistance'] ?? null);
         $normalized[] = $entry;
     }
     return $normalized;
@@ -2197,7 +2210,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $allowed = [
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'fatigue', 'morale',
-        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
+        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
         'shortcuts', 'abilities', 'linkedTokens',
     ];
@@ -2262,6 +2275,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['magicArmorCategory'] = $magicalArmor['category'];
     $current['magicArmor'] = $magicalArmor['percent'];
     $current['temporalPerception'] = normalizeOnlineTemporalPerception($current['temporalPerception'] ?? null);
+    $current['visionDistance'] = normalizeApplicationVisionDistance($current['visionDistance'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
     $current['characterSchemaVersion'] = 4;
@@ -2536,7 +2550,10 @@ function onlineAttackTargetVisible(PDO $connection, array &$records, array $map,
         $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
             ? $controllerId !== '' && !isset($isolated[$controllerId])
             : $controllerId === $accountId;
-        if ($sharesWithViewer) $origins[] = ['x' => $candidate['x'] ?? 50, 'y' => $candidate['y'] ?? 50];
+        if ($sharesWithViewer) {
+            $character = applicationDomainPayload($records, 'character:' . ($candidate['characterId'] ?? ''));
+            $origins[] = ['x' => $candidate['x'] ?? 50, 'y' => $candidate['y'] ?? 50, 'visionDistance' => onlineTokenVisionDistance($candidate, $character !== [] ? $character : null)];
+        }
     }
     $visionMask = applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50);
     return !applicationFogCoversPoint($fog, $target['x'] ?? 0, $target['y'] ?? 0)
@@ -2890,11 +2907,9 @@ function applyOnlineTokenResourceAdjustment(
             $relatedToken[$resource] = $current;
             $relatedToken[$maximumKey] = $maximum;
             $relatedToken['_updatedAt'] = $now;
-            if ($relatedTokenKey === $tokenKey) {
-                if ($pulse !== null) $relatedToken['resourcePulse'] = $pulse;
-                else unset($relatedToken['resourcePulse']);
-                $token = $relatedToken;
-            }
+            if ($pulse !== null) $relatedToken['resourcePulse'] = $pulse;
+            else unset($relatedToken['resourcePulse']);
+            if ($relatedTokenKey === $tokenKey) $token = $relatedToken;
             queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $relatedToken);
         }
     } elseif ($resourceChanged && $tokenKey !== '') {
@@ -3006,10 +3021,8 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
             $related['hp'] = $current;
             $related['maxHp'] = $maximum;
             $related['_updatedAt'] = $now;
-            if ($relatedTokenKey === $tokenKey && $applied > 0) {
-                $related['resourcePulse'] = $pulse;
-                $token = $related;
-            }
+            if ($applied > 0) $related['resourcePulse'] = $pulse;
+            if ($relatedTokenKey === $tokenKey) $token = $related;
             queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $related);
         }
     } else {
@@ -3083,7 +3096,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
         if ($linked === null) {
             return $token;
         }
-        foreach (['name', 'color', 'image', 'size'] as $key) {
+        foreach (['name', 'color', 'image', 'size', 'visionDistance'] as $key) {
             if (array_key_exists($key, $linked)) {
                 $token[$key] = $linked[$key];
             }
@@ -3120,6 +3133,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     $token['magicArmorCategory'] = $magicalArmor['category'];
     $token['magicArmor'] = $magicalArmor['percent'];
     $token['temporalPerception'] = normalizeOnlineTemporalPerception($character['temporalPerception'] ?? null);
+    $token['visionDistance'] = normalizeApplicationVisionDistance($character['visionDistance'] ?? null);
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
@@ -3333,7 +3347,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -3570,7 +3584,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $character = playerCharacterPatch($character, $patch);
             }
             queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
-            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'conditions', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'weaponText', 'weaponAttacks', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
+            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'conditions', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'weaponText', 'weaponAttacks', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
             if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {
                 $tokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
                 $records = array_replace($records, $tokenRecords);
@@ -3593,6 +3607,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
         } elseif (in_array($command, ['token.conditions.update', 'character.conditions.update'], true)) {
             if ($command === 'token.conditions.update' && !$isGm && ($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             $result = applyOnlineTokenConditionUpdate($connection, $records, $pending, $identity, $sceneId, $arguments, $isGm, $command === 'character.conditions.update');
+        } elseif ($command === 'tokens.layers') {
+            $result = applyOnlineTokenLayersCommand($connection, $records, $pending, $arguments, $isGm);
         } elseif ($command === 'tokens.transform') {
             $result = applyOnlineTokenGroupCommand($connection, $records, $pending, $arguments, $isGm);
         } elseif ($command === 'token.clone') {
@@ -4412,8 +4428,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $result['attack'] = $attack;
         } elseif ($command === 'ping') {
-            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity', 'map:' . $sceneId]));
             $activity = applicationDomainPayload($records, 'activity');
+            $pingLayerId = onlineTokenLayerId([], applicationDomainPayload($records, 'map:' . $sceneId));
+            if ((isset($arguments['sceneId']) && $arguments['sceneId'] !== $sceneId) || (isset($arguments['layerId']) && $arguments['layerId'] !== $pingLayerId)) rejectOnlineCommand($connection, 409, 'La scène ou le niveau du signal a changé.', 'stale_ping_context');
             $now = (int) floor(microtime(true) * 1000);
             $requestId = trim((string) ($arguments['requestId'] ?? ''));
             if ($requestId !== '' && preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
@@ -4439,6 +4457,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'x' => max(0.0, min(100.0, (float) ($arguments['x'] ?? 50))),
                 'y' => max(0.0, min(100.0, (float) ($arguments['y'] ?? 50))),
                 'sceneId' => $sceneId !== '' ? $sceneId : null,
+                'layerId' => onlineTokenLayerId([], applicationDomainPayload($records, 'map:' . $sceneId)),
                 'createdAt' => $now,
                 'expiresAt' => $now + 4200,
                 'author' => $isGm ? 'MJ' : (string) $identity['display_name'],

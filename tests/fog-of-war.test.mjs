@@ -39,7 +39,7 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function requestedOnlineStateRevision"));
   assert.match(projection, /\$fog = applicationActiveMapFogState/);
   assert.match(projection, /\$occlusion = applicationActiveMapOcclusionState/);
-  assert.match(projection, /\$visionMask = applicationComputeVisionMask/);
+  assert.match(projection, /\$visionMask = applicationComputeVisionRenderMask/);
   assert.match(projection, /\$viewerIsIsolated/);
   assert.match(projection, /\$vision\['shared'\]/);
   assert.match(projection, /\$isolatedPlayerIds\[\$controllerId\]/);

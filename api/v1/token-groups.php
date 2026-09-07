@@ -16,6 +16,7 @@ function onlineTokenOnActiveLayer(array $token, array $map): bool
 function normalizeOnlineSceneTokenIdentity(array $token, array $map): array
 {
     $token['layerId'] = onlineTokenLayerId($token, $map);
+    $token['visionDistance'] = normalizeApplicationVisionDistance($token['visionDistance'] ?? null);
     if (!empty($token['characterId']) && ($token['followCharacter'] ?? true) === false && empty($token['linkedTokenId'])) {
         $token['cloneSourceCharacterId'] = $token['cloneSourceCharacterId'] ?? $token['characterId'];
     }
@@ -152,6 +153,75 @@ function applyOnlineTokenGroupCommand(PDO $connection, array &$records, array &$
         $domains[] = ['key' => $key, 'revision' => (int) ($records[$key]['revision'] ?? 0) + (isset($pending[$key]) ? 1 : 0)];
     }
     return ['sceneId' => $sceneId, 'tokens' => $tokens, 'tokenDomains' => $domains, 'relocatedCount' => count(array_filter($placements, static fn (array $p): bool => $p['relocated']))];
+}
+
+function planApplicationTokenLayers(array $map, array $arguments): array
+{
+    $requests = $arguments['tokens'] ?? null;
+    $targetLayer = $arguments['targetLayerId'] ?? null;
+    if (!in_array($targetLayer, ['basement', 'ground', 'upper'], true)) throw new DomainException('Niveau de destination invalide.', 400);
+    if (!is_array($requests) || !applicationDomainArrayIsList($requests) || count($requests) < 1 || count($requests) > 200) throw new DomainException('Sélection de pions invalide.', 400);
+    $index = []; $ids = [];
+    foreach ($map['tokens'] ?? [] as $token) $index[$token['id']] = $token;
+    foreach ($requests as $request) {
+        $id = is_array($request) ? ($request['id'] ?? null) : null;
+        if (!is_string($id) || preg_match('/^[A-Za-z0-9_-]{1,80}$/D', $id) !== 1 || isset($ids[$id])) throw new DomainException('Identifiant de pion invalide ou dupliqué.', 400);
+        if (!in_array($request['layerId'] ?? null, ['basement', 'ground', 'upper'], true)) throw new DomainException('Niveau de départ invalide.', 400);
+        $ids[$id] = true;
+        $token = $index[$id] ?? null;
+        if ($token === null || onlineTokenLayerId($token, $map) !== $request['layerId']) throw new DomainException('Un pion a changé de niveau.', 409);
+        foreach (['x', 'y'] as $axis) {
+            if ((!is_int($request[$axis] ?? null) && !is_float($request[$axis] ?? null)) || !is_finite((float) $request[$axis]) || $request[$axis] < 0 || $request[$axis] > 100) throw new DomainException('Position de départ invalide.', 400);
+            if (abs((float) ($token[$axis] ?? 50) - $request[$axis]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
+        }
+    }
+    $destination = $map['layers'][$targetLayer] ?? ($targetLayer === onlineTokenLayerId([], $map) ? $map : []);
+    $destination['naturalWidth'] = (float) ($destination['naturalWidth'] ?? 1600) ?: 1600.0;
+    $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
+    $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $token): bool => onlineTokenLayerId($token, $map) === $targetLayer));
+    $placements = [];
+    foreach ($requests as $request) {
+        $token = $index[$request['id']];
+        $desired = ['x' => $request['x'], 'y' => $request['y']];
+        if ($request['layerId'] === $targetLayer) {
+            $placements[] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayer, 'relocated' => false];
+            continue;
+        }
+        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied);
+        if ($position === null) throw new DomainException('Aucune place libre près du groupe. Aucun pion n’a changé de niveau.', 409);
+        $placements[] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayer, 'relocated' => abs($position['x'] - $desired['x']) > 0.000001 || abs($position['y'] - $desired['y']) > 0.000001];
+        $occupied[] = array_replace($token, $position);
+    }
+    return $placements;
+}
+
+function applyOnlineTokenLayersCommand(PDO $connection, array &$records, array &$pending, array $arguments, bool $isGm): array
+{
+    if (!$isGm) rejectOnlineCommand($connection, 403, 'Les changements de niveau sont réservés au MJ.', 'gm_mode_required');
+    $sceneId = (string) ($arguments['sceneId'] ?? '');
+    if (!validApplicationDomainKey('map:' . $sceneId)) rejectOnlineCommand($connection, 400, 'Scène invalide.', 'invalid_scene');
+    $mapKey = 'map:' . $sceneId;
+    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]), onlineSceneTokenRecords($connection, $sceneId));
+    $map = applicationDomainPayload($records, $mapKey);
+    if (!is_int($arguments['mapRevision'] ?? null) || $arguments['mapRevision'] !== (int) ($records[$mapKey]['revision'] ?? 0)) rejectOnlineCommand($connection, 409, 'La carte ou ses murs ont changé. Réessayez après actualisation.', 'stale_map');
+    $map['tokens'] = [];
+    foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $map['tokens'][] = applicationDomainPayload($records, $key);
+    try { $placements = planApplicationTokenLayers($map, $arguments); }
+    catch (DomainException $error) { rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'token_layers_refused'); }
+    $tokens = []; $domains = [];
+    foreach ($placements as $placement) {
+        $key = onlineTokenDomainKey($sceneId, $placement['id']);
+        $token = applicationDomainPayload($records, $key);
+        if (onlineTokenLayerId($token, $map) !== $placement['layerId'] || abs(($token['x'] ?? 50) - $placement['x']) > 0.000001 || abs(($token['y'] ?? 50) - $placement['y']) > 0.000001) {
+            $token = array_replace($token, array_intersect_key($placement, array_flip(['x', 'y', 'layerId'])));
+            $token['_movedAt'] = (int) floor(microtime(true) * 1000);
+            queueOnlineDomainUpsert($pending, $records, $key, $token);
+        }
+        $tokens[] = [...$placement, '_movedAt' => $token['_movedAt'] ?? null];
+        $domains[] = ['key' => $key, 'revision' => (int) ($records[$key]['revision'] ?? 0) + (isset($pending[$key]) ? 1 : 0)];
+    }
+    return ['sceneId' => $sceneId, 'mapRevision' => (int) ($records[$mapKey]['revision'] ?? 0), 'tokens' => $tokens, 'tokenDomains' => $domains,
+        'relocatedCount' => count(array_filter($placements, static fn (array $p): bool => $p['relocated']))];
 }
 
 function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$pending, array $arguments, bool $isGm): array

@@ -568,7 +568,7 @@ function applicationResolveWallCollision(
     return ['x' => $desiredX, 'y' => $desiredY, 'blocked' => false];
 }
 
-function applicationComputeVisionMask(array $occlusion, array $origins, mixed $gridSize): array
+function applicationComputeVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
 {
     $walls = $occlusion['walls'];
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
@@ -590,14 +590,6 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $safeGridSize = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
-    $radiusNatural = $vision['distance'] * $safeGridSize;
-    $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
-    $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
-    $ellipseContainsCell = static function (int $column, int $row, float $centerX, float $centerY) use ($radiusX, $radiusY): bool {
-        $deltaX = ($column - $centerX) / $radiusX;
-        $deltaY = ($row - $centerY) / $radiusY;
-        return $deltaX * $deltaX + $deltaY * $deltaY <= 1.0 + 1.0e-12;
-    };
     $firstWallBodyReachesCell = static function (
         float $centerX,
         float $centerY,
@@ -646,6 +638,14 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) {
             continue;
         }
+        $radiusNatural = (normalizeApplicationVisionDistance($origin['visionDistance'] ?? $vision['distance']) + $distanceExtension) * $safeGridSize;
+        $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
+        $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
+        $ellipseContainsCell = static function (int $column, int $row, float $centerX, float $centerY) use ($radiusX, $radiusY): bool {
+            $deltaX = ($column - $centerX) / $radiusX;
+            $deltaY = ($row - $centerY) / $radiusY;
+            return $deltaX * $deltaX + $deltaY * $deltaY <= 1.0 + 1.0e-12;
+        };
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
         $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
         $clearCell($hiddenBytes, $centerX, $centerY);
@@ -745,6 +745,47 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
         'height' => $height,
         'mask' => rtrim(strtr(base64_encode($hiddenBytes), '+/', '-_'), '='),
     ];
+}
+
+function normalizeApplicationVisionDistance(mixed $value = null): int
+{
+    return is_numeric($value) && is_finite((float) $value)
+        ? max(1, min(XAR_VISION_MAXIMUM_DISTANCE, (int) round((float) $value)))
+        : XAR_VISION_DEFAULT_DISTANCE;
+}
+
+function applicationComputeVisionRenderMask(array $occlusion, array $origins, mixed $gridSize): array
+{
+    $strict = applicationComputeVisionMask($occlusion, $origins, $gridSize);
+    if (!$strict['enabled']) return $strict;
+    $width = $strict['width']; $height = $strict['height'];
+    $strictBytes = applicationWallMaskBytes($strict);
+    $opacity = str_repeat("\xff", $width * $height);
+    for ($index = 0; $index < $width * $height; ++$index) {
+        if (!applicationMaskBit($strictBytes, $index)) $opacity[$index] = "\0";
+    }
+    $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
+    $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
+    $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    foreach (array_slice($origins, 0, 40) as $origin) {
+        if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
+        $extended = applicationComputeVisionMask($occlusion, [$origin], $grid, 4);
+        $extendedBytes = applicationWallMaskBytes($extended);
+        $radius = normalizeApplicationVisionDistance($origin['visionDistance'] ?? $vision['distance']) * $grid;
+        $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
+        $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
+        for ($index = 0; $index < $width * $height; ++$index) {
+            if ($opacity[$index] === "\0" || applicationMaskBit($extendedBytes, $index)) continue;
+            $distance = hypot(($index % $width - $centerX) / max(1, $width - 1) * $naturalWidth,
+                (intdiv($index, $width) - $centerY) / max(1, $height - 1) * $naturalHeight);
+            $t = max(0.0, min(1.0, ($distance - $radius) / (4 * $grid)));
+            $alpha = (int) round(255 * $t * $t * (3 - 2 * $t));
+            if ($alpha < ord($opacity[$index])) $opacity[$index] = chr($alpha);
+        }
+    }
+    $strict['opacity'] = rtrim(strtr(base64_encode($opacity), '+/', '-_'), '=');
+    return $strict;
 }
 
 function applicationVisionCoversPoint(mixed $value, mixed $xPercent, mixed $yPercent): bool
@@ -849,6 +890,7 @@ function validApplicationWeaponAttacks(mixed $value): bool
 
 function validApplicationTokenDomain(array $payload): bool
 {
+    if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
         return false;
     }
@@ -1128,6 +1170,7 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
     if (isset($payload['characterSchema']) && (string) $payload['characterSchema'] !== 'xar-tsaroth.character-sheet') {
         return false;
     }
@@ -1317,6 +1360,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
         if ((string) ($payload['id'] ?? '') !== $expected || !validApplicationCharacterDomain($payload)) {
             sendError(400, 'Document de personnage incohérent.', 'invalid_character_domain');
         }
+        $payload['visionDistance'] = normalizeApplicationVisionDistance($payload['visionDistance'] ?? null);
     }
     if (str_starts_with($key, 'token:')) {
         $segments = explode(':', $key, 3);

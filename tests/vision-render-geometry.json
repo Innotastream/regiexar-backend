@@ -1,0 +1,187 @@
+[
+  {
+    "name": "clear individual",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": ""
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 25,
+        "y": 50,
+        "visionDistance": 8
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
+    "opacitySha256": "7f9d49efad4ff089f0b87c8b97992e08bf51b7c582f3090fb629dd637d88b1da"
+  },
+  {
+    "name": "mixed party radii",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": ""
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 25,
+        "y": 50,
+        "visionDistance": 2
+      },
+      {
+        "x": 65,
+        "y": 25,
+        "visionDistance": 10
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "7c2454ecf45aa43eb4c28150b4ae4a6113cf7bc82b4dd059a67f32781f954c68",
+    "opacitySha256": "6650cc333a4026a5909d44f321428fb83d3a507301aa089be5b1f761e11fc7a4"
+  },
+  {
+    "name": "wall stops halo",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": "AAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAAAAAA8AAAAAAAAADwAAAAAAAAAPAAAAAA"
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 25,
+        "y": 50,
+        "visionDistance": 8
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
+    "opacitySha256": "7f9d49efad4ff089f0b87c8b97992e08bf51b7c582f3090fb629dd637d88b1da"
+  },
+  {
+    "name": "first body not second",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": "AAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAAAAAAHBwAAAAAAAAcHAAAAAAAABwcAAAA"
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 25,
+        "y": 50,
+        "visionDistance": 8
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
+    "opacitySha256": "711864c9934b302f4affd094ed5b0f43a1a29f52c6ce9b6d91b8095d7202c5f6"
+  },
+  {
+    "name": "max distance extended",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": ""
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 5,
+        "y": 50,
+        "visionDistance": 40
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "98c888ad8ef12bfde596d617cfc5102eba4e04d7bf47711b3d004d3799cc5372",
+    "opacitySha256": "61958f54d678eee8d79e4ca5e61e5167f727e78470a743efc673f3d2fa213dbc"
+  },
+  {
+    "name": "origin inside wall",
+    "occlusion": {
+      "walls": {
+        "version": 1,
+        "width": 64,
+        "height": 64,
+        "mask": "AABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAAAAHAAAAAAAAAAcAAAAAAAAABwAAAAAAA"
+      },
+      "vision": {
+        "version": 1,
+        "enabled": true,
+        "distance": 32,
+        "shared": false,
+        "isolatedPlayerIds": []
+      },
+      "naturalWidth": 3200,
+      "naturalHeight": 3200
+    },
+    "origins": [
+      {
+        "x": 33.333333,
+        "y": 50,
+        "visionDistance": 8
+      }
+    ],
+    "gridSize": 50,
+    "strictSha256": "a52e8871d4914a198d59c4902de81a078f5db969cad4aed14d2f24a4aa4f0bc7",
+    "opacitySha256": "50e7843bce8bc3dfa4f304817c879f077034a655d65499ceaf9f732972b0b2e3"
+  }
+]
