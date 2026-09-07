@@ -1,10 +1,10 @@
-# Backend OVH — Régie du Seuil 0.15.2
+# Backend OVH — Régie du Seuil 0.15.3
 
-La **0.15.2 / client exact 3.2.2** est un candidat de sources en cours de qualification, non déployé. Build : `client-3-2-2-light-relays-wall-placement-and-token-controls-20260907-1`. La production revérifiée reste backend **0.15.1 / client exact 3.2.1**.
+La **0.15.3 / client annoncé 3.2.3** est un candidat en cours de qualification. Build : `client-3-2-3-map-edit-fixes-dual-login-release-20260907-1`. Le propriétaire autorise exceptionnellement les connexions des seules versions **3.2.2 et 3.2.3**. La dernière base de production contrôlée est 0.15.2 / 3.2.2 ; son contrôle de santé direct est indisponible pendant cette reprise.
 
 Ce candidat ajoute les sources de lumière par scène et niveau : 40 au maximum, portée de 1 à 40 cases (8 par défaut), relais déclenché uniquement par la vision stricte, hors murs et brouillard. Les chaînes sont déterministes ; les vues publiques et les attaques utilisent le même calcul et ne révèlent aucune source hors vue. Le MJ peut traverser les murs pendant un placement ; la destination doit rester libre pour toute l’empreinte du pion ou du groupe. Le trajet Joueur demeure soumis aux collisions. La taille par défaut passe à 40, sans modifier les tailles explicites. Les schémas session **16**, fiche **4**, domaines **1** et MySQL **18** restent inchangés.
 
-PHP est indisponible dans l’environnement de préparation. L’autorisation du propriétaire permet de publier les sources pour exécuter la syntaxe PHP réelle et les suites PHP dans le workflow `backend-check` du commit exact ; les tests Node ne les remplacent pas. Cette validation ne déploie pas OVH. La remise du MSIX exige sa qualification puis le contrôle public **3.2.1 / 3.2.2 / 3.2.3 = 426 / 401 / 426** après le déploiement demandé. Statut conservé : **livraison incomplète — alerte launcher non recettée**.
+PHP est indisponible dans l’environnement de préparation. L’autorisation du propriétaire permet de publier les sources pour exécuter la syntaxe PHP réelle et les suites PHP dans le workflow `backend-check` du commit exact ; les tests Node ne les remplacent pas. Cette validation ne déploie pas OVH. La remise du MSIX exige sa qualification puis le contrôle public **3.2.1 / 3.2.2 / 3.2.3 / 3.2.4 = 426 / 401 / 401 / 426** après le déploiement demandé. Statut conservé : **livraison incomplète — alerte launcher non recettée**.
 
 ### Historique 0.15.1
 
@@ -139,9 +139,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de version de l’application n’est plus pilotée par le bloc privé `client`. Son autorité unique est `XAR_RELEASE_ANNOUNCEMENT_VERSION`, reflétée par `announcedApplicationVersion` dans le manifeste public du dépôt. La santé expose toujours `enforce=true`, `exactVersion=true` et la même version dans `minimumVersion` et `latestVersion`.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. L’exception explicite de cette livraison admet seulement `3.2.2` et `3.2.3`, avec `enforce=true`, `exactVersion=false`, `minimumVersion=3.2.2`, `latestVersion=3.2.3` et `allowedVersions=["3.2.2","3.2.3"]`. Ce n’est pas une plage ouverte : les versions antérieures, futures et suffixées restent refusées.
 
-Règle de livraison permanente demandée par le propriétaire : tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production, qu'il ait indiqué vouloir l'utiliser ou non. Avant cette remise, mettre `XAR_RELEASE_ANNOUNCEMENT_VERSION` et `announcedApplicationVersion` à la version applicative exacte, incrémenter la version backend, exécuter les contrôles, déployer le backend dans la même livraison et vérifier publiquement la matrice ancienne/exacte/future `426/401/426`. Cette annonce et son verrou exact sont effectués même si Partner Center ne contient pas encore le paquet. Le patch précédemment annoncé devient immédiatement interdit après le déploiement ; il est interdit de remettre un MSIX plus récent que la santé publique.
+Cette exception remplace pour cette livraison le verrou habituel sur une version unique. Le launcher 3.2.2 peut se reconnecter et propose la mise à jour 3.2.3 ; ses anciens défauts locaux restent présents jusqu’à son remplacement. L’authentification, les droits et le renouvellement de génération des sessions demeurent obligatoires pour les deux versions.
+
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.1 / 3.2.2 / 3.2.3 / 3.2.4 = 426 / 401 / 401 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. La prochaine évolution de la politique doit redéfinir explicitement sa liste ; l’exception n’autorise aucune version supplémentaire.
 
 ## Comptes et sessions
 

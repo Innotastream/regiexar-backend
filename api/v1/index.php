@@ -3,9 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.2';
-const XAR_BACKEND_BUILD = 'client-3-2-2-light-relays-wall-placement-and-token-controls-20260907-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.2';
+const XAR_BACKEND_VERSION = '0.15.3';
+const XAR_BACKEND_BUILD = 'client-3-2-3-map-edit-fixes-dual-login-release-20260907-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.3';
+// Exception explicitement demandée : aucune autre version n'est admise.
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.2', '3.2.3'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 18;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -125,13 +127,25 @@ function privateConfig(): ?array
 function clientPolicy(array $configuration): array
 {
     $announcedVersion = XAR_RELEASE_ANNOUNCEMENT_VERSION;
-    if (preg_match('/^\d+\.\d+\.\d+$/', $announcedVersion) !== 1) {
+    $allowedVersions = XAR_RELEASE_ALLOWED_CLIENT_VERSIONS;
+    if (preg_match('/^\d+\.\d+\.\d+$/D', $announcedVersion) !== 1
+        || !is_array($allowedVersions) || $allowedVersions === [] || count($allowedVersions) > 2
+        || count(array_unique($allowedVersions, SORT_STRING)) !== count($allowedVersions)
+        || !in_array($announcedVersion, $allowedVersions, true)) {
         sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');
     }
+    foreach ($allowedVersions as $version) {
+        if (!is_string($version) || preg_match('/^\d+\.\d+\.\d+$/D', $version) !== 1
+            || version_compare($version, $announcedVersion, '>')) {
+            sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');
+        }
+    }
+    usort($allowedVersions, 'version_compare');
     return [
         'enforce' => true,
-        'exactVersion' => true,
-        'minimumVersion' => $announcedVersion,
+        'exactVersion' => count($allowedVersions) === 1,
+        'allowedVersions' => $allowedVersions,
+        'minimumVersion' => $allowedVersions[0],
         'latestVersion' => $announcedVersion,
         'storeId' => '9N5N5M67N704',
     ];
@@ -160,7 +174,7 @@ function requireSupportedClient(PDO $connection, array $configuration): void
 {
     $policy = clientPolicy($configuration);
     $provided = trim((string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? ''));
-    if (hash_equals((string) $policy['latestVersion'], $provided)) {
+    if (in_array($provided, $policy['allowedVersions'], true)) {
         return;
     }
     if (drainingBackendSession($connection)) {
@@ -170,7 +184,8 @@ function requireSupportedClient(PDO $connection, array $configuration): void
         'ok' => false,
         'error' => 'Cette version de Xar-Tsaroth Régie est interdite. Installez la version annoncée.',
         'code' => 'client_update_required',
-        'exactVersion' => true,
+        'exactVersion' => $policy['exactVersion'],
+        'allowedVersions' => $policy['allowedVersions'],
         'minimumVersion' => $policy['minimumVersion'],
         'latestVersion' => $policy['latestVersion'],
         'storeId' => $policy['storeId'],
