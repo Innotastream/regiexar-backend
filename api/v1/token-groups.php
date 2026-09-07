@@ -25,7 +25,7 @@ function normalizeOnlineSceneTokenIdentity(array $token, array $map): array
 
 function onlineGroupTokenSize(array $token): float
 {
-    return max(10.0, min(220.0, (float) ($token['size'] ?? 50)));
+    return max(10.0, min(220.0, (float) ($token['size'] ?? 40)));
 }
 
 function onlineGroupTranslation(array $tokens, float $dx, float $dy, array $map): array
@@ -78,7 +78,7 @@ function nearestOnlineGroupPosition(array $desired, array $token, array $map, ar
     $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map): bool {
         if (!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree)) return false;
         if ($start === null) return true;
-        $resolved = applicationResolveWallCollision($map['walls'] ?? null, $start, $point, $token['size'] ?? 50, $width, $height, true);
+        $resolved = applicationResolveWallCollision($map['walls'] ?? null, $start, $point, $token['size'] ?? 40, $width, $height, true);
         return !$resolved['blocked'] && abs($resolved['x'] - $point['x']) < 0.000001 && abs($resolved['y'] - $point['y']) < 0.000001;
     };
     $heap = new SplPriorityQueue();
@@ -129,19 +129,14 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
     $placements = []; $blocked = [];
     foreach ($tokens as $token) {
         $desired = ['x' => round($token['x'] + $delta['x'], 4), 'y' => round($token['y'] + $delta['y'], 4)];
-        $resolved = $targetLayerId === $layerId
-            ? applicationResolveWallCollision($destination['walls'] ?? null, $token, $desired, $token['size'] ?? 50, $destination['naturalWidth'], $destination['naturalHeight'], true)
-            : [...$desired, 'blocked' => false];
-        if (!$resolved['blocked'] && onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree)) {
+        // MJ-only placement ignores the path, never a wall at the destination.
+        if (onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree)) {
             $placements[$token['id']] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayerId, 'relocated' => false];
             $occupied[] = array_replace($token, $desired);
-        } else $blocked[] = [$token, $desired, $resolved];
+        } else $blocked[] = [$token, $desired];
     }
-    foreach ($blocked as [$token, $desired, $resolved]) {
-        $start = $targetLayerId === $layerId ? $token : null;
-        $landing = $start !== null && $resolved['blocked'] && $wallFree($desired, $token) ? $resolved : $desired;
-        $position = nearestOnlineGroupPosition($landing, $token, $destination, $occupied, $start)
-            ?? ($start !== null ? nearestOnlineGroupPosition($resolved, $token, $destination, $occupied, $start) : null);
+    foreach ($blocked as [$token, $desired]) {
+        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied);
         if ($position === null) throw new DomainException('Aucune place libre et accessible près du groupe. Aucun pion n’a été déplacé.', 409);
         $placements[$token['id']] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayerId, 'relocated' => true];
         $occupied[] = array_replace($token, $position);

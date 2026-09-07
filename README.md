@@ -1,10 +1,14 @@
-# Backend OVH — Régie du Seuil 0.15.1
+# Backend OVH — Régie du Seuil 0.15.2
 
-La **0.15.1 / client exact 3.2.1** est un candidat de sources destiné à la validation GitHub, **non déployé**. Son build est `client-3-2-1-scene-isolation-dialog-and-placement-fixes-20260907-1`. La dernière production vérifiée reste backend **0.15.0 / client exact 3.2.0** ; ces métadonnées ne prouvent aucun basculement OVH ni remise de MSIX.
+La **0.15.2 / client exact 3.2.2** est un candidat de sources en cours de qualification, non déployé. Build : `client-3-2-2-light-relays-wall-placement-and-token-controls-20260907-1`. La production revérifiée reste backend **0.15.1 / client exact 3.2.1**.
 
-Ce candidat accompagne l’isolation des nouvelles scènes et la correction des fermetures de dialogues du client 3.2.1. La synchronisation d’une fiche met à jour uniquement les pions existants, sans créer ni transférer automatiquement de pions. Côté PHP, le niveau `layerId` suit les coordonnées lors de la protection contre une édition périmée ; les formats historiques sans niveau ne reçoivent pas de valeur arbitraire. Les placements groupés doivent respecter les autres pions et les bords de la carte, en plus des murs. Les schémas session **16**, fiche **4**, domaines **1** et MySQL **18** sont conservés : aucune migration SQL 019.
+Ce candidat ajoute les sources de lumière par scène et niveau : 40 au maximum, portée de 1 à 40 cases (8 par défaut), relais déclenché uniquement par la vision stricte, hors murs et brouillard. Les chaînes sont déterministes ; les vues publiques et les attaques utilisent le même calcul et ne révèlent aucune source hors vue. Le MJ peut traverser les murs pendant un placement ; la destination doit rester libre pour toute l’empreinte du pion ou du groupe. Le trajet Joueur demeure soumis aux collisions. La taille par défaut passe à 40, sans modifier les tailles explicites. Les schémas session **16**, fiche **4**, domaines **1** et MySQL **18** restent inchangés.
 
-PHP est indisponible dans l’environnement de préparation. Le propriétaire autorise la publication de ces sources pour exécuter la syntaxe PHP réelle et les suites PHP dans le workflow `backend-check` du commit exact ; les tests Node ne les remplacent pas. Cette validation ne déploie pas OVH. Aucune remise de MSIX n’est autorisée avant qualification complète et, après un déploiement demandé, contrôle public de la matrice **3.2.0 / 3.2.1 / 3.2.2 = 426 / 401 / 426**. Statut conservé : **livraison incomplète — alerte launcher non recettée**.
+PHP est indisponible dans l’environnement de préparation. L’autorisation du propriétaire permet de publier les sources pour exécuter la syntaxe PHP réelle et les suites PHP dans le workflow `backend-check` du commit exact ; les tests Node ne les remplacent pas. Cette validation ne déploie pas OVH. La remise du MSIX exige sa qualification puis le contrôle public **3.2.1 / 3.2.2 / 3.2.3 = 426 / 401 / 426** après le déploiement demandé. Statut conservé : **livraison incomplète — alerte launcher non recettée**.
+
+### Historique 0.15.1
+
+La 0.15.1 conserve le niveau avec les coordonnées lors des éditions concurrentes et contrôle l’occupation et les bords pour les groupes. La 3.2.1 associée corrige les scènes neuves et les fermetures de dialogues lors d’une sélection de texte. Son workflow PHP est validé et sa production a été contrôlée avant la continuation.
 
 ### Historique 0.15.0
 

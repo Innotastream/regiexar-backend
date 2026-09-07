@@ -8,7 +8,7 @@ async function source(path) {
 
 test("le contrat backend borne les masques de brume, murs et vision par niveau", async () => {
   const domains = await source("api/v1/domains.php");
-  const vision = domains.slice(domains.indexOf("function applicationComputeVisionMask"), domains.indexOf("function applicationVisionCoversPoint"));
+  const vision = domains.slice(domains.indexOf("function applicationComputeBaseVisionMask"), domains.indexOf("function applicationVisionCoversPoint"));
   assert.match(domains, /XAR_FOG_RASTER_MINIMUM = 32/);
   assert.match(domains, /XAR_FOG_RASTER_MAXIMUM = 512/);
   assert.match(domains, /XAR_FOG_MASK_MAXIMUM_LENGTH = 44000/);
@@ -50,15 +50,17 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
   assert.match(projection, /\$map\['fog'\] = \$fog/);
   assert.match(projection, /\$map\['visionMask'\] = \$visionMask/);
   assert.match(projection, /\|\| \$pointIsHidden\(\$ping\['x'\]/);
-  assert.match(projection, /'size' => \(float\) \(\$token\['size'\] \?\? 50\)/);
+  assert.match(projection, /'size' => \(float\) \(\$token\['size'\] \?\? 40\)/);
 });
 
-test("la commande de déplacement recalcule tout le trajet avec le mur autoritaire", async () => {
+test("la commande de déplacement arbitre le trajet Joueur et la destination MJ avec le mur autoritaire", async () => {
   const online = await source("api/v1/online.php");
   const movement = online.slice(online.indexOf("} elseif ($command === 'token.move')"), online.indexOf("} elseif ($command === 'token.resource.adjust')"));
   assert.match(movement, /\$mapKey = 'map:' \. \$moveSceneId/);
   assert.match(movement, /\$moveSceneId = \$requestedSceneId/);
-  assert.match(movement, /\$isGm\s*\n\s*\);/);
+  assert.match(movement, /\$isGm \? applicationResolveGmTokenPlacement\(/);
+  assert.match(movement, /\) : applicationResolveWallCollision\(/);
+  assert.match(movement, /false\s*\n\s*\);/);
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map\)/);
   assert.match(movement, /applicationResolveWallCollision/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);

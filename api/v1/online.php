@@ -929,6 +929,9 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $visionMask = applicationComputeVisionRenderMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
     $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
         || applicationVisionCoversPoint($visionMask, $x, $y);
+    $visibleLights = array_values(array_filter($occlusion['lights'], static fn (array $light): bool =>
+        $light['enabled'] && !applicationLightCenterBlocked($occlusion, $light)
+        && !$pointIsHidden($light['x'], $light['y'])));
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
         if (!is_array($token) || ($token['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($token, $map)) {
@@ -953,7 +956,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'frameVariant' => normalizeOnlineTokenFrameVariant($token['frameVariant'] ?? null, $allied),
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
-            'size' => (float) ($token['size'] ?? 50),
+            'size' => (float) ($token['size'] ?? 40),
             'visionDistance' => onlineTokenVisionDistance($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
             'initiative' => $token['initiative'] ?? null,
             'conditions' => normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? ''),
@@ -1012,6 +1015,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative = is_array($initiative) ? $initiative : [];
     unset($map['layers']);
     unset($map['walls']);
+    // These six normalized fields are the only public light metadata.
+    $map['lights'] = $visibleLights;
     if (is_array($fog)) {
         $map['fog'] = $fog;
     } else {
@@ -3654,14 +3659,21 @@ function commandOnlineState(PDO $connection, array $configuration): never
             ];
             $map = applicationDomainPayload($records, $mapKey);
             $occlusion = applicationActiveMapOcclusionState($map);
-            $resolved = applicationResolveWallCollision(
+            $resolved = $isGm ? applicationResolveGmTokenPlacement(
                 $occlusion['walls'],
                 ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)],
                 $desired,
-                $token['size'] ?? 50,
+                $token['size'] ?? 40,
+                $occlusion['naturalWidth'],
+                $occlusion['naturalHeight']
+            ) : applicationResolveWallCollision(
+                $occlusion['walls'],
+                ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)],
+                $desired,
+                $token['size'] ?? 40,
                 $occlusion['naturalWidth'],
                 $occlusion['naturalHeight'],
-                $isGm
+                false
             );
             $positionChanged = (float) ($token['x'] ?? 50) !== (float) $resolved['x']
                 || (float) ($token['y'] ?? 50) !== (float) $resolved['y'];

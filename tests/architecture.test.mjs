@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.15.1 conserve la file Codex et porte le schéma 16", async () => {
+test("le backend 0.15.2 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.1'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-1-scene-isolation-dialog-and-placement-fixes-20260907-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.2'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-2-light-relays-wall-placement-and-token-controls-20260907-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -93,8 +93,8 @@ test("le backend 0.15.1 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.1");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.1");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.2");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 18);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -119,7 +119,7 @@ test("les calques PV sont publics en lecture seule, stables et gérés uniquemen
   assert.match(rules, /\^health\/\[A-Za-z0-9_-\]\{43\}/);
   assert.match(online, /'playerControlled' => \$allied/);
   assert.match(online, /'usesCharacterSheet' => \(\$token\['followCharacter'\]/);
-  assert.match(online, /'size' => \(float\) \(\$token\['size'\] \?\? 50\)/);
+  assert.match(online, /'size' => \(float\) \(\$token\['size'\] \?\? 40\)/);
 });
 
 test("les jets sans token restent propriétaires et Chance force un seul d100 brut", async () => {
@@ -244,8 +244,8 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
     read("README.md"),
     read("manifest.json")
   ]);
-  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.2\.1'/);
-  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.2.1");
+  assert.match(index, /XAR_RELEASE_ANNOUNCEMENT_VERSION = '3\.2\.2'/);
+  assert.equal(JSON.parse(manifestSource).announcedApplicationVersion, "3.2.2");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -259,9 +259,9 @@ test("seule la version MSIX annoncée peut utiliser l’API", async () => {
   assert.match(enforcement, /'exactVersion' => true/);
   assert.doesNotMatch(enforcement, /version_compare/);
   const announcedVersion = JSON.parse(manifestSource).announcedApplicationVersion;
-  assert.equal("3.2.0" === announcedVersion, false, "le MSIX précédent doit être refusé");
-  assert.equal("3.2.1" === announcedVersion, true, "seul le MSIX annoncé doit franchir le verrou");
-  assert.equal("3.2.2" === announcedVersion, false, "un MSIX futur non annoncé doit être refusé");
+  assert.equal("3.2.1" === announcedVersion, false, "le MSIX précédent doit être refusé");
+  assert.equal("3.2.2" === announcedVersion, true, "seul le MSIX annoncé doit franchir le verrou");
+  assert.equal("3.2.3" === announcedVersion, false, "un MSIX futur non annoncé doit être refusé");
   assert.match(readme, /tout MSIX remis à l'utilisateur devient immédiatement l'unique version exploitable en production/);
   assert.match(readme, /matrice ancienne\/exacte\/future `426\/401\/426`/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);

@@ -17,6 +17,7 @@ const XAR_WALL_MASK_VERSION = 1;
 const XAR_VISION_SETTINGS_VERSION = 1;
 const XAR_VISION_DEFAULT_DISTANCE = 8;
 const XAR_VISION_MAXIMUM_DISTANCE = 40;
+const XAR_MAP_LIGHT_MAXIMUM = 40;
 const XAR_PENDING_ATTACK_MAXIMUM = 100;
 const XAR_ATTACK_RECEIPT_MAXIMUM = 1024;
 const XAR_RESOURCE_RECEIPT_MAXIMUM = 1024;
@@ -194,6 +195,9 @@ function validApplicationFogState(mixed $value): bool
 
 function validApplicationMapFogState(array $map): bool
 {
+    if (array_key_exists('lights', $map) && !validApplicationMapLights($map['lights'])) {
+        return false;
+    }
     if (array_key_exists('fog', $map) && !validApplicationFogState($map['fog'])) {
         return false;
     }
@@ -214,6 +218,7 @@ function validApplicationMapFogState(array $map): bool
             || !is_array($layer)
             || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))
             || (array_key_exists('walls', $layer) && !validApplicationWallState($layer['walls']))
+            || (array_key_exists('lights', $layer) && !validApplicationMapLights($layer['lights']))
             || (array_key_exists('vision', $layer) && !validApplicationVisionSettings($layer['vision']))) {
             return false;
         }
@@ -228,6 +233,43 @@ function applicationActiveMapFogState(array $map): mixed
         : 'ground';
     $activeLayer = is_array($map['layers'][$activeLayerId] ?? null) ? $map['layers'][$activeLayerId] : [];
     return array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null);
+}
+
+function validApplicationMapLights(mixed $value): bool
+{
+    if (!validApplicationDomainObjectList($value, XAR_MAP_LIGHT_MAXIMUM)) return false;
+    $seen = [];
+    foreach ($value as $light) {
+        $id = $light['id'] ?? null;
+        if (!validApplicationDomainIdentifier($id, 80)
+            || isset($seen[$id])
+            || !is_string($light['name'] ?? null)
+            || preg_match('/\A[^\x00]{1,80}\z/u', $light['name']) !== 1
+            || trim($light['name']) === ''
+            || !validApplicationDomainNumber($light['x'] ?? null, 0, 100)
+            || !validApplicationDomainNumber($light['y'] ?? null, 0, 100)
+            || (array_key_exists('visionDistance', $light)
+                && (!is_int($light['visionDistance']) || $light['visionDistance'] < 1 || $light['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE))
+            || (array_key_exists('enabled', $light) && !is_bool($light['enabled']))) return false;
+        $seen[$id] = true;
+    }
+    return true;
+}
+
+function normalizeApplicationMapLights(mixed $value): array
+{
+    // Malformed persisted lists fail closed; writes reject the entire map first.
+    if (!validApplicationMapLights($value)) return [];
+    $lights = array_map(static fn (array $light): array => [
+        'id' => $light['id'],
+        'name' => trim($light['name']),
+        'x' => (float) $light['x'],
+        'y' => (float) $light['y'],
+        'visionDistance' => $light['visionDistance'] ?? XAR_VISION_DEFAULT_DISTANCE,
+        'enabled' => $light['enabled'] ?? true,
+    ], $value);
+    usort($lights, static fn (array $left, array $right): int => strcmp($left['id'], $right['id']));
+    return $lights;
 }
 
 function applicationFogCoversPoint(mixed $value, mixed $xPercent, mixed $yPercent): bool
@@ -385,6 +427,8 @@ function applicationActiveMapOcclusionState(array $map): array
     }
     return [
         'walls' => $walls,
+        'fog' => array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null),
+        'lights' => normalizeApplicationMapLights(array_key_exists('lights', $activeLayer) ? $activeLayer['lights'] : ($map['lights'] ?? [])),
         'vision' => normalizeApplicationVisionSettings($activeLayer['vision'] ?? ($map['vision'] ?? null)),
         'naturalWidth' => is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0,
         'naturalHeight' => is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0,
@@ -437,6 +481,21 @@ function applicationWallCollisionAt(
     return false;
 }
 
+function applicationResolveGmTokenPlacement(
+    mixed $rawWalls,
+    array $start,
+    array $desired,
+    mixed $tokenSize,
+    mixed $naturalWidth,
+    mixed $naturalHeight
+): array {
+    // MJ placement can cross walls; the final footprint still has to be clear.
+    $checked = applicationResolveWallCollision($rawWalls, $desired, $desired, $tokenSize, $naturalWidth, $naturalHeight, false);
+    return $checked['blocked']
+        ? ['x' => max(0.0, min(100.0, (float) ($start['x'] ?? 0))), 'y' => max(0.0, min(100.0, (float) ($start['y'] ?? 0))), 'blocked' => true]
+        : $checked;
+}
+
 function applicationResolveWallCollision(
     mixed $rawWalls,
     array $start,
@@ -457,7 +516,7 @@ function applicationResolveWallCollision(
     $height = (int) $rawWalls['height'];
     $safeNaturalWidth = is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0;
     $safeNaturalHeight = is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0;
-    $diameter = max(10.0, min(220.0, is_numeric($tokenSize) ? (float) $tokenSize : 50.0));
+    $diameter = max(10.0, min(220.0, is_numeric($tokenSize) ? (float) $tokenSize : 40.0));
     $startX = max(0.0, min(100.0, (float) ($start['x'] ?? 0)));
     $startY = max(0.0, min(100.0, (float) ($start['y'] ?? 0)));
     $desiredX = max(0.0, min(100.0, (float) ($desired['x'] ?? 0)));
@@ -568,7 +627,7 @@ function applicationResolveWallCollision(
     return ['x' => $desiredX, 'y' => $desiredY, 'blocked' => false];
 }
 
-function applicationComputeVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
+function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
 {
     $walls = $occlusion['walls'];
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
@@ -754,9 +813,60 @@ function normalizeApplicationVisionDistance(mixed $value = null): int
         : XAR_VISION_DEFAULT_DISTANCE;
 }
 
+function applicationLightCenterBlocked(array $occlusion, array $light): bool
+{
+    if (applicationFogCoversPoint($occlusion['fog'] ?? null, $light['x'], $light['y'])) return true;
+    $walls = $occlusion['walls'];
+    $bytes = applicationWallMaskBytes($walls);
+    if ($bytes === null) return true;
+    $column = (int) round((float) $light['x'] / 100 * ($walls['width'] - 1));
+    $row = (int) round((float) $light['y'] / 100 * ($walls['height'] - 1));
+    return applicationMaskBit($bytes, $row * $walls['width'] + $column);
+}
+
+function applicationResolveVisionRelays(array $occlusion, array $origins, mixed $gridSize): array
+{
+    $origins = array_slice($origins, 0, 40);
+    $mask = applicationComputeBaseVisionMask($occlusion, $origins, $gridSize);
+    $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => []];
+    if (!$mask['enabled'] || $origins === []) return $result;
+    $bytes = applicationWallMaskBytes($mask);
+    if ($bytes === null) return $result;
+    $remaining = array_values(array_filter(normalizeApplicationMapLights($occlusion['lights'] ?? []),
+        static fn (array $light): bool => $light['enabled'] && !applicationLightCenterBlocked($occlusion, $light)));
+    // Hidden bits combine with AND: each new relay contributes exactly once.
+    // Initial token origins keep their own forty slots; lights never displace them.
+    do {
+        $changed = false;
+        foreach ($remaining as $index => $light) {
+            $column = (int) round($light['x'] / 100 * ($mask['width'] - 1));
+            $row = (int) round($light['y'] / 100 * ($mask['height'] - 1));
+            if (applicationMaskBit($bytes, $row * $mask['width'] + $column)) continue;
+            $origin = ['x' => $light['x'], 'y' => $light['y'], 'visionDistance' => $light['visionDistance']];
+            $addition = applicationComputeBaseVisionMask($occlusion, [$origin], $gridSize);
+            $additionBytes = applicationWallMaskBytes($addition);
+            if ($additionBytes === null) continue;
+            $bytes = $bytes & $additionBytes;
+            $result['origins'][] = $origin;
+            $result['activatedLightIds'][] = $light['id'];
+            unset($remaining[$index]);
+            $changed = true;
+        }
+    } while ($changed && $remaining !== []);
+    $mask['mask'] = rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    $result['mask'] = $mask;
+    return $result;
+}
+
+function applicationComputeVisionMask(array $occlusion, array $origins, mixed $gridSize): array
+{
+    return applicationResolveVisionRelays($occlusion, $origins, $gridSize)['mask'];
+}
+
 function applicationComputeVisionRenderMask(array $occlusion, array $origins, mixed $gridSize): array
 {
-    $strict = applicationComputeVisionMask($occlusion, $origins, $gridSize);
+    $resolved = applicationResolveVisionRelays($occlusion, $origins, $gridSize);
+    $strict = $resolved['mask'];
     if (!$strict['enabled']) return $strict;
     $width = $strict['width']; $height = $strict['height'];
     $strictBytes = applicationWallMaskBytes($strict);
@@ -768,9 +878,9 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
-    foreach (array_slice($origins, 0, 40) as $origin) {
+    foreach ($resolved['origins'] as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
-        $extended = applicationComputeVisionMask($occlusion, [$origin], $grid, 4);
+        $extended = applicationComputeBaseVisionMask($occlusion, [$origin], $grid, 4);
         $extendedBytes = applicationWallMaskBytes($extended);
         $radius = normalizeApplicationVisionDistance($origin['visionDistance'] ?? $vision['distance']) * $grid;
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);

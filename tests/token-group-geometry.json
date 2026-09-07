@@ -162,7 +162,7 @@
     ]
   },
   {
-    "name": "no-wall-crossing",
+    "name": "gm-wall-crossing-clear-destination",
     "map": {
       "viewLocked": true,
       "activeLayerId": "ground",
@@ -213,17 +213,17 @@
     "expected": [
       {
         "id": "a",
-        "x": 47.3269,
+        "x": 60,
         "y": 30,
         "layerId": "ground",
-        "relocated": true
+        "relocated": false
       },
       {
         "id": "b",
-        "x": 47.3277,
+        "x": 65,
         "y": 40,
         "layerId": "ground",
-        "relocated": true
+        "relocated": false
       }
     ]
   }

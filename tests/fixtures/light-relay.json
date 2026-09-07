@@ -1,0 +1,808 @@
+{
+  "options": {
+    "naturalWidth": 1000,
+    "naturalHeight": 1000,
+    "gridSize": 50
+  },
+  "vision": {
+    "version": 1,
+    "enabled": true,
+    "distance": 8,
+    "shared": false,
+    "isolatedPlayerIds": []
+  },
+  "walls": {
+    "version": 1,
+    "width": 32,
+    "height": 32,
+    "mask": ""
+  },
+  "cases": [
+    {
+      "name": "chaine-relais",
+      "strictSha256": "80c5e0d8859d5ebf1b4beba83384a6ef946c0f0b2290acc74e8c1f4506354c01",
+      "opacitySha256": "df23fd8c9f69b381afa3a6dff5995d3f69357d4f770eed2d004b5c23dd55b2a0",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 3
+        }
+      ],
+      "lights": [
+        {
+          "id": "b",
+          "name": "b",
+          "x": 35,
+          "y": 50,
+          "visionDistance": 4,
+          "enabled": true
+        },
+        {
+          "id": "a",
+          "name": "a",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 4,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 50,
+          "y": 50,
+          "visible": true
+        },
+        {
+          "x": 65,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "halo-ne-declenche-pas",
+      "strictSha256": "4749bd8251120b4cded738b3f33e55ab2c8adc67446a340d6a1042b081ba12b9",
+      "opacitySha256": "7ec499b28b3811481dc0624499e3b72b5b446a643ec28bddc42bca7fa197ab9d",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 2
+        }
+      ],
+      "lights": [
+        {
+          "id": "halo",
+          "name": "halo",
+          "x": 30,
+          "y": 50,
+          "visionDistance": 8,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 30,
+          "y": 50,
+          "visible": false
+        },
+        {
+          "x": 65,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "aucune-origine",
+      "strictSha256": "e9175db65a9789096ca9cb5524d3abc2107df03e3c9ba3af1aca628f9c5d3bd2",
+      "opacitySha256": "5f4ecdb7b71c3e403983fe405cddcdc2f2576b655fdb3e80d94a6f7c32e58bc2",
+      "origins": [],
+      "lights": [
+        {
+          "id": "a",
+          "name": "a",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 40,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 20,
+          "y": 50,
+          "visible": false
+        },
+        {
+          "x": 50,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "mur-interrompt-relais",
+      "strictSha256": "dee41e02d504260fd771e78487f276ea5b8f9f58651540da395dc2b3be1c2649",
+      "opacitySha256": "57e248b11a7d6f255f8bcecccb57a138627625563c3e3fd404800e752dccd0e3",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 3
+        }
+      ],
+      "walls": {
+        "version": 1,
+        "width": 32,
+        "height": 32,
+        "mask": "AAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAA"
+      },
+      "lights": [
+        {
+          "id": "a",
+          "name": "a",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 10,
+          "enabled": true
+        },
+        {
+          "id": "b",
+          "name": "b",
+          "x": 45,
+          "y": 50,
+          "visionDistance": 10,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 55,
+          "y": 50,
+          "visible": false
+        },
+        {
+          "x": 20,
+          "y": 50,
+          "visible": true
+        }
+      ]
+    },
+    {
+      "name": "lumiere-dans-mur",
+      "strictSha256": "ecc9f2f2c98bcf1efecf018e2d82637497c2ffd145871a7608144e4cf0a9b2ef",
+      "opacitySha256": "3e2d556ec0105bde093714fff50abe9b5c1e8eb1d5fa4fe199f4805719fa0641",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 10
+        }
+      ],
+      "walls": {
+        "version": 1,
+        "width": 32,
+        "height": 32,
+        "mask": "AAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAA"
+      },
+      "lights": [
+        {
+          "id": "wall",
+          "name": "wall",
+          "x": 32.25806451612903,
+          "y": 50,
+          "visionDistance": 10,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 55,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "brouillard-interdit-relais",
+      "strictSha256": "95980dc0f0854a6fa39c0d6f584cafd751d0e886b341898c905454caaad80507",
+      "opacitySha256": "2c2f074a07adf40f5904ebe40ca68eb504e83e80524ad1714254f709f0d3d55d",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 3
+        }
+      ],
+      "fog": {
+        "version": 1,
+        "width": 32,
+        "height": 32,
+        "mask": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "enabled": true
+      },
+      "lights": [
+        {
+          "id": "a",
+          "name": "a",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 10,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 55,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "lumiere-desactivee",
+      "strictSha256": "95980dc0f0854a6fa39c0d6f584cafd751d0e886b341898c905454caaad80507",
+      "opacitySha256": "2c2f074a07adf40f5904ebe40ca68eb504e83e80524ad1714254f709f0d3d55d",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 3
+        }
+      ],
+      "lights": [
+        {
+          "id": "a",
+          "name": "a",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 10,
+          "enabled": false
+        }
+      ],
+      "points": [
+        {
+          "x": 55,
+          "y": 50,
+          "visible": false
+        }
+      ]
+    },
+    {
+      "name": "quarante-origines-et-quarante-relais",
+      "origins": [
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        },
+        {
+          "x": 10,
+          "y": 50,
+          "visionDistance": 1
+        }
+      ],
+      "lights": [
+        {
+          "id": "source_39",
+          "name": "source_39",
+          "x": 12,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_38",
+          "name": "source_38",
+          "x": 14,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_37",
+          "name": "source_37",
+          "x": 16,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_36",
+          "name": "source_36",
+          "x": 18,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_35",
+          "name": "source_35",
+          "x": 20,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_34",
+          "name": "source_34",
+          "x": 22,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_33",
+          "name": "source_33",
+          "x": 24,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_32",
+          "name": "source_32",
+          "x": 26,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_31",
+          "name": "source_31",
+          "x": 28,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_30",
+          "name": "source_30",
+          "x": 30,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_29",
+          "name": "source_29",
+          "x": 32,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_28",
+          "name": "source_28",
+          "x": 34,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_27",
+          "name": "source_27",
+          "x": 36,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_26",
+          "name": "source_26",
+          "x": 38,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_25",
+          "name": "source_25",
+          "x": 40,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_24",
+          "name": "source_24",
+          "x": 42,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_23",
+          "name": "source_23",
+          "x": 44,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_22",
+          "name": "source_22",
+          "x": 46,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_21",
+          "name": "source_21",
+          "x": 48,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_20",
+          "name": "source_20",
+          "x": 50,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_19",
+          "name": "source_19",
+          "x": 52,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_18",
+          "name": "source_18",
+          "x": 54,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_17",
+          "name": "source_17",
+          "x": 56,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_16",
+          "name": "source_16",
+          "x": 58,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_15",
+          "name": "source_15",
+          "x": 60,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_14",
+          "name": "source_14",
+          "x": 62,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_13",
+          "name": "source_13",
+          "x": 64,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_12",
+          "name": "source_12",
+          "x": 66,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_11",
+          "name": "source_11",
+          "x": 68,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_10",
+          "name": "source_10",
+          "x": 70,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_09",
+          "name": "source_09",
+          "x": 72,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_08",
+          "name": "source_08",
+          "x": 74,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_07",
+          "name": "source_07",
+          "x": 76,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_06",
+          "name": "source_06",
+          "x": 78,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_05",
+          "name": "source_05",
+          "x": 80,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_04",
+          "name": "source_04",
+          "x": 82,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_03",
+          "name": "source_03",
+          "x": 84,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_02",
+          "name": "source_02",
+          "x": 86,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_01",
+          "name": "source_01",
+          "x": 88,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        },
+        {
+          "id": "source_00",
+          "name": "source_00",
+          "x": 90,
+          "y": 50,
+          "visionDistance": 1,
+          "enabled": true
+        }
+      ],
+      "points": [
+        {
+          "x": 94,
+          "y": 50,
+          "visible": true
+        }
+      ]
+    }
+  ]
+}
