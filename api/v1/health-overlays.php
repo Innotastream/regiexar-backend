@@ -4,21 +4,9 @@ declare(strict_types=1);
 
 const XAR_HEALTH_OVERLAY_ORIGIN = 'https://regie-xar-tsaroth.fr';
 
-function healthOverlayState(mixed $current, mixed $maximum): array
+function healthOverlayState(mixed $current, mixed $maximum, bool $manualDeath = false): array
 {
-    $hp = is_numeric($current) && is_finite((float) $current) ? (float) $current : 0.0;
-    $maxHp = is_numeric($maximum) && is_finite((float) $maximum) ? max(0.0, (float) $maximum) : 0.0;
-    $percentage = $maxHp > 0.0 ? min(100.0, max(0.0, ($hp / $maxHp) * 100.0)) : 0.0;
-    if ($maxHp <= 0.0) {
-        return ['code' => 'normal', 'effect' => '', 'percentage' => $percentage];
-    }
-    if ($hp <= 0.0) {
-        return ['code' => 'down', 'effect' => 'Syncope', 'percentage' => $percentage];
-    }
-    if ($percentage < 10.0) {
-        return ['code' => 'critical', 'effect' => 'Critique', 'percentage' => $percentage];
-    }
-    return ['code' => 'normal', 'effect' => '', 'percentage' => $percentage];
+    return onlineHealthState($current, $maximum, true, $manualDeath);
 }
 
 function healthOverlayCharacter(PDO $connection, string $slug): ?array
@@ -43,7 +31,7 @@ function healthOverlayCharacter(PDO $connection, string $slug): ?array
     $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
     $hp = is_numeric($resources['hp'] ?? null) ? (float) $resources['hp'] : 0.0;
     $maxHp = is_numeric($resources['maxHp'] ?? null) ? max(0.0, (float) $resources['maxHp']) : 0.0;
-    $state = healthOverlayState($hp, $maxHp);
+    $state = healthOverlayState($hp, $maxHp, onlineManualDeath($character));
     return [
         'name' => substr(trim((string) ($character['name'] ?? 'Personnage')), 0, 120) ?: 'Personnage',
         'hp' => $hp,
@@ -84,9 +72,9 @@ function healthOverlayHtml(PDO $connection, string $slug, bool $headOnly): never
         . 'body{display:flex;align-items:center;justify-content:center;padding:18px;font-family:Inter,Segoe UI,sans-serif}'
         . '.overlay{--tone:#f4ead6;--bar-a:#8d354e;--bar-b:#df727b;min-width:310px;max-width:720px;padding:14px 18px;border:1px solid rgba(212,170,106,.42);border-radius:14px;background:linear-gradient(135deg,rgba(7,8,17,.92),rgba(18,12,27,.86));box-shadow:0 10px 35px rgba(0,0,0,.55);color:var(--tone);text-shadow:0 2px 5px #000}'
         . '.heading{display:flex;align-items:end;justify-content:space-between;gap:20px}.name{overflow:hidden;font:700 21px Georgia,serif;text-overflow:ellipsis;white-space:nowrap}.value{font-size:22px;font-weight:900;white-space:nowrap}.bar{height:8px;margin-top:9px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.1)}.bar i{display:block;width:var(--hp,0%);height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--bar-a),var(--bar-b));box-shadow:0 0 12px var(--bar-b);transition:width .35s ease}.effect{display:none;margin-top:7px;font-size:11px;font-weight:900;letter-spacing:.14em;text-align:right;text-transform:uppercase}'
-        . '.overlay.critical{--tone:#ff6070;--bar-a:#97142d;--bar-b:#ff4d65}.overlay.down{--tone:#bd9aff;--bar-a:#4b2687;--bar-b:#aa70ff}.overlay.critical .effect,.overlay.down .effect{display:block}'
+        . '.overlay.critical{--tone:#ff6070;--bar-a:#97142d;--bar-b:#ff4d65}.overlay.down{--tone:#bd9aff;--bar-a:#4b2687;--bar-b:#aa70ff}.overlay.dead{--tone:#b1a9b8;--bar-a:#4b4650;--bar-b:#888}.overlay.critical .effect,.overlay.down .effect,.overlay.dead .effect{display:block}'
         . '</style></head><body><main id="overlay" class="overlay" aria-live="polite"><div class="heading"><strong id="name" class="name">Personnage</strong><span id="value" class="value">— / —</span></div><div class="bar"><i id="bar"></i></div><div id="effect" class="effect"></div></main>'
-        . '<script nonce="' . $nonceHtml . '">const endpoint=' . $endpointJson . ';const root=document.getElementById("overlay"),nameNode=document.getElementById("name"),valueNode=document.getElementById("value"),bar=document.getElementById("bar"),effect=document.getElementById("effect");const display=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);async function refresh(){try{const response=await fetch(endpoint,{cache:"no-store",credentials:"omit",headers:{Accept:"application/json"}});if(!response.ok)throw new Error();const payload=await response.json();const health=payload.health||{};nameNode.textContent=String(health.name||"Personnage");valueNode.textContent=display(Number(health.hp)||0)+" / "+display(Number(health.maxHp)||0);bar.style.width=Math.max(0,Math.min(100,Number(health.percentage)||0))+"%";root.className="overlay "+(["critical","down"].includes(health.state)?health.state:"");effect.textContent=String(health.effect||"");root.hidden=false}catch{root.hidden=true}}refresh();setInterval(refresh,2500);</script></body></html>';
+        . '<script nonce="' . $nonceHtml . '">const endpoint=' . $endpointJson . ';const root=document.getElementById("overlay"),nameNode=document.getElementById("name"),valueNode=document.getElementById("value"),bar=document.getElementById("bar"),effect=document.getElementById("effect");const display=n=>Number.isInteger(n)?String(n):String(Math.round(n*100)/100);async function refresh(){try{const response=await fetch(endpoint,{cache:"no-store",credentials:"omit",headers:{Accept:"application/json"}});if(!response.ok)throw new Error();const payload=await response.json();const health=payload.health||{};nameNode.textContent=String(health.name||"Personnage");valueNode.textContent=display(Number(health.hp)||0)+" / "+display(Number(health.maxHp)||0);bar.style.width=Math.max(0,Math.min(100,Number(health.percentage)||0))+"%";root.className="overlay "+(["critical","down","dead"].includes(health.state)?health.state:"");effect.textContent=String(health.effect||"");root.hidden=false}catch{root.hidden=true}}refresh();setInterval(refresh,2500);</script></body></html>';
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store, max-age=0');
     header('X-Robots-Tag: noindex, nofollow, noarchive');

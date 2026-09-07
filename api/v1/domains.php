@@ -855,11 +855,13 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
-    foreach (['name' => 120, 'damageDice' => 80, 'condition' => 200, 'bonuses' => 1000, 'penalties' => 1000, 'notes' => 4000, 'gmNotes' => 4000] as $key => $maximum) {
+    foreach (['name' => 120, 'damageDice' => 80, 'condition' => 96200, 'bonuses' => 1000, 'penalties' => 1000, 'notes' => 4000, 'gmNotes' => 4000] as $key => $maximum) {
         if (array_key_exists($key, $payload) && !validApplicationDomainText($payload[$key], $maximum)) {
             return false;
         }
     }
+    if (array_key_exists('conditions', $payload) && !validApplicationConditions($payload['conditions'])) return false;
+    if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('image', $payload)
         && $payload['image'] !== null
         && !validApplicationDomainText($payload['image'], 4096)) {
@@ -919,7 +921,7 @@ function validApplicationTokenDomain(array $payload): bool
         if (!is_array($pulse)
             || !validApplicationDomainIdentifier($pulse['id'] ?? null, 120)
             || !in_array($pulse['resource'] ?? null, ['hp', 'mana'], true)
-            || !validApplicationDomainNumber($pulse['delta'] ?? null, -1000000000, 1000000000)
+            || !validApplicationDomainNumber($pulse['delta'] ?? null, -2000000000, 2000000000)
             || (float) ($pulse['delta'] ?? 0) === 0.0
             || !validApplicationDomainNumber($pulse['at'] ?? null, 1, 9007199254740991)) {
             return false;
@@ -1008,6 +1010,14 @@ function validApplicationRollDomain(array $payload): bool
     if (array_key_exists('revealed', $payload) && !is_bool($payload['revealed'])) {
         return false;
     }
+    if (array_key_exists('diceAppearance', $payload) && !validApplicationDiceAppearance($payload['diceAppearance'])) return false;
+    if (is_array($payload['mapEvent'] ?? null)) {
+        $event = $payload['mapEvent'];
+        foreach (['sceneId' => 80, 'attackId' => 180, 'anchorTokenId' => 180] as $key => $maximum) {
+            if (array_key_exists($key, $event) && !validApplicationDomainIdentifier($event[$key], $maximum)) return false;
+        }
+        if (array_key_exists('diceAppearance', $event) && !validApplicationDiceAppearance($event['diceAppearance'])) return false;
+    }
     $rollMode = (string) ($payload['rollMode'] ?? 'normal');
     if (!in_array($rollMode, ['normal', 'advantage', 'disadvantage'], true)) {
         return false;
@@ -1095,6 +1105,24 @@ function validApplicationDomainShape(mixed $value): bool
     return applicationDomainNodeShapeIsValid($value, 0, $nodes);
 }
 
+function validApplicationConditions(mixed $value): bool
+{
+    if (!is_array($value) || !array_is_list($value) || count($value) > 100) return false;
+    foreach ($value as $condition) {
+        if (!is_string($condition) || preg_match('/^[^\x00]{0,240}$/uD', $condition) !== 1) return false;
+    }
+    return true;
+}
+
+function validApplicationDiceAppearance(mixed $value): bool
+{
+    if (!is_array($value) || count($value) !== 2) return false;
+    foreach (['color', 'foreground'] as $key) {
+        if (!is_string($value[$key] ?? null) || preg_match('/^#[0-9a-f]{6}$/iD', $value[$key]) !== 1) return false;
+    }
+    return true;
+}
+
 function validApplicationCharacterDomain(array $payload): bool
 {
     if (isset($payload['characterSchema']) && (string) $payload['characterSchema'] !== 'xar-tsaroth.character-sheet') {
@@ -1104,9 +1132,10 @@ function validApplicationCharacterDomain(array $payload): bool
         && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 4)) {
         return false;
     }
-    if (isset($payload['conditions']) && !validApplicationDomainStringList($payload['conditions'], 100, 240)) {
+    if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
         return false;
     }
+    if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('hitThreshold', $payload)
         && $payload['hitThreshold'] !== null
         && !validApplicationDomainNumber($payload['hitThreshold'], 0, 100)) {
