@@ -67,7 +67,7 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
 test("le backend 0.15.3 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.3'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-3-map-edit-fixes-dual-login-release-20260907-1'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-3-map-visibility-continuity-and-dual-login-release-20260907-2'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
