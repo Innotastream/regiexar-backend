@@ -554,7 +554,7 @@ requireDomainCompatibility(
     $fogTokenIds === ['owned-fogged', 'enemy-clear']
         && !array_key_exists('layers', $fogProjection['map'] ?? [])
         && ($fogProjection['map']['fog']['mask'] ?? null) === $fogMask
-        && (($fogProjection['map']['tokens'][0]['size'] ?? null) === 50.0)
+        && (($fogProjection['map']['tokens'][0]['size'] ?? null) === 40.0)
         && array_column($fogProjection['mapPings'] ?? [], 'id') === ['ping-clear'],
     'Le brouillard actif doit masquer adversaires et signaux côté serveur, conserver le pion possédé et ne jamais exposer les autres niveaux.'
 );
