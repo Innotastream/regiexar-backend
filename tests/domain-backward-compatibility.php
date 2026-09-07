@@ -605,6 +605,7 @@ $currentTokenRecord = [
         'name' => 'Boss',
         'x' => 40,
         'y' => 50,
+        'layerId' => 'upper',
         'mana' => 69,
         'maxMana' => 100,
         '_updatedAt' => 300,
@@ -616,6 +617,7 @@ $staleTokenWithNewMovement = [
     'name' => 'Boss',
     'x' => 75,
     'y' => 80,
+    'layerId' => 'basement',
     'mana' => 0,
     'maxMana' => 0,
     '_updatedAt' => 100,
@@ -632,8 +634,9 @@ requireDomainCompatibility(
         && ($protectedToken['maxMana'] ?? null) === 100
         && ($protectedToken['x'] ?? null) === 75
         && ($protectedToken['y'] ?? null) === 80
+        && ($protectedToken['layerId'] ?? null) === 'basement'
         && ($protectedToken['_movedAt'] ?? null) === 400,
-    'Un ancien token ne doit pas effacer ses ressources, mais son déplacement plus récent doit rester accepté.'
+    'Un ancien token ne doit pas effacer ses ressources, mais ses coordonnées et son niveau plus récents doivent rester acceptés.'
 );
 
 $newTokenDataWithOldMovement = [
@@ -641,6 +644,7 @@ $newTokenDataWithOldMovement = [
     'name' => 'Boss renforcé',
     'x' => 5,
     'y' => 6,
+    'layerId' => 'ground',
     'mana' => 90,
     'maxMana' => 120,
     '_updatedAt' => 500,
@@ -656,8 +660,45 @@ requireDomainCompatibility(
         && ($protectedMovement['mana'] ?? null) === 90
         && ($protectedMovement['x'] ?? null) === 40
         && ($protectedMovement['y'] ?? null) === 50
+        && ($protectedMovement['layerId'] ?? null) === 'upper'
         && ($protectedMovement['_movedAt'] ?? null) === 200,
-    'Une modification récente de fiche token ne doit pas ramener sa position à une coordonnée plus ancienne.'
+    'Une modification récente de fiche token ne doit pas rétablir des coordonnées ou un niveau plus anciens.'
+);
+
+$legacyMovementWithoutLayer = $staleTokenWithNewMovement;
+unset($legacyMovementWithoutLayer['layerId']);
+$protectedLegacyMovement = protectApplicationDomainAgainstStaleEntityWrite(
+    'token:scene-1:token-boss',
+    $legacyMovementWithoutLayer,
+    $currentTokenRecord
+);
+requireDomainCompatibility(
+    ($protectedLegacyMovement['x'] ?? null) === 75
+        && ($protectedLegacyMovement['y'] ?? null) === 80
+        && ($protectedLegacyMovement['layerId'] ?? null) === 'upper',
+    'Un ancien format de déplacement sans niveau conserve le niveau connu au lieu d’en inventer un.'
+);
+$legacyCurrentTokenRecord = $currentTokenRecord;
+unset($legacyCurrentTokenRecord['payload']['layerId']);
+$protectedLegacyCurrent = protectApplicationDomainAgainstStaleEntityWrite(
+    'token:scene-1:token-boss',
+    $newTokenDataWithOldMovement,
+    $legacyCurrentTokenRecord
+);
+requireDomainCompatibility(
+    !array_key_exists('layerId', $protectedLegacyCurrent)
+        && ($protectedLegacyCurrent['x'] ?? null) === 40
+        && ($protectedLegacyCurrent['y'] ?? null) === 50,
+    'Un mouvement autoritaire historique sans niveau ne reçoit pas le niveau périmé d’une édition de fiche.'
+);
+$protectedBothLegacy = protectApplicationDomainAgainstStaleEntityWrite(
+    'token:scene-1:token-boss',
+    $legacyMovementWithoutLayer,
+    $legacyCurrentTokenRecord
+);
+requireDomainCompatibility(
+    !array_key_exists('layerId', $protectedBothLegacy),
+    'La fusion de deux formats historiques sans niveau préserve cette absence pour la normalisation de scène.'
 );
 
 $wholeCharacterPatch = [

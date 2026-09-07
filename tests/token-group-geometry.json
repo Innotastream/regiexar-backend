@@ -1,5 +1,34 @@
 [
   {
+    "name": "occupied-ground-no-wall",
+    "map": { "viewLocked": true, "activeLayerId": "ground", "naturalWidth": 1000, "naturalHeight": 1000,
+      "tokens": [ { "id": "a", "x": 20, "y": 50, "size": 50, "layerId": "ground" }, { "id": "b", "x": 30, "y": 50, "size": 50, "layerId": "ground" } ] },
+    "request": { "tokenIds": ["a"], "layerId": "ground", "base": { "a": { "x": 20, "y": 50 } }, "dx": 10, "dy": 0 },
+    "expected": [ { "id": "a", "x": 26.8689, "y": 46.0861, "layerId": "ground", "relocated": true } ]
+  },
+  {
+    "name": "left-radius",
+    "map": { "viewLocked": true, "activeLayerId": "ground", "naturalWidth": 1000, "naturalHeight": 1000,
+      "tokens": [ { "id": "a", "x": 20, "y": 50, "size": 50, "layerId": "ground" } ] },
+    "request": { "tokenIds": ["a"], "layerId": "ground", "base": { "a": { "x": 20, "y": 50 } }, "dx": -20, "dy": 0 },
+    "expected": [ { "id": "a", "x": 2.5, "y": 50, "layerId": "ground", "relocated": false } ]
+  },
+  {
+    "name": "upper-radius-formation",
+    "map": { "viewLocked": true, "activeLayerId": "ground", "naturalWidth": 1000, "naturalHeight": 1000,
+      "tokens": [ { "id": "a", "x": 80, "y": 80, "size": 30, "layerId": "ground" }, { "id": "b", "x": 90, "y": 90, "size": 30, "layerId": "ground" } ] },
+    "request": { "tokenIds": ["a", "b"], "layerId": "ground", "base": { "a": { "x": 80, "y": 80 }, "b": { "x": 90, "y": 90 } }, "dx": 30, "dy": 40 },
+    "expected": [ { "id": "a", "x": 88.5, "y": 88.5, "layerId": "ground", "relocated": false }, { "id": "b", "x": 98.5, "y": 98.5, "layerId": "ground", "relocated": false } ]
+  },
+  {
+    "name": "occupied-other-level-dimensions",
+    "map": { "viewLocked": true, "activeLayerId": "ground", "naturalWidth": 1000, "naturalHeight": 1000,
+      "tokens": [ { "id": "a", "x": 20, "y": 50, "size": 50, "layerId": "ground" }, { "id": "b", "x": 30, "y": 50, "size": 50, "layerId": "upper" }, { "id": "hidden", "x": 30, "y": 45, "size": 50, "layerId": "basement" } ],
+      "layers": { "upper": { "naturalWidth": 1500, "naturalHeight": 1000 } } },
+    "request": { "tokenIds": ["a"], "layerId": "ground", "targetLayerId": "upper", "base": { "a": { "x": 20, "y": 50 } }, "dx": 10, "dy": 0 },
+    "expected": [ { "id": "a", "x": 27.9126, "y": 46.0861, "layerId": "upper", "relocated": true } ]
+  },
+  {
     "name": "formation",
     "map": {
       "viewLocked": true,

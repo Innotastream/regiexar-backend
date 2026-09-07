@@ -1,4 +1,12 @@
-# Backend OVH — Régie du Seuil 0.15.0
+# Backend OVH — Régie du Seuil 0.15.1
+
+La **0.15.1 / client exact 3.2.1** est un candidat de sources destiné à la validation GitHub, **non déployé**. Son build est `client-3-2-1-scene-isolation-dialog-and-placement-fixes-20260907-1`. La dernière production vérifiée reste backend **0.15.0 / client exact 3.2.0** ; ces métadonnées ne prouvent aucun basculement OVH ni remise de MSIX.
+
+Ce candidat accompagne l’isolation des nouvelles scènes et la correction des fermetures de dialogues du client 3.2.1. La synchronisation d’une fiche met à jour uniquement les pions existants, sans créer ni transférer automatiquement de pions. Côté PHP, le niveau `layerId` suit les coordonnées lors de la protection contre une édition périmée ; les formats historiques sans niveau ne reçoivent pas de valeur arbitraire. Les placements groupés doivent respecter les autres pions et les bords de la carte, en plus des murs. Les schémas session **16**, fiche **4**, domaines **1** et MySQL **18** sont conservés : aucune migration SQL 019.
+
+PHP est indisponible dans l’environnement de préparation. Le propriétaire autorise la publication de ces sources pour exécuter la syntaxe PHP réelle et les suites PHP dans le workflow `backend-check` du commit exact ; les tests Node ne les remplacent pas. Cette validation ne déploie pas OVH. Aucune remise de MSIX n’est autorisée avant qualification complète et, après un déploiement demandé, contrôle public de la matrice **3.2.0 / 3.2.1 / 3.2.2 = 426 / 401 / 426**. Statut conservé : **livraison incomplète — alerte launcher non recettée**.
+
+### Historique 0.15.0
 
 La 0.15.0 accompagne le client **3.2.0**, annoncé comme unique version autorisée. Les schémas session 16, fiche 4, domaines 1 et MySQL 18 sont conservés. La portée `visionDistance` est une statistique individuelle entière de 1 à 40 cases, à 8 par défaut. Une fiche autoritative la propage à ses pions dans toutes les scènes ; un clone ou une invocation garde sa portée propre. L'ancien réglage global ne remplace pas cette statistique. Le masque binaire reste seul arbitre de la visibilité des pions et des actions ; un champ `opacity` en base64url contient un octet par cellule pour assombrir progressivement le décor sur les quatre cases suivantes, sans traverser les murs ni révéler de pions. Le mode Stream de combat applique le POV du pion courant depuis la projection locale du MJ.
 

@@ -28,6 +28,21 @@ function onlineGroupTokenSize(array $token): float
     return max(10.0, min(220.0, (float) ($token['size'] ?? 50)));
 }
 
+function onlineGroupTranslation(array $tokens, float $dx, float $dy, array $map): array
+{
+    $axis = static function (string $key, float $delta, float $dimension) use ($tokens): float {
+        $lower = -min(array_column($tokens, $key));
+        $upper = 100 - max(array_column($tokens, $key));
+        // Round margins inward before serializing centers at 1/10000 percent.
+        $insideLower = max(array_map(static fn (array $token): float => ceil(onlineGroupTokenSize($token) / 2 / $dimension * 100 * 10000) / 10000 - $token[$key], $tokens));
+        $insideUpper = min(array_map(static fn (array $token): float => floor((100 - onlineGroupTokenSize($token) / 2 / $dimension * 100) * 10000) / 10000 - $token[$key], $tokens));
+        // An oversized formation is handled by the per-token bounded relocation.
+        if ($insideLower <= $insideUpper) { $lower = $insideLower; $upper = $insideUpper; }
+        return max($lower, min($delta, $upper));
+    };
+    return ['x' => $axis('x', $dx, $map['naturalWidth']), 'y' => $axis('y', $dy, $map['naturalHeight'])];
+}
+
 function onlineGroupPositionValidator(array $map): Closure
 {
     $walls = $map['walls'] ?? null;
@@ -42,20 +57,26 @@ function onlineGroupPositionValidator(array $map): Closure
     };
 }
 
+function onlineGroupPositionIsFree(array $point, array $token, float $width, float $height, array $occupied, Closure $wallFree): bool
+{
+    $radius = onlineGroupTokenSize($token) / 2;
+    if ($point['x'] * $width / 100 < $radius || $point['x'] * $width / 100 > $width - $radius
+        || $point['y'] * $height / 100 < $radius || $point['y'] * $height / 100 > $height - $radius || !$wallFree($point, $token)) return false;
+    foreach ($occupied as $other) {
+        if (hypot(($point['x'] - $other['x']) * $width / 100, ($point['y'] - $other['y']) * $height / 100)
+            < $radius + onlineGroupTokenSize($other) / 2 + 0.1) return false;
+    }
+    return true;
+}
+
 function nearestOnlineGroupPosition(array $desired, array $token, array $map, array $occupied = [], ?array $start = null): ?array
 {
     $width = (float) ($map['naturalWidth'] ?? 1600) ?: 1600.0;
     $height = (float) ($map['naturalHeight'] ?? 900) ?: 900.0;
     $step = max(1.0, min($width / 511, $height / 511));
-    $radius = onlineGroupTokenSize($token) / 2;
     $wallFree = onlineGroupPositionValidator($map);
-    $valid = static function (array $point) use ($width, $height, $radius, $wallFree, $occupied, $token, $start, $map): bool {
-        if ($point['x'] * $width / 100 < $radius || $point['x'] * $width / 100 > $width - $radius
-            || $point['y'] * $height / 100 < $radius || $point['y'] * $height / 100 > $height - $radius || !$wallFree($point, $token)) return false;
-        foreach ($occupied as $other) {
-            if (hypot(($point['x'] - $other['x']) * $width / 100, ($point['y'] - $other['y']) * $height / 100)
-                < $radius + onlineGroupTokenSize($other) / 2 + 0.1) return false;
-        }
+    $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map): bool {
+        if (!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree)) return false;
         if ($start === null) return true;
         $resolved = applicationResolveWallCollision($map['walls'] ?? null, $start, $point, $token['size'] ?? 50, $width, $height, true);
         return !$resolved['blocked'] && abs($resolved['x'] - $point['x']) < 0.000001 && abs($resolved['y'] - $point['y']) < 0.000001;
@@ -103,16 +124,15 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
     $destination['naturalWidth'] = (float) ($destination['naturalWidth'] ?? 1600) ?: 1600.0;
     $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
     $wallFree = onlineGroupPositionValidator($destination);
-    $dx = max(-min(array_column($tokens, 'x')), min($request['dx'], 100 - max(array_column($tokens, 'x'))));
-    $dy = max(-min(array_column($tokens, 'y')), min($request['dy'], 100 - max(array_column($tokens, 'y'))));
+    $delta = onlineGroupTranslation($tokens, (float) $request['dx'], (float) $request['dy'], $destination);
     $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $t): bool => !in_array($t['id'], $ids, true) && onlineTokenLayerId($t, $map) === $targetLayerId));
     $placements = []; $blocked = [];
     foreach ($tokens as $token) {
-        $desired = ['x' => round($token['x'] + $dx, 4), 'y' => round($token['y'] + $dy, 4)];
+        $desired = ['x' => round($token['x'] + $delta['x'], 4), 'y' => round($token['y'] + $delta['y'], 4)];
         $resolved = $targetLayerId === $layerId
             ? applicationResolveWallCollision($destination['walls'] ?? null, $token, $desired, $token['size'] ?? 50, $destination['naturalWidth'], $destination['naturalHeight'], true)
             : [...$desired, 'blocked' => false];
-        if (!$resolved['blocked'] && $wallFree($desired, $token)) {
+        if (!$resolved['blocked'] && onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree)) {
             $placements[$token['id']] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayerId, 'relocated' => false];
             $occupied[] = array_replace($token, $desired);
         } else $blocked[] = [$token, $desired, $resolved];

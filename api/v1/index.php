@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.0';
-const XAR_BACKEND_BUILD = 'client-3-2-0-individual-vision-stream-and-layers-release-20260907-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.0';
+const XAR_BACKEND_VERSION = '0.15.1';
+const XAR_BACKEND_BUILD = 'client-3-2-1-scene-isolation-dialog-and-placement-fixes-20260907-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.1';
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 18;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;

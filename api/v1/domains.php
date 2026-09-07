@@ -1581,7 +1581,7 @@ function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $pay
     if ($currentUpdatedAt > $incomingUpdatedAt) {
         $protected = $currentPayload;
         if ($incomingMovedAt > $currentMovedAt) {
-            foreach (['x', 'y', '_movedAt'] as $field) {
+            foreach (['x', 'y', 'layerId', '_movedAt'] as $field) {
                 if (array_key_exists($field, $payload)) {
                     $protected[$field] = $payload[$field];
                 }
@@ -1590,7 +1590,7 @@ function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $pay
         return $protected;
     }
     if ($currentMovedAt > $incomingMovedAt) {
-        foreach (['x', 'y', '_movedAt'] as $field) {
+        foreach (['x', 'y', 'layerId', '_movedAt'] as $field) {
             if (array_key_exists($field, $currentPayload)) {
                 $payload[$field] = $currentPayload[$field];
             } else {
