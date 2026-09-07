@@ -232,7 +232,36 @@ function applicationActiveMapFogState(array $map): mixed
         ? $map['activeLayerId']
         : 'ground';
     $activeLayer = is_array($map['layers'][$activeLayerId] ?? null) ? $map['layers'][$activeLayerId] : [];
-    return array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null);
+    $fog = array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null);
+    $enabled = false;
+    foreach (['basement', 'ground', 'upper'] as $id) {
+        $candidate = $map['layers'][$id]['fog'] ?? ($id === $activeLayerId ? ($map['fog'] ?? null) : null);
+        if (is_array($candidate) && ($candidate['enabled'] ?? false) === true) $enabled = true;
+    }
+    if (!$enabled) return $fog;
+    if (!validApplicationFogState($fog)) {
+        $dimensions = applicationRasterDimensions($activeLayer['naturalWidth'] ?? ($map['naturalWidth'] ?? 1600), $activeLayer['naturalHeight'] ?? ($map['naturalHeight'] ?? 900));
+        $fog = ['version' => XAR_FOG_MASK_VERSION, 'enabled' => false, ...$dimensions, 'mask' => ''];
+    }
+    if (!$fog['enabled'] && $fog['mask'] === '') {
+        $bits = $fog['width'] * $fog['height'];
+        $bytes = str_repeat("\xff", (int) ceil($bits / 8));
+        if ($bits % 8 !== 0) $bytes[strlen($bytes) - 1] = chr((1 << ($bits % 8)) - 1);
+        $fog['mask'] = rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    }
+    $fog['enabled'] = true;
+    return $fog;
+}
+
+function applicationMapVisionSettings(array $map): array
+{
+    $active = in_array($map['activeLayerId'] ?? null, ['basement', 'ground', 'upper'], true) ? $map['activeLayerId'] : 'ground';
+    $current = $map['layers'][$active]['vision'] ?? ($map['vision'] ?? null);
+    foreach (array_unique([$active, 'basement', 'ground', 'upper']) as $id) {
+        $candidate = $map['layers'][$id]['vision'] ?? ($id === $active ? ($map['vision'] ?? null) : null);
+        if (is_array($candidate) && ($candidate['enabled'] ?? false) === true) return normalizeApplicationVisionSettings($candidate);
+    }
+    return normalizeApplicationVisionSettings($current);
 }
 
 function validApplicationMapLights(mixed $value): bool
@@ -427,9 +456,9 @@ function applicationActiveMapOcclusionState(array $map): array
     }
     return [
         'walls' => $walls,
-        'fog' => array_key_exists('fog', $activeLayer) ? $activeLayer['fog'] : ($map['fog'] ?? null),
+        'fog' => applicationActiveMapFogState($map),
         'lights' => normalizeApplicationMapLights(array_key_exists('lights', $activeLayer) ? $activeLayer['lights'] : ($map['lights'] ?? [])),
-        'vision' => normalizeApplicationVisionSettings($activeLayer['vision'] ?? ($map['vision'] ?? null)),
+        'vision' => applicationMapVisionSettings($map),
         'naturalWidth' => is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0,
         'naturalHeight' => is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0,
     ];

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
 const XAR_BACKEND_VERSION = '0.15.3';
-const XAR_BACKEND_BUILD = 'client-3-2-3-map-edit-fixes-dual-login-release-20260907-1';
+const XAR_BACKEND_BUILD = 'client-3-2-3-map-visibility-continuity-and-dual-login-release-20260907-2';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.3';
 // Exception explicitement demandée : aucune autre version n'est admise.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.2', '3.2.3'];

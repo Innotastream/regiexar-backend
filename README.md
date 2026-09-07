@@ -1,6 +1,8 @@
 # Backend OVH — Régie du Seuil 0.15.3
 
-La **0.15.3 / client annoncé 3.2.3** est un candidat en cours de qualification. Build : `client-3-2-3-map-edit-fixes-dual-login-release-20260907-1`. Le propriétaire autorise exceptionnellement les connexions des seules versions **3.2.2 et 3.2.3**. La dernière base de production contrôlée est 0.15.2 / 3.2.2 ; son contrôle de santé direct est indisponible pendant cette reprise.
+La projection Joueur conserve maintenant la vision et le brouillard entre les niveaux de la même scène, y compris pour les cartes enregistrées par la 3.2.2. Un niveau sans observateur reste hors vision ; un niveau encore non protégé reçoit un masque complet si le brouillard est actif ailleurs. Les révélations explicitement préparées restent conservées. Le correctif complet de l’interface MJ et du Stream est embarqué dans la 3.2.3.
+
+La **0.15.3 / client annoncé 3.2.3** est un candidat en cours de qualification. Build : `client-3-2-3-map-visibility-continuity-and-dual-login-release-20260907-2`. Le propriétaire autorise exceptionnellement les connexions des seules versions **3.2.2 et 3.2.3**. La dernière base de production contrôlée est 0.15.2 / 3.2.2 ; la santé publique a confirmé cette base avant le basculement.
 
 Ce candidat ajoute les sources de lumière par scène et niveau : 40 au maximum, portée de 1 à 40 cases (8 par défaut), relais déclenché uniquement par la vision stricte, hors murs et brouillard. Les chaînes sont déterministes ; les vues publiques et les attaques utilisent le même calcul et ne révèlent aucune source hors vue. Le MJ peut traverser les murs pendant un placement ; la destination doit rester libre pour toute l’empreinte du pion ou du groupe. Le trajet Joueur demeure soumis aux collisions. La taille par défaut passe à 40, sans modifier les tailles explicites. Les schémas session **16**, fiche **4**, domaines **1** et MySQL **18** restent inchangés.
 
