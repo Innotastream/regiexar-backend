@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/token-groups.php';
+
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_SESSION_SCHEMA_VERSION = 16;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
@@ -850,7 +852,7 @@ function validApplicationTokenDomain(array $payload): bool
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
         return false;
     }
-    foreach (['libraryTemplateId' => 120, 'characterId' => 180, 'controllerPlayerId' => 128, 'linkedTokenId' => 180] as $key => $maximum) {
+    foreach (['libraryTemplateId' => 120, 'characterId' => 180, 'controllerPlayerId' => 128, 'linkedTokenId' => 180, 'cloneSourceCharacterId' => 180, 'cloneSourceTokenId' => 80] as $key => $maximum) {
         if (array_key_exists($key, $payload) && !validApplicationDomainIdentifier($payload[$key], $maximum, true)) {
             return false;
         }
@@ -911,6 +913,7 @@ function validApplicationTokenDomain(array $payload): bool
         && !validApplicationDomainNumber($payload['initiative'])) {
         return false;
     }
+    if (array_key_exists('layerId', $payload) && !in_array($payload['layerId'], ['basement', 'ground', 'upper'], true)) return false;
     foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers'] as $key) {
         if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
             return false;
@@ -2193,6 +2196,7 @@ function patchApplicationDomains(PDO $connection): never
                 'conflicts' => $conflicts,
             ]);
         }
+        $pending = prepareOnlineSceneTokenChanges($connection, $records, $pending);
         if ($pending === []) {
             $connection->commit();
             sendJson(200, ['ok' => true, 'revision' => $clock['globalRevision'], 'domains' => []]);

@@ -909,7 +909,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $viewerIsIsolated = isset($isolatedPlayerIds[$accountId]);
     $visionOrigins = [];
     foreach (($map['tokens'] ?? []) as $candidateToken) {
-        if (!is_array($candidateToken) || ($candidateToken['hidden'] ?? false) === true) {
+        if (!is_array($candidateToken) || ($candidateToken['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidateToken, $map)) {
             continue;
         }
         $controllerId = onlineEffectiveTokenControllerId($candidateToken, $characterOwners);
@@ -925,7 +925,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         || applicationVisionCoversPoint($visionMask, $x, $y);
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
-        if (!is_array($token) || ($token['hidden'] ?? false) === true) {
+        if (!is_array($token) || ($token['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($token, $map)) {
             continue;
         }
         $effectiveControllerId = onlineEffectiveTokenControllerId($token, $characterOwners);
@@ -939,6 +939,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         $temporaryMovementAllowed = $active && ($movementOverrides[(string) ($token['id'] ?? '')] ?? false) === true;
         $visible = [
             'id' => $token['id'] ?? null,
+            'layerId' => onlineTokenLayerId($token, $map),
             'characterId' => $token['characterId'] ?? null,
             'name' => $token['name'] ?? 'Token',
             'image' => $token['image'] ?? null,
@@ -2519,6 +2520,7 @@ function sortedOnlineInitiativeOrder(array $order, array $records, string $scene
 
 function onlineAttackTargetVisible(PDO $connection, array &$records, array $map, array $target, string $accountId, string $sceneId): bool
 {
+    if (!onlineTokenOnActiveLayer($target, $map)) return false;
     $records = onlineSceneTokenRecords($connection, $sceneId, $records);
     $fog = applicationActiveMapFogState($map);
     $occlusion = applicationActiveMapOcclusionState($map);
@@ -2529,7 +2531,7 @@ function onlineAttackTargetVisible(PDO $connection, array &$records, array $map,
     foreach ($records as $key => $record) {
         if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
         $candidate = applicationDomainPayload($records, $key);
-        if ($candidate === [] || ($candidate['hidden'] ?? false) === true) continue;
+        if ($candidate === [] || ($candidate['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidate, $map)) continue;
         $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
         $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
             ? $controllerId !== '' && !isset($isolated[$controllerId])
@@ -2554,6 +2556,12 @@ function onlinePendingAttackParties(PDO $connection, array &$records, array $att
     $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
     if ($source === [] || $target === []) {
         rejectOnlineCommand($connection, 404, 'Un token de cette attaque n’existe plus.', 'attack_party_missing');
+    }
+    $mapKey = 'map:' . $sceneId;
+    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
+    $map = applicationDomainPayload($records, $mapKey);
+    if (!onlineTokenOnActiveLayer($source, $map) || !onlineTokenOnActiveLayer($target, $map)) {
+        rejectOnlineCommand($connection, 409, 'Les pions de cette attaque doivent être sur le niveau actif.', 'stale_token_layer');
     }
     $sourceController = onlineTokenControllerIdFromRecords($connection, $records, $source);
     $targetController = onlineTokenControllerIdFromRecords($connection, $records, $target);
@@ -3096,7 +3104,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (trim((string) ($character['color'] ?? '')) !== '') {
         $token['color'] = (string) $character['color'];
     }
-    if (($character['portrait'] ?? null) !== null) {
+    if (array_key_exists('portrait', $character)) {
         $token['image'] = $character['portrait'];
     }
     $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
@@ -3325,7 +3333,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -3585,6 +3593,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
         } elseif (in_array($command, ['token.conditions.update', 'character.conditions.update'], true)) {
             if ($command === 'token.conditions.update' && !$isGm && ($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             $result = applyOnlineTokenConditionUpdate($connection, $records, $pending, $identity, $sceneId, $arguments, $isGm, $command === 'character.conditions.update');
+        } elseif ($command === 'tokens.transform') {
+            $result = applyOnlineTokenGroupCommand($connection, $records, $pending, $arguments, $isGm);
+        } elseif ($command === 'token.clone') {
+            $result = applyOnlineTokenCloneCommand($connection, $records, $pending, $arguments, $isGm);
         } elseif ($command === 'token.move') {
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
@@ -3602,6 +3614,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $mapKey = 'map:' . $moveSceneId;
             $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $mapKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+            if ($token !== [] && !onlineTokenOnActiveLayer($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur le niveau actif.', 'stale_token_layer');
             $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
             if ($token === [] || (!$isGm
                 && ($effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true))) {
@@ -3930,6 +3943,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $source = applicationDomainPayload($records, $sourceKey);
                 $target = applicationDomainPayload($records, $targetKey);
+                $map = applicationDomainPayload($records, $mapKey);
+                if (($source !== [] && !onlineTokenOnActiveLayer($source, $map)) || ($target !== [] && !onlineTokenOnActiveLayer($target, $map))) {
+                    rejectOnlineCommand($connection, 409, 'L’attaquant et la cible doivent être sur le niveau actif.', 'stale_token_layer');
+                }
                 $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
                 $targetController = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
                 if ($isGm) {
@@ -4460,8 +4477,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
                 }
                 $tokenKey = onlineTokenDomainKey($sceneId, $tokenId);
-                $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity']));
+                $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $indexKey, 'activity', 'map:' . $sceneId]));
                 $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
+                if ($token !== [] && !onlineTokenOnActiveLayer($token, applicationDomainPayload($records, 'map:' . $sceneId))) rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur le niveau actif.', 'stale_token_layer');
                 $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
                 if ($token === [] || $effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true) {
                     rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
