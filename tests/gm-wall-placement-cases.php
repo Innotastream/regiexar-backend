@@ -22,9 +22,23 @@ foreach (['token-player', 'token-monster'] as $placementId) {
     $response = runCommand($db, 'token.move', ['sceneId' => 'scene-one', 'tokenId' => $placementId, 'x' => 80, 'y' => 50], true, 'account-gm');
     requireTactical($response->status === 200 && $response->body['token']['x'] === 80.0 && !$response->body['blockedByWall'], 'MJ crosses a wall when placing either a player or creature token: ' . $placementId);
     $placementRevision = $db->revision;
+    $placementSavedToken = $db->payload('token:scene-one:' . $placementId);
     foreach ([50, 48.5] as $placementX) {
         $response = runCommand($db, 'token.move', ['sceneId' => 'scene-one', 'tokenId' => $placementId, 'x' => $placementX, 'y' => 50], true, 'account-gm');
-        requireTactical($response->status === 200 && $response->body['token']['x'] === 80.0 && $response->body['blockedByWall'] && $db->revision === $placementRevision, 'A final wall or overlapping footprint does not change authoritative position.');
+        $placementActualX = $response->body['token']['x'] ?? null;
+        // JSON storage returns 80 as an integer; an unchanged position must not
+        // require that the pre-storage floating-point PHP type survives a read.
+        requireTactical($response->status === 200 && (is_int($placementActualX) || is_float($placementActualX))
+            && (float) $placementActualX === 80.0 && ($response->body['blockedByWall'] ?? false) === true
+            && ($response->body['positionChanged'] ?? true) === false && $db->revision === $placementRevision
+            && $db->payload('token:scene-one:' . $placementId) === $placementSavedToken,
+            'A final wall or overlapping footprint does not change authoritative position: ' . json_encode([
+                'token' => $placementId, 'requestedX' => $placementX, 'status' => $response->status,
+                'actualX' => $placementActualX, 'actualType' => gettype($placementActualX),
+                'blocked' => $response->body['blockedByWall'] ?? null,
+                'positionChanged' => $response->body['positionChanged'] ?? null,
+                'revision' => $db->revision, 'expectedRevision' => $placementRevision,
+            ], JSON_UNESCAPED_UNICODE));
     }
 }
 $db = fixture();

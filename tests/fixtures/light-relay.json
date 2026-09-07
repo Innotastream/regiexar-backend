@@ -272,6 +272,8 @@
     },
     {
       "name": "quarante-origines-et-quarante-relais",
+      "strictSha256": "c7e15d197cfd7e1861dfbda98e1398c1a5f0f6c333aa0fd661919b218b678fa9",
+      "opacitySha256": "f8e4c63f03b401b2783b120ed14910098dd01b762353ded3b07fe654188cc3af",
       "origins": [
         {
           "x": 10,
