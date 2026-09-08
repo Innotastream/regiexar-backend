@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-function onlineVisiblePathPointTester(array $fog, array $vision): Closure
+// Older maps may have no fog. Computed vision is always an array; enabled
+// malformed masks continue to fail closed below.
+function onlineVisiblePathPointTester(?array $fog, array $vision): Closure
 {
     $masks = [];
     foreach ([$fog, $vision] as $mask) {

@@ -44,8 +44,18 @@ foreach (['token-player', 'token-monster'] as $placementId) {
 $db = fixture();
 $db->put('map:scene-one', $placementMap);
 $db->put('initiative:scene-one', ['active' => false]);
+$playerBeforeWall = $db->payload('token:scene-one:token-player');
+$playerBeforeWallRevision = $db->revision;
+$placementWallFree = onlineGroupPositionValidator($placementMap);
+requireTactical($placementWallFree(['x'=>20,'y'=>50],['size'=>40])
+    && $placementWallFree(['x'=>80,'y'=>50],['size'=>40])
+    && !$placementWallFree(['x'=>50,'y'=>50],['size'=>40]),
+    'Both endpoints are clear but the continuous wall separates them.');
 $response = runCommand($db, 'token.move', ['sceneId' => 'scene-one', 'tokenId' => 'token-player', 'x' => 80, 'y' => 50, 'isGm' => true]);
-requireTactical($response->status === 200 && $response->body['blockedByWall'] && $response->body['token']['x'] > 20 && $response->body['token']['x'] < 50, 'An effective Player cannot bypass the travelled wall path with a request flag.');
+requireTactical($response->status === 200 && ($response->body['blockedByWall'] ?? false) === true
+    && ($response->body['positionChanged'] ?? true) === false && ($response->body['path'] ?? null) === []
+    && $db->payload('token:scene-one:token-player') === $playerBeforeWall && $db->revision === $playerBeforeWallRevision,
+    'An effective Player cannot bypass the wall with a request flag; an unreachable exact destination leaves the starting position intact.');
 requireTactical(runCommand($db, 'token.move', ['sceneId' => 'scene-one', 'tokenId' => 'token-monster', 'x' => 80, 'y' => 50])->status === 403, 'Player ownership restrictions remain authoritative.');
 
 $db = fixture();

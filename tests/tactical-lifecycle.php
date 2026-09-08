@@ -109,6 +109,45 @@ requireTactical(onlineManualDeath(['conditions'=>['Mort']]) && !onlineManualDeat
 $patched = playerCharacterPatch(['conditions'=>['Mort'], 'resources'=>['hp'=>1,'maxHp'=>100,'mana'=>1,'maxMana'=>10]], ['conditions'=>['Poison'], 'healthOverride'=>null, 'resources'=>['hp'=>-26,'mana'=>-2]]);
 requireTactical($patched['healthOverride'] === 'dead' && $patched['conditions'] === ['Empoisonné'], 'A player patch preserves the legacy MJ death override.');
 requireTactical($patched['resources']['hp'] === -26 && $patched['resources']['mana'] === 0, 'Player patches preserve signed HP and nonnegative mana.');
+// Legacy maps without fog must work through both movement visibility callers.
+foreach (['absent'=>['gridSize'=>50], 'null'=>['gridSize'=>50,'fog'=>null]] as $fogCase=>$fogMap) {
+    $vision = applicationComputeVisionMask(applicationActiveMapOcclusionState($fogMap), [], 50);
+    requireTactical(applicationActiveMapFogState($fogMap) === null && is_array($vision)
+        && onlineVisiblePathPointTester(null, $vision)(25.0, 50.0), $fogCase . ': no fog is distinct from the always-array computed vision.');
+    foreach ([false,true] as $fogGm) {
+        $db=fixture();$db->put('map:scene-one',$fogMap);$db->put('initiative:scene-one',['active'=>false]);
+        $move=['sceneId'=>'scene-one','tokenId'=>'token-player','x'=>25,'y'=>50];
+        if ($fogGm) $move['assisted']=true;
+        $response=runCommand($db,'token.move',$move,$fogGm,$fogGm?'account-gm':'account-player');
+        requireTactical($response->status===200 && ($response->body['blockedByWall']??true)===false
+            && (float)$db->payload('token:scene-one:token-player')['x']===25.0,
+            $fogCase . ': player and assisted MJ reach an open destination: ' . $response->getMessage());
+    }
+    $db=fixture();$db->put('map:scene-one',$fogMap);
+    $character=$db->payload('character:character-player');$character['resources']['hp']=0;$db->put('character:character-player',$character);
+    $response=runCommand($db,'token.attack',['sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','requestId'=>'no-fog-attack-'.$fogCase.'-0001']);
+    requireTactical($response->status===409 && ($response->body['code']??'')==='attack_source_defeated',
+        $fogCase . ': attack visibility accepts the absent fog and reaches the authoritative KO guard.');
+}
+$protectedFog=['version'=>1,'enabled'=>true,'width'=>32,'height'=>32,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",128)),'+/','-_'),'=')];
+requireTactical(!onlineVisiblePathPointTester([...$protectedFog,'mask'=>'!invalid!'],['enabled'=>false])(25.0,50.0), 'Enabled malformed fog still fails closed.');
+requireTactical(!onlineVisiblePathPointTester(null,$protectedFog)(25.0,50.0), 'Absent fog does not disable active vision.');
+foreach (['active fog'=>['fog'=>$protectedFog], 'new upper floor'=>['activeLayerId'=>'upper','layers'=>['ground'=>['fog'=>$protectedFog],'upper'=>[]]]] as $fogCase=>$fogMap) {
+    $db=fixture();$db->put('map:scene-one',$fogMap);$db->put('initiative:scene-one',['active'=>false]);
+    foreach (['token-player','token-monster'] as $fogTokenId) {
+        $fogToken=$db->payload('token:scene-one:'.$fogTokenId);$fogToken['layerId']=$fogMap['activeLayerId']??'ground';$db->put('token:scene-one:'.$fogTokenId,$fogToken);
+    }
+    $before=$db->domains;$beforeRevision=$db->revision;
+    foreach ([false,true] as $fogGm) {
+        $response=runCommand($db,'token.move',['sceneId'=>'scene-one','tokenId'=>'token-player','x'=>25,'y'=>50,'assisted'=>true],$fogGm,$fogGm?'account-gm':'account-player');
+        requireTactical($response->status===200 && ($response->body['blockedByWall']??false)===true
+            && ($response->body['positionChanged']??true)===false && $db->domains===$before && $db->revision===$beforeRevision,
+            $fogCase . ': protected destinations remain inaccessible to player and assisted MJ.');
+    }
+    $response=runCommand($db,'token.attack',['sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','requestId'=>'hidden-fog-attack-0001']);
+    requireTactical($response->status===403 && ($response->body['code']??'')==='attack_target_hidden' && $db->domains===$before,
+        $fogCase . ': a concealed target cannot be attacked.');
+}
 requireTactical(onlineDiceAppearance(['frameVariant'=>'boss']) === ['color'=>'#000000','foreground'=>'#ffffff'], 'A boss has black dice with white digits.');
 requireTactical(onlineDiceAppearance(['frameVariant'=>'boss','color'=>'#ff0000'], true, ['color'=>'#ffffff']) === ['color'=>'#ffffff','foreground'=>'#000000'], 'Player ownership wins over frame and uses character colour.');
 requireTactical(array_keys(publicOnlineDiceAppearance(['color'=>'#ffffff','foreground'=>'#000000','secret'=>'do-not-project'])) === ['color','foreground'], 'Dice projection is a strict whitelist.');
