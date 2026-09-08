@@ -59,7 +59,7 @@ function balancedPhpDelimiters(source) {
 }
 
 test("les sources PHP ont des délimiteurs structurels équilibrés", async () => {
-  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
+  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
     assert.equal(balancedPhpDelimiters(await read(file)), true, file);
   }
 });
@@ -67,7 +67,7 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
 test("le backend 0.15.3 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.3'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-3-map-visibility-continuity-and-dual-login-release-20260907-2'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-3-complete-lifecycle-audit-candidate-20260908-3'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -136,7 +136,7 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
 });
 
 test("les attaques ciblées et opposées restent autoritaires sans divulguer l’armure", async () => {
-  const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
+  const [online, domains, effects] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php"), read("api/v1/ability-effects.php")]);
   const attack = online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
   const oppose = attack.slice(attack.indexOf("} elseif ($command === 'token.attack.oppose')"), attack.indexOf("} elseif ($command === 'token.attack.resolve')"));
   const applyDamage = online.slice(online.indexOf("function applyOnlineAttackDamage"), online.indexOf("function onlineAttackDiscordContent"));
@@ -148,7 +148,10 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /normalizeOnlineWeaponAttacks/);
   assert.match(attack, /normalizeOnlineAbilities/);
   assert.match(attack, /findEntryIndex\(\$stats/);
-  assert.match(attack, /onlineAttackArmorPercent\(\$target, \$damageType\)/);
+  assert.match(attack, /onlineRollAttackDamage\(\$damageSpecification, \$target\)/);
+  assert.match(effects, /foreach \(\$parts as \$part\)[\s\S]*?onlineAttackArmorPercent\(\$target, \$part\['type'\]\)/);
+  assert.match(effects, /onlineAttackArmorPercent\(\$target, \$attack\['damageType'\] \?\? 'physical'\)/);
+  assert.match(effects, /\$final \+= \$summary\['finalDamage'\]/);
   assert.match(attack, /\$combatActive = \(\$initiative\['active'\] \?\? false\) === true/);
   assert.match(attack, /elseif \(\$combatActive\)[\s\S]*?applyOnlineAttackDamage/);
   assert.match(attack, /else \{[\s\S]*?\$attack\['status'\] = 'pending'[\s\S]*?\$activity\['pendingAttacks'\]/);
@@ -230,7 +233,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$result\['tokenDomain'\]/);
   assert.match(command, /'revision' => \(int\) \(\$records\[\$tokenKey\]\['revision'\] \?\? 0\) \+ \(\$positionChanged \? 1 : 0\)/);
   assert.match(command, /if \(\$positionChanged\)[\s\S]*?queueOnlineDomainUpsert/);
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -431,7 +434,7 @@ test("le worker Régie change de poste avec un bail éphémère et clôture l’
 
 test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
-  assert.match(online, /'token\.resource\.adjust', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
+  assert.match(online, /'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
   assert.match(online, /'author' => \$isGm \? 'MJ'/);
   assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
   assert.match(online, /\$requestId = trim/);
@@ -537,7 +540,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
@@ -750,14 +753,18 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /timer_limit/);
 });
 
-test("la projection joueur partage toute fiche tactique visible sans élargir les droits de contrôle", async () => {
+test("la projection joueur garde les monstres privés et partage les détails uniquement après révélation MJ", async () => {
   const online = await read("api/v1/online.php");
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /\$effectiveControllerId = onlineEffectiveTokenControllerId/);
   assert.match(projection, /\$allied = \$effectiveControllerId !== ''/);
   assert.match(projection, /'conditions' => normalizeOnlineConditions[\s\S]*?'condition' => implode/);
   assert.match(projection, /\$notesVisible = \$allied \|\|/);
-  assert.match(projection, /\$details = true/);
+  assert.match(projection, /\$details = \$allied \|\| \(\$token\['revealDetailsToPlayers'\] \?\? false\) === true/);
+  assert.match(projection, /if \(\$details\) \{[\s\S]*?foreach \(\['hp', 'maxHp', 'mana', 'maxMana'/);
+  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\]\)/);
+  assert.match(projection, /'publicHealth' => onlineHealthState/);
+  assert.doesNotMatch(projection, /\$details = true/);
   assert.match(projection, /if \(\$notesVisible && array_key_exists\('notes'/);
   assert.match(projection, /'bonuses', 'penalties'/);
   assert.match(projection, /'activeCharacterId'/);
@@ -812,7 +819,11 @@ test("les variantes de cadre sont bornées et les détails tactiques restent en 
   assert.match(online, /\$playerControlled \? 'player' : 'creature'/);
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /'frameVariant' => normalizeOnlineTokenFrameVariant/);
-  assert.match(projection, /\$details = true/);
+  assert.match(projection, /\$details = \$allied \|\| \(\$token\['revealDetailsToPlayers'\] \?\? false\) === true/);
+  assert.match(projection, /if \(\$details\) \{[\s\S]*?foreach \(\['hp', 'maxHp', 'mana', 'maxMana'/);
+  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\]\)/);
+  assert.match(projection, /'publicHealth' => onlineHealthState/);
+  assert.doesNotMatch(projection, /\$details = true/);
   assert.match(projection, /'controllable' => \$owned && !\$paused/);
 });
 

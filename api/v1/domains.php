@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/token-groups.php';
+require_once __DIR__ . '/token-pathfinding.php';
+require_once __DIR__ . '/ability-effects.php';
+require_once __DIR__ . '/ability-use.php';
+require_once __DIR__ . '/ability-casting.php';
+require_once __DIR__ . '/tactical-rolls.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_SESSION_SCHEMA_VERSION = 16;
@@ -999,7 +1004,8 @@ function validApplicationAbilities(mixed $value): bool
         return false;
     }
     foreach ($value as $entry) {
-        if (!validApplicationDomainIdentifier($entry['id'] ?? null, 120)
+        if (!validApplicationAbilityEffects($entry)
+            || !validApplicationDomainIdentifier($entry['id'] ?? null, 120)
             || !validApplicationDomainText($entry['name'] ?? null, 120, false)
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
@@ -1432,6 +1438,29 @@ function reactivateDomainMedia(PDO $connection, array $payload): void
     }
 }
 
+function validApplicationAudioPlayback(mixed $playback): bool
+{
+    if (!is_array($playback) || ($playback !== [] && array_is_list($playback))) return false;
+    foreach (['music', 'ambience'] as $channel) {
+        if (!array_key_exists($channel, $playback)) continue;
+        if (!is_array($playback[$channel]) || ($playback[$channel] !== [] && array_is_list($playback[$channel]))) return false;
+        if (array_key_exists('loop', $playback[$channel]) && !is_bool($playback[$channel]['loop'])) return false;
+    }
+    return true;
+}
+
+function preserveApplicationAudioLoops(array $payload, array $previous = []): array
+{
+    $playback = is_array($payload['playback'] ?? null) ? $payload['playback'] : [];
+    foreach (['music' => false, 'ambience' => true] as $channel => $fallback) {
+        $state = is_array($playback[$channel] ?? null) ? $playback[$channel] : [];
+        if (!array_key_exists('loop', $state)) $state['loop'] = is_bool($previous['playback'][$channel]['loop'] ?? null) ? $previous['playback'][$channel]['loop'] : $fallback;
+        $playback[$channel] = $state;
+    }
+    $payload['playback'] = $playback;
+    return $payload;
+}
+
 function validatedDomainPayload(string $key, mixed $payload): array
 {
     if (!validApplicationDomainKey($key) || !is_array($payload)) {
@@ -1485,7 +1514,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
         sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
     if ($key === 'audio'
-        && !validApplicationAudioTracks($payload['tracks'] ?? null, $payload['folders'] ?? [])) {
+        && (!validApplicationAudioTracks($payload['tracks'] ?? null, $payload['folders'] ?? [])
+            || !validApplicationAudioPlayback(array_key_exists('playback', $payload) ? $payload['playback'] : []))) {
         sendError(400, 'Playlist incohérente.', 'invalid_audio_domain');
     }
     if (str_starts_with($key, 'scene:')) {
@@ -1674,6 +1704,7 @@ function applicationDomainPayloadForComparison(string $key, array $payload): arr
         unset($payload['resourcePulse']);
     }
     if ($key === 'audio') {
+        $payload = preserveApplicationAudioLoops($payload);
         if (($payload['folders'] ?? null) === []) {
             unset($payload['folders']);
         }
@@ -1706,6 +1737,7 @@ function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $pay
         return $payload;
     }
     $currentPayload = $current['payload'];
+    $payload = preserveApplicationAbilityExtensions($key, $payload, $currentPayload);
     $incomingUpdatedAt = applicationDomainEntityTimestamp($payload, '_updatedAt');
     $currentUpdatedAt = applicationDomainEntityTimestamp($currentPayload, '_updatedAt');
     if (str_starts_with($key, 'character:')) {
@@ -1748,6 +1780,7 @@ function prepareApplicationDomainUpsert(
 ): ?array
 {
     $payload = validatedDomainPayload($key, $payload);
+    if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     if ($protectAgainstStaleEntityWrite) {
         $payload = protectApplicationDomainAgainstStaleEntityWrite($key, $payload, $current);
     }

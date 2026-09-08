@@ -117,7 +117,7 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
     foreach ($ids as $id) {
         $token = $index[$id] ?? null; $base = $request['base'][$id] ?? null;
         if ($token === null || !onlineTokenOnActiveLayer($token, $map) || !is_array($base)) throw new DomainException('La sélection a changé.', 409);
-        foreach (['x', 'y'] as $key) if ((!is_int($base[$key] ?? null) && !is_float($base[$key] ?? null)) || !is_finite((float) $base[$key]) || abs((float) ($token[$key] ?? 50) - $base[$key]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
+        foreach (['x', 'y'] as $key) if ((!is_int($base[$key] ?? null) && !is_float($base[$key] ?? null)) || !is_finite((float) $base[$key]) || (($request['rebasePositions'] ?? false) !== true && abs((float) ($token[$key] ?? 50) - $base[$key]) > 0.000001)) throw new DomainException('Un pion a changé de position.', 409);
         $tokens[] = $token;
     }
     $destination = $map['layers'][$targetLayerId] ?? ($targetLayerId === $layerId ? $map : []);
@@ -187,7 +187,7 @@ function planApplicationTokenLayers(array $map, array $arguments): array
         if ($token === null || onlineTokenLayerId($token, $map) !== $request['layerId']) throw new DomainException('Un pion a changé de niveau.', 409);
         foreach (['x', 'y'] as $axis) {
             if ((!is_int($request[$axis] ?? null) && !is_float($request[$axis] ?? null)) || !is_finite((float) $request[$axis]) || $request[$axis] < 0 || $request[$axis] > 100) throw new DomainException('Position de départ invalide.', 400);
-            if (abs((float) ($token[$axis] ?? 50) - $request[$axis]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
+            if (($arguments['rebasePositions'] ?? false) !== true && abs((float) ($token[$axis] ?? 50) - $request[$axis]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
         }
     }
     $destination = $map['layers'][$targetLayer] ?? ($targetLayer === onlineTokenLayerId([], $map) ? $map : []);
@@ -197,7 +197,7 @@ function planApplicationTokenLayers(array $map, array $arguments): array
     $placements = [];
     foreach ($requests as $request) {
         $token = $index[$request['id']];
-        $desired = ['x' => $request['x'], 'y' => $request['y']];
+        $desired = ($arguments['rebasePositions'] ?? false) === true ? ['x' => $token['x'], 'y' => $token['y']] : ['x' => $request['x'], 'y' => $request['y']];
         if ($request['layerId'] === $targetLayer) {
             $placements[] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayer, 'relocated' => false];
             continue;
@@ -264,6 +264,7 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
         'cloneSourceCharacterId' => $source['characterId'] ?? ($source['cloneSourceCharacterId'] ?? null),
         'cloneSourceTokenId' => $source['id'], 'layerId' => onlineTokenLayerId($source, $map), 'libraryTemplateId' => null,
         'initiative' => null, 'resourcePulse' => null, '_updatedAt' => (int) floor(microtime(true) * 1000), '_movedAt' => (int) floor(microtime(true) * 1000)]);
+    unset($clone['transformation']);
     $layer = $map['layers'][$clone['layerId']] ?? $map;
     $layer['naturalWidth'] = (float) ($layer['naturalWidth'] ?? 1600) ?: 1600.0;
     $layer['naturalHeight'] = (float) ($layer['naturalHeight'] ?? 900) ?: 900.0;

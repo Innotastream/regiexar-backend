@@ -424,7 +424,7 @@ requireDomainCompatibility(
         && ($genericCharacterPatch['fatigue'] ?? null) === ['current' => 13, 'max' => 100],
     'Un patch partiel de n’importe quelle fiche doit préserver toutes les autres ressources, stats et valeurs de fatigue.'
 );
-$visibleNpcProjection = publicPlayerState([
+$visibleNpcState = [
     'session' => ['name' => 'Recette tactique'],
     'characters' => [],
     'map' => ['tokens' => [[
@@ -447,18 +447,44 @@ $visibleNpcProjection = publicPlayerState([
     'rolls' => [],
     'actionTimers' => [],
     'mapPings' => [],
-], ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+];
+$visibleNpcProjection = publicPlayerState($visibleNpcState, ['id' => 'account-player', 'display_name' => 'Joueur'], []);
 $visibleNpc = $visibleNpcProjection['map']['tokens'][0] ?? [];
 requireDomainCompatibility(
-    ($visibleNpc['detailsVisible'] ?? false) === true
-        && ($visibleNpc['hp'] ?? null) === 40
-        && ($visibleNpc['stats'][0]['value'] ?? null) === '70'
+    ($visibleNpc['detailsVisible'] ?? true) === false
+        && !array_key_exists('hp', $visibleNpc)
+        && !array_key_exists('stats', $visibleNpc)
+        && !array_key_exists('maxHp', $visibleNpc)
+        && !array_key_exists('mana', $visibleNpc)
+        && !array_key_exists('visionDistance', $visibleNpc)
+        && ($visibleNpc['publicHealth'] ?? '') === 'normal'
         && !array_key_exists('notes', $visibleNpc)
         && !array_key_exists('gmNotes', $visibleNpc)
         && ($visibleNpc['ownedByYou'] ?? true) === false
         && ($visibleNpc['controllable'] ?? true) === false,
-    'Tout token visible doit exposer sa fiche tactique en lecture seule sans notes privées ni droit de contrôle.'
+    'Une créature visible conserve sa fiche tactique privée par défaut, sans statistiques dans le JSON Joueur.'
 );
+
+foreach ([null, false, 'true'] as $sharing) {
+    $candidate = $visibleNpcState;
+    $candidate['map']['tokens'][0]['revealDetailsToPlayers'] = $sharing;
+    $projected = publicPlayerState($candidate, ['id' => 'account-player', 'display_name' => 'Joueur'], [])['map']['tokens'][0];
+    requireDomainCompatibility(($projected['detailsVisible'] ?? true) === false && !array_key_exists('stats', $projected), 'La révélation exige le booléen true explicite.');
+}
+foreach ([40 => 'normal', 2 => 'critical', 0 => 'down', -1 => 'dead'] as $hp => $health) {
+    $candidate = $visibleNpcState;
+    $candidate['map']['tokens'][0]['hp'] = $hp;
+    $projected = publicPlayerState($candidate, ['id' => 'account-player', 'display_name' => 'Joueur'], [])['map']['tokens'][0];
+    requireDomainCompatibility(($projected['publicHealth'] ?? '') === $health && !array_key_exists('hp', $projected) && !array_key_exists('maxHp', $projected), 'L’état de santé reste public sans exposer les PV.');
+}
+$candidate = $visibleNpcState;
+$candidate['map']['tokens'][0]['revealDetailsToPlayers'] = true;
+$revealedNpc = publicPlayerState($candidate, ['id' => 'account-player', 'display_name' => 'Joueur'], [])['map']['tokens'][0];
+requireDomainCompatibility(($revealedNpc['detailsVisible'] ?? false) === true && ($revealedNpc['tacticalDetailsShared'] ?? false) === true && ($revealedNpc['stats'][0]['value'] ?? '') === '70' && !array_key_exists('gmNotes', $revealedNpc), 'Le MJ peut explicitement révéler une créature, jamais ses notes secrètes.');
+$candidate = $visibleNpcState;
+$candidate['map']['tokens'][0]['controllerPlayerId'] = 'account-player';
+$ownedNpc = publicPlayerState($candidate, ['id' => 'account-player', 'display_name' => 'Joueur'], [])['map']['tokens'][0];
+requireDomainCompatibility(($ownedNpc['ownedByYou'] ?? false) === true && ($ownedNpc['stats'][0]['value'] ?? '') === '70', 'Un joueur conserve les statistiques de son propre pion.');
 
 $sharedVisionState = [
     'session' => ['name' => 'Recette vision commune'],

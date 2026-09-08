@@ -58,11 +58,12 @@ test("la commande de déplacement arbitre le trajet Joueur et la destination MJ 
   const movement = online.slice(online.indexOf("} elseif ($command === 'token.move')"), online.indexOf("} elseif ($command === 'token.resource.adjust')"));
   assert.match(movement, /\$mapKey = 'map:' \. \$moveSceneId/);
   assert.match(movement, /\$moveSceneId = \$requestedSceneId/);
-  assert.match(movement, /\$isGm \? applicationResolveGmTokenPlacement\(/);
-  assert.match(movement, /\) : applicationResolveWallCollision\(/);
-  assert.match(movement, /false\s*\n\s*\);/);
+  assert.match(movement, /\$isGm && \(\$arguments\['assisted'\] \?\? false\) !== true \? applicationResolveGmTokenPlacement\(/);
+  assert.match(movement, /if \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)/);
+  assert.match(movement, /onlineMapMovementVisibility\(\$connection, \$records, \$map, \$accountId, \$moveSceneId\)/);
+  assert.match(movement, /applicationComputeVisionMask\(\$occlusion, \$origins/);
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map\)/);
-  assert.match(movement, /applicationResolveWallCollision/);
+  assert.match(movement, /findApplicationVisibleTokenPath\(/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);
   assert.match(movement, /\$positionChanged/);
   assert.match(movement, /if \(\$positionChanged\)[\s\S]*?\$token\['_movedAt'\]/);

@@ -33,6 +33,10 @@ jobs:
         run: php tests/client-policy.php
       - name: Tactical lifecycle and concurrent conditions
         run: php tests/tactical-lifecycle.php
+      - name: Ability casting costs and cooldowns
+        run: php tests/ability-casting-contract.php
+      - name: Authoritative tactical rolls and audio loops
+        run: php tests/tactical-rolls-audio-contract.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 
