@@ -111,6 +111,15 @@ function requireImageStudioIdentity(PDO $connection): array
     return $identity;
 }
 
+function requireImageStudioAdministratorIdentity(PDO $connection): array
+{
+    $identity = requireImageStudioIdentity($connection);
+    if (!(bool) ($identity['can_administrate'] ?? false)) {
+        sendError(403, 'Cette suppression définitive est réservée à l’administrateur.', 'administrator_required');
+    }
+    return $identity;
+}
+
 function imageStudioPublicIdentity(array $identity): array
 {
     return [
@@ -336,10 +345,7 @@ function updateImageStudioConversation(PDO $connection, string $id): never
 
 function permanentlyDeleteImageStudioConversation(PDO $connection, string $id): never
 {
-    $identity = requireImageStudioIdentity($connection);
-    if (!(bool) ($identity['can_administrate'] ?? false)) {
-        sendError(403, 'La suppression définitive des discussions est réservée à l’administrateur.', 'administrator_required');
-    }
+    $identity = requireImageStudioAdministratorIdentity($connection);
     $conversation = assertImageStudioConversationAccess(
         $identity,
         imageStudioConversationRecord($connection, $id)
@@ -412,6 +418,62 @@ function permanentlyDeleteImageStudioConversation(PDO $connection, string $id): 
         'deletedMessages' => $deletedMessages,
         'mediaScheduledForDeletion' => $mediaScheduled,
         'historyRetainedForAdministrator' => false,
+    ]);
+}
+
+function permanentlyDeleteImageStudioMessage(PDO $connection, string $id): never
+{
+    requireImageStudioAdministratorIdentity($connection);
+    $message = imageStudioMessageRecord($connection, $id);
+    if (!is_array($message)) {
+        sendError(404, 'Demande de génération introuvable.', 'message_missing');
+    }
+    if (in_array((string) $message['status'], ['queued', 'generating'], true)) {
+        sendError(409, 'Annulez ou terminez cette génération avant de la supprimer définitivement.', 'generation_active');
+    }
+    $mediaId = (string) ($message['media_id'] ?? '');
+    $connection->beginTransaction();
+    try {
+        $detachReplies = $connection->prepare(
+            'UPDATE image_studio_messages SET parent_message_id = NULL WHERE parent_message_id = :id'
+        );
+        $detachReplies->execute([':id' => $id]);
+        $delete = $connection->prepare(
+            "DELETE FROM image_studio_messages WHERE id = :id AND status NOT IN ('queued', 'generating')"
+        );
+        $delete->execute([':id' => $id]);
+        if ($delete->rowCount() !== 1) {
+            throw new RuntimeException('message_delete_conflict');
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        if ($error instanceof RuntimeException && $error->getMessage() === 'message_delete_conflict') {
+            sendError(409, 'La génération a changé pendant la confirmation. Actualisez le journal.', 'message_delete_conflict');
+        }
+        throw $error;
+    }
+    $mediaScheduled = false;
+    if ($mediaId !== ''
+        && mediaDomainReferenceCount($connection, $mediaId) === 0
+        && !imageStudioMediaUsedByCatalog($connection, $mediaId)) {
+        $mark = $connection->prepare(
+            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3), public_slug = NULL, published_at = NULL '
+            . 'WHERE id = :id AND pending_delete_at IS NULL'
+        );
+        $mark->execute([':id' => $mediaId]);
+        $mediaScheduled = $mark->rowCount() === 1;
+    }
+    sendJson(200, [
+        'ok' => true,
+        'permanentlyDeleted' => true,
+        'messageId' => $id,
+        'mediaScheduledForDeletion' => $mediaScheduled,
+        'mediaRetained' => $mediaId !== '' && !$mediaScheduled,
+        'historyRetainedForAdministrator' => false,
+        ...($mediaScheduled ? ['retainedUntil' => gmdate('c', time() + 30 * 86400)] : []),
     ]);
 }
 
@@ -1285,26 +1347,13 @@ function hideImageStudioMessage(PDO $connection, string $id): never
         . 'worker_account_id = NULL, worker_lease_id = NULL, worker_lease_expires_at = NULL WHERE id = :id'
     );
     $statement->execute([':id' => $id]);
-    $mediaScheduled = false;
-    $mediaId = (string) ($message['media_id'] ?? '');
-    if ($mediaId !== ''
-        && $message['public_slug'] === null
-        && mediaDomainReferenceCount($connection, $mediaId) === 0
-        && !imageStudioMediaUsedByCatalog($connection, $mediaId)) {
-        $mark = $connection->prepare(
-            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3) '
-            . 'WHERE id = :id AND public_slug IS NULL AND pending_delete_at IS NULL'
-        );
-        $mark->execute([':id' => $mediaId]);
-        $mediaScheduled = $mark->rowCount() === 1;
-    }
     sendJson(200, [
         'ok' => true,
         'hidden' => true,
         'cancelled' => $cancelled,
         'historyRetainedForAdministrator' => true,
-        'mediaScheduledForDeletion' => $mediaScheduled,
-        ...($mediaScheduled ? ['retainedUntil' => gmdate('c', time() + 30 * 86400)] : []),
+        'mediaRetained' => true,
+        'mediaScheduledForDeletion' => false,
     ]);
 }
 
@@ -1345,6 +1394,55 @@ function listImageStudioGallery(PDO $connection, bool $headOnly): never
         'images' => $images,
         'retentionNotice' => 'Une image retirée disparaît de la collection du MJ, mais son journal reste accessible à l’administrateur.',
     ], $headOnly);
+}
+
+function listImageStudioPublishedMedia(PDO $connection, bool $headOnly): never
+{
+    requireImageStudioAdministratorIdentity($connection);
+    $statement = $connection->query(
+        "SELECT id, original_name, content_type, byte_size, public_slug, published_at "
+        . "FROM media_objects WHERE public_slug IS NOT NULL AND pending_delete_at IS NULL "
+        . "AND content_type LIKE 'image/%' ORDER BY published_at DESC, created_at DESC LIMIT 1000"
+    );
+    $rows = $statement === false ? [] : $statement->fetchAll();
+    $media = array_map(static fn (array $row): array => [
+        'mediaId' => (string) $row['id'],
+        'originalName' => (string) $row['original_name'],
+        'contentType' => (string) $row['content_type'],
+        'size' => (int) $row['byte_size'],
+        'publishedAt' => (string) $row['published_at'],
+        'imageUrl' => '/api/v1/image-studio/media/' . (string) $row['id'],
+        'shareUrl' => 'https://regie-xar-tsaroth.fr/share/' . (string) $row['public_slug'],
+    ], $rows);
+    sendJson(200, ['ok' => true, 'media' => $media], $headOnly);
+}
+
+function permanentlyDeleteImageStudioPublishedMedia(PDO $connection, string $id): never
+{
+    requireImageStudioAdministratorIdentity($connection);
+    $record = mediaRecord($connection, $id);
+    if (!is_array($record) || $record['public_slug'] === null) {
+        sendJson(200, ['ok' => true, 'alreadyRemoved' => true]);
+    }
+    ensureDomainStoreInitialized($connection);
+    if (mediaDomainReferenceCount($connection, $id) > 0) {
+        sendError(
+            409,
+            'Ce média est encore référencé. Retirez ses usages actifs ou supprimez définitivement sa génération depuis le journal.',
+            'media_still_referenced'
+        );
+    }
+    $statement = $connection->prepare(
+        'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3), public_slug = NULL, published_at = NULL '
+        . 'WHERE id = :id AND public_slug IS NOT NULL AND pending_delete_at IS NULL'
+    );
+    $statement->execute([':id' => $id]);
+    sendJson(200, [
+        'ok' => true,
+        'permanentlyDeleted' => $statement->rowCount() === 1,
+        'mediaId' => $id,
+        'retainedUntil' => gmdate('c', time() + 30 * 86400),
+    ]);
 }
 
 function imageStudioMediaOwner(PDO $connection, string $mediaId): ?array
@@ -1798,6 +1896,14 @@ function handleImageStudioRoute(PDO $connection, string $route, string $method, 
         requireMethod($method, ['GET', 'HEAD']);
         listImageStudioGallery($connection, $headOnly);
     }
+    if ($route === '/api/v1/image-studio/published-media') {
+        requireMethod($method, ['GET', 'HEAD']);
+        listImageStudioPublishedMedia($connection, $headOnly);
+    }
+    if (preg_match('#^/api/v1/image-studio/published-media/([A-Za-z0-9_-]{24})$#', $route, $match) === 1) {
+        requireMethod($method, ['DELETE']);
+        permanentlyDeleteImageStudioPublishedMedia($connection, $match[1]);
+    }
     if ($route === '/api/v1/image-studio/references') {
         if ($method === 'GET' || $method === 'HEAD') {
             listImageReferenceCatalog($connection, $headOnly);
@@ -1840,6 +1946,10 @@ function handleImageStudioRoute(PDO $connection, string $route, string $method, 
     if (preg_match('#^/api/v1/image-studio/messages/([A-Za-z0-9_-]{24})/fail$#', $route, $match) === 1) {
         requireMethod($method, ['POST']);
         failImageStudioMessage($connection, $match[1]);
+    }
+    if (preg_match('#^/api/v1/image-studio/messages/([A-Za-z0-9_-]{24})/permanent$#', $route, $match) === 1) {
+        requireMethod($method, ['DELETE']);
+        permanentlyDeleteImageStudioMessage($connection, $match[1]);
     }
     if (preg_match('#^/api/v1/image-studio/messages/([A-Za-z0-9_-]{24})$#', $route, $match) === 1) {
         requireMethod($method, ['DELETE']);

@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.3';
-const XAR_BACKEND_BUILD = 'client-3-2-3-complete-lifecycle-audit-candidate-20260908-3';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.3';
-// Exception explicitement demandée : aucune autre version n'est admise.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.2', '3.2.3'];
+const XAR_BACKEND_VERSION = '0.15.4';
+const XAR_BACKEND_BUILD = 'client-3-2-4-reversible-history-placement-candidate-20260908-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.4';
+// Politique fermée de la livraison 3.2.4 : aucune autre version n'est admise.
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.2', '3.2.3', '3.2.4'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 18;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -129,7 +129,7 @@ function clientPolicy(array $configuration): array
     $announcedVersion = XAR_RELEASE_ANNOUNCEMENT_VERSION;
     $allowedVersions = XAR_RELEASE_ALLOWED_CLIENT_VERSIONS;
     if (preg_match('/^\d+\.\d+\.\d+$/D', $announcedVersion) !== 1
-        || !is_array($allowedVersions) || $allowedVersions === [] || count($allowedVersions) > 2
+        || !is_array($allowedVersions) || $allowedVersions === [] || count($allowedVersions) > 3
         || count(array_unique($allowedVersions, SORT_STRING)) !== count($allowedVersions)
         || !in_array($announcedVersion, $allowedVersions, true)) {
         sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');

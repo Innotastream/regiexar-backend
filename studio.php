@@ -78,8 +78,11 @@ header(
     .history-entry header { margin: 0 0 8px; color: #9f93aa; font-size: 10px; }
     .history-entry p { margin: 0; color: #d4ccd6; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
     .history-entry img { width: min(100%, 520px); max-height: 360px; margin-top: 10px; object-fit: contain; border-radius: 8px; background: #030308; }
+    .history-entry-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+    .history-entry-actions .button { min-height: 34px; padding-inline: 10px; font-size: 11px; }
     .audit-badge { display: inline-block; margin-left: 7px; padding: 2px 6px; border-radius: 999px; background: rgba(171, 63, 82, .2); color: #e6aab4; }
     .history-delete { min-width: 42px; padding: 0 9px; }
+    .published-manager-card h2 { overflow-wrap: anywhere; white-space: normal; }
     dialog { width: min(460px, calc(100% - 28px)); border: 1px solid rgba(203, 170, 111, .34); border-radius: 15px; padding: 0; background: #100b1b; color: #eee8da; box-shadow: 0 28px 90px rgba(0, 0, 0, .72); }
     dialog::backdrop { background: rgba(2, 2, 8, .76); backdrop-filter: blur(4px); }
     dialog form { display: grid; gap: 12px; padding: 22px; }
@@ -111,6 +114,7 @@ header(
       <div class="panel toolbar">
         <div class="identity"><strong id="identityName"></strong><small id="identityRole">Collection privée MJ</small></div>
         <div class="toolbar-actions">
+          <button id="publishedButton" class="button ghost hidden" type="button">Médias publiés</button>
           <button id="historyButton" class="button ghost hidden" type="button">Journal administrateur</button>
           <button id="scopeButton" class="button ghost hidden" type="button">Voir toutes les collections</button>
           <button id="refreshButton" class="button ghost" type="button">Actualiser</button>
@@ -118,10 +122,14 @@ header(
         </div>
       </div>
       <p id="pageMessage" class="page-message" role="status" aria-live="polite"></p>
-      <p class="notice">« Fermer l’aperçu » libère seulement de la place sur cet écran. « Retirer » masque l’image de la collection. L’administrateur peut aussi supprimer définitivement une discussion et son journal.</p>
+      <p class="notice">« Fermer l’aperçu » libère seulement de la place sur cet écran. « Retirer » masque l’image de la collection sans supprimer son fichier. Les suppressions définitives sont réservées aux vues administrateur de ce site.</p>
       <div id="gallery" class="gallery" aria-live="polite"></div>
+      <section id="publishedPanel" class="hidden" aria-label="Administration des médias publiés">
+        <p class="notice">Images actuellement publiques. Une suppression les retire du web et ouvre leur rétention de trente jours. Un média encore utilisé doit d’abord être retiré de la table ou de son journal de génération.</p>
+        <div id="publishedGallery" class="gallery" aria-live="polite"></div>
+      </section>
       <section id="historyPanel" class="hidden" aria-label="Journal administrateur des conversations">
-        <p class="notice">Journal de sécurité complet : conversations ouvertes ou fermées, demandes réussies, échouées ou retirées. Cet historique est réservé à Innota administrateur.</p>
+        <p class="notice">Journal de sécurité complet : conversations ouvertes ou fermées, demandes réussies, échouées ou retirées. Ici seulement, Innota administrateur peut effacer définitivement une génération ou une discussion inactive.</p>
         <div class="history-layout">
           <aside id="historyConversations" class="panel history-conversations"></aside>
           <div id="historyMessages" class="panel history-messages" aria-live="polite"></div>
@@ -147,6 +155,26 @@ header(
         <div class="dialog-actions"><button class="button ghost" type="submit" value="cancel">Annuler</button><button class="button danger" type="submit" value="confirm">Supprimer définitivement</button></div>
       </form>
     </dialog>
+
+    <dialog id="deleteMessageDialog" aria-labelledby="deleteMessageDialogTitle" aria-describedby="deleteMessageDialogMessage">
+      <form method="dialog">
+        <small>Administration</small>
+        <h2 id="deleteMessageDialogTitle">Supprimer définitivement cette génération ?</h2>
+        <p id="deleteMessageDialogMessage" class="muted"></p>
+        <p class="error">La demande et son entrée d’audit seront effacées sans restauration. Son média sera retiré du web et placé en rétention seulement s’il n’est plus référencé.</p>
+        <div class="dialog-actions"><button class="button ghost" type="submit" value="cancel">Annuler</button><button class="button danger" type="submit" value="confirm">Supprimer définitivement</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="deletePublishedMediaDialog" aria-labelledby="deletePublishedMediaDialogTitle" aria-describedby="deletePublishedMediaDialogMessage">
+      <form method="dialog">
+        <small>Administration</small>
+        <h2 id="deletePublishedMediaDialogTitle">Retirer définitivement ce média public ?</h2>
+        <p id="deletePublishedMediaDialogMessage" class="muted"></p>
+        <p class="error">Son lien public cessera de fonctionner et le fichier entrera dans la rétention de trente jours. Cette action n’est proposée que sur le site de la Régie.</p>
+        <div class="dialog-actions"><button class="button ghost" type="submit" value="cancel">Annuler</button><button class="button danger" type="submit" value="confirm">Retirer définitivement</button></div>
+      </form>
+    </dialog>
   </main>
 
   <script nonce="<?= htmlspecialchars($nonce, ENT_QUOTES, 'UTF-8') ?>">
@@ -155,6 +183,9 @@ header(
     const studioPanel = document.querySelector("#studioPanel");
     const gallery = document.querySelector("#gallery");
     const scopeButton = document.querySelector("#scopeButton");
+    const publishedButton = document.querySelector("#publishedButton");
+    const publishedPanel = document.querySelector("#publishedPanel");
+    const publishedGallery = document.querySelector("#publishedGallery");
     const historyButton = document.querySelector("#historyButton");
     const historyPanel = document.querySelector("#historyPanel");
     const historyConversations = document.querySelector("#historyConversations");
@@ -162,9 +193,12 @@ header(
     const pageMessage = document.querySelector("#pageMessage");
     const removeDialog = document.querySelector("#removeDialog");
     const deleteConversationDialog = document.querySelector("#deleteConversationDialog");
+    const deleteMessageDialog = document.querySelector("#deleteMessageDialog");
+    const deletePublishedMediaDialog = document.querySelector("#deletePublishedMediaDialog");
     let identity = null;
     let allCollections = false;
     let historyVisible = false;
+    let publishedVisible = false;
     let selectedHistoryConversationId = "";
 
     function notify(message = "", error = false) {
@@ -189,6 +223,24 @@ header(
       });
     }
 
+    function confirmPermanentMessageDeletion(message) {
+      document.querySelector("#deleteMessageDialogMessage").textContent = `${message.operation || "Génération"} · ${message.createdAt || "date inconnue"} · ${(message.prompt || "Sans description").slice(0, 180)}`;
+      return new Promise((resolve) => {
+        const closed = () => resolve(deleteMessageDialog.returnValue === "confirm");
+        deleteMessageDialog.addEventListener("close", closed, { once: true });
+        deleteMessageDialog.showModal();
+      });
+    }
+
+    function confirmPermanentPublishedMediaDeletion(media) {
+      document.querySelector("#deletePublishedMediaDialogMessage").textContent = media.originalName || media.mediaId;
+      return new Promise((resolve) => {
+        const closed = () => resolve(deletePublishedMediaDialog.returnValue === "confirm");
+        deletePublishedMediaDialog.addEventListener("close", closed, { once: true });
+        deletePublishedMediaDialog.showModal();
+      });
+    }
+
     async function request(path, options = {}) {
       const response = await fetch(`${apiRoot}${path}`, {
         method: options.method || "GET",
@@ -201,12 +253,20 @@ header(
       return payload;
     }
 
+    function updateAdminView() {
+      historyButton.textContent = historyVisible ? "Revenir à la galerie" : "Journal administrateur";
+      publishedButton.textContent = publishedVisible ? "Revenir à la galerie" : "Médias publiés";
+      gallery.classList.toggle("hidden", historyVisible || publishedVisible);
+      historyPanel.classList.toggle("hidden", !historyVisible);
+      publishedPanel.classList.toggle("hidden", !publishedVisible);
+      scopeButton.classList.toggle("hidden", historyVisible || publishedVisible || !identity?.canAdministrate);
+    }
+
     function showLogin() {
       identity = null;
       historyVisible = false;
-      historyButton.textContent = "Journal administrateur";
-      historyPanel.classList.add("hidden");
-      gallery.classList.remove("hidden");
+      publishedVisible = false;
+      updateAdminView();
       loginPanel.classList.remove("hidden");
       studioPanel.classList.add("hidden");
       document.querySelector("#password").value = "";
@@ -219,8 +279,9 @@ header(
       studioPanel.classList.remove("hidden");
       document.querySelector("#identityName").textContent = account.displayName || account.username;
       document.querySelector("#identityRole").textContent = account.canAdministrate ? "MJ administrateur" : "Collection privée MJ";
-      scopeButton.classList.toggle("hidden", !account.canAdministrate);
       historyButton.classList.toggle("hidden", !account.canAdministrate);
+      publishedButton.classList.toggle("hidden", !account.canAdministrate);
+      updateAdminView();
       notify();
     }
 
@@ -315,6 +376,55 @@ header(
       }
     }
 
+    function publishedMediaCard(item) {
+      const card = element("article", "card published-manager-card");
+      const image = element("img");
+      image.src = item.imageUrl;
+      image.alt = item.originalName ? `Média publié : ${item.originalName.slice(0, 120)}` : "Média publié sur la Régie";
+      image.loading = "lazy";
+      const copy = element("div", "card-copy");
+      copy.append(element("h2", "", item.originalName || "Image publiée"));
+      const date = item.publishedAt ? new Date(item.publishedAt.replace(" ", "T") + "Z").toLocaleString("fr-FR") : "Date inconnue";
+      copy.append(element("div", "meta", `${date} · ${Math.max(0, Number(item.size) || 0).toLocaleString("fr-FR")} octets`));
+      const actions = element("div", "card-actions");
+      const publicPage = element("a", "button ghost", "Ouvrir la page publique");
+      publicPage.href = item.shareUrl;
+      publicPage.target = "_blank";
+      publicPage.rel = "noopener noreferrer";
+      actions.append(publicPage);
+      const remove = element("button", "button danger", "Retirer définitivement");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!await confirmPermanentPublishedMediaDeletion(item)) return;
+        remove.disabled = true;
+        try {
+          await request(`/published-media/${encodeURIComponent(item.mediaId)}`, { method: "DELETE" });
+          notify("Média retiré du web et placé en rétention.");
+          await loadPublishedMedia();
+        } catch (error) { notify(error.message, true); remove.disabled = false; }
+      });
+      actions.append(remove);
+      copy.append(actions);
+      card.append(image, copy);
+      return card;
+    }
+
+    async function loadPublishedMedia() {
+      publishedGallery.replaceChildren(element("div", "panel empty", "Chargement des médias publiés…"));
+      try {
+        const payload = await request("/published-media");
+        publishedGallery.replaceChildren();
+        if (!payload.media?.length) {
+          publishedGallery.append(element("div", "panel empty", "Aucun média n’est actuellement publié."));
+          return;
+        }
+        publishedGallery.append(...payload.media.map(publishedMediaCard));
+      } catch (error) {
+        if (error.status === 401) return showLogin();
+        publishedGallery.replaceChildren(element("div", "panel empty", error.message));
+      }
+    }
+
     function renderHistoryMessages(payload) {
       historyMessages.replaceChildren();
       const messages = payload.messages || [];
@@ -335,6 +445,24 @@ header(
           entry.append(image);
         }
         if (item.error?.message) entry.append(element("p", "error", item.error.message));
+        if (!["queued", "generating"].includes(item.status)) {
+          const actions = element("div", "history-entry-actions");
+          const remove = element("button", "button danger", "Supprimer définitivement cette génération");
+          remove.type = "button";
+          remove.addEventListener("click", async () => {
+            if (!await confirmPermanentMessageDeletion(item)) return;
+            remove.disabled = true;
+            try {
+              const deleted = await request(`/messages/${encodeURIComponent(item.id)}/permanent`, { method: "DELETE" });
+              notify(deleted.mediaScheduledForDeletion
+                ? "Génération supprimée ; son média est retiré du web et placé en rétention."
+                : "Génération supprimée. Son média reste conservé car une autre référence l’utilise.");
+              await loadHistory();
+            } catch (error) { notify(error.message, true); remove.disabled = false; }
+          });
+          actions.append(remove);
+          entry.append(actions);
+        }
         historyMessages.append(entry);
       }
     }
@@ -401,14 +529,22 @@ header(
       } catch (failure) { error.textContent = failure.message; }
       finally { submit.disabled = false; }
     });
-    document.querySelector("#refreshButton").addEventListener("click", () => historyVisible ? loadHistory() : loadGallery());
+    document.querySelector("#refreshButton").addEventListener("click", () => historyVisible
+      ? loadHistory()
+      : publishedVisible ? loadPublishedMedia() : loadGallery());
     historyButton.addEventListener("click", async () => {
       historyVisible = !historyVisible;
-      historyButton.textContent = historyVisible ? "Revenir à la galerie" : "Journal administrateur";
-      gallery.classList.toggle("hidden", historyVisible);
-      scopeButton.classList.toggle("hidden", historyVisible || !identity?.canAdministrate);
-      historyPanel.classList.toggle("hidden", !historyVisible);
+      publishedVisible = false;
+      updateAdminView();
       if (historyVisible) await loadHistory();
+      else await loadGallery();
+    });
+    publishedButton.addEventListener("click", async () => {
+      publishedVisible = !publishedVisible;
+      historyVisible = false;
+      updateAdminView();
+      if (publishedVisible) await loadPublishedMedia();
+      else await loadGallery();
     });
     scopeButton.addEventListener("click", async () => {
       allCollections = !allCollections;

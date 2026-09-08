@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.15.3 conserve la file Codex et porte le schéma 16", async () => {
+test("le backend 0.15.4 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.3'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-3-complete-lifecycle-audit-candidate-20260908-3'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.4'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-4-reversible-history-placement-candidate-20260908-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -93,8 +93,8 @@ test("le backend 0.15.3 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.3");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.3");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.4");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.4");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 18);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -241,13 +241,13 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(domains, /\$allowed !== true/);
 });
 
-test("la connexion accepte seulement les deux versions explicitement autorisées", async () => {
+test("la connexion accepte seulement les trois versions explicitement autorisées", async () => {
   const [index, readme, manifestSource, workflow] = await Promise.all([
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.3");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.2", "3.2.3"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.4");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.2", "3.2.3", "3.2.4"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -259,7 +259,7 @@ test("la connexion accepte seulement les deux versions explicitement autorisées
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /426 \/ 401 \/ 401 \/ 426/);
+  assert.match(readme, /426 \/ 401 \/ 401 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 
@@ -457,7 +457,6 @@ test("le studio sépare les secrets Codex, les propriétaires et l’audit admin
   assert.match(studio, /media_forbidden/);
   assert.match(studio, /function imageStudioMediaUsedByCatalog/);
   assert.match(studio, /\$catalogued \|\| imageStudioMediaUsedByCurrentDomain/);
-  assert.match(studio, /mediaDomainReferenceCount[\s\S]*?!imageStudioMediaUsedByCatalog/);
   assert.match(studio, /historyRetainedForAdministrator/);
   assert.match(studio, /owner_hidden_at/);
   assert.match(studio, /generation_already_active/);
@@ -480,8 +479,34 @@ test("le studio sépare les secrets Codex, les propriétaires et l’audit admin
   assert.match(index, /!str_starts_with\(\$route, '\/api\/v1\/image-studio'\)/);
 });
 
+test("effacer une génération reste réversible et protège son média masqué", async () => {
+  const [studio, online, page] = await Promise.all([
+    read("api/v1/image-studio.php"), read("api/v1/online.php"), read("studio.php")
+  ]);
+  const hiding = studio.slice(
+    studio.indexOf("function hideImageStudioMessage"),
+    studio.indexOf("function listImageStudioGallery")
+  );
+  const referenceCounting = online.slice(
+    online.indexOf("function mediaDomainReferenceCount"),
+    online.indexOf("function cleanupExpiredMediaRetention")
+  );
+  assert.match(hiding, /owner_hidden_at = COALESCE/);
+  assert.match(hiding, /'historyRetainedForAdministrator' => true/);
+  assert.match(hiding, /'mediaRetained' => true/);
+  assert.match(hiding, /'mediaScheduledForDeletion' => false/);
+  assert.doesNotMatch(hiding, /UPDATE media_objects SET pending_delete_at/);
+  assert.match(referenceCounting, /SELECT COUNT\(\*\) FROM image_studio_messages/);
+  assert.match(referenceCounting, /WHERE media_id = :media_id/);
+  assert.doesNotMatch(referenceCounting, /owner_hidden_at IS NULL/);
+  assert.match(page, /id="deleteConversationDialog"/);
+  assert.match(page, /Supprimer définitivement cette discussion/);
+});
+
 test("la galerie web reste MJ, privée et explicite sur la conservation", async () => {
   const [page, rules, privacy] = await Promise.all([read("studio.php"), read(".htaccess"), read("confidentialite.html")]);
+  const scriptStart = page.indexOf("\n", page.indexOf("<script nonce")) + 1;
+  const clientScript = page.slice(scriptStart, page.indexOf("</script>", scriptStart));
   assert.match(rules, /\^studio\/\?\$/);
   assert.match(page, /Content-Security-Policy/);
   assert.match(page, /form-action 'none'/);
@@ -491,10 +516,15 @@ test("la galerie web reste MJ, privée et explicite sur la conservation", async 
   assert.match(page, /id="removeDialog"/);
   assert.match(page, /Fermer l’aperçu/);
   assert.match(page, /id="deleteConversationDialog"/);
+  assert.match(page, /id="deleteMessageDialog"/);
+  assert.match(page, /id="deletePublishedMediaDialog"/);
+  assert.match(page, /id="publishedButton"[^>]*>Médias publiés/);
   assert.match(page, /Supprimer définitivement/);
   assert.match(page, /method: "DELETE"/);
   assert.match(page, /new Map\(\[\["image\/jpeg", "jpg"\], \["image\/webp", "webp"\]\]\)/);
   assert.doesNotMatch(page, /\balert\s*\(|\bconfirm\s*\(/);
+  assert.ok(clientScript.length > 1000);
+  assert.doesNotThrow(() => new Function(clientScript));
   assert.match(privacy, /Studio d’images/);
   assert.match(privacy, /aucun jeton Codex/);
   assert.match(privacy, /30 jours/);
@@ -502,12 +532,17 @@ test("la galerie web reste MJ, privée et explicite sur la conservation", async 
 
 test("l’administrateur peut effacer définitivement une discussion inactive", async () => {
   const studio = await read("api/v1/image-studio.php");
+  const administrativeIdentity = studio.slice(
+    studio.indexOf("function requireImageStudioAdministratorIdentity"),
+    studio.indexOf("function imageStudioPublicIdentity")
+  );
   const deletion = studio.slice(
     studio.indexOf("function permanentlyDeleteImageStudioConversation"),
     studio.indexOf("function normalizedImageStudioReferences")
   );
-  assert.match(deletion, /can_administrate/);
-  assert.match(deletion, /administrator_required/);
+  assert.match(administrativeIdentity, /can_administrate/);
+  assert.match(administrativeIdentity, /administrator_required/);
+  assert.match(deletion, /requireImageStudioAdministratorIdentity/);
   assert.match(deletion, /status IN \('queued', 'generating'\)/);
   assert.match(deletion, /conversation_generation_active/);
   assert.match(deletion, /SET parent_message_id = NULL/);
@@ -517,6 +552,30 @@ test("l’administrateur peut effacer définitivement une discussion inactive", 
   assert.match(deletion, /mediaDomainReferenceCount/);
   assert.match(deletion, /imageStudioMediaUsedByCatalog/);
   assert.match(studio, /requireMethod\(\$method, \['PATCH', 'DELETE'\]\)/);
+});
+
+test("le site de la Régie centralise les suppressions définitives unitaires", async () => {
+  const [studio, page] = await Promise.all([read("api/v1/image-studio.php"), read("studio.php")]);
+  const messageDeletion = studio.slice(
+    studio.indexOf("function permanentlyDeleteImageStudioMessage"),
+    studio.indexOf("function normalizedImageStudioReferences")
+  );
+  const publishedDeletion = studio.slice(
+    studio.indexOf("function permanentlyDeleteImageStudioPublishedMedia"),
+    studio.indexOf("function imageStudioMediaOwner")
+  );
+  assert.match(messageDeletion, /requireImageStudioAdministratorIdentity/);
+  assert.match(messageDeletion, /status NOT IN \('queued', 'generating'\)/);
+  assert.match(messageDeletion, /DELETE FROM image_studio_messages WHERE id = :id/);
+  assert.match(messageDeletion, /public_slug = NULL, published_at = NULL/);
+  assert.match(messageDeletion, /historyRetainedForAdministrator' => false/);
+  assert.match(publishedDeletion, /requireImageStudioAdministratorIdentity/);
+  assert.match(publishedDeletion, /mediaDomainReferenceCount\(\$connection, \$id\) > 0/);
+  assert.match(publishedDeletion, /public_slug = NULL, published_at = NULL/);
+  assert.match(studio, /messages\/\(\[A-Za-z0-9_-\]\{24\}\)\/permanent/);
+  assert.match(studio, /published-media\/\(\[A-Za-z0-9_-\]\{24\}\)/);
+  assert.match(page, /\/messages\/\$\{encodeURIComponent\(item\.id\)\}\/permanent/);
+  assert.match(page, /\/published-media\/\$\{encodeURIComponent\(item\.mediaId\)\}/);
 });
 
 test("l’ancien état global est en lecture seule et les commandes sont ciblées", async () => {

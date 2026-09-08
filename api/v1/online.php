@@ -5660,7 +5660,7 @@ function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHis
     $count = (int) $current->fetchColumn();
     $studio = $connection->prepare(
         'SELECT COUNT(*) FROM image_studio_messages '
-        . 'WHERE media_id = :media_id AND owner_hidden_at IS NULL'
+        . 'WHERE media_id = :media_id'
     );
     $studio->execute([':media_id' => $id]);
     $count += (int) $studio->fetchColumn();
