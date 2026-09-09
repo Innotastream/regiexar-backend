@@ -95,9 +95,9 @@ function fixture(): MemoryConnection
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi']],
         'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 50, 'y' => 50,
-            'stats' => [['id' => 'monster-force', 'label' => 'Force', 'value' => 70]], 'weaponAttacks' => [['id' => 'monster-claw', 'formula' => '1d6', 'damageType' => 'physical']]],
+            'stats' => [['id' => 'monster-force', 'label' => 'Force', 'value' => '70']], 'weaponAttacks' => [['id' => 'monster-claw', 'formula' => '1d6', 'damageType' => 'physical']]],
         'token:scene-one:token-monster-two' => ['id' => 'token-monster-two', 'name' => 'Seconde créature', 'hp' => 35, 'maxHp' => 35, 'x' => 65, 'y' => 50,
-            'stats' => [['id' => 'monster-two-force', 'label' => 'Force', 'value' => 60]], 'weaponAttacks' => [['id' => 'monster-two-claw', 'formula' => '1d4', 'damageType' => 'physical']]],
+            'stats' => [['id' => 'monster-two-force', 'label' => 'Force', 'value' => '60']], 'weaponAttacks' => [['id' => 'monster-two-claw', 'formula' => '1d4', 'damageType' => 'physical']]],
         'activity' => ['actionTimers' => [], 'actionTimerTombstones' => [], 'mapPings' => [], 'shortcuts' => [], 'rolls' => [], 'playerActions' => [], 'pendingAttacks' => [], 'attackReceipts' => []],
     ]);
 }
