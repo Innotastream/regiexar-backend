@@ -73,7 +73,8 @@ $take = [
 $response = runCommand($db, 'light.carry', $take);
 $carried = $db->payload('map:scene-one')['layers']['ground']['lights'][0];
 requireTactical($response->status === 200 && !($response->body['deduplicated'] ?? true)
-    && $carried['carrierTokenId'] === 'token-player' && $carried['x'] === 20.0 && $carried['y'] === 50.0,
+    && $carried['carrierTokenId'] === 'token-player'
+    && (float) $carried['x'] === 20.0 && (float) $carried['y'] === 50.0,
     'A player can take one portable light at contact: ' . $response->getMessage());
 $revision = $db->revision;
 $response = runCommand($db, 'light.carry', $take);
@@ -94,7 +95,7 @@ $response = runCommand($db, 'light.carry', [
 ]);
 $dropped = $db->payload('map:scene-one')['layers']['ground']['lights'][0];
 requireTactical($response->status === 200 && $dropped['carrierTokenId'] === null
-    && $dropped['x'] === 31.0 && $dropped['y'] === 44.0,
+    && (float) $dropped['x'] === 31.0 && (float) $dropped['y'] === 44.0,
     'Dropping a light persists the current authoritative token position.');
 requireTactical(count($db->payload('activity')['playerActions']) === 2,
     'Only the successful take and drop are recorded in the private action audit.');
@@ -131,7 +132,7 @@ $response = runCommand($db, 'token.resource.adjust', [
 ], true, 'account-gm');
 $fallen = $db->payload('map:scene-one')['layers']['ground']['lights'][0];
 requireTactical($response->status === 200 && $fallen['carrierTokenId'] === null
-    && $fallen['x'] === 57.0 && $fallen['y'] === 62.0,
+    && (float) $fallen['x'] === 57.0 && (float) $fallen['y'] === 62.0,
     'At zero HP a creature drops its light exactly at its live position.');
 
 $map = lightingCarryMap([
@@ -141,6 +142,6 @@ $map = lightingCarryMap([
 ]);
 $tokens = [['id' => 'token-player', 'layerId' => 'upper', 'x' => 73.0, 'y' => 29.0, 'hp' => 1, 'maxHp' => 10]];
 requireTactical(applicationMapLightsForLayer($map, 'ground', $tokens) === []
-    && applicationMapLightsForLayer($map, 'upper', $tokens)[0]['x'] === 73.0
-    && applicationMapLightsForLayer($map, 'upper', $tokens)[0]['y'] === 29.0,
+    && (float) applicationMapLightsForLayer($map, 'upper', $tokens)[0]['x'] === 73.0
+    && (float) applicationMapLightsForLayer($map, 'upper', $tokens)[0]['y'] === 29.0,
     'A carried light follows its unit across floors and never remains projected below.');
