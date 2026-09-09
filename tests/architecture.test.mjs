@@ -59,15 +59,15 @@ function balancedPhpDelimiters(source) {
 }
 
 test("les sources PHP ont des délimiteurs structurels équilibrés", async () => {
-  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
+  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
     assert.equal(balancedPhpDelimiters(await read(file)), true, file);
   }
 });
 
-test("le backend 0.15.5 conserve la file Codex et porte le schéma 16", async () => {
+test("le backend 0.15.6 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.5'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-5-combat-ruler-stream-candidate-20260909-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.6'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-6-portable-lighting-launcher-candidate-20260909-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -93,8 +93,8 @@ test("le backend 0.15.5 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.5");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.5");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.6");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.6");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 18);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -242,7 +242,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$result\['tokenDomain'\]/);
   assert.match(command, /'revision' => \(int\) \(\$records\[\$tokenKey\]\['revision'\] \?\? 0\) \+ \(\$positionChanged \? 1 : 0\)/);
   assert.match(command, /if \(\$positionChanged\)[\s\S]*?queueOnlineDomainUpsert/);
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -255,8 +255,8 @@ test("la connexion accepte seulement les quatre versions explicitement autorisé
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.5");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.2", "3.2.3", "3.2.4", "3.2.5"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.6");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.3", "3.2.4", "3.2.5", "3.2.6"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -608,7 +608,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
@@ -794,7 +794,7 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 4/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 5/);
   assert.match(online, /normalizeOnlineAbilities/);
   assert.match(online, /'hitThreshold'/);
   assert.match(online, /\['stat', 'hit'\]/);
@@ -831,7 +831,7 @@ test("la projection joueur garde les monstres privés et partage les détails un
   assert.match(projection, /\$notesVisible = \$allied \|\|/);
   assert.match(projection, /\$details = \$allied \|\| \(\$token\['revealDetailsToPlayers'\] \?\? false\) === true/);
   assert.match(projection, /if \(\$details\) \{[\s\S]*?foreach \(\['hp', 'maxHp', 'mana', 'maxMana'/);
-  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\]\)/);
+  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\], \$visible\['darkVision'\]\)/);
   assert.match(projection, /'publicHealth' => onlineHealthState/);
   assert.doesNotMatch(projection, /\$details = true/);
   assert.match(projection, /if \(\$notesVisible && array_key_exists\('notes'/);
@@ -890,7 +890,7 @@ test("les variantes de cadre sont bornées et les détails tactiques restent en 
   assert.match(projection, /'frameVariant' => normalizeOnlineTokenFrameVariant/);
   assert.match(projection, /\$details = \$allied \|\| \(\$token\['revealDetailsToPlayers'\] \?\? false\) === true/);
   assert.match(projection, /if \(\$details\) \{[\s\S]*?foreach \(\['hp', 'maxHp', 'mana', 'maxMana'/);
-  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\]\)/);
+  assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\], \$visible\['darkVision'\]\)/);
   assert.match(projection, /'publicHealth' => onlineHealthState/);
   assert.doesNotMatch(projection, /\$details = true/);
   assert.match(projection, /'controllable' => \$owned && !\$paused/);

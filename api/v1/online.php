@@ -230,6 +230,13 @@ function onlineTokenVisionDistance(array $token, ?array $character = null): int
     return normalizeApplicationVisionDistance($usesSheet && $character !== null ? ($character['visionDistance'] ?? null) : ($token['visionDistance'] ?? null));
 }
 
+function onlineTokenDarkVision(array $token, ?array $character = null): string
+{
+    $usesSheet = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
+    return normalizeApplicationDarkVision($usesSheet && $character !== null
+        ? ($character['darkVision'] ?? null) : ($token['darkVision'] ?? null));
+}
+
 function onlineDiceAppearance(array $token, bool $playerControlled = false, ?array $character = null): array
 {
     if (!$playerControlled) return ($token['frameVariant'] ?? '') === 'boss'
@@ -897,7 +904,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         ? $fullState['tacticalSync']['publishedMap']
         : ($fullState['map'] ?? []);
     $fog = applicationActiveMapFogState(is_array($map) ? $map : []);
-    $occlusion = applicationActiveMapOcclusionState(is_array($map) ? $map : []);
+    $occlusion = applicationActiveMapOcclusionState(
+        is_array($map) ? $map : [],
+        is_array($map['tokens'] ?? null) ? $map['tokens'] : []
+    );
     $initiative = $paused && is_array($fullState['tacticalSync']['publishedInitiative'] ?? null)
         ? $fullState['tacticalSync']['publishedInitiative']
         : ($fullState['initiative'] ?? []);
@@ -923,15 +933,24 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             ? $controllerId !== '' && !isset($isolatedPlayerIds[$controllerId])
             : $controllerId === $accountId;
         if ($sharesWithViewer) {
-            $visionOrigins[] = ['x' => $candidateToken['x'] ?? 50, 'y' => $candidateToken['y'] ?? 50, 'visionDistance' => onlineTokenVisionDistance($candidateToken, $charactersById[(string) ($candidateToken['characterId'] ?? '')] ?? null)];
+            $visionCharacter = $charactersById[(string) ($candidateToken['characterId'] ?? '')] ?? null;
+            $visionOrigins[] = [
+                'x' => $candidateToken['x'] ?? 50,
+                'y' => $candidateToken['y'] ?? 50,
+                'visionDistance' => onlineTokenVisionDistance($candidateToken, $visionCharacter),
+                'darkVision' => onlineTokenDarkVision($candidateToken, $visionCharacter),
+                'source' => 'token',
+            ];
         }
     }
     $visionMask = applicationComputeVisionRenderMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
-    $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
+    $strictPointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
         || applicationVisionCoversPoint($visionMask, $x, $y);
+    $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
+        || applicationVisionTokenCoversPoint($visionMask, $x, $y);
     $visibleLights = array_values(array_filter($occlusion['lights'], static fn (array $light): bool =>
         $light['enabled'] && !applicationLightCenterBlocked($occlusion, $light)
-        && !$pointIsHidden($light['x'], $light['y'])));
+        && !$strictPointIsHidden($light['x'], $light['y'])));
     $tokens = [];
     foreach (($map['tokens'] ?? []) as $token) {
         if (!is_array($token) || ($token['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($token, $map)) {
@@ -958,6 +977,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 40),
             'visionDistance' => onlineTokenVisionDistance($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
+            'darkVision' => onlineTokenDarkVision($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
             'initiative' => $token['initiative'] ?? null,
             'conditions' => normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? ''),
             'condition' => implode(', ', normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? '')),
@@ -980,7 +1000,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
                 }
             }
         }
-        if (!$details) unset($visible['visionDistance']);
+        if (!$details) unset($visible['visionDistance'], $visible['darkVision']);
         if (is_array($token['resourcePulse'] ?? null)) {
             $visible['resourcePulse'] = array_intersect_key($token['resourcePulse'], array_fill_keys(['id', 'resource', 'delta', 'at'], true));
         }
@@ -1022,8 +1042,14 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $initiative = is_array($initiative) ? $initiative : [];
     unset($map['layers']);
     unset($map['walls']);
-    // These six normalized fields are the only public light metadata.
-    $map['lights'] = $visibleLights;
+    // A hidden carrier may cast visible light without leaking its token id.
+    $map['lights'] = array_map(static function (array $light) use ($visibleIds): array {
+        if (($light['carrierTokenId'] ?? null) !== null && !isset($visibleIds[(string) $light['carrierTokenId']])) {
+            $light['carrierTokenId'] = null;
+            $light['portable'] = false;
+        }
+        return $light;
+    }, $visibleLights);
     if (is_array($fog)) {
         $map['fog'] = $fog;
     } else {
@@ -1036,6 +1062,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         'shared' => $vision['shared'] && !$viewerIsIsolated,
     ];
     $map['visionMask'] = $visionMask;
+    $map['lightingMode'] = $occlusion['lightingMode'];
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
@@ -1080,7 +1107,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
             || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds
             || onlineTokenLayerId(['layerId' => $ping['layerId'] ?? 'ground']) !== onlineTokenLayerId([], $map)
-            || $pointIsHidden($ping['x'] ?? 0, $ping['y'] ?? 0)) {
+            || $strictPointIsHidden($ping['x'] ?? 0, $ping['y'] ?? 0)) {
             continue;
         }
         $visibleMapPings[] = [
@@ -2123,6 +2150,7 @@ function normalizeOnlineLinkedTokens(mixed $value): array
         $entry['id'] = $id;
         $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
         $entry['visionDistance'] = normalizeApplicationVisionDistance($entry['visionDistance'] ?? null);
+        $entry['darkVision'] = normalizeApplicationDarkVision($entry['darkVision'] ?? null);
         $normalized[] = $entry;
     }
     return $normalized;
@@ -2133,12 +2161,13 @@ function migrateOnlineCombatCharacterPayload(array $character): array
     $physical = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
     $magical = normalizeOnlineMagicResistance($character['magicArmor'] ?? 0);
     $character['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $character['characterSchemaVersion'] = 4;
+    $character['characterSchemaVersion'] = 5;
     $character['armorCategory'] = $physical['category'];
     $character['armor'] = $physical['percent'];
     $character['magicArmorCategory'] = $magical['category'];
     $character['magicArmor'] = $magical['percent'];
     $character['temporalPerception'] = 'normal';
+    $character['darkVision'] = normalizeApplicationDarkVision($character['darkVision'] ?? null);
     $character['linkedTokens'] = normalizeOnlineLinkedTokens($character['linkedTokens'] ?? []);
     $character['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
     $character['weaponAttacks'] = normalizeOnlineWeaponAttacks($character['weaponAttacks'] ?? [], extractOnlineDamageFormulas($character['weaponText'] ?? ''));
@@ -2158,6 +2187,7 @@ function migrateOnlineCombatTokenPayload(array $token, ?array $character = null)
         $token['magicArmorCategory'] = $magical['category'];
         $token['magicArmor'] = $magical['percent'];
         $token['temporalPerception'] = 'normal';
+        $token['darkVision'] = normalizeApplicationDarkVision($token['darkVision'] ?? null);
         $token['abilities'] = normalizeOnlineAbilities($token['abilities'] ?? []);
         $formula = strtolower(str_replace(' ', '', (string) ($token['damageDice'] ?? '')));
         $formulas = validOnlineRollFormula($formula) ? [$formula] : array_values(array_filter(array_map(
@@ -2224,7 +2254,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $allowed = [
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'fatigue', 'morale',
-        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
+        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'darkVision', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
         'shortcuts', 'abilities', 'linkedTokens',
     ];
@@ -2240,6 +2270,8 @@ function playerCharacterPatch(array $current, array $patch): array
                 $current[$key] = normalizeOnlineWeaponAttacks($patch[$key], extractOnlineDamageFormulas($patch['weaponText'] ?? $current['weaponText'] ?? ''));
             } elseif ($key === 'temporalPerception') {
                 $current[$key] = normalizeOnlineTemporalPerception($patch[$key]);
+            } elseif ($key === 'darkVision') {
+                $current[$key] = normalizeApplicationDarkVision($patch[$key]);
             } elseif ($key === 'magicArmorCategory') {
                 continue;
             } elseif ($key === 'magicArmor') {
@@ -2290,9 +2322,10 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['magicArmor'] = $magicalArmor['percent'];
     $current['temporalPerception'] = normalizeOnlineTemporalPerception($current['temporalPerception'] ?? null);
     $current['visionDistance'] = normalizeApplicationVisionDistance($current['visionDistance'] ?? null);
+    $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
-    $current['characterSchemaVersion'] = 4;
+    $current['characterSchemaVersion'] = 5;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
@@ -2309,10 +2342,12 @@ function legacyWholePlayerCharacterPatch(array $patch): bool
         'initiativeBonus', 'conditions', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
         'inventory', 'shortcuts', 'abilities', 'linkedTokens',
     ];
+    $lightingSignature = [...$currentSignature, 'visionDistance', 'darkVision'];
     $keys = array_keys($patch);
     return count($patch) >= 24 && (
         count(array_intersect($legacySignature, $keys)) === count($legacySignature)
         || count(array_intersect($currentSignature, $keys)) === count($currentSignature)
+        || count(array_intersect($lightingSignature, $keys)) === count($lightingSignature)
     );
 }
 
@@ -2465,6 +2500,192 @@ function onlineSceneTokenRecords(PDO $connection, string $sceneId, array $record
     return $keys === [] ? $records : array_replace($records, applicationDomainRecords($connection, $keys));
 }
 
+function onlinePendingDomainPayload(array $records, array $pending, string $key, array $fallback = []): array
+{
+    if (isset($pending[$key])) {
+        return ($pending[$key]['operation'] ?? '') === 'upsert' && is_array($pending[$key]['payload'] ?? null)
+            ? $pending[$key]['payload'] : $fallback;
+    }
+    return applicationDomainPayload($records, $key, $fallback);
+}
+
+function onlineSceneTokensForLights(PDO $connection, array &$records, array $pending, string $sceneId): array
+{
+    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+    $prefix = 'token:' . $sceneId . ':';
+    $keys = [];
+    foreach (array_keys($records) as $key) if (str_starts_with($key, $prefix)) $keys[$key] = true;
+    foreach (array_keys($pending) as $key) if (str_starts_with($key, $prefix)) $keys[$key] = true;
+    $tokens = [];
+    foreach (array_keys($keys) as $key) {
+        $token = onlinePendingDomainPayload($records, $pending, $key);
+        if ($token !== []) $tokens[] = $token;
+    }
+    return $tokens;
+}
+
+function onlineLightWithinTokenReach(array $light, array $token, array $map): bool
+{
+    $activeLayerId = onlineTokenLayerId([], $map);
+    $layer = is_array($map['layers'][$activeLayerId] ?? null) ? $map['layers'][$activeLayerId] : $map;
+    $width = max(1.0, is_numeric($layer['naturalWidth'] ?? null) ? (float) $layer['naturalWidth'] : 1600.0);
+    $height = max(1.0, is_numeric($layer['naturalHeight'] ?? null) ? (float) $layer['naturalHeight'] : 900.0);
+    $grid = max(12.0, min(240.0, is_numeric($map['gridSize'] ?? null) ? (float) $map['gridSize'] : 50.0));
+    $deltaX = abs(((float) $light['x'] - (float) ($token['x'] ?? 0)) / 100 * $width);
+    $deltaY = abs(((float) $light['y'] - (float) ($token['y'] ?? 0)) / 100 * $height);
+    return $deltaX <= $grid + 1.0e-6 && $deltaY <= $grid + 1.0e-6;
+}
+
+function onlineStoredMapLight(array $map, string $lightId): ?array
+{
+    $activeLayerId = onlineTokenLayerId([], $map);
+    $definedLayers = array_values(array_filter(['basement', 'ground', 'upper'],
+        static fn (string $id): bool => is_array($map['layers'][$id] ?? null)));
+    if ($definedLayers === []) {
+        $lights = normalizeApplicationMapLights($map['lights'] ?? []);
+        foreach ($lights as $index => $light) {
+            if ((string) $light['id'] === $lightId) return ['layerId' => $activeLayerId, 'index' => $index, 'light' => $light, 'legacy' => true];
+        }
+        return null;
+    }
+    foreach (array_values(array_unique([$activeLayerId, ...$definedLayers])) as $layerId) {
+        $lights = normalizeApplicationMapLights($map['layers'][$layerId]['lights'] ?? []);
+        foreach ($lights as $index => $light) {
+            if ((string) $light['id'] === $lightId) return ['layerId' => $layerId, 'index' => $index, 'light' => $light, 'legacy' => false];
+        }
+    }
+    return null;
+}
+
+function onlinePlaceStoredMapLight(array $map, string $lightId, array $light, string $targetLayerId): array
+{
+    $activeLayerId = onlineTokenLayerId([], $map);
+    $definedLayers = array_values(array_filter(['basement', 'ground', 'upper'],
+        static fn (string $id): bool => is_array($map['layers'][$id] ?? null)));
+    if ($definedLayers === []) {
+        $map['lights'] = normalizeApplicationMapLights([
+            ...array_values(array_filter(normalizeApplicationMapLights($map['lights'] ?? []),
+                static fn (array $entry): bool => (string) $entry['id'] !== $lightId)),
+            $light,
+        ]);
+        return $map;
+    }
+    foreach ($definedLayers as $layerId) {
+        $map['layers'][$layerId]['lights'] = array_values(array_filter(
+            normalizeApplicationMapLights($map['layers'][$layerId]['lights'] ?? []),
+            static fn (array $entry): bool => (string) $entry['id'] !== $lightId
+        ));
+    }
+    $map['layers'][$targetLayerId] ??= ['lights' => []];
+    $targetLights = normalizeApplicationMapLights($map['layers'][$targetLayerId]['lights'] ?? []);
+    if (count($targetLights) >= XAR_MAP_LIGHT_MAXIMUM) throw new DomainException('Ce niveau contient déjà le maximum de lumières.', 409);
+    $map['layers'][$targetLayerId]['lights'] = normalizeApplicationMapLights([...$targetLights, $light]);
+    $map['lights'] = normalizeApplicationMapLights($map['layers'][$activeLayerId]['lights'] ?? []);
+    return $map;
+}
+
+function onlineReconcileCarriedLightsForScene(
+    PDO $connection,
+    array &$records,
+    array &$pending,
+    string $sceneId,
+    array $forcedDropTokenIds = []
+): bool {
+    $mapKey = 'map:' . $sceneId;
+    if (!validApplicationDomainKey($mapKey)) return false;
+    if (!isset($records[$mapKey])) $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
+    $map = onlinePendingDomainPayload($records, $pending, $mapKey);
+    if ($map === []) return false;
+    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+    $forced = array_fill_keys(array_map('strval', $forcedDropTokenIds), true);
+    $prefix = 'token:' . $sceneId . ':';
+    $tokenById = [];
+    foreach ($records as $tokenKey => $_record) {
+        if (!str_starts_with($tokenKey, $prefix)) continue;
+        $storedToken = applicationDomainPayload($records, $tokenKey);
+        if ($storedToken === []) continue;
+        $tokenId = (string) ($storedToken['id'] ?? '');
+        if (($pending[$tokenKey]['operation'] ?? '') === 'delete') {
+            $forced[$tokenId] = true;
+            $tokenById[$tokenId] = $storedToken;
+            continue;
+        }
+        $token = onlinePendingDomainPayload($records, $pending, $tokenKey);
+        if ($token !== []) $tokenById[(string) ($token['id'] ?? '')] = $token;
+    }
+    foreach ($pending as $tokenKey => $change) {
+        if (!str_starts_with($tokenKey, $prefix) || ($change['operation'] ?? '') !== 'upsert') continue;
+        $token = is_array($change['payload'] ?? null) ? $change['payload'] : [];
+        if ($token !== []) $tokenById[(string) ($token['id'] ?? '')] = $token;
+    }
+    $activeLayerId = onlineTokenLayerId([], $map);
+    $definedLayers = array_values(array_filter(['basement', 'ground', 'upper'],
+        static fn (string $id): bool => is_array($map['layers'][$id] ?? null)));
+    $legacy = $definedLayers === [];
+    $sourceLayerIds = $legacy ? [$activeLayerId] : $definedLayers;
+    $collections = [];
+    foreach ($sourceLayerIds as $layerId) {
+        $collections[$layerId] = normalizeApplicationMapLights($legacy ? ($map['lights'] ?? []) : ($map['layers'][$layerId]['lights'] ?? []));
+    }
+    $seenLights = [];
+    $seenCarriers = [];
+    $transfers = [];
+    $changed = false;
+    foreach ($sourceLayerIds as $layerId) {
+        $retained = [];
+        foreach ($collections[$layerId] as $light) {
+            $lightId = (string) $light['id'];
+            if (isset($seenLights[$lightId])) { $changed = true; continue; }
+            $seenLights[$lightId] = true;
+            $carrierId = is_string($light['carrierTokenId'] ?? null) ? $light['carrierTokenId'] : '';
+            if ($carrierId === '') { $retained[] = $light; continue; }
+            $carrier = $tokenById[$carrierId] ?? null;
+            $position = is_array($carrier) ? [
+                'x' => max(0.0, min(100.0, is_numeric($carrier['x'] ?? null) ? (float) $carrier['x'] : (float) $light['x'])),
+                'y' => max(0.0, min(100.0, is_numeric($carrier['y'] ?? null) ? (float) $carrier['y'] : (float) $light['y'])),
+            ] : ['x' => $light['x'], 'y' => $light['y']];
+            $viable = is_array($carrier) && !isset($forced[$carrierId])
+                && applicationTokenCanCarryLight($carrier) && !isset($seenCarriers[$carrierId]);
+            if (!$viable) {
+                $retained[] = [...$light, ...$position, 'carrierTokenId' => null];
+                $changed = true;
+                continue;
+            }
+            $seenCarriers[$carrierId] = true;
+            $carrierLayerId = onlineTokenLayerId($carrier, $map);
+            if ($carrierLayerId !== $layerId) {
+                $transfers[] = ['sourceLayerId' => $layerId, 'targetLayerId' => $carrierLayerId, 'light' => [...$light, ...$position]];
+                $changed = true;
+            } else {
+                $retained[] = $light;
+            }
+        }
+        $collections[$layerId] = $retained;
+    }
+    foreach ($transfers as $transfer) {
+        $target = $transfer['targetLayerId'];
+        $source = $transfer['sourceLayerId'];
+        $collections[$target] ??= [];
+        if (count($collections[$target]) >= XAR_MAP_LIGHT_MAXIMUM) {
+            $collections[$source][] = [...$transfer['light'], 'carrierTokenId' => null];
+        } else {
+            $collections[$target][] = $transfer['light'];
+        }
+    }
+    if (!$changed) return false;
+    if ($legacy) {
+        $map['lights'] = normalizeApplicationMapLights($collections[$activeLayerId]);
+    } else {
+        foreach ($sourceLayerIds as $layerId) $map['layers'][$layerId]['lights'] = normalizeApplicationMapLights($collections[$layerId] ?? []);
+        foreach (array_keys($collections) as $layerId) {
+            if (!isset($map['layers'][$layerId])) $map['layers'][$layerId] = ['lights' => normalizeApplicationMapLights($collections[$layerId])];
+        }
+        $map['lights'] = normalizeApplicationMapLights($map['layers'][$activeLayerId]['lights'] ?? []);
+    }
+    queueOnlineDomainUpsert($pending, $records, $mapKey, $map);
+    return true;
+}
+
 function removeOnlineTokenIdsFromInitiative(array $initiative, array $tokenIds): array
 {
     $removed = array_fill_keys(array_map('strval', $tokenIds), true);
@@ -2550,14 +2771,15 @@ function onlineMapMovementVisibility(PDO $connection, array &$records, array $ma
 {
     $records = onlineSceneTokenRecords($connection, $sceneId, $records);
     $fog = applicationActiveMapFogState($map);
-    $occlusion = applicationActiveMapOcclusionState($map);
-    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $vision = applicationMapVisionSettings($map);
     $isolated = array_fill_keys($vision['isolatedPlayerIds'], true);
     $viewerIsIsolated = isset($isolated[$accountId]);
     $origins = [];
+    $sceneTokens = [];
     foreach ($records as $key => $record) {
         if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
         $candidate = applicationDomainPayload($records, $key);
+        if ($candidate !== []) $sceneTokens[] = $candidate;
         if ($candidate === [] || ($candidate['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidate, $map)) continue;
         $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
         $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
@@ -2565,9 +2787,17 @@ function onlineMapMovementVisibility(PDO $connection, array &$records, array $ma
             : $controllerId === $accountId;
         if ($sharesWithViewer) {
             $character = applicationDomainPayload($records, 'character:' . ($candidate['characterId'] ?? ''));
-            $origins[] = ['x' => $candidate['x'] ?? 50, 'y' => $candidate['y'] ?? 50, 'visionDistance' => onlineTokenVisionDistance($candidate, $character !== [] ? $character : null)];
+            $character = $character !== [] ? $character : null;
+            $origins[] = [
+                'x' => $candidate['x'] ?? 50,
+                'y' => $candidate['y'] ?? 50,
+                'visionDistance' => onlineTokenVisionDistance($candidate, $character),
+                'darkVision' => onlineTokenDarkVision($candidate, $character),
+                'source' => 'token',
+            ];
         }
     }
+    $occlusion = applicationActiveMapOcclusionState($map, $sceneTokens);
     $visionMask = applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50);
     return onlineVisiblePathPointTester($fog, $visionMask);
 }
@@ -2577,6 +2807,162 @@ function onlineAttackTargetVisible(PDO $connection, array &$records, array $map,
     if (!onlineTokenOnActiveLayer($target, $map)) return false;
     $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId);
     return $visible((float) ($target['x'] ?? 0), (float) ($target['y'] ?? 0));
+}
+
+function applyOnlineLightCarryCommand(
+    PDO $connection,
+    array &$records,
+    array &$pending,
+    array $table,
+    array $identity,
+    array $arguments,
+    bool $isGm
+): array {
+    $accountId = (string) $identity['id'];
+    $requestId = trim((string) ($arguments['requestId'] ?? ''));
+    if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
+        rejectOnlineCommand($connection, 400, 'Référence de transport invalide.', 'invalid_light_request');
+    }
+    $signature = [
+        'kind' => 'light-carry',
+        'requestId' => $requestId,
+        'sceneId' => trim((string) ($arguments['sceneId'] ?? '')),
+        'layerId' => trim((string) ($arguments['layerId'] ?? '')),
+        'lightId' => trim((string) ($arguments['lightId'] ?? '')),
+        'tokenId' => trim((string) ($arguments['tokenId'] ?? '')),
+        'carry' => ($arguments['carry'] ?? false) === true,
+    ];
+    $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    $activity = applicationDomainPayload($records, 'activity');
+    $now = (int) floor(microtime(true) * 1000);
+    $receipts = array_values(array_filter(
+        is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
+        static fn (mixed $entry): bool => is_array($entry) && (int) ($entry['expiresAt'] ?? 0) > $now
+    ));
+    foreach ($receipts as $receipt) {
+        if ((string) ($receipt['requestId'] ?? '') !== $requestId) continue;
+        if ((string) ($receipt['accountId'] ?? '') !== $accountId) {
+            rejectOnlineCommand($connection, 403, 'Ce reçu de lumière appartient à un autre compte.', 'light_receipt_forbidden');
+        }
+        $operation = is_array($receipt['operation'] ?? null) ? $receipt['operation'] : [];
+        foreach ($signature as $key => $value) {
+            if (($operation[$key] ?? null) !== $value) {
+                rejectOnlineCommand($connection, 409, 'Cette référence a déjà servi à une autre action de lumière.', 'light_receipt_mismatch');
+            }
+        }
+        return ['light' => is_array($operation['light'] ?? null) ? $operation['light'] : null, 'deduplicated' => true];
+    }
+    if (count($receipts) >= XAR_RESOURCE_RECEIPT_MAXIMUM) {
+        rejectOnlineCommand($connection, 429, 'Le journal de sécurité des lumières est plein. Réessayez après expiration.', 'light_receipt_capacity_reached');
+    }
+    $sceneId = $signature['sceneId'];
+    if ($sceneId === '' || $sceneId !== onlineActiveSceneId($table)) {
+        rejectOnlineCommand($connection, 409, 'La scène a changé. Rouvrez les actions du pion.', 'stale_scene');
+    }
+    $mapKey = 'map:' . $sceneId;
+    $tokenKey = onlineTokenDomainKey($sceneId, $signature['tokenId']);
+    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey, $tokenKey]));
+    $map = applicationDomainPayload($records, $mapKey);
+    $layerId = onlineTokenLayerId([], $map);
+    if ($signature['layerId'] !== $layerId) {
+        rejectOnlineCommand($connection, 409, 'Le niveau actif a changé.', 'stale_token_layer');
+    }
+    if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
+        rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée par le MJ.', 'table_locked');
+    }
+    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+    $tokens = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
+    $token = onlinePendingDomainPayload($records, $pending, $tokenKey);
+    if ($token === [] || !onlineTokenOnActiveLayer($token, $map)) {
+        rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur ce niveau.', 'stale_token_layer');
+    }
+    $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $token);
+    if (!$isGm && (($token['hidden'] ?? false) === true || $controllerId !== $accountId)) {
+        rejectOnlineCommand($connection, 403, 'Vous ne pouvez pas utiliser ce pion.', 'token_forbidden');
+    }
+    $stored = onlineStoredMapLight($map, $signature['lightId']);
+    $effective = null;
+    foreach (applicationMapLightsForLayer($map, $layerId, $tokens) as $candidate) {
+        if ((string) $candidate['id'] === $signature['lightId']) { $effective = $candidate; break; }
+    }
+    if ($stored === null || !is_array($effective)) {
+        rejectOnlineCommand($connection, 409, 'Cette lumière n’est plus sur ce niveau.', 'light_missing');
+    }
+    $light = $stored['light'];
+    if (($light['portable'] ?? false) !== true) {
+        rejectOnlineCommand($connection, 403, 'Le MJ n’a pas rendu cette lumière transportable.', 'light_not_portable');
+    }
+    $carry = $signature['carry'];
+    $changed = false;
+    if ($carry) {
+        if (($light['carrierTokenId'] ?? null) !== $token['id']) {
+            if (($light['carrierTokenId'] ?? null) !== null) {
+                rejectOnlineCommand($connection, 409, 'Cette lumière est déjà transportée.', 'light_already_carried');
+            }
+            if (!applicationTokenCanCarryLight($token)) {
+                rejectOnlineCommand($connection, 409, 'Une unité hors combat ne peut pas prendre de lumière.', 'light_carrier_incapacitated');
+            }
+            $candidateCollections = [];
+            foreach (['basement', 'ground', 'upper'] as $candidateLayerId) {
+                if (is_array($map['layers'][$candidateLayerId] ?? null)) {
+                    $candidateCollections[] = normalizeApplicationMapLights($map['layers'][$candidateLayerId]['lights'] ?? []);
+                }
+            }
+            if ($candidateCollections === []) $candidateCollections[] = normalizeApplicationMapLights($map['lights'] ?? []);
+            foreach ($candidateCollections as $candidateLights) {
+                foreach ($candidateLights as $candidate) {
+                    if ((string) $candidate['id'] !== $signature['lightId']
+                        && (string) ($candidate['carrierTokenId'] ?? '') === (string) $token['id']) {
+                        rejectOnlineCommand($connection, 409, 'Cette unité transporte déjà une lumière.', 'light_carrier_occupied');
+                    }
+                }
+            }
+            if (!onlineLightWithinTokenReach($effective, $token, $map)) {
+                rejectOnlineCommand($connection, 409, 'Approchez le pion à une case de la lumière pour la prendre.', 'light_out_of_reach');
+            }
+            if (!$isGm) {
+                $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId);
+                if (!$visible((float) $effective['x'], (float) $effective['y'])) {
+                    rejectOnlineCommand($connection, 403, 'Cette lumière n’est pas visible depuis ce pion.', 'light_not_visible');
+                }
+            }
+            $light = [...$light, 'x' => (float) ($token['x'] ?? $light['x']), 'y' => (float) ($token['y'] ?? $light['y']), 'carrierTokenId' => (string) $token['id']];
+            $changed = true;
+        }
+    } else {
+        if ((string) ($light['carrierTokenId'] ?? '') !== (string) $token['id']) {
+            rejectOnlineCommand($connection, 409, 'Cette lumière n’est plus transportée par ce pion.', 'light_not_carried_by_token');
+        }
+        $light = [...$light, 'x' => (float) ($token['x'] ?? $light['x']), 'y' => (float) ($token['y'] ?? $light['y']), 'carrierTokenId' => null];
+        $changed = true;
+    }
+    if ($changed) {
+        try {
+            $map = onlinePlaceStoredMapLight($map, $signature['lightId'], $light, $layerId);
+        } catch (DomainException $error) {
+            rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'light_layer_capacity_reached');
+        }
+        queueOnlineDomainUpsert($pending, $records, $mapKey, $map);
+        if (!$isGm) {
+            onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
+                'kind' => 'light',
+                'characterName' => (string) ($token['name'] ?? 'Pion'),
+                'summary' => $carry ? 'Prend une lumière' : 'Pose une lumière',
+                'detail' => (string) ($light['name'] ?? 'Lumière'),
+            ]);
+        }
+    }
+    $operation = [...$signature, 'light' => $light];
+    $activity = is_array($pending['activity']['payload'] ?? null) ? $pending['activity']['payload'] : $activity;
+    $receipts[] = [
+        'requestId' => $requestId,
+        'accountId' => $accountId,
+        'expiresAt' => $now + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS,
+        'operation' => $operation,
+    ];
+    $activity['resourceReceipts'] = $receipts;
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    return ['light' => $light, 'deduplicated' => false];
 }
 
 function onlinePendingAttackParties(PDO $connection, array &$records, array $attack): array
@@ -2863,6 +3249,7 @@ function applyOnlineTokenResourceAdjustment(
     $maximumKey = $resource === 'mana' ? 'maxMana' : 'maxHp';
     $character = null;
     $characterKey = '';
+    $affectedLightScenes = $tokenKey !== '' ? [$sceneId => true] : [];
     $characterId = $characterIdFallback !== null ? trim($characterIdFallback) : $currentCharacterId;
     if ($characterId !== '') {
         $characterKey = 'character:' . $characterId;
@@ -2931,9 +3318,16 @@ function applyOnlineTokenResourceAdjustment(
             else unset($relatedToken['resourcePulse']);
             if ($relatedTokenKey === $tokenKey) $token = $relatedToken;
             queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $relatedToken);
+            $segments = explode(':', (string) $relatedTokenKey, 3);
+            if (count($segments) === 3) $affectedLightScenes[$segments[1]] = true;
         }
     } elseif ($resourceChanged && $tokenKey !== '') {
         queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+    }
+    if ($resource === 'hp' && $resourceChanged && $current <= 0) {
+        foreach (array_keys($affectedLightScenes) as $affectedSceneId) {
+            onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) $affectedSceneId);
+        }
     }
     return [
         'token' => [
@@ -2998,6 +3392,8 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
 {
     $character = null;
     $characterKey = '';
+    $tokenSegments = explode(':', $tokenKey, 3);
+    $affectedLightScenes = count($tokenSegments) === 3 ? [$tokenSegments[1] => true] : [];
     $characterId = trim((string) ($token['characterId'] ?? ''));
     $followsCharacter = ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '';
     if ($followsCharacter && $characterId !== '') {
@@ -3044,9 +3440,16 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
             if ($applied > 0) $related['resourcePulse'] = $pulse;
             if ($relatedTokenKey === $tokenKey) $token = $related;
             queueOnlineDomainUpsert($pending, $records, $relatedTokenKey, $related);
+            $segments = explode(':', (string) $relatedTokenKey, 3);
+            if (count($segments) === 3) $affectedLightScenes[$segments[1]] = true;
         }
     } else {
         queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+    }
+    if ($current <= 0) {
+        foreach (array_keys($affectedLightScenes) as $affectedSceneId) {
+            onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) $affectedSceneId);
+        }
     }
     return [
         'previousHp' => $previous,
@@ -3211,7 +3614,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
         if ($linked === null) {
             return $token;
         }
-        foreach (['name', 'color', 'image', 'size', 'visionDistance'] as $key) {
+        foreach (['name', 'color', 'image', 'size', 'visionDistance', 'darkVision'] as $key) {
             if (array_key_exists($key, $linked)) {
                 $token[$key] = $linked[$key];
             }
@@ -3249,6 +3652,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     $token['magicArmor'] = $magicalArmor['percent'];
     $token['temporalPerception'] = normalizeOnlineTemporalPerception($character['temporalPerception'] ?? null);
     $token['visionDistance'] = normalizeApplicationVisionDistance($character['visionDistance'] ?? null);
+    $token['darkVision'] = normalizeApplicationDarkVision($character['darkVision'] ?? null);
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
@@ -3463,7 +3867,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'ability.use', 'token.roll', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'token.roll', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -3700,13 +4104,21 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $character = playerCharacterPatch($character, $patch);
             }
             queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
-            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'conditions', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'weaponText', 'weaponAttacks', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
+            $synchronizedFields = ['name', 'portrait', 'color', 'resources', 'conditions', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'darkVision', 'weaponText', 'weaponAttacks', 'stats', 'hitThreshold', 'abilities', 'initiativeBonus', 'linkedTokens'];
+            $synchronizedSceneIds = [];
             if (array_intersect(array_keys($patch), $synchronizedFields) !== []) {
                 $tokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
                 $records = array_replace($records, $tokenRecords);
                 foreach ($tokenRecords as $tokenKey => $record) {
                     $token = synchronizeOnlineCharacterToken(applicationDomainPayload($records, $tokenKey), $character);
                     queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+                    $segments = explode(':', (string) $tokenKey, 3);
+                    if (count($segments) === 3) $synchronizedSceneIds[$segments[1]] = true;
+                }
+            }
+            if (array_intersect(array_keys($patch), ['resources', 'healthOverride']) !== []) {
+                foreach (array_keys($synchronizedSceneIds) as $synchronizedSceneId) {
+                    onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) $synchronizedSceneId);
                 }
             }
             if (array_key_exists('conditions', $patch)) {
@@ -3723,10 +4135,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
         } elseif (in_array($command, ['token.conditions.update', 'character.conditions.update'], true)) {
             if ($command === 'token.conditions.update' && !$isGm && ($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             $result = applyOnlineTokenConditionUpdate($connection, $records, $pending, $identity, $sceneId, $arguments, $isGm, $command === 'character.conditions.update');
+        } elseif ($command === 'light.carry') {
+            $result = applyOnlineLightCarryCommand($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'tokens.layers') {
             $result = applyOnlineTokenLayersCommand($connection, $records, $pending, $arguments, $isGm);
+            onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) ($result['sceneId'] ?? ''));
         } elseif ($command === 'tokens.transform') {
             $result = applyOnlineTokenGroupCommand($connection, $records, $pending, $arguments, $isGm);
+            onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) ($result['sceneId'] ?? ''));
         } elseif ($command === 'token.clone') {
             $result = applyOnlineTokenCloneCommand($connection, $records, $pending, $arguments, $isGm);
         } elseif ($command === 'token.move') {
@@ -3770,7 +4186,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'y' => max(0.0, min(100.0, is_finite($y) ? $y : 50.0)),
             ];
             $map = applicationDomainPayload($records, $mapKey);
-            $occlusion = applicationActiveMapOcclusionState($map);
+            $records = onlineSceneTokenRecords($connection, $moveSceneId, $records);
+            $sceneTokens = [];
+            foreach ($records as $recordKey => $_record) {
+                if (!str_starts_with($recordKey, 'token:' . $moveSceneId . ':')) continue;
+                $candidate = applicationDomainPayload($records, $recordKey);
+                if ($candidate !== []) $sceneTokens[] = $candidate;
+            }
+            $occlusion = applicationActiveMapOcclusionState($map, $sceneTokens);
             $resolved = $isGm && ($arguments['assisted'] ?? false) !== true ? applicationResolveGmTokenPlacement(
                 $occlusion['walls'],
                 ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)],
@@ -3784,7 +4207,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (!$isGm || ($arguments['assisted'] ?? false) === true) {
                 if ($isGm) {
                     $character = applicationDomainPayload($records, 'character:' . ($token['characterId'] ?? ''));
-                    $origins = [['x' => $token['x'] ?? 50, 'y' => $token['y'] ?? 50, 'visionDistance' => onlineTokenVisionDistance($token, $character !== [] ? $character : null)]];
+                    $character = $character !== [] ? $character : null;
+                    $origins = [[
+                        'x' => $token['x'] ?? 50,
+                        'y' => $token['y'] ?? 50,
+                        'visionDistance' => onlineTokenVisionDistance($token, $character),
+                        'darkVision' => onlineTokenDarkVision($token, $character),
+                        'source' => 'token',
+                    ]];
                     $visible = onlineVisiblePathPointTester(applicationActiveMapFogState($map), applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50));
                 } else $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $moveSceneId);
                 $resolved = findApplicationVisibleTokenPath($occlusion['walls'], ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)], $desired,
@@ -5143,6 +5573,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             foreach (array_keys($characterTokenRecords) as $tokenKey) {
                 queueOnlineDomainDelete($pending, $records, $tokenKey);
             }
+            foreach ($tokenIdsByScene as $affectedSceneId => $tokenIds) {
+                onlineReconcileCarriedLightsForScene($connection, $records, $pending, (string) $affectedSceneId, $tokenIds);
+            }
             $removedTimerCount = 0;
             if (isset($records['activity'])) {
                 $activity = applicationDomainPayload($records, 'activity');
@@ -5223,7 +5656,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             rejectOnlineCommand($connection, 400, 'Commande d’état inconnue ou refusée.', 'command_rejected');
         }
 
-        if (!$isGm && !in_array($command, ['ensure-player', 'preferences.update', 'token.conditions.update', 'character.conditions.update', 'token.resource.adjust', 'token.attack', 'token.attack.oppose'], true)) {
+        if (!$isGm && !in_array($command, ['ensure-player', 'preferences.update', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'token.attack', 'token.attack.oppose'], true)) {
             $loggedAction = null;
             if (in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
                 $loggedRoll = $result['roll'];

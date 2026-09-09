@@ -331,4 +331,5 @@ require __DIR__ . '/gm-wall-placement-cases.php';
 require __DIR__ . '/vision-stream-layers-cases.php';
 require __DIR__ . '/map-visibility-cases.php';
 require __DIR__ . '/light-relay-cases.php';
+require __DIR__ . '/lighting-carry-cases.php';
 fwrite(STDOUT, 'Cycle tactique PHP 3.2.0 : ' . $GLOBALS['checks'] . " contrôles réussis\n");

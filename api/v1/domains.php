@@ -23,6 +23,7 @@ const XAR_VISION_SETTINGS_VERSION = 1;
 const XAR_VISION_DEFAULT_DISTANCE = 8;
 const XAR_VISION_MAXIMUM_DISTANCE = 40;
 const XAR_MAP_LIGHT_MAXIMUM = 40;
+const XAR_MAP_LIGHT_DEFAULT_COLOR = '#ffd36a';
 const XAR_PENDING_ATTACK_MAXIMUM = 100;
 const XAR_ATTACK_RECEIPT_MAXIMUM = 1024;
 const XAR_RESOURCE_RECEIPT_MAXIMUM = 1024;
@@ -212,6 +213,9 @@ function validApplicationMapFogState(array $map): bool
     if (array_key_exists('vision', $map) && !validApplicationVisionSettings($map['vision'])) {
         return false;
     }
+    if (array_key_exists('lightingMode', $map) && !validApplicationMapLightingMode($map['lightingMode'])) {
+        return false;
+    }
     if (!array_key_exists('layers', $map)) {
         return true;
     }
@@ -224,11 +228,32 @@ function validApplicationMapFogState(array $map): bool
             || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))
             || (array_key_exists('walls', $layer) && !validApplicationWallState($layer['walls']))
             || (array_key_exists('lights', $layer) && !validApplicationMapLights($layer['lights']))
-            || (array_key_exists('vision', $layer) && !validApplicationVisionSettings($layer['vision']))) {
+            || (array_key_exists('vision', $layer) && !validApplicationVisionSettings($layer['vision']))
+            || (array_key_exists('lightingMode', $layer) && !validApplicationMapLightingMode($layer['lightingMode']))) {
             return false;
         }
     }
     return true;
+}
+
+function normalizeApplicationMapLightingMode(mixed $value): string
+{
+    return in_array($value, ['dark', 'normal', 'bright'], true) ? $value : 'normal';
+}
+
+function validApplicationMapLightingMode(mixed $value): bool
+{
+    return is_string($value) && in_array($value, ['dark', 'normal', 'bright'], true);
+}
+
+function normalizeApplicationDarkVision(mixed $value): string
+{
+    return in_array($value, ['none', 'dim', 'full'], true) ? $value : 'none';
+}
+
+function validApplicationDarkVision(mixed $value): bool
+{
+    return is_string($value) && in_array($value, ['none', 'dim', 'full'], true);
 }
 
 function applicationActiveMapFogState(array $map): mixed
@@ -284,7 +309,15 @@ function validApplicationMapLights(mixed $value): bool
             || !validApplicationDomainNumber($light['y'] ?? null, 0, 100)
             || (array_key_exists('visionDistance', $light)
                 && (!is_int($light['visionDistance']) || $light['visionDistance'] < 1 || $light['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE))
-            || (array_key_exists('enabled', $light) && !is_bool($light['enabled']))) return false;
+            || (array_key_exists('enabled', $light) && !is_bool($light['enabled']))
+            || (array_key_exists('portable', $light) && !is_bool($light['portable']))
+            || (array_key_exists('carrierTokenId', $light)
+                && !validApplicationDomainIdentifier($light['carrierTokenId'], 80, true))
+            || (($light['carrierTokenId'] ?? null) !== null && ($light['portable'] ?? false) !== true)
+            || (array_key_exists('color', $light)
+                && (!is_string($light['color']) || preg_match('/^#[0-9a-f]{6}$/iD', $light['color']) !== 1))
+            || (array_key_exists('icon', $light)
+                && !in_array($light['icon'], ['torch', 'orb', 'wisp'], true))) return false;
         $seen[$id] = true;
     }
     return true;
@@ -301,6 +334,10 @@ function normalizeApplicationMapLights(mixed $value): array
         'y' => (float) $light['y'],
         'visionDistance' => $light['visionDistance'] ?? XAR_VISION_DEFAULT_DISTANCE,
         'enabled' => $light['enabled'] ?? true,
+        'portable' => $light['portable'] ?? false,
+        'carrierTokenId' => ($light['portable'] ?? false) === true ? ($light['carrierTokenId'] ?? null) : null,
+        'color' => strtolower((string) ($light['color'] ?? XAR_MAP_LIGHT_DEFAULT_COLOR)),
+        'icon' => in_array($light['icon'] ?? null, ['torch', 'orb', 'wisp'], true) ? $light['icon'] : 'torch',
     ], $value);
     usort($lights, static fn (array $left, array $right): int => strcmp($left['id'], $right['id']));
     return $lights;
@@ -411,6 +448,7 @@ function validApplicationMapEffectPresets(mixed $value): bool
             || !validApplicationFogState($preset['fog'] ?? null)
             || !validApplicationWallState($preset['walls'] ?? null)
             || !validApplicationVisionSettings($preset['vision'] ?? null)
+            || (array_key_exists('lightingMode', $preset) && !validApplicationMapLightingMode($preset['lightingMode']))
             || !is_bool($preset['automatic'] ?? null)
             || !validApplicationDomainText($preset['createdAt'] ?? null, 80, false)
             || !validApplicationDomainText($preset['updatedAt'] ?? null, 80, false)
@@ -447,7 +485,70 @@ function emptyApplicationWallState(mixed $naturalWidth = 1600, mixed $naturalHei
     return ['version' => XAR_WALL_MASK_VERSION, 'width' => $dimensions['width'], 'height' => $dimensions['height'], 'mask' => ''];
 }
 
-function applicationActiveMapOcclusionState(array $map): array
+function applicationTokenCanCarryLight(array $token): bool
+{
+    if (($token['healthOverride'] ?? null) === 'dead') return false;
+    $maximum = is_numeric($token['maxHp'] ?? null) ? (float) $token['maxHp'] : 0.0;
+    return !($maximum > 0 && is_numeric($token['hp'] ?? null) && (float) $token['hp'] <= 0);
+}
+
+function applicationMapLightsForLayer(array $map, string $requestedLayerId, ?array $tokens = null): array
+{
+    $layerId = in_array($requestedLayerId, ['basement', 'ground', 'upper'], true) ? $requestedLayerId : 'ground';
+    $tokenList = is_array($tokens) ? $tokens : (is_array($map['tokens'] ?? null) ? $map['tokens'] : []);
+    $tokenById = [];
+    foreach ($tokenList as $token) {
+        if (is_array($token) && validApplicationDomainIdentifier($token['id'] ?? null, 80)) {
+            $tokenById[(string) $token['id']] = $token;
+        }
+    }
+    $entries = [];
+    $definedLayers = [];
+    foreach (['basement', 'ground', 'upper'] as $sourceLayerId) {
+        if (!is_array($map['layers'][$sourceLayerId] ?? null)) continue;
+        $definedLayers[] = $sourceLayerId;
+        foreach (normalizeApplicationMapLights($map['layers'][$sourceLayerId]['lights'] ?? []) as $light) {
+            $entries[] = ['sourceLayerId' => $sourceLayerId, 'light' => $light];
+        }
+    }
+    if ($definedLayers === []) {
+        foreach (normalizeApplicationMapLights($map['lights'] ?? []) as $light) {
+            $entries[] = ['sourceLayerId' => $layerId, 'light' => $light];
+        }
+    }
+    usort($entries, static function (array $left, array $right): int {
+        $byId = strcmp((string) $left['light']['id'], (string) $right['light']['id']);
+        return $byId !== 0 ? $byId : strcmp((string) $left['sourceLayerId'], (string) $right['sourceLayerId']);
+    });
+    $seenLights = [];
+    $seenCarriers = [];
+    $result = [];
+    foreach ($entries as $entry) {
+        $light = $entry['light'];
+        $lightId = (string) $light['id'];
+        if (isset($seenLights[$lightId])) continue;
+        $seenLights[$lightId] = true;
+        $carrierId = is_string($light['carrierTokenId'] ?? null) ? $light['carrierTokenId'] : '';
+        $carrier = $carrierId !== '' ? ($tokenById[$carrierId] ?? null) : null;
+        $carrierValid = is_array($carrier) && applicationTokenCanCarryLight($carrier) && !isset($seenCarriers[$carrierId]);
+        if ($carrierValid) {
+            $seenCarriers[$carrierId] = true;
+            $carrierLayerId = in_array($carrier['layerId'] ?? null, ['basement', 'ground', 'upper'], true)
+                ? $carrier['layerId'] : 'ground';
+            if ($carrierLayerId !== $layerId) continue;
+            $light['x'] = max(0.0, min(100.0, is_numeric($carrier['x'] ?? null) ? (float) $carrier['x'] : 0.0));
+            $light['y'] = max(0.0, min(100.0, is_numeric($carrier['y'] ?? null) ? (float) $carrier['y'] : 0.0));
+            $result[] = $light;
+            continue;
+        }
+        if ((string) $entry['sourceLayerId'] !== $layerId) continue;
+        $light['carrierTokenId'] = null;
+        $result[] = $light;
+    }
+    return array_slice($result, 0, XAR_MAP_LIGHT_MAXIMUM);
+}
+
+function applicationActiveMapOcclusionState(array $map, ?array $tokens = null): array
 {
     $activeLayerId = in_array($map['activeLayerId'] ?? null, ['basement', 'ground', 'upper'], true)
         ? $map['activeLayerId']
@@ -462,8 +563,9 @@ function applicationActiveMapOcclusionState(array $map): array
     return [
         'walls' => $walls,
         'fog' => applicationActiveMapFogState($map),
-        'lights' => normalizeApplicationMapLights(array_key_exists('lights', $activeLayer) ? $activeLayer['lights'] : ($map['lights'] ?? [])),
+        'lights' => applicationMapLightsForLayer($map, $activeLayerId, $tokens),
         'vision' => applicationMapVisionSettings($map),
+        'lightingMode' => normalizeApplicationMapLightingMode($activeLayer['lightingMode'] ?? ($map['lightingMode'] ?? null)),
         'naturalWidth' => is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0,
         'naturalHeight' => is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0,
     ];
@@ -731,7 +833,7 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) {
             continue;
         }
-        $radiusNatural = (normalizeApplicationVisionDistance($origin['visionDistance'] ?? $vision['distance']) + $distanceExtension) * $safeGridSize;
+        $radiusNatural = (applicationOriginVisionDistance($origin, $vision) + $distanceExtension) * $safeGridSize;
         $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
         $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
         $ellipseContainsCell = static function (int $column, int $row, float $centerX, float $centerY) use ($radiusX, $radiusY): bool {
@@ -847,6 +949,67 @@ function normalizeApplicationVisionDistance(mixed $value = null): int
         : XAR_VISION_DEFAULT_DISTANCE;
 }
 
+function applicationOriginVisionDistance(array $origin, array $vision): int
+{
+    if (($origin['environmentAdjusted'] ?? false) === true) {
+        return is_numeric($origin['visionDistance'] ?? null) && is_finite((float) $origin['visionDistance'])
+            ? max(1, min(120, (int) round((float) $origin['visionDistance'])))
+            : XAR_VISION_DEFAULT_DISTANCE;
+    }
+    return array_key_exists('visionDistance', $origin)
+        ? normalizeApplicationVisionDistance($origin['visionDistance'])
+        : (int) $vision['distance'];
+}
+
+function applicationEffectiveVisionDistance(mixed $baseDistance, mixed $lightingMode, mixed $darkVision): int
+{
+    $mode = normalizeApplicationMapLightingMode($lightingMode);
+    $sight = normalizeApplicationDarkVision($darkVision);
+    $base = normalizeApplicationVisionDistance($baseDistance);
+    if ($mode === 'bright') return 16;
+    if ($mode === 'dark') return $sight === 'full' ? 8 : 4;
+    return $base;
+}
+
+function applicationVisionFadeDistance(mixed $distance): int
+{
+    return max(1, min(20, (int) round((is_numeric($distance) ? (float) $distance : 1.0) / 2)));
+}
+
+function applicationRemoteLightDetectionDistance(mixed $distance, mixed $lightingMode): int
+{
+    $base = is_numeric($distance) && is_finite((float) $distance)
+        ? max(1, min(40, (int) round((float) $distance))) : XAR_VISION_DEFAULT_DISTANCE;
+    return in_array(normalizeApplicationMapLightingMode($lightingMode), ['dark', 'normal'], true)
+        ? min(120, $base * 3) : $base;
+}
+
+function applicationPreparedVisionOrigins(array $occlusion, array $origins): array
+{
+    $applyEnvironment = array_key_exists('lightingMode', $occlusion);
+    $mode = normalizeApplicationMapLightingMode($occlusion['lightingMode'] ?? null);
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $prepared = [];
+    foreach (array_slice($origins, 0, 40) as $origin) {
+        if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
+        $source = ($origin['source'] ?? null) === 'light' ? 'light' : 'token';
+        $darkVision = normalizeApplicationDarkVision($origin['darkVision'] ?? null);
+        $distance = ($origin['environmentAdjusted'] ?? false) === true || $source === 'light' || !$applyEnvironment
+            ? applicationOriginVisionDistance($origin, $vision)
+            : applicationEffectiveVisionDistance(applicationOriginVisionDistance($origin, $vision), $mode, $darkVision);
+        $prepared[] = [
+            ...$origin,
+            'x' => max(0.0, min(100.0, (float) $origin['x'])),
+            'y' => max(0.0, min(100.0, (float) $origin['y'])),
+            'visionDistance' => $distance,
+            'darkVision' => $darkVision,
+            'source' => $source,
+            'environmentAdjusted' => true,
+        ];
+    }
+    return $prepared;
+}
+
 function applicationLightCenterBlocked(array $occlusion, array $light): bool
 {
     if (applicationFogCoversPoint($occlusion['fog'] ?? null, $light['x'], $light['y'])) return true;
@@ -860,14 +1023,32 @@ function applicationLightCenterBlocked(array $occlusion, array $light): bool
 
 function applicationResolveVisionRelays(array $occlusion, array $origins, mixed $gridSize): array
 {
-    $origins = array_slice($origins, 0, 40);
+    $origins = applicationPreparedVisionOrigins($occlusion, $origins);
     $mask = applicationComputeBaseVisionMask($occlusion, $origins, $gridSize);
-    $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => []];
+    $viewerSeesFade = false;
+    foreach ($origins as $origin) {
+        if (normalizeApplicationDarkVision($origin['darkVision'] ?? null) !== 'none') {
+            $viewerSeesFade = true;
+            break;
+        }
+    }
+    $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => [], 'viewerSeesFade' => $viewerSeesFade];
     if (!$mask['enabled'] || $origins === []) return $result;
     $bytes = applicationWallMaskBytes($mask);
     if ($bytes === null) return $result;
     $remaining = array_values(array_filter(normalizeApplicationMapLights($occlusion['lights'] ?? []),
         static fn (array $light): bool => $light['enabled'] && !applicationLightCenterBlocked($occlusion, $light)));
+    $remoteMasks = [];
+    $lightingMode = normalizeApplicationMapLightingMode($occlusion['lightingMode'] ?? null);
+    if (array_key_exists('lightingMode', $occlusion) && in_array($lightingMode, ['dark', 'normal'], true)) {
+        foreach ($origins as $origin) {
+            $remoteMasks[] = applicationComputeBaseVisionMask($occlusion, [[
+                ...$origin,
+                'visionDistance' => applicationRemoteLightDetectionDistance($origin['visionDistance'] ?? null, $lightingMode),
+                'environmentAdjusted' => true,
+            ]], $gridSize);
+        }
+    }
     // Hidden bits combine with AND: each new relay contributes exactly once.
     // Initial token origins keep their own forty slots; lights never displace them.
     do {
@@ -875,8 +1056,19 @@ function applicationResolveVisionRelays(array $occlusion, array $origins, mixed 
         foreach ($remaining as $index => $light) {
             $column = (int) round($light['x'] / 100 * ($mask['width'] - 1));
             $row = (int) round($light['y'] / 100 * ($mask['height'] - 1));
-            if (applicationMaskBit($bytes, $row * $mask['width'] + $column)) continue;
-            $origin = ['x' => $light['x'], 'y' => $light['y'], 'visionDistance' => $light['visionDistance']];
+            $remotelyVisible = false;
+            foreach ($remoteMasks as $remoteMask) {
+                $remoteBytes = applicationWallMaskBytes($remoteMask);
+                if ($remoteBytes !== null && !applicationMaskBit($remoteBytes, $row * $mask['width'] + $column)) {
+                    $remotelyVisible = true;
+                    break;
+                }
+            }
+            if (applicationMaskBit($bytes, $row * $mask['width'] + $column) && !$remotelyVisible) continue;
+            $origin = [
+                'x' => $light['x'], 'y' => $light['y'], 'visionDistance' => $light['visionDistance'],
+                'darkVision' => 'none', 'source' => 'light', 'environmentAdjusted' => true,
+            ];
             $addition = applicationComputeBaseVisionMask($occlusion, [$origin], $gridSize);
             $additionBytes = applicationWallMaskBytes($addition);
             if ($additionBytes === null) continue;
@@ -904,6 +1096,8 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
     if (!$strict['enabled']) return $strict;
     $width = $strict['width']; $height = $strict['height'];
     $strictBytes = applicationWallMaskBytes($strict);
+    if ($strictBytes === null) return $strict;
+    $tokenBytes = $strictBytes;
     $opacity = str_repeat("\xff", $width * $height);
     for ($index = 0; $index < $width * $height; ++$index) {
         if (!applicationMaskBit($strictBytes, $index)) $opacity[$index] = "\0";
@@ -912,23 +1106,31 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    $environmentLighting = array_key_exists('lightingMode', $occlusion);
     foreach ($resolved['origins'] as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
-        $extended = applicationComputeBaseVisionMask($occlusion, [$origin], $grid, 4);
+        $originDistance = applicationOriginVisionDistance($origin, $vision);
+        $fadeDistance = $environmentLighting ? applicationVisionFadeDistance($originDistance) : 4;
+        $extended = applicationComputeBaseVisionMask($occlusion, [$origin], $grid, $fadeDistance);
         $extendedBytes = applicationWallMaskBytes($extended);
-        $radius = normalizeApplicationVisionDistance($origin['visionDistance'] ?? $vision['distance']) * $grid;
+        if ($extendedBytes === null) continue;
+        if (($resolved['viewerSeesFade'] ?? false) === true) $tokenBytes = $tokenBytes & $extendedBytes;
+        $radius = $originDistance * $grid;
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
         $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
         for ($index = 0; $index < $width * $height; ++$index) {
             if ($opacity[$index] === "\0" || applicationMaskBit($extendedBytes, $index)) continue;
             $distance = hypot(($index % $width - $centerX) / max(1, $width - 1) * $naturalWidth,
                 (intdiv($index, $width) - $centerY) / max(1, $height - 1) * $naturalHeight);
-            $t = max(0.0, min(1.0, ($distance - $radius) / (4 * $grid)));
+            $t = max(0.0, min(1.0, ($distance - $radius) / ($fadeDistance * $grid)));
             $alpha = (int) round(255 * $t * $t * (3 - 2 * $t));
             if ($alpha < ord($opacity[$index])) $opacity[$index] = chr($alpha);
         }
     }
     $strict['opacity'] = rtrim(strtr(base64_encode($opacity), '+/', '-_'), '=');
+    if (($resolved['viewerSeesFade'] ?? false) === true) {
+        $strict['tokenMask'] = rtrim(strtr(base64_encode($tokenBytes), '+/', '-_'), '=');
+    }
     return $strict;
 }
 
@@ -952,6 +1154,16 @@ function applicationVisionCoversPoint(mixed $value, mixed $xPercent, mixed $yPer
     $column = (int) round(($x / 100) * ($value['width'] - 1));
     $row = (int) round(($y / 100) * ($value['height'] - 1));
     return applicationMaskBit($bytes, $row * (int) $value['width'] + $column);
+}
+
+function applicationVisionTokenCoversPoint(mixed $value, mixed $xPercent, mixed $yPercent): bool
+{
+    if (!is_array($value) || !is_string($value['tokenMask'] ?? null)) {
+        return applicationVisionCoversPoint($value, $xPercent, $yPercent);
+    }
+    $tokenMask = $value;
+    $tokenMask['mask'] = $value['tokenMask'];
+    return applicationVisionCoversPoint($tokenMask, $xPercent, $yPercent);
 }
 
 function validApplicationTokenStats(mixed $value): bool
@@ -1036,6 +1248,7 @@ function validApplicationWeaponAttacks(mixed $value): bool
 function validApplicationTokenDomain(array $payload): bool
 {
     if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
+    if (array_key_exists('darkVision', $payload) && !validApplicationDarkVision($payload['darkVision'])) return false;
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
         return false;
     }
@@ -1316,11 +1529,12 @@ function validApplicationDiceAppearance(mixed $value): bool
 function validApplicationCharacterDomain(array $payload): bool
 {
     if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
+    if (array_key_exists('darkVision', $payload) && !validApplicationDarkVision($payload['darkVision'])) return false;
     if (isset($payload['characterSchema']) && (string) $payload['characterSchema'] !== 'xar-tsaroth.character-sheet') {
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 4)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 5)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
@@ -1336,6 +1550,10 @@ function validApplicationCharacterDomain(array $payload): bool
         if (isset($payload[$key]) && !validApplicationDomainObjectList($payload[$key], $maximum)) {
             return false;
         }
+    }
+    foreach (is_array($payload['linkedTokens'] ?? null) ? $payload['linkedTokens'] : [] as $linkedToken) {
+        if (is_array($linkedToken) && array_key_exists('darkVision', $linkedToken)
+            && !validApplicationDarkVision($linkedToken['darkVision'])) return false;
     }
     if (isset($payload['abilities']) && !validApplicationAbilities($payload['abilities'])) {
         return false;
@@ -1530,6 +1748,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             sendError(400, 'Document de personnage incohérent.', 'invalid_character_domain');
         }
         $payload['visionDistance'] = normalizeApplicationVisionDistance($payload['visionDistance'] ?? null);
+        $payload['darkVision'] = normalizeApplicationDarkVision($payload['darkVision'] ?? null);
     }
     if (str_starts_with($key, 'token:')) {
         $segments = explode(':', $key, 3);

@@ -49,7 +49,7 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
   assert.match(projection, /unset\(\$map\['walls'\]\)/);
   assert.match(projection, /\$map\['fog'\] = \$fog/);
   assert.match(projection, /\$map\['visionMask'\] = \$visionMask/);
-  assert.match(projection, /\|\| \$pointIsHidden\(\$ping\['x'\]/);
+  assert.match(projection, /\|\| \$strictPointIsHidden\(\$ping\['x'\]/);
   assert.match(projection, /'size' => \(float\) \(\$token\['size'\] \?\? 40\)/);
 });
 
@@ -62,7 +62,7 @@ test("la commande de déplacement arbitre le trajet Joueur et la destination MJ 
   assert.match(movement, /if \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)/);
   assert.match(movement, /onlineMapMovementVisibility\(\$connection, \$records, \$map, \$accountId, \$moveSceneId\)/);
   assert.match(movement, /applicationComputeVisionMask\(\$occlusion, \$origins/);
-  assert.match(movement, /applicationActiveMapOcclusionState\(\$map\)/);
+  assert.match(movement, /applicationActiveMapOcclusionState\(\$map, \$sceneTokens\)/);
   assert.match(movement, /findApplicationVisibleTokenPath\(/);
   assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);
   assert.match(movement, /\$positionChanged/);

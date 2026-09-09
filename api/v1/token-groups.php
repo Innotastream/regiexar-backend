@@ -324,5 +324,18 @@ function prepareOnlineSceneTokenChanges(PDO $connection, array &$records, array 
         $prepared = prepareApplicationDomainUpsert($key, $token, $records[$key] ?? null);
         if ($prepared === null) unset($byKey[$key]); else $byKey[$key] = $prepared;
     }
+    if (function_exists('onlineReconcileCarriedLightsForScene')) {
+        $affectedScenes = [];
+        foreach ($byKey as $key => $entry) {
+            if (str_starts_with($key, 'map:')) $affectedScenes[substr($key, 4)] = true;
+            if (str_starts_with($key, 'token:')) {
+                $segments = explode(':', $key, 3);
+                if (count($segments) === 3) $affectedScenes[$segments[1]] = true;
+            }
+        }
+        foreach (array_keys($affectedScenes) as $sceneId) {
+            onlineReconcileCarriedLightsForScene($connection, $records, $byKey, (string) $sceneId);
+        }
+    }
     return array_values($byKey);
 }

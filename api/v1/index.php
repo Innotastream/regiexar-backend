@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.5';
-const XAR_BACKEND_BUILD = 'client-3-2-5-combat-ruler-stream-candidate-20260909-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.5';
-// Politique fermée de la livraison 3.2.5 : aucune autre version n'est admise.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.2', '3.2.3', '3.2.4', '3.2.5'];
+const XAR_BACKEND_VERSION = '0.15.6';
+const XAR_BACKEND_BUILD = 'client-3-2-6-portable-lighting-launcher-candidate-20260909-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.6';
+// Politique fermée de la livraison 3.2.6 : aucune autre version n'est admise.
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.3', '3.2.4', '3.2.5', '3.2.6'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 18;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
