@@ -64,10 +64,10 @@ test("les sources PHP ont des délimiteurs structurels équilibrés", async () =
   }
 });
 
-test("le backend 0.15.4 conserve la file Codex et porte le schéma 16", async () => {
+test("le backend 0.15.5 conserve la file Codex et porte le schéma 16", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.4'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-4-reversible-history-placement-candidate-20260908-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.5'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-5-combat-ruler-stream-candidate-20260909-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -93,8 +93,8 @@ test("le backend 0.15.4 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.4");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.4");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.5");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.5");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 18);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -141,7 +141,9 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   const oppose = attack.slice(attack.indexOf("} elseif ($command === 'token.attack.oppose')"), attack.indexOf("} elseif ($command === 'token.attack.resolve')"));
   const applyDamage = online.slice(online.indexOf("function applyOnlineAttackDamage"), online.indexOf("function onlineAttackDiscordContent"));
   assert.match(attack, /onlineTokenControllerIdFromRecords/);
-  assert.match(attack, /if \(\$isGm\)[\s\S]*?attack_source_not_gm_creature[\s\S]*?attack_target_not_player/);
+  assert.match(attack, /if \(\$isGm\)[\s\S]*?attack_source_not_visible[\s\S]*?attack_target_not_visible/);
+  assert.doesNotMatch(attack, /attack_source_not_gm_creature|attack_target_not_player/);
+  assert.match(attack, /if \(\$isGm\)[\s\S]*?\$source === \[\][\s\S]*?\$target === \[\][\s\S]*?\$source\['id'\]/);
   assert.match(attack, /if \(!\$isGm && !onlineAttackTargetVisible/);
   assert.doesNotMatch(attack, /L’attaque ciblée doit être portée par un joueur/);
   assert.match(attack, /onlineAttackTargetVisible/);
@@ -183,7 +185,9 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(oppose, /\$target === \[\] && \$decision !== 'cancel'/);
   assert.match(oppose, /'opposition'\] = \['requestId' => \$requestId, 'cancelled' => true, 'rolledByGm' => true\]/);
   assert.match(attack, /Jet d’opposition demandé/);
-  assert.match(attack, /Jet DMG .* présumés/);
+  assert.match(attack, /onlineAttackHistoryDetail\(\$attack/);
+  assert.match(attack, /validationKind'\] = 'outcome'/);
+  assert.match(attack, /provisionalStatus/);
   assert.match(attack, /onlineDefenderWinsOpposition/);
   assert.match(attack, /onlineAppendAppliedDamageAction/);
   assert.match(attack, /onlinePendingAttackParties/);
@@ -196,7 +200,12 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(discord, /Jet ATK/);
   assert.match(discord, /Jet OPP/);
   assert.match(discord, /Jet DMG/);
-  assert.doesNotMatch(discord, /armorPercent|finalDamage|currentHp|maximumHp|previousHp/);
+  assert.match(discord, /onlineAttackDiscordModifierSummary/);
+  assert.doesNotMatch(discord, /rawDamage|damageFormula|armorPercent|finalDamage|currentHp|maximumHp|previousHp/);
+  assert.match(online, /function onlineDamageComponentDetail[\s\S]*?armure/);
+  assert.match(online, /function onlineDamageCalculationDetail[\s\S]*?absorb/);
+  assert.match(online, /function onlineAttackHistoryDetail/);
+  assert.match(online, /breaksOpposition'[\s\S]*?requiresGmValidation'/);
   assert.match(online, /'token\.attack\.resolve'/);
   assert.match(online, /'token\.attack\.oppose'/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
@@ -241,13 +250,13 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(domains, /\$allowed !== true/);
 });
 
-test("la connexion accepte seulement les trois versions explicitement autorisées", async () => {
+test("la connexion accepte seulement les quatre versions explicitement autorisées", async () => {
   const [index, readme, manifestSource, workflow] = await Promise.all([
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.4");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.2", "3.2.3", "3.2.4"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.5");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.2", "3.2.3", "3.2.4", "3.2.5"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -259,7 +268,7 @@ test("la connexion accepte seulement les trois versions explicitement autorisée
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /426 \/ 401 \/ 401 \/ 401 \/ 426/);
+  assert.match(readme, /426 \/ 401 \/ 401 \/ 401 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 
@@ -792,7 +801,8 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(online, /\$formula = '1d100';/);
   assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\]/);
   assert.match(online, /\[1, 11, 22, 33, 44\]/);
-  assert.match(online, /\[10, 66, 77, 88, 99\]/);
+  assert.match(online, /\[66, 77, 88, 99, 100\]/);
+  assert.doesNotMatch(online, /\[10, 66, 77, 88, 99\]/);
   assert.match(online, /function onlineRollFormulaWithMode/);
   assert.match(online, /normalizeOnlineRollMode/);
   assert.match(online, /selectOnlineRollAttemptIndex/);

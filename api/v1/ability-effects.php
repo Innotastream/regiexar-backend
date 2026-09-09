@@ -100,7 +100,9 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $preserve = static function ($attack) use ($attacks) {
             if (!is_array($attack)) return $attack;
             $old = $attacks[$attack['id'] ?? ''] ?? [];
-            if (!array_key_exists('damageComponents', $attack) && isset($old['damageComponents'])) $attack['damageComponents'] = $old['damageComponents'];
+            foreach (['damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+                if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
+            }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
             return $attack;
         };

@@ -73,9 +73,27 @@ $automaticOutcome = ['code' => 'success', 'label' => 'SANS JET', 'success' => tr
 foreach ([['code' => 'success', 'success' => true, 'result' => 91], ['code' => 'critical-success', 'success' => true, 'result' => 44], ['code' => 'special-success', 'success' => true, 'result' => 55]] as $defence) {
     requireCasting(onlineDefenderWinsOpposition($automaticOutcome, $defence), 'A successful defence must defeat an attack with no casting die');
 }
-foreach ([['code' => 'failure', 'success' => false, 'result' => 1], ['code' => 'critical-failure', 'success' => false, 'result' => 10], null] as $defence) {
+foreach ([['code' => 'failure', 'success' => false, 'result' => 1], ['code' => 'critical-failure', 'success' => false, 'result' => 100], null] as $defence) {
     requireCasting(!onlineDefenderWinsOpposition($automaticOutcome, $defence), 'An absent or failed defence must not defeat an attack with no casting die');
 }
+
+foreach ([1, 11, 22, 33, 44] as $raw) {
+    $outcome = classifyOnlineD100Outcome($raw, 0);
+    requireCasting($outcome['code'] === 'critical-success' && $outcome['success'] === true, "Critical success $raw must override the threshold");
+    requireCasting($outcome['immediate'] === true && $outcome['breaksOpposition'] === true && $outcome['requiresGmValidation'] === true, "Critical success $raw must await explicit GM validation");
+}
+$special = classifyOnlineD100Outcome(55, 0);
+requireCasting($special['code'] === 'special-success' && $special['success'] === true && $special['breaksOpposition'] === true && $special['requiresGmValidation'] === true, 'The special 55 result must immediately break opposition and await the GM');
+foreach ([66, 77, 88, 99, 100] as $raw) {
+    $outcome = classifyOnlineD100Outcome($raw, 100);
+    requireCasting($outcome['code'] === 'critical-failure' && $outcome['success'] === false, "Critical failure $raw must override the threshold");
+    requireCasting($outcome['immediate'] === true && $outcome['breaksOpposition'] === true && $outcome['requiresGmValidation'] === true, "Critical failure $raw must await explicit GM validation");
+}
+$ordinaryTen = classifyOnlineD100Outcome(10, 50);
+requireCasting($ordinaryTen['code'] === 'success' && ($ordinaryTen['immediate'] ?? false) === false, 'A raw 10 is now an ordinary statistic success');
+$genericOne = classifyOnlineD100Outcome(1, 50, 0, 0, false);
+requireCasting($genericOne['code'] === 'success' && ($genericOne['immediate'] ?? false) === false, 'Generic d100 rolls must not acquire remarkable effects');
+requireCasting(classifyOnlineD100Outcome(42) === null, 'Ordinary Chance results without a threshold keep no success label');
 
 $missing = array_replace($ability, ['castingStatId' => 'removed-stat']);
 rejectsCasting(fn() => applicationAbilityCastingPlan($missing, $source, 'scene-one', $initiative, []), 'ability_cast_stat_missing');
@@ -122,6 +140,10 @@ requireCasting(preserveApplicationAbilityExtensions('activity', ['resourceReceip
 $legacyTimer = $timer; unset($legacyTimer['abilityId'], $legacyTimer['tokenId']);
 $keptTimer = preserveApplicationAbilityExtensions('activity', ['actionTimers' => [$legacyTimer]], ['actionTimers' => [$timer]])['actionTimers'][0];
 requireCasting($keptTimer['abilityId'] === $timer['abilityId'] && $keptTimer['tokenId'] === '', 'Old timer normalization must retain its managed ability association');
+$remarkableAttack = ['id' => 'attack-remarkable-old-client', 'damageComponents' => [['type' => 'physical', 'formula' => '1d6']], 'damageModifier' => 7, 'validationKind' => 'outcome', 'provisionalStatus' => 'applied'];
+$oldClientAttack = ['id' => $remarkableAttack['id']];
+$preservedAttack = preserveApplicationAbilityExtensions('activity', ['pendingAttacks' => [$oldClientAttack]], ['pendingAttacks' => [$remarkableAttack]])['pendingAttacks'][0];
+foreach (['damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) requireCasting($preservedAttack[$field] === $remarkableAttack[$field], 'Old clients must preserve pending attack field ' . $field);
 
 $damage = onlineRollAttackDamage(['damageComponents' => $ability['damageComponents'], 'damageRollMode' => 'normal'], ['armorCategory' => 'heavy', 'armor' => 50, 'magicArmor' => 25]);
 requireCasting($damage['damage']['rawDamage'] === 37, 'Mixed raw damage must sum all components');
@@ -130,5 +152,20 @@ requireCasting($parts[0]['armorPercent'] === onlineAttackArmorPercent(['armorCat
 requireCasting($parts[1]['finalDamage'] === 15 && $parts[1]['armorPercent'] === 25, 'Magical damage must use its own percentage');
 requireCasting($parts[2]['finalDamage'] === 7 && $parts[2]['armorPercent'] === 0, 'Ignoring armor must bypass both armor types');
 requireCasting($damage['damage']['finalDamage'] === array_sum(array_column($parts, 'finalDamage')), 'Mixed damage must sum separately reduced values');
+
+$calculatedAttack = [
+    'sourceName' => 'Héros', 'targetName' => 'Garde', 'attackName' => 'Lame', 'status' => 'applied',
+    'damageType' => 'physical', 'damageModifier' => 3, 'appliedDamage' => 12,
+    'hit' => ['raw' => 38, 'outcome' => ['raw' => 38, 'result' => 36, 'resultModifier' => -2, 'baseThreshold' => 50, 'modifier' => 5, 'threshold' => 55, 'code' => 'success', 'label' => 'RÉUSSITE', 'success' => true]],
+    'opposition' => ['raw' => 71, 'outcome' => ['raw' => 71, 'baseThreshold' => 45, 'modifier' => -5, 'threshold' => 40, 'code' => 'failure', 'label' => 'ÉCHEC', 'success' => false]],
+    'damage' => ['formula' => '2d6+3', 'rawDamage' => 18, 'preventedDamage' => 6, 'finalDamage' => 12, 'components' => [['type' => 'physical', 'formula' => '2d6+3', 'breakdown' => '6 + 9 + 3', 'rawDamage' => 18, 'armorPercent' => 35, 'preventedDamage' => 6, 'finalDamage' => 12]]],
+];
+$history = onlineAttackHistoryDetail($calculatedAttack);
+requireCasting(str_contains($history, 'dé brut 38 −2 = 36') && str_contains($history, 'seuil 50 +5 = 55'), 'GM history must show the complete hit calculation');
+requireCasting(str_contains($history, 'armure 35 % : −6') && str_contains($history, 'total brut 18') && str_contains($history, 'final 12'), 'GM history must show armor absorption and final damage');
+$discord = onlineAttackDiscordContent($calculatedAttack);
+requireCasting(str_contains($discord, 'Modificateurs') && str_contains($discord, 'bonus de seuil +5') && str_contains($discord, 'bonus de résultat −2') && str_contains($discord, 'bonus de dégâts +3'), 'Discord must show the simplified modifiers');
+requireCasting(str_contains($discord, 'Jet DMG **12** — PV perdus') && !str_contains($discord, '2d6+3') && !str_contains($discord, 'Jet DMG **18**'), 'Discord must show only the applied public damage, never the raw roll used to infer armor');
+requireCasting(!str_contains($discord, 'armure') && !str_contains($discord, '35 %') && !str_contains($discord, 'maximumHp'), 'Discord must not expose armor or private health state');
 
 echo json_encode(['checks' => $checks, 'status' => 'ok', 'scope' => 'pure PHP casting authority; no Windows, OVH or real-account acceptance'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE) . PHP_EOL;

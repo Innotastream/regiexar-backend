@@ -88,13 +88,16 @@ function fixture(): MemoryConnection
     return new MemoryConnection([
         'table' => ['activeSceneId' => 'scene-one', 'tacticalSync' => ['paused' => false]],
         'map:scene-one' => ['gridSize' => 50],
-        'token-index:scene-one' => ['order' => ['token-player', 'token-monster']],
+        'token-index:scene-one' => ['order' => ['token-player', 'token-monster', 'token-monster-two']],
         'initiative:scene-one' => ['active' => true, 'order' => ['token-monster', 'token-player'], 'currentIndex' => 0],
         'character:character-player' => ['id' => 'character-player', 'ownerPlayerId' => 'account-player', 'name' => 'Personnage', 'color' => '#22aa33', 'resources' => ['hp' => 10, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 10], 'conditions' => [], 'stats' => ['force' => 50]],
         'token:scene-one:token-player' => ['id' => 'token-player', 'characterId' => 'character-player', 'controllerPlayerId' => 'stale-controller', 'name' => 'Personnage', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi']],
-        'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 50, 'y' => 50],
+        'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 50, 'y' => 50,
+            'stats' => [['id' => 'monster-force', 'label' => 'Force', 'value' => 70]], 'weaponAttacks' => [['id' => 'monster-claw', 'formula' => '1d6', 'damageType' => 'physical']]],
+        'token:scene-one:token-monster-two' => ['id' => 'token-monster-two', 'name' => 'Seconde créature', 'hp' => 35, 'maxHp' => 35, 'x' => 65, 'y' => 50,
+            'stats' => [['id' => 'monster-two-force', 'label' => 'Force', 'value' => 60]], 'weaponAttacks' => [['id' => 'monster-two-claw', 'formula' => '1d4', 'damageType' => 'physical']]],
         'activity' => ['actionTimers' => [], 'actionTimerTombstones' => [], 'mapPings' => [], 'shortcuts' => [], 'rolls' => [], 'playerActions' => [], 'pendingAttacks' => [], 'attackReceipts' => []],
     ]);
 }
@@ -204,7 +207,62 @@ $db = fixture();
 $character=$db->payload('character:character-player');$character['weaponText']='1d6';$character['weaponAttacks']=[['id'=>'weapon-1','formula'=>'1d6','damageType'=>'ignore']];$db->put('character:character-player',$character);
 $monster=$db->payload('token:scene-one:token-monster');$monster['hp']=0;$db->put('token:scene-one:token-monster',$monster);
 $response=runCommand($db,'token.attack',['sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','requestId'=>'attack-request-test02','attackKind'=>'weapon','attackId'=>'weapon-1','statId'=>'character-stat-force','opposed'=>true]);
-requireTactical($response->status===200 && in_array($response->body['attack']['status'] ?? '',['missed','applied'],true), 'A KO creature can be attacked, with no opposition regardless of the actual attack roll: '.$response->getMessage());
+requireTactical($response->status===200 && in_array($response->body['attack']['status'] ?? '',['missed','applied','pending'],true), 'A KO creature can be attacked, with no opposition regardless of the actual attack roll: '.$response->getMessage());
+
+$db = fixture();
+$character = $db->payload('character:character-player');
+$character['weaponText'] = '1d6';
+$character['weaponAttacks'] = [['id' => 'weapon-1', 'formula' => '1d6', 'damageType' => 'ignore']];
+$db->put('character:character-player', $character);
+$response = runCommand($db, 'token.attack', [
+    'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster',
+    'requestId' => 'gm-player-source-0001', 'attackKind' => 'weapon', 'attackId' => 'weapon-1',
+    'statId' => 'character-stat-force',
+], true, 'account-gm');
+requireTactical($response->status === 200 && ($response->body['attack']['sourceTokenId'] ?? '') === 'token-player', 'The GM can attack with a player token instead of the principal creature: ' . $response->getMessage());
+
+$db = fixture();
+$response = runCommand($db, 'token.attack', [
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-monster-two',
+    'requestId' => 'gm-creature-source-01', 'attackKind' => 'weapon', 'attackId' => 'monster-claw',
+    'statId' => 'monster-force',
+], true, 'account-gm');
+requireTactical($response->status === 200 && ($response->body['attack']['targetTokenId'] ?? '') === 'token-monster-two', 'The GM can target another creature with a creature: ' . $response->getMessage());
+
+$db = fixture();
+$remarkableFailure = [
+    'id' => 'attack-critical-failure01', 'requestId' => 'critical-failure-request1', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player', 'sourceName' => 'Créature', 'targetName' => 'Personnage',
+    'attackName' => 'Griffe', 'accountId' => 'account-gm', 'attackerRole' => 'gm', 'playerName' => 'MJ test',
+    'status' => 'pending', 'validationKind' => 'outcome', 'provisionalStatus' => 'missed', 'finalDamage' => 0,
+    'damageType' => 'physical', 'damageFormula' => '1d6', 'damageRollMode' => 'normal',
+    'hit' => ['raw' => 100, 'outcome' => classifyOnlineD100Outcome(100, 100)],
+];
+$activity = $db->payload('activity');
+$activity['pendingAttacks'] = [$remarkableFailure];
+$activity['attackReceipts'] = [['requestId' => $remarkableFailure['requestId'], 'accountId' => 'account-gm', 'expiresAt' => PHP_INT_MAX, 'attack' => $remarkableFailure]];
+$db->put('activity', $activity);
+$beforeHp = $db->payload('character:character-player')['resources']['hp'];
+$response = runCommand($db, 'token.attack.resolve', ['attackId' => $remarkableFailure['id'], 'decision' => 'approve', 'confirmed' => true], true, 'account-gm');
+requireTactical($response->status === 200 && ($response->body['attack']['status'] ?? '') === 'missed' && $db->payload('character:character-player')['resources']['hp'] === $beforeHp, 'GM validation of a critical failure finalizes the miss without touching HP');
+
+$db = fixture();
+$remarkableSuccess = [
+    'id' => 'attack-critical-success01', 'requestId' => 'critical-success-request1', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster', 'sourceName' => 'Personnage', 'targetName' => 'Créature',
+    'attackName' => 'Lame', 'accountId' => 'account-gm', 'attackerRole' => 'gm', 'playerName' => 'MJ test',
+    'status' => 'pending', 'validationKind' => 'outcome', 'provisionalStatus' => 'applied', 'finalDamage' => 5,
+    'damageType' => 'ignore', 'damageFormula' => '5', 'damageRollMode' => 'normal',
+    'hit' => ['raw' => 11, 'outcome' => classifyOnlineD100Outcome(11, 0)],
+    'damage' => ['formula' => '5', 'breakdown' => '5', 'rawDamage' => 5, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 5],
+];
+$activity = $db->payload('activity');
+$activity['pendingAttacks'] = [$remarkableSuccess];
+$activity['attackReceipts'] = [['requestId' => $remarkableSuccess['requestId'], 'accountId' => 'account-gm', 'expiresAt' => PHP_INT_MAX, 'attack' => $remarkableSuccess]];
+$db->put('activity', $activity);
+requireTactical($db->payload('token:scene-one:token-monster')['hp'] === 40, 'A remarkable hit cannot alter HP before GM validation');
+$response = runCommand($db, 'token.attack.resolve', ['attackId' => $remarkableSuccess['id'], 'decision' => 'approve', 'confirmed' => true], true, 'account-gm');
+requireTactical($response->status === 200 && ($response->body['attack']['status'] ?? '') === 'applied' && $db->payload('token:scene-one:token-monster')['hp'] === 35, 'Explicit GM validation applies a remarkable hit exactly once');
 
 $db = fixture();
 $response = runCommand($db, 'token.resource.adjust', ['tokenId'=>'token-player','resource'=>'hp','delta'=>-40,'requestId'=>'resource-request-0001']);
