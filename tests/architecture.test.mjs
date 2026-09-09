@@ -4,6 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
+const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -59,8 +60,18 @@ function balancedPhpDelimiters(source) {
 }
 
 test("les sources PHP ont des délimiteurs structurels équilibrés", async () => {
-  for (const file of ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"]) {
+  for (const file of PHP_SOURCES) {
     assert.equal(balancedPhpDelimiters(await read(file)), true, file);
+  }
+});
+
+test("aucune source PHP ne redéclare une fonction de premier niveau", async () => {
+  for (const file of PHP_SOURCES) {
+    const names = [...phpBlocks(await read(file)).matchAll(/^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm)]
+      .map((match) => match[1]);
+    const seen = new Set();
+    const duplicates = names.filter((name) => seen.has(name) || !seen.add(name));
+    assert.deepEqual([...new Set(duplicates)], [], file);
   }
 });
 

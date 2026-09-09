@@ -2500,7 +2500,7 @@ function onlineSceneTokenRecords(PDO $connection, string $sceneId, array $record
     return $keys === [] ? $records : array_replace($records, applicationDomainRecords($connection, $keys));
 }
 
-function onlinePendingDomainPayload(array $records, array $pending, string $key, array $fallback = []): array
+function onlineLightPendingDomainPayload(array $records, array $pending, string $key, array $fallback = []): array
 {
     if (isset($pending[$key])) {
         return ($pending[$key]['operation'] ?? '') === 'upsert' && is_array($pending[$key]['payload'] ?? null)
@@ -2518,7 +2518,7 @@ function onlineSceneTokensForLights(PDO $connection, array &$records, array $pen
     foreach (array_keys($pending) as $key) if (str_starts_with($key, $prefix)) $keys[$key] = true;
     $tokens = [];
     foreach (array_keys($keys) as $key) {
-        $token = onlinePendingDomainPayload($records, $pending, $key);
+        $token = onlineLightPendingDomainPayload($records, $pending, $key);
         if ($token !== []) $tokens[] = $token;
     }
     return $tokens;
@@ -2594,7 +2594,7 @@ function onlineReconcileCarriedLightsForScene(
     $mapKey = 'map:' . $sceneId;
     if (!validApplicationDomainKey($mapKey)) return false;
     if (!isset($records[$mapKey])) $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
-    $map = onlinePendingDomainPayload($records, $pending, $mapKey);
+    $map = onlineLightPendingDomainPayload($records, $pending, $mapKey);
     if ($map === []) return false;
     $records = onlineSceneTokenRecords($connection, $sceneId, $records);
     $forced = array_fill_keys(array_map('strval', $forcedDropTokenIds), true);
@@ -2610,7 +2610,7 @@ function onlineReconcileCarriedLightsForScene(
             $tokenById[$tokenId] = $storedToken;
             continue;
         }
-        $token = onlinePendingDomainPayload($records, $pending, $tokenKey);
+        $token = onlineLightPendingDomainPayload($records, $pending, $tokenKey);
         if ($token !== []) $tokenById[(string) ($token['id'] ?? '')] = $token;
     }
     foreach ($pending as $tokenKey => $change) {
@@ -2872,7 +2872,7 @@ function applyOnlineLightCarryCommand(
     }
     $records = onlineSceneTokenRecords($connection, $sceneId, $records);
     $tokens = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
-    $token = onlinePendingDomainPayload($records, $pending, $tokenKey);
+    $token = onlineLightPendingDomainPayload($records, $pending, $tokenKey);
     if ($token === [] || !onlineTokenOnActiveLayer($token, $map)) {
         rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur ce niveau.', 'stale_token_layer');
     }
