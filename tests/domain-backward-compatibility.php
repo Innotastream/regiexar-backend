@@ -211,8 +211,9 @@ $migratedStandaloneToken = migrateOnlineCombatTokenPayload([
     'weaponAttacks' => [['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical']],
 ]);
 requireDomainCompatibility(
-    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 4
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 5
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
+        && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'
         && !array_key_exists('speed', $migratedCombatCharacter)
         && ($migratedCombatCharacter['armorCategory'] ?? '') === 'medium'
         && ($migratedCombatCharacter['magicArmorCategory'] ?? '') === 'special'
@@ -220,7 +221,7 @@ requireDomainCompatibility(
         && ($migratedCombatCharacter['abilities'][0]['damageType'] ?? '') === 'ignore'
         && ($migratedStandaloneToken['weaponAttacks'][0]['damageType'] ?? '') === 'magical'
         && validApplicationCharacterDomain($migratedCombatCharacter),
-    'La migration 3.1.5 doit mettre tout le monde en perception normale et conserver les types de dégâts valides.'
+    'La migration 3.2.6 doit ajouter la vision nocturne sans perdre la perception temporelle ni les types de dégâts.'
 );
 
 $pillarState = emptyApplicationWallState(1000, 1000);
