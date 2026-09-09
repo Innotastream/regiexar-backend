@@ -511,7 +511,10 @@ function applicationMapLightsForLayer(array $map, string $requestedLayerId, ?arr
             $entries[] = ['sourceLayerId' => $sourceLayerId, 'light' => $light];
         }
     }
-    if ($definedLayers === []) {
+    // A legacy active level can still live in the top-level alias while a
+    // different level has already been materialized. An explicit level,
+    // including an empty one, always remains authoritative.
+    if (!in_array($layerId, $definedLayers, true)) {
         foreach (normalizeApplicationMapLights($map['lights'] ?? []) as $light) {
             $entries[] = ['sourceLayerId' => $layerId, 'light' => $light];
         }
