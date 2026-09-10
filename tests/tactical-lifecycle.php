@@ -91,6 +91,7 @@ function fixture(): MemoryConnection
         'token-index:scene-one' => ['order' => ['token-player', 'token-monster', 'token-monster-two']],
         'initiative:scene-one' => ['active' => true, 'order' => ['token-monster', 'token-player'], 'currentIndex' => 0],
         'character:character-player' => ['id' => 'character-player', 'ownerPlayerId' => 'account-player', 'name' => 'Personnage', 'color' => '#22aa33', 'resources' => ['hp' => 10, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 10], 'conditions' => [], 'stats' => ['force' => 50]],
+        'luck' => ['characters' => []],
         'token:scene-one:token-player' => ['id' => 'token-player', 'characterId' => 'character-player', 'controllerPlayerId' => 'stale-controller', 'name' => 'Personnage', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi']],
@@ -154,6 +155,39 @@ foreach (['active fog'=>['fog'=>$protectedFog], 'new upper floor'=>['activeLayer
 requireTactical(onlineDiceAppearance(['frameVariant'=>'boss']) === ['color'=>'#000000','foreground'=>'#ffffff'], 'A boss has black dice with white digits.');
 requireTactical(onlineDiceAppearance(['frameVariant'=>'boss','color'=>'#ff0000'], true, ['color'=>'#ffffff']) === ['color'=>'#ffffff','foreground'=>'#000000'], 'Player ownership wins over frame and uses character colour.');
 requireTactical(array_keys(publicOnlineDiceAppearance(['color'=>'#ffffff','foreground'=>'#000000','secret'=>'do-not-project'])) === ['color','foreground'], 'Dice projection is a strict whitelist.');
+
+$db = fixture();
+$records = applicationDomainRecords($db);
+$pending = [];
+$db->beginTransaction();
+$playerIdentity = ['id'=>'account-player','display_name'=>'Joueur test','effective_mode'=>'player','permanent_role'=>'player'];
+$gmIdentity = ['id'=>'account-gm','display_name'=>'MJ test','effective_mode'=>'gm','permanent_role'=>'gm'];
+requireTactical(
+    onlineRecordCharacterLuckD100($db, $records, $pending, $playerIdentity, 'character-player', ['rawD100'=>42,'total'=>62]),
+    'A player d100 must enter the authoritative luck aggregate.'
+);
+requireTactical(
+    !onlineRecordCharacterLuckD100($db, $records, $pending, $playerIdentity, 'character-player', ['rawD100'=>91,'total'=>91], true)
+        && !onlineRecordCharacterLuckD100($db, $records, $pending, $gmIdentity, 'character-player', ['rawD100'=>7,'total'=>7])
+        && !onlineRecordCharacterLuckD100($db, $records, $pending, $playerIdentity, 'character-player', ['rawD100'=>null,'total'=>84]),
+    'Damage d100, GM rolls and formulas without one selected d100 must stay excluded.'
+);
+requireTactical(
+    onlineRecordCharacterLuckD100($db, $records, $pending, $playerIdentity, 'character-player', [
+        'rawD100'=>18,
+        'total'=>38,
+        'rollMode'=>'advantage',
+        'selectedIndex'=>1,
+        'attempts'=>[['rawD100'=>73],['rawD100'=>18]],
+    ]),
+    'An advantage action records only its selected d100.'
+);
+$luckRecord = $pending['luck']['payload']['characters']['character-player'] ?? [];
+requireTactical(
+    ($luckRecord['rollCount'] ?? null) === 2 && ($luckRecord['rawTotal'] ?? null) === 60,
+    'The luck aggregate must count selected raw faces without modifiers.'
+);
+$db->rollBack();
 
 $db = fixture();
 $character = $db->payload('character:character-player'); $character['ownerPlayerId'] = null; $db->put('character:character-player',$character);

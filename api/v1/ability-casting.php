@@ -112,6 +112,14 @@ function onlineAbilityRollVisibility(array $roll, array $source, array $identity
 // pending payloads first so healing oneself never restores the mana just spent.
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true): array {
     $now = (int) floor(microtime(true) * 1000);
+    onlineRecordCharacterLuckD100(
+        $connection,
+        $records,
+        $pending,
+        $identity,
+        ($plan['characterId'] ?? '') !== '' ? $plan['characterId'] : ($source['characterId'] ?? ''),
+        $cast
+    );
     $cost = (int) $plan['manaCost'];
     if ($cost > 0) {
         $characterKey = $plan['characterId'] !== '' ? 'character:' . $plan['characterId'] : '';

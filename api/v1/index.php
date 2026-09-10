@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.6';
-const XAR_BACKEND_BUILD = 'client-3-2-6-portable-lighting-launcher-candidate-20260909-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.6';
-// Politique fermée de la livraison 3.2.6 : aucune autre version n'est admise.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.3', '3.2.4', '3.2.5', '3.2.6'];
+const XAR_BACKEND_VERSION = '0.15.9';
+const XAR_BACKEND_BUILD = 'client-3-2-9-character-luck-exact-version-candidate-20260910-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.9';
+// La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.9'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 18;
+const XAR_DATABASE_SCHEMA_VERSION = 19;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -900,6 +900,34 @@ function ensureCurrentSchema(PDO $connection): void
                 throw $error;
             }
             $version = 18;
+        }
+
+        if ($version < 19) {
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true);
+                $records = applicationDomainRecords($connection, ['luck']);
+                $pending = [];
+                if (!isset($records['luck'])) {
+                    $change = prepareApplicationDomainUpsert('luck', ['characters' => []], null);
+                    if ($change !== null) $pending[] = $change;
+                }
+                if ($pending !== []) {
+                    persistDomainChangesInTransaction($connection, [], $clock, $pending);
+                }
+                $insertMigration = $connection->prepare(
+                    'INSERT IGNORE INTO schema_migrations (version, name, checksum) VALUES (19, :name, :checksum)'
+                );
+                $insertMigration->execute([
+                    ':name' => 'readonly_character_luck_statistics_domain',
+                    ':checksum' => '8f03817c42a453cad9b0b984e00b6ee336ccc6d68f2b02ea058ae8d7e73c18d5',
+                ]);
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
+            $version = 19;
         }
     } finally {
         try {

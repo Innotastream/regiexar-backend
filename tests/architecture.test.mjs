@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
-const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/tactical-rolls.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.6 conserve la file Codex et porte le schéma 16", async () => {
+test("le backend 0.15.9 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.6'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-6-portable-lighting-launcher-candidate-20260909-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.9'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-9-character-luck-exact-version-candidate-20260910-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -96,6 +96,8 @@ test("le backend 0.15.6 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /session_schema_15_opposed_attacks_and_private_player_activity/);
   assert.match(index, /session_schema_16_undoable_resources_and_gm_creature_attacks/);
   assert.match(index, /VALUES \(18, :name, :checksum\)/);
+  assert.match(index, /VALUES \(19, :name, :checksum\)/);
+  assert.match(index, /readonly_character_luck_statistics_domain/);
   assert.match(index, /unset\(\$entry\['operation'\], \$entry\['undo'\]\)/);
   assert.match(index, /\$attack\['attackerRole'\] = 'player'/);
   assert.match(index, /\$receipt\['attack'\]\['attackerRole'\] = 'player'/);
@@ -104,9 +106,11 @@ test("le backend 0.15.6 conserve la file Codex et porte le schéma 16", async ()
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
   assert.match(domains, /legacyStateToDomains/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.6");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.6");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 18);
+  assert.match(domains, /readonly_luck_domain/);
+  assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.9");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.9");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -253,6 +257,14 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$result\['tokenDomain'\]/);
   assert.match(command, /'revision' => \(int\) \(\$records\[\$tokenKey\]\['revision'\] \?\? 0\) \+ \(\$positionChanged \? 1 : 0\)/);
   assert.match(command, /if \(\$positionChanged\)[\s\S]*?queueOnlineDomainUpsert/);
+  const projection = online.slice(online.indexOf("if ($command === 'token.move' && !$isGm)"), online.indexOf("if (in_array($command, ['roll', 'token.roll']", online.indexOf("if ($command === 'token.move' && !$isGm)")));
+  assert.match(projection, /playerApplicationStateRecord\(\$connection\)/);
+  assert.match(projection, /publicPlayerState\(\$projectionState, \$identity, \[\]\)/);
+  assert.match(projection, /\$result\['mapProjection'\]/);
+  assert.match(projection, /'visionMask'/);
+  assert.match(projection, /'lights'/);
+  assert.ok(online.indexOf("$connection->commit();") < online.indexOf("$result['mapProjection']"),
+    "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
   assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
@@ -261,25 +273,26 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(domains, /\$allowed !== true/);
 });
 
-test("la connexion accepte seulement les quatre versions explicitement autorisées", async () => {
+test("la santé reste publique mais seule la version courante peut se connecter", async () => {
   const [index, readme, manifestSource, workflow] = await Promise.all([
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.6");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.3", "3.2.4", "3.2.5", "3.2.6"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.9");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.9"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
   assert.match(policy, /XAR_RELEASE_ALLOWED_CLIENT_VERSIONS/);
   assert.match(policy, /'allowedVersions' =>/);
+  assert.match(policy, /'exactVersion' => count\(\$allowedVersions\) === 1/);
   assert.doesNotMatch(policy, /\$configuration\['client'\]/);
   assert.match(enforcement, /in_array\(\$provided, \$policy\['allowedVersions'\], true\)/);
   assert.match(enforcement, /drainingBackendSession\(\$connection\)/);
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /426 \/ 401 \/ 401 \/ 401 \/ 401 \/ 426/);
+  assert.match(readme, /3\.2\.8 \/ 3\.2\.9 \/ 3\.2\.10 = 426 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 

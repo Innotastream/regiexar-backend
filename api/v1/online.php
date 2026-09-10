@@ -1032,6 +1032,14 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             $myCharacters[] = visibleCharacter($character);
         }
     }
+    $luckStatistics = normalizeApplicationLuckStatistics($fullState['luckStatistics'] ?? []);
+    $visibleLuckStatistics = [];
+    foreach ($myCharacters as $character) {
+        $characterId = (string) ($character['id'] ?? '');
+        if ($characterId !== '' && isset($luckStatistics[$characterId])) {
+            $visibleLuckStatistics[$characterId] = $luckStatistics[$characterId];
+        }
+    }
     $rolls = array_values(array_filter($fullState['rolls'] ?? [], static fn (mixed $roll): bool =>
         is_array($roll) && (($roll['visibility'] ?? '') === 'public' || ($roll['revealed'] ?? false) === true)
         && (($roll['mapEvent']['kind'] ?? '') !== 'damage' || ($roll['mapEvent']['applied'] ?? false) === true)
@@ -1173,6 +1181,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         'myPlayer' => ['id' => $accountId, 'name' => (string) $identity['display_name'], 'role' => 'player'],
         'preferences' => $preferences,
         'myCharacters' => $myCharacters,
+        'luckStatistics' => $visibleLuckStatistics,
         'characterTombstones' => array_values(array_filter(
             is_array($fullState['characterTombstones'] ?? null) ? $fullState['characterTombstones'] : [],
             static fn (mixed $entry): bool => is_array($entry)
@@ -2469,6 +2478,83 @@ function queueOnlineDomainDelete(array &$pending, array $records, string $key): 
     if ($prepared !== null) {
         $pending[$key] = $prepared;
     }
+}
+
+function onlineSelectedRawD100(mixed $rolled): ?int
+{
+    $raw = is_array($rolled)
+        ? ($rolled['rawD100'] ?? $rolled['outcome']['raw'] ?? null)
+        : $rolled;
+    if (!is_int($raw) && !is_float($raw) && !is_string($raw)) return null;
+    if (!is_numeric($raw) || (float) $raw !== (float) (int) $raw) return null;
+    $value = (int) $raw;
+    return $value >= 1 && $value <= 100 ? $value : null;
+}
+
+function onlineIdentityIsGm(array $identity): bool
+{
+    return (string) ($identity['effective_mode'] ?? '') === 'gm'
+        && (string) ($identity['permanent_role'] ?? '') === 'gm';
+}
+
+function onlineRecordCharacterLuckD100(
+    PDO $connection,
+    array &$records,
+    array &$pending,
+    array $identity,
+    mixed $characterId,
+    mixed $rolled,
+    bool $damage = false
+): bool {
+    $raw = onlineSelectedRawD100($rolled);
+    $id = trim((string) $characterId);
+    if ($damage || $raw === null || onlineIdentityIsGm($identity) || !validApplicationDomainIdentifier($id, 180)) return false;
+    $characterKey = 'character:' . $id;
+    if (!isset($records[$characterKey])) {
+        $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+    }
+    $character = applicationDomainPayload($records, $characterKey);
+    if ($character === [] || (string) ($character['ownerPlayerId'] ?? '') !== (string) ($identity['id'] ?? '')) return false;
+    if (!isset($records['luck'])) {
+        $records = array_replace($records, applicationDomainRecords($connection, ['luck']));
+    }
+    $luck = is_array($pending['luck']['payload'] ?? null)
+        ? $pending['luck']['payload']
+        : applicationDomainPayload($records, 'luck', ['characters' => []]);
+    $statistics = normalizeApplicationLuckStatistics($luck['characters'] ?? []);
+    $previous = is_array($statistics[$id] ?? null) ? $statistics[$id] : null;
+    if ($previous === null && count($statistics) >= XAR_LUCK_CHARACTER_MAXIMUM) {
+        rejectOnlineCommand($connection, 409, 'Le calculateur de chance a atteint sa limite de personnages.', 'luck_character_limit');
+    }
+    if ((int) ($previous['rollCount'] ?? 0) >= XAR_LUCK_ROLL_MAXIMUM) {
+        rejectOnlineCommand($connection, 409, 'Le calculateur de chance a atteint sa limite de sécurité pour ce personnage.', 'luck_roll_limit');
+    }
+    $now = gmdate('c');
+    $statistics[$id] = [
+        'rollCount' => (int) ($previous['rollCount'] ?? 0) + 1,
+        'rawTotal' => (int) ($previous['rawTotal'] ?? 0) + $raw,
+        'startedAt' => (string) ($previous['startedAt'] ?? $now),
+        'updatedAt' => $now,
+    ];
+    $luck['characters'] = $statistics;
+    queueOnlineDomainUpsert($pending, $records, 'luck', $luck);
+    return true;
+}
+
+function onlineDeleteCharacterLuck(PDO $connection, array &$records, array &$pending, string $characterId): void
+{
+    if (!validApplicationDomainIdentifier($characterId, 180)) return;
+    if (!isset($records['luck'])) {
+        $records = array_replace($records, applicationDomainRecords($connection, ['luck']));
+    }
+    $luck = is_array($pending['luck']['payload'] ?? null)
+        ? $pending['luck']['payload']
+        : applicationDomainPayload($records, 'luck', ['characters' => []]);
+    $statistics = normalizeApplicationLuckStatistics($luck['characters'] ?? []);
+    if (!array_key_exists($characterId, $statistics)) return;
+    unset($statistics[$characterId]);
+    $luck['characters'] = $statistics;
+    queueOnlineDomainUpsert($pending, $records, 'luck', $luck);
 }
 
 function onlineActiveSceneId(array $table): string
@@ -4312,6 +4398,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         'formula' => substr((string) $rolled['formula'], 0, 100),
                         'total' => (int) $rolled['total'],
                         'breakdown' => substr((string) $rolled['breakdown'], 0, 500),
+                        'rawD100' => onlineSelectedRawD100($rolled),
                     ];
                 } else {
                     $requestedDelta = is_numeric($arguments['delta'] ?? null) ? (int) $arguments['delta'] : 0;
@@ -4326,6 +4413,15 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $requestedDelta,
                     $accountId,
                     $isGm
+                );
+                onlineRecordCharacterLuckD100(
+                    $connection,
+                    $records,
+                    $pending,
+                    $identity,
+                    $adjustment['characterId'] ?? '',
+                    $resourceRoll,
+                    $resource === 'hp' && $requestedDelta < 0
                 );
                 $operation = [
                     'kind' => 'resource-adjust',
@@ -4634,6 +4730,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                 $hitRolled = $hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement'];
                 $hitOutcome = $hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true];
+                if ($castingPlan === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
                 if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
                 $statLabel = $hasCastingCheck ? substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120) : 'Sans jet';
                 $hitRoll = onlineRollEntry($identity, $hitRolled, $attackName . ' · ' . $statLabel, (string) ($source['name'] ?? 'Token'), $hitOutcome);
@@ -4894,6 +4991,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $statLabel = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
                         if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
                         $defenseRoll = onlineRollEntry($identity, $rolled, 'Opposition · ' . $statLabel, (string) ($target['name'] ?? 'Défenseur'), $outcome);
+                        onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $targetCharacterId, $rolled);
                         $defenseDice = onlineDiceAppearance($target, $defenderAccountId !== '', $targetCharacter ?? null);
                         $defenseRoll['diceAppearance'] = $defenseDice;
                         $defenseRoll['mapEvent'] = [
@@ -5265,6 +5363,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $outcome = in_array($kind, ['stat', 'hit'], true)
                 ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier)
                 : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
+            onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $token['characterId'] ?? $characterId, $rolled, in_array($kind, ['damage', 'ability'], true));
             $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
             $activity = applicationDomainPayload($records, 'activity');
             $rolls = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
@@ -5328,6 +5427,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
             }
             $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, null, 0, 0, false);
+            onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $rolled, $kind === 'damage');
             $roll = onlineRollEntry(
                 $identity,
                 $rolled,
@@ -5643,6 +5743,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 if ($activityChanged) queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             }
+            onlineDeleteCharacterLuck($connection, $records, $pending, $characterId);
             queueOnlineDomainDelete($pending, $records, $characterKey);
             $result['character'] = [
                 'id' => $characterId,
@@ -5693,6 +5794,21 @@ function commandOnlineState(PDO $connection, array $configuration): never
             : persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
         $connection->commit();
         cleanupApplicationDomainHistory($connection);
+        if ($command === 'token.move' && !$isGm) {
+            $projectionRecord = playerApplicationStateRecord($connection);
+            $projectionState = is_array($projectionRecord['state'] ?? null) ? $projectionRecord['state'] : [];
+            if ($projectionState !== []) {
+                $projectionState['revision'] = (int) ($projectionRecord['revision'] ?? $revision);
+                $visibleProjection = publicPlayerState($projectionState, $identity, []);
+                $projectedMap = is_array($visibleProjection['map'] ?? null) ? $visibleProjection['map'] : [];
+                $result['mapProjection'] = [
+                    'sceneId' => trim((string) ($arguments['sceneId'] ?? '')),
+                    'layerId' => (string) ($projectedMap['activeLayerId'] ?? 'ground'),
+                    'visionMask' => is_array($projectedMap['visionMask'] ?? null) ? $projectedMap['visionMask'] : [],
+                    'lights' => is_array($projectedMap['lights'] ?? null) ? $projectedMap['lights'] : [],
+                ];
+            }
+        }
         if (in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordRollContent($result['roll']));
             $result['discordPosted'] = $discord['posted'];

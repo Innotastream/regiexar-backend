@@ -80,6 +80,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'character', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $returning ? 'Reprend sa forme initiale' : 'Change de forme']);
     } elseif ($cast['success']) {
         $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
+        onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);
         if ($rolled['total'] <= 0) rejectOnlineCommand($connection, 400, 'Le soin doit rendre au moins un PV.', 'invalid_healing_total');
         $amount = max(0, min(1000000000, $rolled['total']));
         if ($amount > 0) {

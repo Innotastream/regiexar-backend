@@ -28,10 +28,12 @@ const XAR_PENDING_ATTACK_MAXIMUM = 100;
 const XAR_ATTACK_RECEIPT_MAXIMUM = 1024;
 const XAR_RESOURCE_RECEIPT_MAXIMUM = 1024;
 const XAR_PLAYER_ACTION_MAXIMUM = 300;
+const XAR_LUCK_CHARACTER_MAXIMUM = 1000;
+const XAR_LUCK_ROLL_MAXIMUM = 1000000000;
 
 function validApplicationDomainKey(string $key): bool
 {
-    if (in_array($key, ['table', 'scene-index', 'roster', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
+    if (in_array($key, ['table', 'scene-index', 'roster', 'luck', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
         return true;
     }
     return preg_match('/^(?:scene|map|initiative|presentation|token-index):[A-Za-z0-9_-]{1,80}$/D', $key) === 1
@@ -166,6 +168,51 @@ function validApplicationDomainNumber(mixed $value, float $minimum = -1000000000
         && is_finite((float) $value)
         && (float) $value >= $minimum
         && (float) $value <= $maximum;
+}
+
+function normalizeApplicationLuckStatistics(mixed $value): array
+{
+    if (!is_array($value)) return [];
+    $normalized = [];
+    foreach ($value as $characterId => $record) {
+        if (count($normalized) >= XAR_LUCK_CHARACTER_MAXIMUM) break;
+        if (!is_string($characterId) || !validApplicationDomainIdentifier($characterId, 180) || !is_array($record)) continue;
+        $rollCount = is_int($record['rollCount'] ?? null) ? $record['rollCount'] : 0;
+        $rawTotal = is_int($record['rawTotal'] ?? null) ? $record['rawTotal'] : 0;
+        if ($rollCount < 1 || $rollCount > XAR_LUCK_ROLL_MAXIMUM || $rawTotal < $rollCount || $rawTotal > $rollCount * 100) continue;
+        $updatedAt = is_string($record['updatedAt'] ?? null) && strlen($record['updatedAt']) <= 80 && strtotime($record['updatedAt']) !== false
+            ? $record['updatedAt'] : null;
+        $startedAt = is_string($record['startedAt'] ?? null) && strlen($record['startedAt']) <= 80 && strtotime($record['startedAt']) !== false
+            ? $record['startedAt'] : $updatedAt;
+        if ($startedAt === null || $updatedAt === null) continue;
+        $normalized[$characterId] = [
+            'rollCount' => $rollCount,
+            'rawTotal' => $rawTotal,
+            'startedAt' => $startedAt,
+            'updatedAt' => $updatedAt,
+        ];
+    }
+    return $normalized;
+}
+
+function validApplicationLuckDomain(array $payload): bool
+{
+    if (array_keys($payload) !== ['characters'] || !validApplicationDomainMap($payload['characters'], XAR_LUCK_CHARACTER_MAXIMUM, 180)) return false;
+    foreach ($payload['characters'] as $characterId => $record) {
+        if (!is_array($record)
+            || array_diff(array_keys($record), ['rollCount', 'rawTotal', 'startedAt', 'updatedAt']) !== []
+            || !is_int($record['rollCount'] ?? null)
+            || $record['rollCount'] < 1
+            || $record['rollCount'] > XAR_LUCK_ROLL_MAXIMUM
+            || !is_int($record['rawTotal'] ?? null)
+            || $record['rawTotal'] < $record['rollCount']
+            || $record['rawTotal'] > $record['rollCount'] * 100
+            || !validApplicationDomainText($record['startedAt'] ?? null, 80, false)
+            || strtotime($record['startedAt']) === false
+            || !validApplicationDomainText($record['updatedAt'] ?? null, 80, false)
+            || strtotime($record['updatedAt']) === false) return false;
+    }
+    return true;
 }
 
 function applicationFogMaskBytes(mixed $value): ?string
@@ -1716,6 +1763,9 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['characterTombstones'] ?? [], 2000))) {
         sendError(400, 'Registre des participants incohérent.', 'invalid_roster_domain');
     }
+    if ($key === 'luck' && !validApplicationLuckDomain($payload)) {
+        sendError(400, 'Calculateur de chance incohérent.', 'invalid_luck_domain');
+    }
     if ($key === 'activity'
         && (!validApplicationDomainObjectList($payload['actionTimers'] ?? null, 300)
             || !validApplicationDomainObjectList($payload['actionTimerTombstones'] ?? null, 1000)
@@ -2094,6 +2144,9 @@ function legacyStateToDomains(array $state): array
             'playerTombstones' => is_array($state['playerTombstones'] ?? null) ? $state['playerTombstones'] : [],
             'characterTombstones' => is_array($state['characterTombstones'] ?? null) ? $state['characterTombstones'] : [],
         ],
+        'luck' => [
+            'characters' => normalizeApplicationLuckStatistics($state['luckStatistics'] ?? []),
+        ],
         'activity' => [
             'actionTimers' => is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [],
             'actionTimerTombstones' => is_array($state['actionTimerTombstones'] ?? null) ? $state['actionTimerTombstones'] : [],
@@ -2191,6 +2244,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
     $table = $payload('table');
     $sceneIndex = $payload('scene-index');
     $roster = $payload('roster');
+    $luck = $payload('luck');
     $activity = $payload('activity');
     $library = $payload('library');
     $audio = $payload('audio');
@@ -2273,6 +2327,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'playerPreferences' => is_array($roster['playerPreferences'] ?? null) ? $roster['playerPreferences'] : [],
         'playerTombstones' => is_array($roster['playerTombstones'] ?? null) ? $roster['playerTombstones'] : [],
         'characterTombstones' => is_array($roster['characterTombstones'] ?? null) ? $roster['characterTombstones'] : [],
+        'luckStatistics' => normalizeApplicationLuckStatistics($luck['characters'] ?? []),
         'map' => is_array($combat['map'] ?? null) ? $combat['map'] : [],
         'initiative' => is_array($combat['initiative'] ?? null) ? $combat['initiative'] : [],
         'discordCapture' => is_array($table['discordCapture'] ?? null) ? $table['discordCapture'] : [],
@@ -2404,7 +2459,7 @@ function playerApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
     $clock = domainClockRecord($connection);
-    $records = applicationDomainRecords($connection, ['table', 'roster', 'activity', 'audio', 'detached-combat']);
+    $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat']);
     $table = applicationDomainPayload($records, 'table');
     $roster = applicationDomainPayload($records, 'roster');
     $sceneId = (string) ($table['activeSceneId'] ?? '');
@@ -2589,6 +2644,7 @@ function patchApplicationDomains(PDO $connection): never
     }
     $keys = [];
     $seen = [];
+    $deletedCharacterIds = [];
     foreach ($changes as $change) {
         if (!is_array($change)) {
             sendError(400, 'Changement de domaine invalide.', 'invalid_domain_change');
@@ -2597,8 +2653,14 @@ function patchApplicationDomains(PDO $connection): never
         if (!validApplicationDomainKey($key) || isset($seen[$key])) {
             sendError(400, 'Clé de domaine invalide ou dupliquée.', 'invalid_domain_key');
         }
+        if ($key === 'luck') {
+            sendError(403, 'Le calculateur de chance est alimenté uniquement par les jets autoritatifs.', 'readonly_luck_domain');
+        }
         $seen[$key] = true;
         $keys[] = $key;
+        if (($change['operation'] ?? 'upsert') === 'delete' && str_starts_with($key, 'character:')) {
+            $deletedCharacterIds[] = substr($key, strlen('character:'));
+        }
     }
     $connection->beginTransaction();
     try {
@@ -2635,6 +2697,23 @@ function patchApplicationDomains(PDO $connection): never
             ]);
         }
         $pending = prepareOnlineSceneTokenChanges($connection, $records, $pending);
+        if ($deletedCharacterIds !== []) {
+            $records = array_replace($records, applicationDomainRecords($connection, ['luck']));
+            $currentLuck = $records['luck'] ?? null;
+            $luck = applicationDomainPayload($records, 'luck', ['characters' => []]);
+            $statistics = normalizeApplicationLuckStatistics($luck['characters'] ?? []);
+            $luckChanged = false;
+            foreach ($deletedCharacterIds as $characterId) {
+                if (!array_key_exists($characterId, $statistics)) continue;
+                unset($statistics[$characterId]);
+                $luckChanged = true;
+            }
+            if ($luckChanged) {
+                $luck['characters'] = $statistics;
+                $preparedLuck = prepareApplicationDomainUpsert('luck', $luck, $currentLuck);
+                if ($preparedLuck !== null) $pending[] = $preparedLuck;
+            }
+        }
         if ($pending === []) {
             $connection->commit();
             sendJson(200, ['ok' => true, 'revision' => $clock['globalRevision'], 'domains' => []]);
@@ -2718,6 +2797,9 @@ function restoreApplicationDomainHistory(PDO $connection): never
     $expectedRevision = max(0, (int) ($body['expectedRevision'] ?? 0));
     if (!validApplicationDomainKey($key) || $historyId <= 0) {
         sendError(400, 'Révision historique invalide.', 'invalid_domain_history');
+    }
+    if ($key === 'luck') {
+        sendError(403, 'Le calculateur de chance ne peut pas être restauré manuellement.', 'readonly_luck_domain');
     }
     $connection->beginTransaction();
     try {

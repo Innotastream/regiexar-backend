@@ -14,6 +14,49 @@ function requireDomainCompatibility(bool $condition, string $message): void
     exit(1);
 }
 
+$luckTimestamp = '2026-09-10T12:00:00+00:00';
+$validLuck = ['characters' => [
+    'character-owned' => ['rollCount'=>2,'rawTotal'=>83,'startedAt'=>$luckTimestamp,'updatedAt'=>$luckTimestamp],
+]];
+requireDomainCompatibility(
+    validApplicationDomainKey('luck')
+        && validApplicationLuckDomain($validLuck)
+        && normalizeApplicationLuckStatistics($validLuck['characters']) === $validLuck['characters'],
+    'Le domaine chance doit accepter uniquement un agrégat cumulatif cohérent.'
+);
+requireDomainCompatibility(
+    !validApplicationLuckDomain([...$validLuck, 'manualAverage'=>41.5])
+        && !validApplicationLuckDomain(['characters'=>['character-owned'=>[...$validLuck['characters']['character-owned'],'rawTotal'=>201]]])
+        && normalizeApplicationLuckStatistics(['character-owned'=>[...$validLuck['characters']['character-owned'],'updatedAt'=>'invalide']]) === [],
+    'Une moyenne fournie, un total impossible ou une date invalide doivent être refusés.'
+);
+$luckDomains = legacyStateToDomains(['luckStatistics'=>$validLuck['characters']]);
+$luckRecords = array_map(
+    static fn (array $payload): array => ['revision'=>1,'payload'=>$payload],
+    $luckDomains
+);
+requireDomainCompatibility(
+    ($luckDomains['luck'] ?? null) === $validLuck
+        && (domainsToApplicationState($luckRecords, 1)['luckStatistics'] ?? null) === $validLuck['characters'],
+    'Le passage état historique/domaines doit préserver exactement les statistiques de chance.'
+);
+$luckProjection = publicPlayerState([
+    'characters'=>[
+        ['id'=>'character-owned','ownerPlayerId'=>'account-player','name'=>'Possédé'],
+        ['id'=>'character-private','ownerPlayerId'=>'another-player','name'=>'Privé'],
+    ],
+    'luckStatistics'=>[
+        ...$validLuck['characters'],
+        'character-private'=>['rollCount'=>1,'rawTotal'=>99,'startedAt'=>$luckTimestamp,'updatedAt'=>$luckTimestamp],
+    ],
+    'map'=>['tokens'=>[]],
+    'initiative'=>[],
+], ['id'=>'account-player','display_name'=>'Joueur'], []);
+requireDomainCompatibility(
+    array_keys($luckProjection['luckStatistics'] ?? []) === ['character-owned'],
+    'Un joueur ne doit recevoir que la chance de ses propres personnages.'
+);
+
 $wallState = emptyApplicationWallState(1600, 900);
 $wallBytes = applicationWallMaskBytes($wallState);
 requireDomainCompatibility(is_string($wallBytes), 'Le masque de murs vide doit être décodable.');
