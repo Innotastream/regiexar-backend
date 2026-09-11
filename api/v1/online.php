@@ -2439,11 +2439,6 @@ function selectOnlineRollAttemptIndex(array $attempts, mixed $mode): int
     }
     $first = is_array($attempts[0] ?? null) ? $attempts[0] : [];
     $second = is_array($attempts[1] ?? null) ? $attempts[1] : [];
-    if (is_int($first['rawD100'] ?? null) && is_int($second['rawD100'] ?? null)) {
-        return $rollMode === 'advantage'
-            ? ((int) $second['rawD100'] < (int) $first['rawD100'] ? 1 : 0)
-            : ((int) $second['rawD100'] > (int) $first['rawD100'] ? 1 : 0);
-    }
     return $rollMode === 'advantage'
         ? ((int) ($second['total'] ?? 0) > (int) ($first['total'] ?? 0) ? 1 : 0)
         : ((int) ($second['total'] ?? 0) < (int) ($first['total'] ?? 0) ? 1 : 0);
@@ -3857,41 +3852,17 @@ function safeOnlineDiscordLabel(mixed $value): string
 function onlineDiscordRollContent(array $roll): string
 {
     $actor = safeOnlineDiscordLabel($roll['rollerName'] ?? 'Joueur');
-    $label = safeOnlineDiscordLabel(($roll['characterName'] ?? '') !== ''
-        ? (string) $roll['characterName'] . ' · ' . (string) ($roll['label'] ?? 'Jet')
-        : (string) ($roll['label'] ?? 'Jet'));
-    $content = '🎲 **' . $actor . ' · ' . $label . '** — `' . (string) ($roll['formula'] ?? '') . '`'
-        . "\nRésultat : **" . (string) ($roll['total'] ?? 0) . '** · ' . (string) ($roll['breakdown'] ?? '');
+    $name = ($roll['characterName'] ?? '') !== ''
+        ? safeOnlineDiscordLabel($roll['characterName']) . ' · ' . $actor
+        : $actor;
     $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
-    $attempts = is_array($roll['attempts'] ?? null) ? $roll['attempts'] : [];
-    if ($mode !== 'normal' && count($attempts) === 2) {
-        $labelMode = $mode === 'advantage' ? 'Avantage' : 'Désavantage';
-        $selectedIndex = max(0, min(1, (int) ($roll['selectedIndex'] ?? 0)));
-        $values = [];
-        foreach ($attempts as $index => $attempt) {
-            $values[] = ($index === $selectedIndex ? 'retenu ' : '') . (string) ($attempt['total'] ?? 0);
-        }
-        $content .= "\n" . $labelMode . ' · ' . implode(' / ', $values);
+    $type = safeOnlineDiscordLabel($roll['label'] ?? 'Jet') . ' · ' . safeOnlineDiscordLabel($roll['formula'] ?? '');
+    if ($mode !== 'normal') {
+        $type .= ' · ' . ($mode === 'advantage' ? 'Avantage' : 'Désavantage');
     }
-    $outcome = is_array($roll['outcome'] ?? null) ? $roll['outcome'] : null;
-    if ($outcome !== null) {
-        $content .= "\n**" . safeOnlineDiscordLabel($outcome['label'] ?? '') . '** · d100 brut **'
-            . (string) ($outcome['raw'] ?? '') . '**';
-        if (($outcome['threshold'] ?? null) !== null) {
-            $modifier = (int) ($outcome['modifier'] ?? 0);
-            $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
-            if ($resultModifier !== 0) {
-                $content .= ' · résultat personnalisé **' . (string) ($outcome['result'] ?? '')
-                    . '** (**' . ($resultModifier > 0 ? '+' : '') . (string) $resultModifier
-                    . '**) · seuil **' . (string) $outcome['threshold'] . '**';
-            } else {
-                $content .= $modifier !== 0
-                    ? ' · seuil ajusté **' . (string) $outcome['threshold'] . '** (base **'
-                        . (string) ($outcome['baseThreshold'] ?? '') . '**, **' . ($modifier > 0 ? '+' : '') . (string) $modifier . '**)'
-                    : ' · seuil **' . (string) $outcome['threshold'] . '**';
-            }
-        }
-    }
+    $content = '**Nom :** ' . $name
+        . "\n**Type de jet :** " . $type
+        . "\n**Résultats :** **" . (string) ($roll['total'] ?? 0) . '**';
     return substr($content, 0, 1900);
 }
 

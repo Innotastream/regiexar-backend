@@ -633,15 +633,15 @@ $d100Attempts = [
     ['total' => 2, 'rawD100' => 2],
 ];
 requireDomainCompatibility(
-    selectOnlineRollAttemptIndex($d100Attempts, 'advantage') === 1,
-    'L’avantage d100 doit toujours retenir le plus petit dé brut, même face à une ancienne catégorie critique.'
+    selectOnlineRollAttemptIndex($d100Attempts, 'advantage') === 0,
+    'L’avantage doit relancer le jet complet et retenir son total le plus élevé, y compris sur un d100.'
 );
 requireDomainCompatibility(
     selectOnlineRollAttemptIndex([
         ['total' => 66, 'rawD100' => 66],
         ['total' => 100, 'rawD100' => 100],
-    ], 'disadvantage') === 1,
-    'Le désavantage d100 doit toujours retenir le plus grand dé brut, avant toute classification du résultat.'
+    ], 'disadvantage') === 0,
+    'Le désavantage doit relancer le jet complet et retenir son total le plus faible, y compris sur un d100.'
 );
 requireDomainCompatibility(
     selectOnlineRollAttemptIndex([
@@ -652,7 +652,29 @@ requireDomainCompatibility(
             ['total' => 7, 'rawD100' => null],
             ['total' => 12, 'rawD100' => null],
         ], 'disadvantage') === 0,
-    'Les formules hors d100 doivent conserver le total haut sous avantage et le total bas sous désavantage.'
+    'Toutes les formules doivent conserver le total haut sous avantage et le total bas sous désavantage.'
+);
+$discordRoll = onlineDiscordRollContent([
+    'rollerName' => 'June',
+    'characterName' => 'Hilbours',
+    'label' => 'Perception',
+    'formula' => '2d10+3',
+    'total' => 16,
+    'breakdown' => '[6, 7] +3',
+    'rollMode' => 'disadvantage',
+    'selectedIndex' => 0,
+    'attempts' => [
+        ['total' => 16, 'breakdown' => '[6, 7] +3'],
+        ['total' => 20, 'breakdown' => '[9, 8] +3'],
+    ],
+    'outcome' => ['label' => 'Réussite', 'raw' => 16],
+]);
+requireDomainCompatibility(
+    $discordRoll === "**Nom :** Hilbours · June\n**Type de jet :** Perception · 2d10+3 · Désavantage\n**Résultats :** **16**"
+        && !str_contains($discordRoll, '🎲')
+        && !str_contains($discordRoll, '[6, 7]')
+        && !str_contains($discordRoll, 'Réussite'),
+    'Discord doit publier uniquement le nom, le type de jet et le résultat retenu, sans icône ni calcul MJ.'
 );
 $staleCharacter = [
     'id' => 'character-hira',
