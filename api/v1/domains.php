@@ -1023,7 +1023,7 @@ function applicationEffectiveVisionDistance(mixed $baseDistance, mixed $lighting
 
 function applicationVisionFadeDistance(mixed $distance): int
 {
-    return max(1, min(20, (int) round((is_numeric($distance) ? (float) $distance : 1.0) / 2)));
+    return max(1, min(30, (int) round((is_numeric($distance) ? (float) $distance : 1.0) * 3 / 4)));
 }
 
 function applicationRemoteLightDetectionDistance(mixed $distance, mixed $lightingMode): int
@@ -1160,7 +1160,7 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
     foreach ($resolved['origins'] as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
         $originDistance = applicationOriginVisionDistance($origin, $vision);
-        $fadeDistance = $environmentLighting ? applicationVisionFadeDistance($originDistance) : 4;
+        $fadeDistance = $environmentLighting ? applicationVisionFadeDistance($originDistance) : 6;
         $extended = applicationComputeBaseVisionMask($occlusion, [$origin], $grid, $fadeDistance);
         $extendedBytes = applicationWallMaskBytes($extended);
         if ($extendedBytes === null) continue;
@@ -1302,7 +1302,7 @@ function validApplicationTokenDomain(array $payload): bool
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
         return false;
     }
-    foreach (['libraryTemplateId' => 120, 'characterId' => 180, 'controllerPlayerId' => 128, 'linkedTokenId' => 180, 'cloneSourceCharacterId' => 180, 'cloneSourceTokenId' => 80] as $key => $maximum) {
+    foreach (['libraryTemplateId' => 120, 'characterId' => 180, 'controllerPlayerId' => 128, 'linkedTokenId' => 180, 'cloneSourceCharacterId' => 180, 'cloneSourceTokenId' => 80, 'targetTokenId' => 80] as $key => $maximum) {
         if (array_key_exists($key, $payload) && !validApplicationDomainIdentifier($payload[$key], $maximum, true)) {
             return false;
         }
@@ -1713,6 +1713,8 @@ function validApplicationAudioPlayback(mixed $playback): bool
         if (!array_key_exists($channel, $playback)) continue;
         if (!is_array($playback[$channel]) || ($playback[$channel] !== [] && array_is_list($playback[$channel]))) return false;
         if (array_key_exists('loop', $playback[$channel]) && !is_bool($playback[$channel]['loop'])) return false;
+        if (array_key_exists('queueFolderId', $playback[$channel])
+            && !validApplicationDomainIdentifier($playback[$channel]['queueFolderId'], 180, true)) return false;
     }
     return true;
 }
@@ -1723,6 +1725,9 @@ function preserveApplicationAudioLoops(array $payload, array $previous = []): ar
     foreach (['music' => false, 'ambience' => true] as $channel => $fallback) {
         $state = is_array($playback[$channel] ?? null) ? $playback[$channel] : [];
         if (!array_key_exists('loop', $state)) $state['loop'] = is_bool($previous['playback'][$channel]['loop'] ?? null) ? $previous['playback'][$channel]['loop'] : $fallback;
+        if (!array_key_exists('queueFolderId', $state) && array_key_exists('queueFolderId', $previous['playback'][$channel] ?? [])) {
+            $state['queueFolderId'] = $previous['playback'][$channel]['queueFolderId'];
+        }
         $playback[$channel] = $state;
     }
     $payload['playback'] = $playback;

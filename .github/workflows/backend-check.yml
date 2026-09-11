@@ -29,7 +29,7 @@ jobs:
         run: find . -type f -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
       - name: Domain backward compatibility
         run: php tests/domain-backward-compatibility.php
-      - name: Explicit four-version login policy
+      - name: Exact current-version login policy
         run: php tests/client-policy.php
       - name: Tactical lifecycle and concurrent conditions
         run: php tests/tactical-lifecycle.php

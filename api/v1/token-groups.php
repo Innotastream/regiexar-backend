@@ -13,6 +13,44 @@ function onlineTokenOnActiveLayer(array $token, array $map): bool
     return onlineTokenLayerId($token, $map) === onlineTokenLayerId([], $map);
 }
 
+function onlineReconcileTokenTargetsForScene(PDO $connection, array &$records, array &$pending, string $sceneId): array
+{
+    if (!validApplicationDomainKey('map:' . $sceneId)) return [];
+    $sceneRecords = onlineSceneTokenRecords($connection, $sceneId);
+    $records = array_replace($records, $sceneRecords);
+    $mapKey = 'map:' . $sceneId;
+    if (!isset($records[$mapKey])) {
+        $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
+    }
+    $map = is_array($pending[$mapKey]['payload'] ?? null)
+        ? $pending[$mapKey]['payload'] : applicationDomainPayload($records, $mapKey);
+    $prefix = 'token:' . $sceneId . ':';
+    $keys = [];
+    foreach ($records as $key => $_record) if (str_starts_with((string) $key, $prefix)) $keys[$key] = true;
+    foreach ($pending as $key => $_entry) if (str_starts_with((string) $key, $prefix)) $keys[$key] = true;
+    $tokens = [];
+    foreach (array_keys($keys) as $key) {
+        $entry = $pending[$key] ?? null;
+        if (is_array($entry) && ($entry['operation'] ?? '') === 'delete') continue;
+        $token = is_array($entry['payload'] ?? null) ? $entry['payload'] : applicationDomainPayload($records, $key);
+        if ($token === []) continue;
+        $tokens[(string) ($token['id'] ?? substr($key, strlen($prefix)))] = ['key' => $key, 'payload' => $token];
+    }
+    $changed = [];
+    foreach ($tokens as $id => $entry) {
+        $targetId = trim((string) ($entry['payload']['targetTokenId'] ?? ''));
+        if ($targetId === '') continue;
+        $target = $tokens[$targetId]['payload'] ?? null;
+        if ($targetId !== $id && is_array($target)
+            && onlineTokenLayerId($entry['payload'], $map) === onlineTokenLayerId($target, $map)) continue;
+        $token = $entry['payload'];
+        $token['targetTokenId'] = null;
+        queueOnlineDomainUpsert($pending, $records, $entry['key'], $token);
+        $changed[] = $entry['key'];
+    }
+    return $changed;
+}
+
 function normalizeOnlineSceneTokenIdentity(array $token, array $map): array
 {
     $token['layerId'] = onlineTokenLayerId($token, $map);
@@ -260,7 +298,7 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
     $occupied = [];
     foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $occupied[] = applicationDomainPayload($records, $key);
     if (count($occupied) >= 2000) rejectOnlineCommand($connection, 409, 'La scène a atteint sa limite de pions.', 'token_limit');
-    $clone = array_replace($source, ['id' => 'token-' . randomToken(16), 'characterId' => null, 'linkedTokenId' => null, 'followCharacter' => false,
+    $clone = array_replace($source, ['id' => 'token-' . randomToken(16), 'characterId' => null, 'linkedTokenId' => null, 'followCharacter' => false, 'targetTokenId' => null,
         'cloneSourceCharacterId' => $source['characterId'] ?? ($source['cloneSourceCharacterId'] ?? null),
         'cloneSourceTokenId' => $source['id'], 'layerId' => onlineTokenLayerId($source, $map), 'libraryTemplateId' => null,
         'initiative' => null, 'resourcePulse' => null, '_updatedAt' => (int) floor(microtime(true) * 1000), '_movedAt' => (int) floor(microtime(true) * 1000)]);
@@ -324,16 +362,17 @@ function prepareOnlineSceneTokenChanges(PDO $connection, array &$records, array 
         $prepared = prepareApplicationDomainUpsert($key, $token, $records[$key] ?? null);
         if ($prepared === null) unset($byKey[$key]); else $byKey[$key] = $prepared;
     }
-    if (function_exists('onlineReconcileCarriedLightsForScene')) {
-        $affectedScenes = [];
-        foreach ($byKey as $key => $entry) {
-            if (str_starts_with($key, 'map:')) $affectedScenes[substr($key, 4)] = true;
-            if (str_starts_with($key, 'token:')) {
-                $segments = explode(':', $key, 3);
-                if (count($segments) === 3) $affectedScenes[$segments[1]] = true;
-            }
+    $affectedScenes = [];
+    foreach ($byKey as $key => $entry) {
+        if (str_starts_with($key, 'map:')) $affectedScenes[substr($key, 4)] = true;
+        if (str_starts_with($key, 'token:')) {
+            $segments = explode(':', $key, 3);
+            if (count($segments) === 3) $affectedScenes[$segments[1]] = true;
         }
-        foreach (array_keys($affectedScenes) as $sceneId) {
+    }
+    foreach (array_keys($affectedScenes) as $sceneId) {
+        onlineReconcileTokenTargetsForScene($connection, $records, $byKey, (string) $sceneId);
+        if (function_exists('onlineReconcileCarriedLightsForScene')) {
             onlineReconcileCarriedLightsForScene($connection, $records, $byKey, (string) $sceneId);
         }
     }

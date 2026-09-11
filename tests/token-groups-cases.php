@@ -30,6 +30,42 @@ function groupArguments(MemoryConnection $db, array $extra = []): array
         'mapRevision'=>$db->domains['map:scene-one']['revision']], $extra);
 }
 
+// Directional targets are scene-local, floor-local and never inherited by a clone.
+$targetDb = fixture();
+$targetSource = $targetDb->payload('token:scene-one:token-player');
+$targetSource['targetTokenId'] = 'token-monster';
+$targetResponse = patchGroupDomains($targetDb, ['token:scene-one:token-player' => $targetSource]);
+requireTactical($targetResponse->status === 200
+    && ($targetDb->payload('token:scene-one:token-player')['targetTokenId'] ?? null) === 'token-monster',
+    'A valid same-floor directional target persists.');
+$targetMap = $targetDb->payload('map:scene-one');
+$targetMap['vision'] = ['enabled' => false, 'shared' => true];
+$targetMap['tokens'] = [
+    $targetDb->payload('token:scene-one:token-player'),
+    $targetDb->payload('token:scene-one:token-monster'),
+];
+$targetProjection = publicPlayerState([
+    'characters' => [$targetDb->payload('character:character-player')],
+    'activeSceneId' => 'scene-one', 'map' => $targetMap, 'initiative' => [],
+], ['id' => 'account-player', 'display_name' => 'Player'], []);
+requireTactical(($targetProjection['map']['tokens'][0]['targetTokenId'] ?? null) === 'token-monster',
+    'The public projection exposes a target only when both endpoints are visible.');
+$targetMoved = $targetDb->payload('token:scene-one:token-monster');
+$targetMoved['layerId'] = 'upper';
+$targetResponse = patchGroupDomains($targetDb, ['token:scene-one:token-monster' => $targetMoved]);
+requireTactical($targetResponse->status === 200
+    && ($targetDb->payload('token:scene-one:token-player')['targetTokenId'] ?? null) === null,
+    'Moving the target to another floor clears the source relation atomically.');
+
+$targetDb = fixture();
+$targetDb->put('map:scene-one', ['activeLayerId' => 'ground', 'viewLocked' => true, 'naturalWidth' => 1000, 'naturalHeight' => 1000]);
+$targetSource = $targetDb->payload('token:scene-one:token-player');
+$targetSource['targetTokenId'] = 'token-monster';
+$targetDb->put('token:scene-one:token-player', $targetSource);
+$targetClone = runCommand($targetDb, 'token.clone', ['sceneId' => 'scene-one', 'tokenId' => 'token-player'], true);
+requireTactical($targetClone->status === 200 && ($targetClone->body['token']['targetTokenId'] ?? null) === null,
+    'A clone never inherits the source directional target.');
+
 $db = fixture();
 requireTactical(runCommand($db,'tokens.transform',groupArguments($db))->status === 403, 'Players cannot transform groups.');
 requireTactical(runCommand($db,'tokens.transform',groupArguments($db),true)->status === 423, 'An unlocked map refuses groups.');

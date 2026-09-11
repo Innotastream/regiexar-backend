@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.9 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
+test("le backend 0.15.10 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.9'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-9-character-luck-exact-version-candidate-20260910-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.10'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-10-media-targeting-stream-light-candidate-20260911-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -108,8 +108,8 @@ test("le backend 0.15.9 conserve la file Codex, porte le schéma de session 16 e
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.9");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.9");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.10");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.10");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -278,8 +278,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.9");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.9"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.10");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.10"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -292,7 +292,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.8 \/ 3\.2\.9 \/ 3\.2\.10 = 426 \/ 401 \/ 426/);
+  assert.match(readme, /3\.2\.9 \/ 3\.2\.10 \/ 3\.2\.11 = 426 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 

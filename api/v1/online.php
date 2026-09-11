@@ -1013,6 +1013,18 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         $tokens[] = $visible;
     }
     $visibleIds = array_flip(array_map(static fn (array $token): string => (string) $token['id'], $tokens));
+    $sourceTokensById = [];
+    foreach (($map['tokens'] ?? []) as $sourceToken) {
+        if (is_array($sourceToken) && trim((string) ($sourceToken['id'] ?? '')) !== '') {
+            $sourceTokensById[(string) $sourceToken['id']] = $sourceToken;
+        }
+    }
+    foreach ($tokens as $index => $visibleToken) {
+        $targetId = trim((string) ($sourceTokensById[(string) ($visibleToken['id'] ?? '')]['targetTokenId'] ?? ''));
+        if ($targetId !== '' && $targetId !== (string) ($visibleToken['id'] ?? '') && isset($visibleIds[$targetId])) {
+            $tokens[$index]['targetTokenId'] = $targetId;
+        }
+    }
     $visibleOrder = array_values(array_filter($order, static fn (mixed $id): bool => isset($visibleIds[(string) $id])));
     $characters = is_array($fullState['characters'] ?? null) ? $fullState['characters'] : [];
     $myCharacters = [];
@@ -5787,6 +5799,16 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $loggedAction = ['kind' => 'ping', 'summary' => 'Signale une position sur la carte', 'detail' => 'Signal public temporaire'];
             }
             if (is_array($loggedAction)) onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, $loggedAction);
+        }
+
+        $targetScenes = [];
+        foreach ($pending as $key => $_entry) {
+            if (!str_starts_with((string) $key, 'token:')) continue;
+            $segments = explode(':', (string) $key, 3);
+            if (count($segments) === 3) $targetScenes[$segments[1]] = true;
+        }
+        foreach (array_keys($targetScenes) as $targetSceneId) {
+            onlineReconcileTokenTargetsForScene($connection, $records, $pending, (string) $targetSceneId);
         }
 
         $revision = $pending === []

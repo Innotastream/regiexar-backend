@@ -20,7 +20,7 @@ function validApplicationAbilityEffects(array $entry): bool {
     $effect = $entry['effect'] ?? 'damage';
     if (!in_array($effect, ['damage', 'healing', 'metamorphosis'], true)) return false;
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);
-    if ($effect === 'metamorphosis') return validApplicationDomainIdentifier($entry['formCharacterId'] ?? null, 80);
+    if ($effect === 'metamorphosis') return validApplicationDomainIdentifier($entry['formCharacterId'] ?? null, 180);
     if (!array_key_exists('damageComponents', $entry)) return true;
     $parts = applicationDamageComponents($entry['damageComponents']);
     return $parts !== [] && validApplicationAbilityFormula(applicationCombinedDamageFormula($parts));
