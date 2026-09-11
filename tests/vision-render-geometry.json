@@ -27,7 +27,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "7f9d49efad4ff089f0b87c8b97992e08bf51b7c582f3090fb629dd637d88b1da"
+    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525"
   },
   {
     "name": "mixed party radii",
@@ -62,7 +62,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "7c2454ecf45aa43eb4c28150b4ae4a6113cf7bc82b4dd059a67f32781f954c68",
-    "opacitySha256": "6650cc333a4026a5909d44f321428fb83d3a507301aa089be5b1f761e11fc7a4"
+    "opacitySha256": "859ffde1d83a2f3841eef0eb8038a7d516c64b87eaa1fde4904e56a36123b327"
   },
   {
     "name": "wall stops halo",
@@ -92,7 +92,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "7f9d49efad4ff089f0b87c8b97992e08bf51b7c582f3090fb629dd637d88b1da"
+    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525"
   },
   {
     "name": "first body not second",
@@ -122,7 +122,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "711864c9934b302f4affd094ed5b0f43a1a29f52c6ce9b6d91b8095d7202c5f6"
+    "opacitySha256": "c099c17651f3971ed3179545c78243d3d9f83104984fdc0862f2061a650ce240"
   },
   {
     "name": "max distance extended",
@@ -152,7 +152,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "98c888ad8ef12bfde596d617cfc5102eba4e04d7bf47711b3d004d3799cc5372",
-    "opacitySha256": "61958f54d678eee8d79e4ca5e61e5167f727e78470a743efc673f3d2fa213dbc"
+    "opacitySha256": "461c36494f1c7a3643703c0abc3c6a914fbf27244d8041af0ef0cf79aa2b305e"
   },
   {
     "name": "origin inside wall",
