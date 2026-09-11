@@ -14,8 +14,8 @@ requireTactical(applicationEffectiveVisionDistance(13, 'dark', 'none') === 4
     && applicationEffectiveVisionDistance(13, 'normal', 'full') === 13
     && applicationEffectiveVisionDistance(2, 'bright', 'none') === 16,
     'Dark, normal, bright and full dark vision use their exact authoritative distances.');
-requireTactical(applicationVisionFadeDistance(4) === 2
-    && applicationVisionFadeDistance(16) === 8
+requireTactical(applicationVisionFadeDistance(4) === 3
+    && applicationVisionFadeDistance(16) === 12
     && applicationRemoteLightDetectionDistance(8, 'dark') === 24
     && applicationRemoteLightDetectionDistance(8, 'normal') === 24
     && applicationRemoteLightDetectionDistance(8, 'bright') === 8,
