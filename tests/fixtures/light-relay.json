@@ -21,7 +21,7 @@
     {
       "name": "chaine-relais",
       "strictSha256": "80c5e0d8859d5ebf1b4beba83384a6ef946c0f0b2290acc74e8c1f4506354c01",
-      "opacitySha256": "df23fd8c9f69b381afa3a6dff5995d3f69357d4f770eed2d004b5c23dd55b2a0",
+      "opacitySha256": "ffda43776fa6d3d0de85d67e0998ae4c287ac4c5bb08367c2dc828fbefbafe6c",
       "origins": [
         {
           "x": 10,
@@ -63,7 +63,7 @@
     {
       "name": "halo-ne-declenche-pas",
       "strictSha256": "4749bd8251120b4cded738b3f33e55ab2c8adc67446a340d6a1042b081ba12b9",
-      "opacitySha256": "7ec499b28b3811481dc0624499e3b72b5b446a643ec28bddc42bca7fa197ab9d",
+      "opacitySha256": "f26690714aedded0cd677393d00961e61bea4351255cca2583bb7aabfdbf8c0e",
       "origins": [
         {
           "x": 10,
@@ -125,7 +125,7 @@
     {
       "name": "mur-interrompt-relais",
       "strictSha256": "dee41e02d504260fd771e78487f276ea5b8f9f58651540da395dc2b3be1c2649",
-      "opacitySha256": "57e248b11a7d6f255f8bcecccb57a138627625563c3e3fd404800e752dccd0e3",
+      "opacitySha256": "81913aefc91ecefbf228142ff8f5cb83dd5872a84a1140281e5c0b3d778215b9",
       "origins": [
         {
           "x": 10,
@@ -173,7 +173,7 @@
     {
       "name": "lumiere-dans-mur",
       "strictSha256": "ecc9f2f2c98bcf1efecf018e2d82637497c2ffd145871a7608144e4cf0a9b2ef",
-      "opacitySha256": "3e2d556ec0105bde093714fff50abe9b5c1e8eb1d5fa4fe199f4805719fa0641",
+      "opacitySha256": "3d0da882198dd75056021c2c34eba200cd55c8a02805d361f2f9094d0e0e6667",
       "origins": [
         {
           "x": 10,
@@ -208,7 +208,7 @@
     {
       "name": "brouillard-interdit-relais",
       "strictSha256": "95980dc0f0854a6fa39c0d6f584cafd751d0e886b341898c905454caaad80507",
-      "opacitySha256": "2c2f074a07adf40f5904ebe40ca68eb504e83e80524ad1714254f709f0d3d55d",
+      "opacitySha256": "d4a2e1398cef41cf94d2ebd19d0e8bd9301e88d9ee5dfeb8bf3c01da801f1a91",
       "origins": [
         {
           "x": 10,
@@ -244,7 +244,7 @@
     {
       "name": "lumiere-desactivee",
       "strictSha256": "95980dc0f0854a6fa39c0d6f584cafd751d0e886b341898c905454caaad80507",
-      "opacitySha256": "2c2f074a07adf40f5904ebe40ca68eb504e83e80524ad1714254f709f0d3d55d",
+      "opacitySha256": "d4a2e1398cef41cf94d2ebd19d0e8bd9301e88d9ee5dfeb8bf3c01da801f1a91",
       "origins": [
         {
           "x": 10,
@@ -273,7 +273,7 @@
     {
       "name": "quarante-origines-et-quarante-relais",
       "strictSha256": "c7e15d197cfd7e1861dfbda98e1398c1a5f0f6c333aa0fd661919b218b678fa9",
-      "opacitySha256": "f8e4c63f03b401b2783b120ed14910098dd01b762353ded3b07fe654188cc3af",
+      "opacitySha256": "fcf2153d95ad6faa43bf79ed39cc127fe4ca5d07afad0ebd0327d6da4948dd2d",
       "origins": [
         {
           "x": 10,
