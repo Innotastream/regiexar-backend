@@ -5741,7 +5741,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if (!$isGm && !in_array($command, ['ensure-player', 'preferences.update', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'token.attack', 'token.attack.oppose'], true)) {
             $loggedAction = null;
-            if (in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
+            $abilityRollAlreadyLogged = $command === 'token.roll' && ($arguments['kind'] ?? '') === 'ability';
+            if (!$abilityRollAlreadyLogged && in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
                 $loggedRoll = $result['roll'];
                 $loggedAction = ['kind' => 'roll', ...applicationRollActivityFields($loggedRoll)];
             } elseif (in_array($command, ['timer.create', 'timer.update', 'timer.delete'], true) && is_array($result['timer'] ?? null)) {

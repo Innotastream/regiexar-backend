@@ -251,5 +251,9 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     }
     $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity);
     onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . $cast['remainingRounds'] . ' tours' : ' · aucune recharge')]);
-    return onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, ['roll' => $roll, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
+    $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, ['roll' => $roll, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
+    if (is_array($roll)) {
+        onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);
+    }
+    return $result;
 }

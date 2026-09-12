@@ -69,6 +69,10 @@ requireTactical($activityFields === [
     'summary' => 'Force (Avantage)',
     'detail' => "1d100+15 : 75\n1d100+15 : 42 (jet ignoré)\nRÉUSSITE",
 ], 'The private activity log must retain both attempts and the final outcome');
+$legacyPresentation = applicationRollPresentation([
+    'rollerName' => 'Innota', 'characterName' => '', 'label' => 'Chance', 'formula' => '1d100', 'total' => 38,
+]);
+requireTactical($legacyPresentation['character'] === 'Innota', 'An empty legacy character name must fall back to the roller name, as in the client formatter');
 
 $args = ['kind' => 'stat', 'tokenId' => 'monster-one', 'statId' => 'force'];
 $signature = applicationTacticalRollSignature('scene-one', $args);

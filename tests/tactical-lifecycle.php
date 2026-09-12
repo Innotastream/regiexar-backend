@@ -90,7 +90,8 @@ function fixture(): MemoryConnection
         'map:scene-one' => ['gridSize' => 50],
         'token-index:scene-one' => ['order' => ['token-player', 'token-monster', 'token-monster-two']],
         'initiative:scene-one' => ['active' => true, 'order' => ['token-monster', 'token-player'], 'currentIndex' => 0],
-        'character:character-player' => ['id' => 'character-player', 'ownerPlayerId' => 'account-player', 'name' => 'Personnage', 'color' => '#22aa33', 'resources' => ['hp' => 10, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 10], 'conditions' => [], 'stats' => ['force' => 50]],
+        'character:character-player' => ['id' => 'character-player', 'ownerPlayerId' => 'account-player', 'name' => 'Personnage', 'color' => '#22aa33', 'resources' => ['hp' => 10, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 10], 'conditions' => [], 'stats' => ['force' => 50],
+            'abilities' => [['id' => 'ability-one', 'name' => 'Frappe test', 'formula' => '1', 'damageType' => 'physical', 'description' => '']]],
         'luck' => ['characters' => []],
         'token:scene-one:token-player' => ['id' => 'token-player', 'characterId' => 'character-player', 'controllerPlayerId' => 'stale-controller', 'name' => 'Personnage', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
@@ -390,6 +391,30 @@ $event = ['mapEvent'=>['kind'=>'roll','sceneId'=>'scene-one','attackId'=>'attack
 requireTactical(onlineMapRollVisible($event,'scene-one',['source','target']), 'Visible attack dice stay available.');
 requireTactical(!onlineMapRollVisible($event,'scene-two',['source','target']) && !onlineMapRollVisible($event,'scene-one',['source']), 'Other scenes and hidden targets do not reveal map dice.');
 requireTactical(!onlineMapRollVisible(['mapEvent'=>[...$event['mapEvent'],'kind'=>'damage','applied'=>false,'value'=>20]],'scene-one',['source','target']), 'Prospective damage never becomes a public event.');
+$abilityRollFields = [];
+foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$role, $gm, $account]) {
+    $db = fixture();
+    $requestId = 'ability-journal-' . $role . '-0001';
+    $payload = ['sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'ability', 'abilityId' => 'ability-one', 'rollMode' => 'advantage', 'requestId' => $requestId];
+    $response = runCommand($db, 'token.roll', $payload, $gm, $account);
+    $actions = $db->payload('activity')['playerActions'];
+    requireTactical($response->status === 200 && array_column($actions, 'kind') === ['roll', 'ability'], "$role ability roll must append exactly one canonical roll action and one ability action: " . $response->getMessage());
+    $rollAction = $actions[0];
+    $abilityAction = $actions[1];
+    $abilityRollFields[$role] = array_intersect_key($rollAction, array_flip(['kind', 'characterName', 'summary', 'detail']));
+    requireTactical($abilityRollFields[$role] === [
+        'kind' => 'roll',
+        'characterName' => 'Personnage',
+        'summary' => 'Frappe test (Avantage)',
+        'detail' => "1 : 1\n1 : 1 (jet ignoré)",
+    ], "$role ability roll must use the canonical roll presentation");
+    $receipts = array_values(array_filter($db->payload('activity')['resourceReceipts'] ?? [], static fn (mixed $entry): bool => is_array($entry) && ($entry['requestId'] ?? '') === $requestId));
+    requireTactical(count($receipts) === 1 && ($receipts[0]['actionId'] ?? '') === $abilityAction['id'], "$role ability receipt must keep pointing to the ability action");
+    $revision = $db->revision;
+    $retry = runCommand($db, 'token.roll', $payload, $gm, $account);
+    requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) === true && $db->revision === $revision && count($db->payload('activity')['playerActions']) === 2, "$role ability retry must not duplicate either journal entry");
+}
+requireTactical($abilityRollFields['player'] === $abilityRollFields['gm'], 'Player and GM ability rolls must produce identical canonical roll fields');
 require __DIR__ . '/token-groups-cases.php';
 require __DIR__ . '/token-size-defaults-cases.php';
 require __DIR__ . '/gm-wall-placement-cases.php';

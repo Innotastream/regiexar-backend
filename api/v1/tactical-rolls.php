@@ -16,6 +16,9 @@ function applicationRollUppercase(string $value): string {
 function applicationRollPresentation(array $roll): array {
     $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
     $formula = trim((string) ($roll['formula'] ?? 'Jet')) ?: 'Jet';
+    $character = trim((string) ($roll['characterName'] ?? ''));
+    if ($character === '') $character = trim((string) ($roll['rollerName'] ?? ''));
+    if ($character === '') $character = 'MJ';
     $storedAttempts = array_values(array_filter(
         is_array($roll['attempts'] ?? null) ? array_slice($roll['attempts'], 0, 2) : [],
         static fn (mixed $attempt): bool => is_array($attempt)
@@ -37,7 +40,7 @@ function applicationRollPresentation(array $roll): array {
     $label = trim((string) ($roll['label'] ?? 'Jet')) ?: 'Jet';
     $outcome = trim((string) ($roll['outcome']['label'] ?? ''));
     return [
-        'character' => trim((string) ($roll['characterName'] ?? $roll['rollerName'] ?? 'MJ')) ?: 'MJ',
+        'character' => $character,
         'type' => $label . ($mode === 'normal' ? '' : ' (' . applicationRollModeLabel($mode) . ')'),
         'calculations' => $calculations,
         'outcome' => $outcome === '' ? '' : applicationRollUppercase($outcome),
