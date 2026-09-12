@@ -1482,6 +1482,7 @@ function validApplicationRollDomain(array $payload): bool
         foreach (['sceneId' => 80, 'attackId' => 180, 'anchorTokenId' => 180] as $key => $maximum) {
             if (array_key_exists($key, $event) && !validApplicationDomainIdentifier($event[$key], $maximum)) return false;
         }
+        if (array_key_exists('layerId', $event) && !in_array($event['layerId'], ['basement', 'ground', 'upper'], true)) return false;
         if (array_key_exists('diceAppearance', $event) && !validApplicationDiceAppearance($event['diceAppearance'])) return false;
     }
     $rollMode = (string) ($payload['rollMode'] ?? 'normal');

@@ -46,11 +46,11 @@ function applicationCustomAttack(mixed $value): array {
 function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
     $parts = applicationDamageComponents($attack['damageComponents'] ?? []);
     if ($parts === []) {
-        $rolled = onlineRollFormulaWithMode($attack['damageFormula'], $attack['damageRollMode'] ?? 'normal');
+        $rolled = onlineRollFormulaWithMode($attack['damageFormula'], 'normal');
         return ['rolled' => $rolled, 'damage' => onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, $attack['damageType'] ?? 'physical'))];
     }
     $rollFormula ??= static fn (string $formula): array => onlineRollFormula($formula);
-    $rollMode = normalizeOnlineRollMode($attack['damageRollMode'] ?? 'normal');
+    $rollMode = 'normal';
     $attempts = [];
     $attemptCount = $rollMode === 'normal' ? 1 : 2;
     for ($attemptIndex = 0; $attemptIndex < $attemptCount; $attemptIndex += 1) {

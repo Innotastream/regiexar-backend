@@ -906,6 +906,8 @@ $initiativeRollRetry = runCommand($initiativeRollDatabase, 'token.roll', $initia
 requireTactical(
     $initiativeRoll->status === 200
         && ($initiativeRoll->body['initiativeUpdated'] ?? false) === true
+        && ($initiativeRoll->body['roll']['rollMode'] ?? '') === 'normal'
+        && !isset($initiativeRoll->body['roll']['attempts'])
         && $initiativeRollRetry->status === 200
         && ($initiativeRollRetry->body['deduplicated'] ?? false) === true
         && ($initiativeRollRetry->body['roll']['id'] ?? '') === ($initiativeRoll->body['roll']['id'] ?? null)
@@ -1013,13 +1015,13 @@ requireTactical(
         && ($shortcutRoll['characterName'] ?? '') === 'Personnage'
         && ($shortcutRoll['label'] ?? '') === 'Perception'
         && ($shortcutRoll['formula'] ?? '') === '1d100+15'
-        && ($shortcutRoll['rollMode'] ?? '') === 'advantage'
-        && count($shortcutRoll['attempts'] ?? []) === 2
-        && ($shortcutAction['summary'] ?? '') === 'Perception (Avantage)'
-        && substr_count((string) ($shortcutAction['detail'] ?? ''), '1d100+15 : ') === 2
-        && str_contains((string) ($shortcutAction['detail'] ?? ''), '(jet ignoré)')
+        && ($shortcutRoll['rollMode'] ?? '') === 'normal'
+        && !isset($shortcutRoll['attempts'])
+        && ($shortcutAction['summary'] ?? '') === 'Perception'
+        && substr_count((string) ($shortcutAction['detail'] ?? ''), '1d100+15 : ') === 1
+        && !str_contains((string) ($shortcutAction['detail'] ?? ''), '(jet ignoré)')
         && !str_contains((string) ($shortcutAction['detail'] ?? ''), 'Nom :'),
-    'The direct Player shortcut route executes the same two-attempt presentation instead of only matching source text'
+    'The direct Player shortcut route ignores a forged roll mode and presents one normal attempt'
 );
 $shortcutRevision = $shortcutDatabase->revision;
 $shortcutActivity = $shortcutDatabase->payload('activity');
@@ -1041,10 +1043,11 @@ requireTactical(
 );
 $shortcutMismatch = runCommand($shortcutDatabase, 'roll', [...$shortcutPayload, 'rollMode' => 'disadvantage']);
 requireTactical(
-    $shortcutMismatch->status === 409
-        && ($shortcutMismatch->body['code'] ?? '') === 'shortcut_roll_request_mismatch'
+    $shortcutMismatch->status === 200
+        && ($shortcutMismatch->body['deduplicated'] ?? false) === true
+        && ($shortcutMismatch->body['roll']['id'] ?? '') === ($shortcutRoll['id'] ?? null)
         && $shortcutDatabase->revision === $shortcutRevision,
-    'A shortcut request id cannot be reused with another roll mode.'
+    'Changing an ignored shortcut roll mode replays the same canonical request.'
 );
 $legacyShortcutDatabase = fixture();
 $legacyShortcutCharacter = $legacyShortcutDatabase->payload('character:character-player');
@@ -1131,21 +1134,21 @@ requireTactical(
     'Immediate attack response, receipt journal and activity retain hit then damage exactly once'
 );
 requireTactical(
-    ($mixedDamageRoll['rollMode'] ?? '') === 'advantage'
-        && is_int($mixedDamageRoll['selectedIndex'] ?? null)
-        && count($mixedDamageRoll['attempts'] ?? []) === 2
-        && ($mixedAttack['damage']['rollMode'] ?? '') === 'advantage'
+    ($mixedDamageRoll['rollMode'] ?? '') === 'normal'
+        && ($mixedDamageRoll['selectedIndex'] ?? null) === 0
+        && !isset($mixedDamageRoll['attempts'])
+        && ($mixedAttack['damage']['rollMode'] ?? '') === 'normal'
         && ($mixedAttack['damage']['selectedIndex'] ?? null) === ($mixedDamageRoll['selectedIndex'] ?? null)
-        && ($mixedAttack['damage']['attempts'] ?? null) === ($mixedDamageRoll['attempts'] ?? null)
+        && count($mixedAttack['damage']['attempts'] ?? []) === 1
         && count($mixedAttack['damage']['components'] ?? []) === 2,
-    'Mixed damage preserves its two global attempts, selected index and retained component calculation in the attack receipt'
+    'Mixed damage ignores the attack mode and preserves its sole component calculation in the attack receipt'
 );
 $mixedHistory = onlineAttackHistoryDetail($mixedAttack);
 requireTactical(
-    str_contains($mixedHistory, 'Jet DMG (Avantage)')
-        && substr_count($mixedHistory, '1+2 : 3') === 2
-        && str_contains($mixedHistory, '(jet ignoré)'),
-    'The GM attack journal exposes both complete damage attempts and identifies the ignored attempt'
+    str_contains($mixedHistory, 'Jet DMG 3')
+        && substr_count($mixedHistory, '1+2') === 1
+        && !str_contains($mixedHistory, 'Jet DMG (Avantage)'),
+    'The GM attack journal exposes the single normal damage attempt'
 );
 $publicDamageRoll = publicOnlineAttackRoll($mixedAttack['damageRoll'], false, 'damage');
 requireTactical(
@@ -1470,10 +1473,15 @@ foreach ([true,false] as $combatActive) {
     requireTactical(runCommand($db,'token.attack.oppose',['attackId'=>$attack['id'],'requestId'=>'opposition-request-0001'])->status===200 && $db->revision===$revision, 'Replayed KO opposition cannot apply damage again.');
     requireTactical(runCommand($db,'token.attack.oppose',['attackId'=>$attack['id'],'requestId'=>'opposition-request-0001'],false,'intruder')->status===403, 'A third party cannot replay a KO receipt.');
 }
-$event = ['mapEvent'=>['kind'=>'roll','sceneId'=>'scene-one','attackId'=>'attack-xxx','sourceTokenId'=>'source','targetTokenId'=>'target','anchorTokenId'=>'source']];
-requireTactical(onlineMapRollVisible($event,'scene-one',['source','target']), 'Visible attack dice stay available.');
-requireTactical(!onlineMapRollVisible($event,'scene-two',['source','target']) && !onlineMapRollVisible($event,'scene-one',['source']), 'Other scenes and hidden targets do not reveal map dice.');
-requireTactical(!onlineMapRollVisible(['mapEvent'=>[...$event['mapEvent'],'kind'=>'damage','applied'=>false,'value'=>20]],'scene-one',['source','target']), 'Prospective damage never becomes a public event.');
+$event = ['mapEvent'=>['kind'=>'roll','sceneId'=>'scene-one','layerId'=>'upper','attackId'=>'attack-xxx','sourceTokenId'=>'source','targetTokenId'=>'target','anchorTokenId'=>'source']];
+requireTactical(onlineMapRollVisible($event,'scene-one','upper',['source','target']), 'Visible attack dice stay available on their level.');
+requireTactical(!onlineMapRollVisible($event,'scene-two','upper',['source','target'])
+    && !onlineMapRollVisible($event,'scene-one','ground',['source','target'])
+    && !onlineMapRollVisible($event,'scene-one','upper',['source']), 'Other scenes, levels and hidden targets do not reveal map dice.');
+$legacyGroundEvent = ['mapEvent'=>array_diff_key($event['mapEvent'], ['layerId'=>true])];
+requireTactical(onlineMapRollVisible($legacyGroundEvent,'scene-one','ground',['source','target'])
+    && !onlineMapRollVisible($legacyGroundEvent,'scene-one','upper',['source','target']), 'A legacy event without layer remains confined to the historical ground level.');
+requireTactical(!onlineMapRollVisible(['mapEvent'=>[...$event['mapEvent'],'kind'=>'damage','applied'=>false,'value'=>20]],'scene-one','upper',['source','target']), 'Prospective damage never becomes a public event.');
 $abilityRollFields = [];
 foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$role, $gm, $account]) {
     $db = fixture();
@@ -1494,9 +1502,14 @@ foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$
     requireTactical($abilityRollFields[$role] === [
         'kind' => 'roll',
         'characterName' => 'Personnage',
-        'summary' => 'Frappe test (Avantage)',
-        'detail' => "1 : 1\n1 : 1 (jet ignoré)",
+        'summary' => 'Frappe test',
+        'detail' => "1 : 1",
     ], "$role ability roll must use the canonical roll presentation");
+    requireTactical(
+        ($response->body['effectRoll']['rollMode'] ?? '') === 'normal'
+            && !isset($response->body['effectRoll']['attempts']),
+        "$role ability effect ignores advantage when no statistic is rolled"
+    );
     $receipts = array_values(array_filter($db->payload('activity')['resourceReceipts'] ?? [], static fn (mixed $entry): bool => is_array($entry) && ($entry['requestId'] ?? '') === $requestId));
     requireTactical(count($receipts) === 1 && ($receipts[0]['actionId'] ?? '') === $abilityAction['id'], "$role ability receipt must keep pointing to the ability action");
     $revision = $db->revision;
@@ -1543,10 +1556,11 @@ foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$
     );
     requireTactical(
         count($response->body['castRoll']['attempts'] ?? []) === 2
-            && count($response->body['effectRoll']['attempts'] ?? []) === 2
+            && !isset($response->body['effectRoll']['attempts'])
+            && ($response->body['effectRoll']['rollMode'] ?? '') === 'normal'
             && array_column($db->payload('activity')['rolls'], 'id') === array_column($rolls, 'id')
             && array_column($db->payload('activity')['playerActions'], 'kind') === ['roll', 'roll', 'ability'],
-        "$role journal and actions must contain both advantage rolls exactly once"
+        "$role journal and actions must contain one advantage casting roll and one normal effect exactly once"
     );
     $checkedRoleFields[$role] = [
         $response->body['castRoll']['label'] ?? '',

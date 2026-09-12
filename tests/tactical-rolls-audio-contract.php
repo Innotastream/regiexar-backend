@@ -24,7 +24,11 @@ $outcome = classifyOnlineD100Outcome(55, $customStat['threshold'], $customStat['
 requireTactical($outcome['raw'] === 55 && $outcome['result'] === 43 && $outcome['code'] === 'special-success', 'Special outcomes use the raw result with personalized result shown separately');
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'hit'])['threshold'] === 42, 'Hit uses the stored threshold');
 $luck = applicationTacticalRollSpecification($creature, ['kind' => 'luck', 'formula' => '8d20', 'modifier' => 99, 'rollMode' => 'advantage']);
-requireTactical($luck['formula'] === '1d100' && $luck['rollMode'] === 'normal', 'Luck remains a single unmodified d100');
+requireTactical($luck['formula'] === '1d100' && $luck['rollMode'] === 'advantage' && $luck['d100RollUnder'] === true, 'Luck remains an unmodified d100 and accepts advantage');
+requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'hit', 'rollMode' => 'advantage'])['rollMode'] === 'normal'
+    && applicationTacticalRollSpecification($creature, ['kind' => 'damage', 'rollMode' => 'advantage'])['rollMode'] === 'normal'
+    && applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '1d100', 'rollMode' => 'disadvantage'])['rollMode'] === 'normal',
+    'Hit, damage and free formulas ignore forged roll modes');
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'damage'])['formula'] === '3d4'
     && applicationTacticalRollSpecification($creature, ['kind' => 'damage'])['label'] === 'Dégâts',
     'Default damage uses the first stored weapon and the same label as the player route');
@@ -60,23 +64,25 @@ requireTactical(applicationTacticalRollVisibility($roll, ['controllerPlayerId' =
 
 $presentedRoll = [
     'rollerName' => 'Innota', 'characterName' => 'Inho', 'label' => 'Force', 'formula' => '1d100+15',
-    'total' => 75, 'rollMode' => 'advantage', 'selectedIndex' => 0,
+    'total' => 42, 'rollMode' => 'advantage', 'selectedIndex' => 1,
     'attempts' => [['total' => 75, 'breakdown' => '[60] +15'], ['total' => 42, 'breakdown' => '[27] +15']],
     'outcome' => ['label' => 'Réussite'],
 ];
 $presentation = applicationRollPresentation($presentedRoll);
 requireTactical($presentation['character'] === 'Inho' && $presentation['type'] === 'Force (Avantage)'
-    && $presentation['calculations'][0]['total'] === '75' && !$presentation['calculations'][0]['ignored']
-    && $presentation['calculations'][1]['total'] === '42' && $presentation['calculations'][1]['ignored']
+    && $presentation['calculations'][0]['total'] === '75' && $presentation['calculations'][0]['ignored']
+    && $presentation['calculations'][1]['total'] === '42' && !$presentation['calculations'][1]['ignored']
     && $presentation['outcome'] === 'RÉUSSITE', 'MJ and player rolls must share the canonical presentation');
 $activityFields = applicationRollActivityFields($presentedRoll);
 requireTactical($activityFields === [
     'characterName' => 'Inho',
     'summary' => 'Force (Avantage)',
-    'detail' => "1d100+15 : 75\n1d100+15 : 42 (jet ignoré)\nRÉUSSITE",
+    'detail' => "1d100+15 : 75 (jet ignoré)\n1d100+15 : 42\nRÉUSSITE",
 ], 'The private activity log must retain both attempts and the final outcome');
 $castRoll = [...$presentedRoll, 'id' => 'cast-roll-one', 'label' => 'Frappe · Lancement · Force', 'visibility' => 'public', 'revealed' => true];
-$effectRoll = [...$presentedRoll, 'id' => 'effect-roll-one', 'label' => 'Frappe', 'formula' => '2d6', 'outcome' => null];
+$effectRoll = [...$presentedRoll, 'id' => 'effect-roll-one', 'label' => 'Frappe', 'formula' => '2d6',
+    'rollMode' => 'normal', 'selectedIndex' => 0, 'outcome' => null];
+unset($effectRoll['attempts']);
 $bundle = onlineAbilityRollBundle(['success' => true, 'roll' => $castRoll], $effectRoll);
 requireTactical($bundle['roll'] === $effectRoll && $bundle['castRoll'] === $castRoll && $bundle['effectRoll'] === $effectRoll
     && array_column($bundle['rolls'], 'id') === ['cast-roll-one', 'effect-roll-one'],

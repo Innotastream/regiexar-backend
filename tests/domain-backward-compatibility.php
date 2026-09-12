@@ -655,46 +655,66 @@ $d100Attempts = [
     ['total' => 2, 'rawD100' => 2],
 ];
 requireDomainCompatibility(
-    selectOnlineRollAttemptIndex($d100Attempts, 'advantage') === 0,
-    'L’avantage doit relancer le jet complet et retenir son total le plus élevé, y compris sur un d100.'
+    selectOnlineRollAttemptIndex($d100Attempts, 'advantage', true) === 1,
+    'L’avantage d100 doit toujours retenir le plus petit dé brut.'
 );
 requireDomainCompatibility(
     selectOnlineRollAttemptIndex([
         ['total' => 66, 'rawD100' => 66],
         ['total' => 100, 'rawD100' => 100],
-    ], 'disadvantage') === 0,
-    'Le désavantage doit relancer le jet complet et retenir son total le plus faible, y compris sur un d100.'
+    ], 'disadvantage', true) === 1,
+    'Le désavantage d100 doit toujours retenir le plus grand dé brut.'
+);
+requireDomainCompatibility(
+    selectOnlineRollAttemptIndex([
+        ['total' => 61, 'rawD100' => 61],
+        ['total' => 93, 'rawD100' => 93],
+    ], 'advantage', true) === 0
+        && selectOnlineRollAttemptIndex([
+            ['total' => 61, 'rawD100' => 61],
+            ['total' => 93, 'rawD100' => 93],
+        ], 'disadvantage', true) === 1,
+    'La régression 61/93 doit retenir 61 sous avantage et 93 sous désavantage.'
 );
 requireDomainCompatibility(
     selectOnlineRollAttemptIndex([
         ['total' => 7, 'rawD100' => null],
         ['total' => 12, 'rawD100' => null],
-    ], 'advantage') === 1
+    ], 'advantage') === 0
         && selectOnlineRollAttemptIndex([
             ['total' => 7, 'rawD100' => null],
             ['total' => 12, 'rawD100' => null],
         ], 'disadvantage') === 0,
-    'Toutes les formules doivent conserver le total haut sous avantage et le total bas sous désavantage.'
+    'Les formules hors statistique et Chance doivent ignorer avantage et désavantage.'
+);
+requireDomainCompatibility(
+    onlineRollModeForKind('advantage', 'stat') === 'advantage'
+        && onlineRollModeForKind('disadvantage', 'luck') === 'disadvantage'
+        && onlineRollModeForKind('advantage', 'hit') === 'normal'
+        && onlineRollModeForKind('advantage', 'initiative') === 'normal'
+        && onlineRollModeForKind('advantage', 'damage') === 'normal'
+        && onlineRollModeForKind('advantage', 'custom') === 'normal',
+    'Seuls Statistique et Chance doivent accepter avantage ou désavantage.'
 );
 $discordRoll = onlineDiscordRollContent([
     'rollerName' => 'June',
     'characterName' => 'Hilbours',
     'label' => 'Perception',
-    'formula' => '2d10+3',
-    'total' => 16,
-    'breakdown' => '[6, 7] +3',
-    'rollMode' => 'disadvantage',
+    'formula' => '1d100',
+    'total' => 61,
+    'breakdown' => '[61]',
+    'rollMode' => 'advantage',
     'selectedIndex' => 0,
     'attempts' => [
-        ['total' => 16, 'breakdown' => '[6, 7] +3'],
-        ['total' => 20, 'breakdown' => '[9, 8] +3'],
+        ['total' => 61, 'breakdown' => '[61]', 'rawD100' => 61],
+        ['total' => 93, 'breakdown' => '[93]', 'rawD100' => 93],
     ],
-    'outcome' => ['label' => 'Réussite', 'raw' => 16],
+    'outcome' => ['label' => 'Réussite', 'raw' => 61],
 ]);
 requireDomainCompatibility(
-    $discordRoll === "**Hilbours**\nPerception (Désavantage)\n2d10+3 : 16\n2d10+3 : 20 (jet ignoré)\n**RÉUSSITE**"
+    $discordRoll === "**Hilbours**\nPerception (Avantage)\n1d100 : 61\n1d100 : 93 (jet ignoré)\n**RÉUSSITE**"
         && !str_contains($discordRoll, '🎲')
-        && !str_contains($discordRoll, '[6, 7]')
+        && !str_contains($discordRoll, '[61]')
         && !str_contains($discordRoll, 'June')
         && !str_contains($discordRoll, 'Nom :'),
     'Discord doit publier la présentation homogène, les deux tentatives et le verdict sans calcul MJ privé.'

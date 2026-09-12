@@ -265,11 +265,24 @@ function onlineUtf8ByteSlice(string $value, int $maximum): string
     return $bounded;
 }
 
-function onlineMapRollVisible(array $roll, string $sceneId, array $visibleTokenIds): bool
+function onlinePersistedLayerId(array $value): ?string
+{
+    if (!array_key_exists('layerId', $value)) return 'ground';
+    $layerId = trim((string) $value['layerId']);
+    return in_array($layerId, ['basement', 'ground', 'upper'], true) ? $layerId : null;
+}
+
+function onlineMapRollVisible(array $roll, string $sceneId, string $activeLayerId, array $visibleTokenIds): bool
 {
     if (!is_array($roll['mapEvent'] ?? null)) return true;
     $event = $roll['mapEvent'];
     if ($sceneId === '' || (string) ($event['sceneId'] ?? '') !== $sceneId) return false;
+    if (!in_array($activeLayerId, ['basement', 'ground', 'upper'], true)) return false;
+    // Events created before map levels existed belong to the historical ground
+    // level. Explicit but invalid layer data is rejected instead of being
+    // silently projected on the currently selected level.
+    $eventLayerId = onlinePersistedLayerId($event);
+    if ($eventLayerId === null || $eventLayerId !== $activeLayerId) return false;
     if (($event['kind'] ?? '') === 'damage' && (($event['applied'] ?? false) !== true || (float) ($event['value'] ?? 0) <= 0)) return false;
     $ids = [];
     foreach (['tokenId', 'sourceTokenId', 'targetTokenId', 'anchorTokenId'] as $key) {
@@ -903,6 +916,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     $map = $paused && is_array($fullState['tacticalSync']['publishedMap'] ?? null)
         ? $fullState['tacticalSync']['publishedMap']
         : ($fullState['map'] ?? []);
+    $visibleLayerId = onlineTokenLayerId([], is_array($map) ? $map : []);
     $fog = applicationActiveMapFogState(is_array($map) ? $map : []);
     $occlusion = applicationActiveMapOcclusionState(
         is_array($map) ? $map : [],
@@ -1158,6 +1172,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
     foreach (is_array($fullState['pendingAttacks'] ?? null) ? $fullState['pendingAttacks'] : [] as $mapAttack) {
         if (!is_array($mapAttack) || !in_array($mapAttack['status'] ?? '', ['awaiting-opposition', 'pending'], true)
             || (string) ($mapAttack['sceneId'] ?? '') !== $visibleSceneId
+            || onlinePersistedLayerId($mapAttack) !== $visibleLayerId
             || !in_array($mapAttack['sourceTokenId'] ?? '', $visibleAttackTokenIds, true)
             || !in_array($mapAttack['targetTokenId'] ?? '', $visibleAttackTokenIds, true)) continue;
         $pendingMapAttacks[] = array_intersect_key(publicOnlineAttackResult(
@@ -1165,7 +1180,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             $visibleTokenDetails[(string) ($mapAttack['sourceTokenId'] ?? '')] ?? false,
             $visibleTokenDetails[(string) ($mapAttack['targetTokenId'] ?? '')] ?? false
         ), array_flip([
-            'id', 'sceneId', 'sourceTokenId', 'sourceName', 'targetTokenId', 'targetName', 'attackName', 'hit', 'opposition', 'status'
+            'id', 'sceneId', 'layerId', 'sourceTokenId', 'sourceName', 'targetTokenId', 'targetName', 'attackName', 'hit', 'opposition', 'status'
         ]));
     }
     $pendingOppositions = [];
@@ -1173,6 +1188,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         if (!is_array($attack)
             || (string) ($attack['status'] ?? '') !== 'awaiting-opposition'
             || (string) ($attack['sceneId'] ?? '') !== $visibleSceneId
+            || onlinePersistedLayerId($attack) !== $visibleLayerId
             || !in_array($attack['sourceTokenId'] ?? '', $visibleAttackTokenIds, true)
             || !in_array($attack['targetTokenId'] ?? '', $visibleAttackTokenIds, true)
             || (($attack['attackerRole'] ?? 'player') !== 'gm'
@@ -1190,6 +1206,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
         $pendingOppositions[] = [
             'id' => $attack['id'] ?? null,
             'sceneId' => $attack['sceneId'] ?? null,
+            'layerId' => onlinePersistedLayerId($attack),
             'sourceTokenId' => $attack['sourceTokenId'] ?? null,
             'sourceName' => $attack['sourceName'] ?? 'Attaquant',
             'targetTokenId' => $attack['targetTokenId'] ?? null,
@@ -1227,7 +1244,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence): 
             ? ($fullState['tacticalSync']['publishedActiveScene'] ?? null)
             : ($fullState['activeScene'] ?? null)),
         'rolls' => stripForbiddenPlayerData(array_slice(array_values(array_filter($rolls,
-            static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleAttackTokenIds))), 0, 30)),
+            static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
         'actionTimers' => $visibleActionTimers,
         'pendingOppositions' => array_slice($pendingOppositions, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'pendingMapAttacks' => array_slice($pendingMapAttacks, 0, XAR_PENDING_ATTACK_MAXIMUM),
@@ -2421,27 +2438,43 @@ function normalizeOnlineRollMode(mixed $value): string
     return in_array($mode, ['advantage', 'disadvantage'], true) ? $mode : 'normal';
 }
 
-function selectOnlineRollAttemptIndex(array $attempts, mixed $mode): int
+function onlineRollModeForKind(mixed $value, mixed $kind): string
 {
-    $rollMode = normalizeOnlineRollMode($mode);
+    return in_array((string) $kind, ['stat', 'luck', 'custom-stat'], true)
+        ? normalizeOnlineRollMode($value)
+        : 'normal';
+}
+
+function selectOnlineRollAttemptIndex(array $attempts, mixed $mode, bool $d100RollUnder = false): int
+{
+    $rollMode = $d100RollUnder ? normalizeOnlineRollMode($mode) : 'normal';
     if ($rollMode === 'normal' || count($attempts) < 2) {
         return 0;
     }
     $first = is_array($attempts[0] ?? null) ? $attempts[0] : [];
     $second = is_array($attempts[1] ?? null) ? $attempts[1] : [];
-    return $rollMode === 'advantage'
-        ? ((int) ($second['total'] ?? 0) > (int) ($first['total'] ?? 0) ? 1 : 0)
-        : ((int) ($second['total'] ?? 0) < (int) ($first['total'] ?? 0) ? 1 : 0);
+    if (is_int($first['rawD100'] ?? null) && is_int($second['rawD100'] ?? null)) {
+        return $rollMode === 'advantage'
+            ? ((int) $second['rawD100'] < (int) $first['rawD100'] ? 1 : 0)
+            : ((int) $second['rawD100'] > (int) $first['rawD100'] ? 1 : 0);
+    }
+    return 0;
 }
 
-function onlineRollFormulaWithMode(string $formula, mixed $mode, ?int $threshold = null, int $modifier = 0): array
+function onlineRollFormulaWithMode(
+    string $formula,
+    mixed $mode,
+    ?int $threshold = null,
+    int $modifier = 0,
+    bool $d100RollUnder = false
+): array
 {
-    $rollMode = normalizeOnlineRollMode($mode);
+    $rollMode = $d100RollUnder ? normalizeOnlineRollMode($mode) : 'normal';
     $attempts = [onlineRollFormula($formula)];
     if ($rollMode !== 'normal') {
         $attempts[] = onlineRollFormula($formula);
     }
-    $selectedIndex = selectOnlineRollAttemptIndex($attempts, $rollMode);
+    $selectedIndex = selectOnlineRollAttemptIndex($attempts, $rollMode, $d100RollUnder);
     $selected = $attempts[$selectedIndex];
     $selected['rollMode'] = $rollMode;
     $selected['selectedIndex'] = $selectedIndex;
@@ -3065,7 +3098,9 @@ function onlinePendingAttackParties(PDO $connection, array &$records, array $att
     $mapKey = 'map:' . $sceneId;
     $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
     $map = applicationDomainPayload($records, $mapKey);
-    if (!onlineTokenOnActiveLayer($source, $map) || !onlineTokenOnActiveLayer($target, $map)) {
+    $attackLayerId = onlinePersistedLayerId($attack);
+    if ($attackLayerId === null || $attackLayerId !== onlineTokenLayerId([], $map)
+        || !onlineTokenOnActiveLayer($source, $map) || !onlineTokenOnActiveLayer($target, $map)) {
         rejectOnlineCommand($connection, 409, 'Les pions de cette attaque doivent être sur le niveau actif.', 'stale_token_layer');
     }
     $sourceController = onlineTokenControllerIdFromRecords($connection, $records, $source);
@@ -3210,7 +3245,9 @@ function onlinePlayerTokenRollRequestSignature(
             ? max(0, min(100, (int) $arguments['threshold'])) : null,
         'modifier' => normalizeOnlineD100Modifier($arguments['modifier'] ?? 0),
         'modifierMode' => ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
-        'rollMode' => $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        'rollMode' => $kind === 'ability'
+            ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal')
+            : onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind),
         'visibility' => in_array($arguments['visibility'] ?? '', ['public', 'gm', 'queued'], true)
             ? (string) $arguments['visibility'] : 'public',
     ]);
@@ -3254,7 +3291,7 @@ function onlineShortcutRollRequestSignature(
         'sceneId' => trim((string) ($arguments['sceneId'] ?? $fallbackSceneId)),
         'characterId' => trim((string) ($arguments['characterId'] ?? '')),
         'shortcutId' => trim((string) ($arguments['shortcutId'] ?? '')),
-        'rollMode' => normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        'rollMode' => 'normal',
     ]);
 }
 
@@ -3346,7 +3383,7 @@ function onlineStorePersistentCommandReceipt(
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
 }
 
-function onlineAttackRequestSignature(string $sceneId, array $arguments): string
+function onlineAttackRequestSignature(string $sceneId, array $arguments, ?bool $hasCastingCheck = null): string
 {
     $kind = in_array($arguments['attackKind'] ?? '', ['ability', 'custom'], true)
         ? (string) $arguments['attackKind']
@@ -3354,6 +3391,7 @@ function onlineAttackRequestSignature(string $sceneId, array $arguments): string
     $attackId = $kind === 'ability'
         ? (string) ($arguments['abilityId'] ?? $arguments['attackId'] ?? '')
         : (string) ($arguments['attackId'] ?? '');
+    $usesHitOptions = $kind !== 'ability' || $hasCastingCheck !== false;
     return json_encode([
         'token.attack',
         $sceneId,
@@ -3362,10 +3400,10 @@ function onlineAttackRequestSignature(string $sceneId, array $arguments): string
         $kind,
         $attackId,
         (string) ($arguments['statId'] ?? ''),
-        normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0),
-        ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
+        $usesHitOptions ? normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0) : 0,
+        $usesHitOptions && ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
         normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0),
-        normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        $usesHitOptions ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal') : 'normal',
         ($arguments['opposed'] ?? false) === true,
         $kind === 'custom' ? onlineCanonicalRequestValue($arguments['customAttack'] ?? null) : null,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
@@ -3510,6 +3548,7 @@ function publicOnlineAttackResult(array $attack, bool $hitDetailsVisible = false
         'id' => $attack['id'] ?? null,
         'requestId' => $attack['requestId'] ?? null,
         'sceneId' => $attack['sceneId'] ?? null,
+        'layerId' => onlinePersistedLayerId($attack),
         'sourceTokenId' => $attack['sourceTokenId'] ?? null,
         'sourceName' => $attack['sourceName'] ?? 'Attaquant',
         'targetTokenId' => $attack['targetTokenId'] ?? null,
@@ -3803,7 +3842,8 @@ function onlineAppendAppliedDamageAction(PDO $connection, array &$records, array
             'kind' => 'damage', 'applied' => true, 'value' => $appliedDamage, 'label' => 'PV perdus',
             'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
             'targetTokenId' => $attack['targetTokenId'], 'sourceTokenId' => $attack['sourceTokenId'],
-            'anchorTokenId' => $attack['sourceTokenId'], 'attackId' => $attack['id'], 'sceneId' => $attack['sceneId']
+            'anchorTokenId' => $attack['sourceTokenId'], 'attackId' => $attack['id'], 'sceneId' => $attack['sceneId'],
+            'layerId' => onlineTokenLayerId(['layerId' => $attack['layerId'] ?? 'ground'])
         ];
         $activity['rolls'] = array_slice([$damageEvent, ...($activity['rolls'] ?? [])], 0, 100);
     }
@@ -4068,6 +4108,7 @@ function onlineFinalizeAttackDamageRoll(array $attack): array
             'anchorTokenId' => (string) ($attack['sourceTokenId'] ?? ''),
             'attackId' => (string) ($attack['id'] ?? ''),
             'sceneId' => (string) ($attack['sceneId'] ?? ''),
+            'layerId' => onlineTokenLayerId(['layerId' => $attack['layerId'] ?? 'ground']),
         ];
     } else {
         unset($damageRoll['mapEvent']);
@@ -5181,8 +5222,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $activity = applicationDomainPayload($records, 'activity');
             $abilityRequestSignature = null; $abilityReceipt = null;
             if (($arguments['attackKind'] ?? '') === 'ability') {
-                $abilityRequestSignature = json_encode(['token.attack', $sceneId, $arguments['sourceTokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['abilityId'] ?? $arguments['attackId'] ?? '', $arguments['targetTokenId'] ?? '', false], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                $abilityReceipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $abilityRequestSignature);
+                $abilityReceiptSignature = static fn(array $receipt): string => applicationAbilityRequestSignature(
+                    'token.attack', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
+                );
+                $abilityReceipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $abilityReceiptSignature);
             }
             $now = (int) floor(microtime(true) * 1000);
             $pendingReceiptAttackIds = [];
@@ -5204,8 +5247,11 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     && (string) ($receipt['accountId'] ?? '') === $accountId
                     && is_array($receipt['attack'] ?? null)) {
                     $storedSignature = (string) ($receipt['requestSignature'] ?? '');
+                    $receiptHasCastingCheck = ($arguments['attackKind'] ?? '') !== 'ability'
+                        || trim((string) ($receipt['attack']['cast']['statId'] ?? '')) !== '';
+                    $expectedAttackSignature = onlineAttackRequestSignature($sceneId, $arguments, $receiptHasCastingCheck);
                     $sameRequest = $storedSignature !== ''
-                        ? hash_equals($storedSignature, $attackRequestSignature)
+                        ? hash_equals($storedSignature, $expectedAttackSignature)
                         : onlineLegacyAttackReceiptMatchesRequest($receipt['attack'], $sceneId, $arguments);
                     if (!$sameRequest) {
                         rejectOnlineCommand($connection, 409, 'Cette référence désigne une autre attaque.', 'attack_request_mismatch');
@@ -5293,6 +5339,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $sourceCharacter = $characterId !== '' ? applicationDomainPayload($records, 'character:' . $characterId) : [];
                 $diceAppearance = onlineDiceAppearance($source, $sourceController !== '', $sourceCharacter);
+                $attackLayerId = onlineTokenLayerId($source, $map);
                 $newAttackId = 'attack-' . randomToken(12);
                 $attackKind = in_array($arguments['attackKind'] ?? '', ['ability', 'custom'], true) ? $arguments['attackKind'] : 'weapon';
                 $custom = null; $damageComponents = [];
@@ -5337,6 +5384,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $castingPlan = $attackKind === 'ability' ? onlinePrepareAbilityCasting($connection, $abilities[$abilityIndex], $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, (string) ($arguments['statId'] ?? '')) : null;
                 $hasCastingCheck = $castingPlan === null || $castingPlan['statId'] !== '';
+                $attackRequestSignature = onlineAttackRequestSignature($sceneId, $arguments, $hasCastingCheck);
+                if ($castingPlan !== null) {
+                    $abilityRequestSignature = applicationAbilityRequestSignature('token.attack', $sceneId, $arguments, $hasCastingCheck);
+                }
                 $stats = is_array($source['stats'] ?? null) ? $source['stats'] : [];
                 if (($custom['customStat'] ?? false) === true) $stats = [['id' => 'custom', 'label' => $custom['statLabel'], 'value' => $custom['threshold']]];
                 $statIndex = findEntryIndex($stats, $castingPlan !== null ? $castingPlan['statId'] : (($custom['customStat'] ?? false) === true ? 'custom' : (string) ($arguments['statId'] ?? '')));
@@ -5350,7 +5401,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $resultModifier = $hitModifierMode === 'result' ? $hitModifierValue : 0;
                 $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-                $hitRolled = $hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement'];
+                $hitRolled = $hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement'];
                 $hitOutcome = $hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true];
                 if ($castingPlan === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
                 if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
@@ -5362,7 +5413,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     && ($hitOutcome['breaksOpposition'] ?? false) !== true;
                 $hitRoll['diceAppearance'] = $diceAppearance;
                 $hitRoll['mapEvent'] = [
-                    'sceneId' => $sceneId, 'attackId' => $newAttackId,
+                    'sceneId' => $sceneId, 'layerId' => $attackLayerId, 'attackId' => $newAttackId,
                     'anchorTokenId' => (string) ($source['id'] ?? ''), 'diceAppearance' => $diceAppearance,
                     'kind' => 'roll',
                     'value' => $hitOutcome['result'] ?? $hitRolled['rawD100'] ?? $hitRolled['total'],
@@ -5378,7 +5429,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 400, 'Le modificateur rend la formule de dégâts invalide.', 'invalid_attack_damage');
                 }
                 if ($damageComponents !== [] && $damageModifier !== 0) $damageComponents[0]['formula'] .= ($damageModifier > 0 ? '+' : '') . $damageModifier;
-                $damageSpecification = ['damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => $rollMode, ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : [])];
+                $damageSpecification = ['damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : [])];
                 $damageRoll = null;
                 $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
                 if (($hitOutcome['success'] ?? false) === true && !$oppositionRequired) {
@@ -5392,6 +5443,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'id' => $newAttackId,
                     'requestId' => $requestId,
                     'sceneId' => $sceneId,
+                    'layerId' => $attackLayerId,
                     'sourceTokenId' => (string) ($source['id'] ?? ''),
                     'sourceName' => substr((string) ($source['name'] ?? 'Attaquant'), 0, 120),
                     'targetTokenId' => (string) ($target['id'] ?? ''),
@@ -5434,7 +5486,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     ...($damageRoll !== null ? ['damageRoll' => $damageRoll] : []),
                     'finalDamage' => (int) $damageSummary['finalDamage'],
                     ...$damageSpecification,
-                    'damageRollMode' => $rollMode,
+                    'damageRollMode' => 'normal',
                     'createdAt' => $now,
                 ];
                 $initiative = applicationDomainPayload($records, $initiativeKey);
@@ -5671,7 +5723,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
                         $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-                        $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier);
+                        $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
                         $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier);
                         $statLabel = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
                         if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
@@ -5680,7 +5732,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $defenseDice = onlineDiceAppearance($target, $defenderAccountId !== '', $targetCharacter ?? null);
                         $defenseRoll['diceAppearance'] = $defenseDice;
                         $defenseRoll['mapEvent'] = [
-                            'sceneId' => $attackSceneId, 'attackId' => $attackId,
+                            'sceneId' => $attackSceneId,
+                            'layerId' => onlineTokenLayerId(['layerId' => $attack['layerId'] ?? 'ground']),
+                            'attackId' => $attackId,
                             'anchorTokenId' => (string) ($attack['sourceTokenId'] ?? ''), 'diceAppearance' => $defenseDice,
                             'kind' => 'roll',
                             'value' => $outcome['result'] ?? $rolled['rawD100'] ?? $rolled['total'],
@@ -5732,7 +5786,6 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         if (strlen($damageFormula) > 100 || !validOnlineRollFormula($damageFormula)) {
                             rejectOnlineCommand($connection, 409, 'La formule de dégâts mémorisée n’est plus valide.', 'stale_attack_damage');
                         }
-                        $damageRollMode = normalizeOnlineRollMode($attack['damageRollMode'] ?? 'normal');
                         $damageResult = onlineRollAttackDamage($attack, $target);
                         $damageRolled = $damageResult['rolled'];
                         $damageType = normalizeOnlineDamageType($attack['damageType'] ?? null);
@@ -6037,7 +6090,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $modifier = 0;
             $resultModifier = 0;
             $modifierMode = 'threshold';
-            $rollMode = $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+            $rollMode = onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind);
             if ($kind === 'luck') {
                 $label = 'Chance';
                 $formula = '1d100';
@@ -6114,17 +6167,19 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $rollMode
             ) : '';
                 try {
+                    $eligibleD100 = in_array($kind, ['stat', 'luck'], true);
                     $rolled = onlineRollFormulaWithMode(
                         $formula,
                         $rollMode,
                         in_array($kind, ['stat', 'hit'], true) ? $threshold : null,
-                        in_array($kind, ['stat', 'hit'], true) ? $modifier : 0
+                        in_array($kind, ['stat', 'hit'], true) ? $modifier : 0,
+                        $eligibleD100
                     );
                 } catch (InvalidArgumentException $error) {
                     rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
                 }
                 $outcome = in_array($kind, ['stat', 'hit'], true)
-                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier)
+                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat')
                     : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
                 if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
                     $outcome['resultCustomized'] = $modifierMode === 'result';
@@ -6210,7 +6265,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $shortcut = $shortcuts[$shortcutIndex];
             $kind = (string) ($shortcut['kind'] ?? 'roll');
             $formula = (string) ($shortcut['formula'] ?? '1d100');
-            $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+            $rollMode = 'normal';
             if ($kind === 'initiative') {
                 $formula = preg_replace('/(?:\d*)d\d+/i', '1d100', str_replace(' ', '', $formula), 1) ?? '1d100';
                 if (!str_contains(strtolower($formula), 'd')) {

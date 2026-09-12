@@ -49,6 +49,45 @@ function applicationRoundCountLabel(int $count): string {
     return $count . ' round' . ($count === 1 ? '' : 's');
 }
 
+function applicationAbilityRequestSignature(string $route, string $sceneId, array $arguments, bool $hasCastingCheck): string {
+    $attack = $route === 'token.attack';
+    $simpleRoll = $route === 'token.roll';
+    $sourceId = trim((string) ($arguments['sourceTokenId'] ?? ''));
+    if ($sourceId === '') $sourceId = trim((string) ($arguments['tokenId'] ?? ''));
+    $abilityId = trim((string) ($arguments['abilityId'] ?? ''));
+    if ($abilityId === '') $abilityId = trim((string) ($arguments['attackId'] ?? ''));
+    $modifierValue = 0;
+    $modifierMode = 'threshold';
+    if ($hasCastingCheck) {
+        $modifierValue = normalizeOnlineD100Modifier($attack
+            ? ($arguments['hitModifier'] ?? 0)
+            : ($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0));
+        $modeValue = $attack
+            ? ($arguments['hitModifierMode'] ?? '')
+            : ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '');
+        $modifierMode = $modeValue === 'result' ? 'result' : 'threshold';
+    }
+    return json_encode([
+        $route,
+        $sceneId,
+        $sourceId,
+        (string) ($arguments['characterId'] ?? ''),
+        $abilityId,
+        (string) ($arguments['targetTokenId'] ?? ''),
+        ($arguments['returnForm'] ?? false) === true,
+        $hasCastingCheck ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal') : 'normal',
+        $modifierValue,
+        $modifierMode,
+        $simpleRoll && !$hasCastingCheck ? normalizeOnlineD100Modifier($arguments['modifier'] ?? 0) : 0,
+        $attack ? normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0) : 0,
+        $attack && ($arguments['opposed'] ?? false) === true,
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+}
+
+function applicationAbilityReceiptHasCastingCheck(array $receipt): bool {
+    return trim((string) ($receipt['result']['cast']['statId'] ?? '')) !== '';
+}
+
 // A round is a complete initiative cycle. Stopping combat freezes the existing
 // counter; beginning a new combat explicitly clears its timers in the MJ flow.
 function applicationAbilityCastingPlan(array $ability, array $source, string $sceneId, array $initiative, array $timers, ?string $legacyStatId = null): array {
@@ -88,19 +127,25 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     }
 }
 
-function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = []): array {
+function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null): array {
     if ($plan['statId'] === '') return ['success' => true, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null];
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
     $thresholdModifier = $modifierMode === 'threshold' ? $modifierValue : 0;
     $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-    $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier);
+    $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
     $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier);
     if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
     $roll = onlineRollEntry($identity, $rolled, $plan['label'] . ' · Lancement · ' . $plan['statLabel'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $roll = onlineAbilityRollVisibility($roll, $source, $identity);
-    if (!empty($source['id'])) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $plan['sceneId'], 'anchorTokenId' => $source['id'], 'tokenId' => $source['id'], 'value' => $outcome['result'] ?? $rolled['rawD100'] ?? $rolled['total'], 'label' => 'Lancement', 'tone' => $outcome['code'] ?? 'normal'];
+    if (!empty($source['id'])) $roll['mapEvent'] = [
+        'kind' => 'roll', 'sceneId' => $plan['sceneId'],
+        'layerId' => onlineTokenLayerId($source, ['activeLayerId' => $layerId]),
+        'anchorTokenId' => $source['id'], 'tokenId' => $source['id'],
+        'value' => $outcome['result'] ?? $rolled['rawD100'] ?? $rolled['total'],
+        'label' => 'Lancement', 'tone' => $outcome['code'] ?? 'normal'
+    ];
     return ['success' => ($outcome['success'] ?? false) === true, 'statId' => $plan['statId'], 'statLabel' => $plan['statLabel'], 'outcome' => $outcome, 'roll' => $roll];
 }
 
@@ -209,7 +254,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     return [...$cast, 'manaSpent' => $cost, 'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => $remaining];
 }
 
-function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, string $signature): ?array {
+function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, mixed $signature): ?array {
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Actualisez le client pour sécuriser le lancement de cette compétence.', 'invalid_ability_request');
     $now = (int) floor(microtime(true) * 1000); $count = 0;
     foreach ($activity['resourceReceipts'] ?? [] as $receipt) {
@@ -217,7 +262,8 @@ function onlineAbilityReceipt(PDO $connection, array $activity, string $requestI
         $count += 1;
         if (($receipt['requestId'] ?? '') !== $requestId) continue;
         if (($receipt['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
-        if (($receipt['requestSignature'] ?? '') !== $signature || ($receipt['kind'] ?? '') !== 'ability-cast' || !is_array($receipt['result'] ?? null)) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre lancement.', 'ability_request_mismatch');
+        $expectedSignature = is_callable($signature) ? $signature($receipt) : (string) $signature;
+        if (($receipt['requestSignature'] ?? '') !== $expectedSignature || ($receipt['kind'] ?? '') !== 'ability-cast' || !is_array($receipt['result'] ?? null)) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre lancement.', 'ability_request_mismatch');
         return [...$receipt['result'], 'deduplicated' => true];
     }
     if ($count >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
@@ -243,14 +289,18 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if (!$isGm && $sceneId !== onlineActiveSceneId($table)) rejectOnlineCommand($connection, 409, 'La scène a changé.', 'stale_scene');
     $records = applicationDomainRecords($connection);
     $activity = applicationDomainPayload($records, 'activity');
-    $signature = json_encode(['token.roll', $sceneId, $arguments['tokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['abilityId'] ?? '', $arguments['targetTokenId'] ?? '', ($arguments['returnForm'] ?? false) === true], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $receiptSignature = static fn(array $receipt): string => applicationAbilityRequestSignature(
+        'token.roll', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
+    );
     $requestId = (string) ($arguments['requestId'] ?? '');
-    if ($requestId !== '') { $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $signature); if ($receipt !== null) return $receipt; }
+    if ($requestId !== '') { $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature); if ($receipt !== null) return $receipt; }
     $tokenId = (string) ($arguments['tokenId'] ?? '');
+    $sourceLayerId = null;
     if ($tokenId !== '') {
         $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $tokenId));
         $map = applicationDomainPayload($records, 'map:' . $sceneId);
         if ($source === [] || !onlineTokenOnActiveLayer($source, $map) || (!empty($arguments['layerId']) && $arguments['layerId'] !== onlineTokenLayerId($source, $map))) rejectOnlineCommand($connection, 409, 'Ce pion a changé de niveau.', 'stale_token_layer');
+        $sourceLayerId = onlineTokenLayerId($source, $map);
         if (!$isGm && (($source['hidden'] ?? false) || onlineTokenControllerIdFromRecords($connection, $records, $source) !== $accountId)) rejectOnlineCommand($connection, 403, 'Ce pion ne vous appartient pas.', 'token_forbidden');
         $source['controllerPlayerId'] = onlineTokenControllerIdFromRecords($connection, $records, $source);
         $owner = applicationAbilityCastingOwner($source);
@@ -268,6 +318,8 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
     $extended = array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
+    $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
+    $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);
     if ($requestId === '') {
         if ($extended) onlineAbilityReceipt($connection, $activity, '', $accountId, $signature);
         $requestId = 'legacy-ability-' . randomToken(12);
@@ -275,7 +327,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     }
     if (applicationAbilitySourceDefeated($source)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     $plan = onlinePrepareAbilityCasting($connection, $ability, $source, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
-    $cast = onlineAbilityCastingRoll($plan, $source, $identity, $arguments);
+    $cast = onlineAbilityCastingRoll($plan, $source, $identity, $arguments, $sourceLayerId);
     $effectRoll = null;
     if ($cast['success']) {
         $parts = applicationDamageComponents($ability['damageComponents'] ?? []);
@@ -283,7 +335,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
         $modifier = $plan['statId'] !== '' ? 0 : normalizeOnlineD100Modifier($arguments['modifier'] ?? 0);
         $formula .= $modifier !== 0 ? ($modifier > 0 ? '+' : '') . $modifier : '';
         if (!validOnlineRollFormula($formula) || strlen($formula) > 100) rejectOnlineCommand($connection, 400, 'Formule de compétence invalide.', 'invalid_roll');
-        $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'));
+        $rolled = onlineRollFormulaWithMode($formula, 'normal');
         $effectRoll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity);
         onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
     }

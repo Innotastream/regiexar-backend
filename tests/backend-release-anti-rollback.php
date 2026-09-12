@@ -25,15 +25,15 @@ function checkReleasePolicy(bool $condition, string $message): void
     $GLOBALS['releaseChecks'] = ($GLOBALS['releaseChecks'] ?? 0) + 1;
 }
 
-checkReleasePolicy(backendReleaseVersionStatus(null, '0.15.18') === 'initialize', 'Une table absente peut être initialisée.');
-checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.18'], '0.15.18') === 'current', 'La génération courante reste stable.');
-checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.17'], '0.15.18') === 'upgrade', 'Une version strictement supérieure peut avancer.');
-checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.18'], '0.15.17') === 'stale', 'Une ancienne instance ne peut pas rabaisser 0.15.18.');
+checkReleasePolicy(backendReleaseVersionStatus(null, '0.15.19') === 'initialize', 'Une table absente peut être initialisée.');
+checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.19'], '0.15.19') === 'current', 'La génération courante reste stable.');
+checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.18'], '0.15.19') === 'upgrade', 'Une version strictement supérieure peut avancer.');
+checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.19'], '0.15.18') === 'stale', 'Une ancienne instance ne peut pas rabaisser 0.15.19.');
 checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.10'], '0.15.9') === 'stale', 'La comparaison est sémantique et non lexicale.');
 checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '1.0.0'], '0.99.99') === 'stale', 'Le verrou couvre aussi les changements majeurs.');
 checkReleasePolicy(backendReleaseVersionStatus(null, 'version-invalide') === 'invalid', 'Même une première instance invalide échoue fermée.');
-checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.18-dev'], '0.15.19') === 'invalid', 'Une autorité non canonique échoue fermée.');
-checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.18'], '00.15.19') === 'invalid', 'Une instance non canonique échoue fermée.');
+checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.19-dev'], '0.15.20') === 'invalid', 'Une autorité non canonique échoue fermée.');
+checkReleasePolicy(backendReleaseVersionStatus(['backend_version' => '0.15.19'], '00.15.20') === 'invalid', 'Une instance non canonique échoue fermée.');
 
 $currentParts = array_map('intval', explode('.', XAR_BACKEND_VERSION));
 $higherVersion = $currentParts[0] . '.' . $currentParts[1] . '.' . ($currentParts[2] + 1);

@@ -16,7 +16,7 @@ test("le backend distingue modification de seuil et personnalisation du résulta
   assert.match(online, /\$success = \$comparedResult <= \$effectiveThreshold/);
   assert.match(online, /\$modifierMode = \(\$arguments\['modifierMode'\] \?\? ''\) === 'result'/);
   assert.match(online, /\$formula = '1d100' \. \(\$resultModifier !== 0/);
-  assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\] \?\? null, \$threshold, \$modifier, \$resultModifier\)/);
+  assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\] \?\? null, \$threshold, \$modifier, \$resultModifier, \$kind === 'stat'\)/);
   assert.match(online, /classifyOnlineD100Outcome\([^\n]+, null, 0, 0, false\)/);
   assert.match(domains, /'resultModifier'/);
   assert.match(domains, /\$outcome\['result'\]/);

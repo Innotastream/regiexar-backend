@@ -31,14 +31,16 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $requestId = (string) ($arguments['requestId'] ?? '');
     $records = applicationDomainRecords($connection);
     $activity = applicationDomainPayload($records, 'activity');
-    $signature = json_encode(['ability.use', $sceneId, $arguments['sourceTokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['abilityId'] ?? '', $arguments['targetTokenId'] ?? '', ($arguments['returnForm'] ?? false) === true], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $receiptSignature = static fn(array $receipt): string => applicationAbilityRequestSignature(
+        'ability.use', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
+    );
     // Preserve a healing receipt created by the preceding 3.2.3 candidate.
     foreach ($activity['resourceReceipts'] ?? [] as $old) if (($old['requestId'] ?? '') === $requestId && ($old['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000) && ($old['operation']['kind'] ?? '') === 'resource-adjust') {
         if (($old['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
         if (($old['operation']['sceneId'] ?? '') !== $sceneId || ($old['operation']['tokenId'] ?? '') !== ($arguments['targetTokenId'] ?? '')) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre soin.', 'ability_request_mismatch');
         return ['effect' => 'healing', 'appliedDelta' => $old['operation']['appliedDelta'] ?? 0, 'deduplicated' => true];
     }
-    $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $signature);
+    $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature);
     if ($receipt !== null) return $receipt;
     $map = applicationDomainPayload($records, 'map:' . $sceneId);
     $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? ''));
@@ -68,7 +70,8 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     }
     if (!$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     $plan = $returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
-    $cast = $returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments);
+    $cast = $returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map));
+    $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
     $effectRoll = null;
     $result = ['effect' => $metamorphosis ? 'metamorphosis' : 'healing', 'appliedDelta' => 0];
     if ($cast['success'] && $metamorphosis) {

@@ -107,7 +107,7 @@ function applicationTacticalRollSignature(string $sceneId, array $arguments): st
         $arguments['threshold'] ?? null,
         normalizeOnlineD100Modifier($arguments['modifier'] ?? 0),
         ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
-        $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind),
         is_string($arguments['visibility'] ?? null) ? $arguments['visibility'] : 'public',
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -119,7 +119,7 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
     if (array_key_exists('visibility', $arguments) && !in_array($arguments['visibility'], ['public', 'gm', 'queued'], true)) throw new RuntimeException('invalid_tactical_roll_visibility');
     $label = trim((string) ($arguments['label'] ?? ''));
     $formula = '1d100'; $threshold = null; $modifier = 0; $resultModifier = 0;
-    $mode = $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+    $mode = onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind);
     if ($kind === 'stat') {
         $stat = applicationAbilityCastingStat($source['stats'] ?? [], (string) ($arguments['statId'] ?? ''));
         if (!is_array($stat) || !is_numeric($stat['value'] ?? null)) throw new RuntimeException('token_stat_missing');
@@ -164,7 +164,8 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
     }
     if (strlen($formula) > 100 || !validOnlineRollFormula($formula)) throw new RuntimeException('invalid_tactical_roll_formula');
     return ['kind' => $kind, 'label' => onlineUtf8ByteSlice($label, 120), 'formula' => $formula, 'threshold' => $threshold, 'modifier' => $modifier,
-        'resultModifier' => $resultModifier, 'modifierMode' => ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold', 'rollMode' => $mode, 'visibility' => $arguments['visibility'] ?? 'public'];
+        'resultModifier' => $resultModifier, 'modifierMode' => ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
+        'rollMode' => $mode, 'd100RollUnder' => in_array($kind, ['stat', 'luck', 'custom-stat'], true), 'visibility' => $arguments['visibility'] ?? 'public'];
 }
 
 function applicationTacticalRollVisibility(array $roll, array $source, string $kind, string $requestedVisibility = 'public'): array {
@@ -231,9 +232,9 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     }
     try { $spec = applicationTacticalRollSpecification($source, $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
-    $rolled = onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier']);
+    $rolled = onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $spec['threshold'] !== null
-        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'])
+        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit')
         : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);

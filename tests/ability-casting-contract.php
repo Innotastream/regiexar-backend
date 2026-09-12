@@ -23,6 +23,73 @@ requireCasting(
     'Le vocabulaire utilisateur des recharges doit refléter initiative.round sans parler de tours.'
 );
 
+$signatureBase = [
+    'sourceTokenId' => 'token-one', 'characterId' => 'character-one', 'abilityId' => 'ability-one',
+    'targetTokenId' => 'token-two',
+];
+$plainAbilitySignature = applicationAbilityRequestSignature('ability.use', 'scene-one', $signatureBase, false);
+requireCasting(
+    $plainAbilitySignature === applicationAbilityRequestSignature('ability.use', 'scene-one', [
+        ...$signatureBase, 'rollMode' => 'disadvantage', 'modifier' => 37, 'modifierMode' => 'result',
+        'hitModifier' => -12, 'hitModifierMode' => 'result',
+    ], false),
+    'Ignored d100 options must not alter an unchecked ability receipt'
+);
+$checkedAbilitySignature = applicationAbilityRequestSignature('ability.use', 'scene-one', [
+    ...$signatureBase, 'rollMode' => 'advantage', 'modifier' => 12, 'modifierMode' => 'threshold',
+], true);
+requireCasting(
+    $checkedAbilitySignature !== applicationAbilityRequestSignature('ability.use', 'scene-one', [
+        ...$signatureBase, 'rollMode' => 'disadvantage', 'modifier' => 12, 'modifierMode' => 'threshold',
+    ], true)
+    && $checkedAbilitySignature !== applicationAbilityRequestSignature('ability.use', 'scene-one', [
+        ...$signatureBase, 'rollMode' => 'advantage', 'modifier' => 13, 'modifierMode' => 'threshold',
+    ], true)
+    && $checkedAbilitySignature !== applicationAbilityRequestSignature('ability.use', 'scene-one', [
+        ...$signatureBase, 'rollMode' => 'advantage', 'modifier' => 12, 'modifierMode' => 'result',
+    ], true),
+    'A checked ability receipt must bind its effective d100 mode, modifier and modifier mode'
+);
+$uncheckedEffectSignature = applicationAbilityRequestSignature('token.roll', 'scene-one', [
+    ...$signatureBase, 'modifier' => 5, 'rollMode' => 'advantage',
+], false);
+requireCasting(
+    $uncheckedEffectSignature === applicationAbilityRequestSignature('token.roll', 'scene-one', [
+        ...$signatureBase, 'modifier' => 5, 'rollMode' => 'disadvantage',
+    ], false)
+    && $uncheckedEffectSignature !== applicationAbilityRequestSignature('token.roll', 'scene-one', [
+        ...$signatureBase, 'modifier' => 6, 'rollMode' => 'advantage',
+    ], false),
+    'An unchecked simple ability ignores roll mode but binds its effective formula modifier'
+);
+$uncheckedAttack = [
+    ...$signatureBase, 'attackKind' => 'ability', 'attackId' => 'ability-one',
+    'rollMode' => 'advantage', 'hitModifier' => 20, 'hitModifierMode' => 'result',
+    'damageModifier' => 4, 'opposed' => true,
+];
+$uncheckedAttackSignature = applicationAbilityRequestSignature('token.attack', 'scene-one', $uncheckedAttack, false);
+requireCasting(
+    $uncheckedAttackSignature === applicationAbilityRequestSignature('token.attack', 'scene-one', [
+        ...$uncheckedAttack, 'rollMode' => 'disadvantage', 'hitModifier' => -50, 'hitModifierMode' => 'threshold',
+    ], false)
+    && $uncheckedAttackSignature !== applicationAbilityRequestSignature('token.attack', 'scene-one', [
+        ...$uncheckedAttack, 'damageModifier' => 5,
+    ], false)
+    && $uncheckedAttackSignature !== applicationAbilityRequestSignature('token.attack', 'scene-one', [
+        ...$uncheckedAttack, 'opposed' => false,
+    ], false),
+    'An unchecked ability attack ignores d100 options but binds damage and opposition'
+);
+requireCasting(
+    onlineAttackRequestSignature('scene-one', $uncheckedAttack, false) === onlineAttackRequestSignature('scene-one', [
+        ...$uncheckedAttack, 'rollMode' => 'disadvantage', 'hitModifier' => -50, 'hitModifierMode' => 'threshold',
+    ], false)
+    && onlineAttackRequestSignature('scene-one', $uncheckedAttack, true) !== onlineAttackRequestSignature('scene-one', [
+        ...$uncheckedAttack, 'rollMode' => 'disadvantage',
+    ], true),
+    'The attack receipt must apply the same checked-versus-ignored d100 distinction'
+);
+
 $ability = ['id' => 'ability-mixed', 'name' => 'Flamme tranchante', 'formula' => '10+20+7', 'damageType' => 'physical', 'description' => '', 'effect' => 'damage',
     'damageComponents' => [['type' => 'physical', 'formula' => '10'], ['type' => 'magical', 'formula' => '20'], ['type' => 'ignore', 'formula' => '7']],
     'manaCost' => 8, 'cooldownRounds' => 3, 'castingStatId' => 'intelligence', 'image' => '/media/ability-test.png'];
@@ -187,20 +254,20 @@ $remarkableAttack = [
     'damageComponents' => [['type' => 'physical', 'formula' => '1d6']],
     'damageModifier' => 7, 'validationKind' => 'outcome', 'provisionalStatus' => 'applied',
     'hit' => [
-        'raw' => 42, 'outcome' => ['success' => true], 'label' => 'Onde · Force', 'characterName' => 'Inho',
-        'formula' => '1d100+3', 'total' => 45, 'rollMode' => 'advantage', 'selectedIndex' => 1,
-        'attempts' => [['total' => 11], ['total' => 45]],
+        'raw' => 8, 'outcome' => ['success' => true], 'label' => 'Onde · Force', 'characterName' => 'Inho',
+        'formula' => '1d100+3', 'total' => 11, 'rollMode' => 'advantage', 'selectedIndex' => 0,
+        'attempts' => [['rawD100' => 8, 'total' => 11], ['rawD100' => 42, 'total' => 45]],
     ],
     'opposition' => [
-        'raw' => 60, 'outcome' => ['success' => false], 'label' => 'Opposition · Agilité', 'characterName' => 'Garde',
-        'formula' => '1d100', 'total' => 60, 'rollMode' => 'disadvantage', 'selectedIndex' => 0,
-        'attempts' => [['total' => 60], ['total' => 80]],
+        'raw' => 80, 'outcome' => ['success' => false], 'label' => 'Opposition · Agilité', 'characterName' => 'Garde',
+        'formula' => '1d100', 'total' => 80, 'rollMode' => 'disadvantage', 'selectedIndex' => 1,
+        'attempts' => [['rawD100' => 60, 'total' => 60], ['rawD100' => 80, 'total' => 80]],
     ],
 ];
 $oldClientAttack = [
     'id' => $remarkableAttack['id'],
-    'hit' => ['raw' => 42, 'outcome' => ['success' => true]],
-    'opposition' => ['raw' => 60, 'outcome' => ['success' => false]],
+    'hit' => ['raw' => 8, 'outcome' => ['success' => true]],
+    'opposition' => ['raw' => 80, 'outcome' => ['success' => false]],
 ];
 $preservedAttack = preserveApplicationAbilityExtensions('activity', ['pendingAttacks' => [$oldClientAttack]], ['pendingAttacks' => [$remarkableAttack]])['pendingAttacks'][0];
 foreach (['damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) requireCasting($preservedAttack[$field] === $remarkableAttack[$field], 'Old clients must preserve pending attack field ' . $field);
@@ -230,12 +297,12 @@ $crossedDamage = onlineRollAttackDamage(
     }
 );
 requireCasting(
-    ($crossedDamage['rolled']['rollMode'] ?? '') === 'advantage'
+    ($crossedDamage['rolled']['rollMode'] ?? '') === 'normal'
         && ($crossedDamage['rolled']['selectedIndex'] ?? -1) === 0
-        && array_column($crossedDamage['rolled']['attempts'] ?? [], 'total') === [7, 6]
+        && array_column($crossedDamage['rolled']['attempts'] ?? [], 'total') === [7]
         && array_column($crossedDamage['damage']['components'] ?? [], 'rawDamage') === [6, 1]
         && ($crossedDamage['damage']['rawDamage'] ?? 0) === 7,
-    'Mixed advantage rolls the complete formula twice and selects one global attempt instead of combining each component best into 11'
+    'Mixed damage ignores a forged advantage and rolls every component exactly once'
 );
 $crossedValues = [6, 1, 1, 5];
 $crossedIndex = 0;
@@ -248,10 +315,12 @@ $crossedDisadvantage = onlineRollAttackDamage(
     }
 );
 requireCasting(
-    ($crossedDisadvantage['rolled']['selectedIndex'] ?? -1) === 1
-        && array_column($crossedDisadvantage['damage']['components'] ?? [], 'rawDamage') === [1, 5]
-        && ($crossedDisadvantage['damage']['rawDamage'] ?? 0) === 6,
-    'Mixed disadvantage selects the lower complete attempt before applying armor to its retained components'
+    ($crossedDisadvantage['rolled']['rollMode'] ?? '') === 'normal'
+        && ($crossedDisadvantage['rolled']['selectedIndex'] ?? -1) === 0
+        && array_column($crossedDisadvantage['rolled']['attempts'] ?? [], 'total') === [7]
+        && array_column($crossedDisadvantage['damage']['components'] ?? [], 'rawDamage') === [6, 1]
+        && ($crossedDisadvantage['damage']['rawDamage'] ?? 0) === 7,
+    'Mixed damage ignores a forged disadvantage before applying armor'
 );
 
 $calculatedAttack = [

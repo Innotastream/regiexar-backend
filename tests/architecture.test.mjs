@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.18 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
+test("le backend 0.15.19 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.18'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-18-roll-vision-stream-candidate-20260912-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.19'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-19-roll-eligibility-vision-folders-candidate-20260912-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -108,8 +108,8 @@ test("le backend 0.15.18 conserve la file Codex, porte le schéma de session 16 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.18");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.18");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.19");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.19");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -147,7 +147,7 @@ test("les calques PV sont publics en lecture seule, stables et gérés uniquemen
   assert.match(online, /'size' => \(float\) \(\$token\['size'\] \?\? 40\)/);
 });
 
-test("les jets sans token restent propriétaires et Chance force un seul d100 brut", async () => {
+test("les jets sans token restent propriétaires et seuls statistique et Chance utilisent les modes", async () => {
   const online = await read("api/v1/online.php");
   const command = online.slice(online.indexOf("} elseif ($command === 'token.roll')"), online.indexOf("} elseif ($command === 'roll')"));
   assert.match(command, /\$characterId = trim/);
@@ -155,7 +155,8 @@ test("les jets sans token restent propriétaires et Chance force un seul d100 br
   assert.match(command, /\(\$character\['ownerPlayerId'\] \?\? null\) !== \$accountId/);
   assert.match(command, /synchronizeOnlineCharacterToken\(\[\], \$character\)/);
   assert.match(command, /\['luck', 'stat', 'hit', 'initiative', 'damage', 'ability', 'custom'\]/);
-  assert.match(command, /\$kind === 'luck' \? 'normal' : normalizeOnlineRollMode/);
+  assert.match(command, /\$rollMode = onlineRollModeForKind\(\$arguments\['rollMode'\] \?\? 'normal', \$kind\)/);
+  assert.match(command, /\$eligibleD100 = in_array\(\$kind, \['stat', 'luck'\], true\)/);
   assert.match(command, /\$kind === 'luck'[\s\S]*?\$label = 'Chance'[\s\S]*?\$formula = '1d100'/);
   assert.match(command, /\$tokenKey !== '' && \$kind === 'initiative'/);
 });
@@ -311,8 +312,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.18");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.18"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.19");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.19"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -325,7 +326,10 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.17 \/ 3\.2\.18 \/ 3\.2\.19 = 426 \/ 401 \/ 426/);
+  assert.match(readme, /3\.2\.18 \/ 3\.2\.19 \/ 3\.2\.20 = 426 \/ 401 \/ 426/);
+  assert.match(readme, /0\.15\.14 appliquait encore un comportement historique erroné/);
+  assert.match(readme, /Depuis la 0\.15\.19,[\s\S]*?l’avantage conserve le plus petit d100 brut et le désavantage le plus grand/);
+  assert.doesNotMatch(readme, /Le candidat 0\.15\.14 exécute toujours deux fois/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 
@@ -932,6 +936,10 @@ test("la projection joueur borne les événements éphémères à la scène visi
   const online = await read("api/v1/online.php");
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /\$visibleSceneId/);
+  assert.match(projection, /\$visibleLayerId\s*=\s*onlineTokenLayerId\(\[\], is_array\(\$map\) \? \$map : \[\]\)/);
+  assert.match(projection, /onlineMapRollVisible\(\$roll, \$visibleSceneId, \$visibleLayerId, \$visibleAttackTokenIds\)/);
+  assert.match(projection, /onlinePersistedLayerId\(\$mapAttack\)\s*!==\s*\$visibleLayerId/);
+  assert.match(projection, /onlinePersistedLayerId\(\$attack\)\s*!==\s*\$visibleLayerId/);
   const timers = projection.slice(projection.indexOf("$visibleActionTimers"), projection.indexOf("$visibleMapPings"));
   const pings = projection.slice(projection.indexOf("$visibleMapPings"), projection.indexOf("return ["));
   assert.match(timers, /\$timer\['sceneId'\][\s\S]*?\$visibleSceneId/);
@@ -940,6 +948,22 @@ test("la projection joueur borne les événements éphémères à la scène visi
   assert.match(pings, /\$ping\['expiresAt'\]/);
   assert.match(projection, /'actionTimers'\s*=>\s*\$visibleActionTimers/);
   assert.match(projection, /'mapPings'\s*=>\s*\$visibleMapPings/);
+});
+
+test("les jets et attaques de carte conservent leur niveau de création", async () => {
+  const [online, casting, domains] = await Promise.all([
+    read("api/v1/online.php"),
+    read("api/v1/ability-casting.php"),
+    read("api/v1/domains.php")
+  ]);
+  const visibility = online.slice(online.indexOf("function onlinePersistedLayerId"), online.indexOf("function requireIdentity"));
+  assert.match(visibility, /array_key_exists\('layerId', \$value\)[\s\S]*?return 'ground'/);
+  assert.match(visibility, /\$eventLayerId !== \$activeLayerId/);
+  assert.match(online, /\$attackLayerId\s*=\s*onlineTokenLayerId\(\$source, \$map\)/);
+  assert.match(online, /'sceneId' => \$sceneId, 'layerId' => \$attackLayerId, 'attackId' => \$newAttackId/);
+  assert.match(online, /'layerId' => onlineTokenLayerId\(\['layerId' => \$attack\['layerId'\] \?\? 'ground'\]\)/);
+  assert.match(casting, /'layerId' => onlineTokenLayerId\(\$source, \['activeLayerId' => \$layerId\]\)/);
+  assert.match(domains, /array_key_exists\('layerId', \$event\)[\s\S]*?\['basement', 'ground', 'upper'\]/);
 });
 
 test("la réutilisation d’un minuteur reste liée au combat et à sa scène", async () => {
