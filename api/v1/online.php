@@ -5481,7 +5481,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         'total' => $damageRoll['total'],
                         'rollMode' => $damageRoll['rollMode'],
                         'selectedIndex' => $damageRoll['selectedIndex'],
-                        'attempts' => $damageRoll['attempts'] ?? [],
+                        // Le reçu d’attaque conserve la tentative interne unique
+                        // même si le jet public normal n’expose pas un faux mode.
+                        'attempts' => $damageRolled['attempts'] ?? [],
                     ],
                     ...($damageRoll !== null ? ['damageRoll' => $damageRoll] : []),
                     'finalDamage' => (int) $damageSummary['finalDamage'],
@@ -5803,7 +5805,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             'total' => $damageRoll['total'],
                             'rollMode' => $damageRoll['rollMode'],
                             'selectedIndex' => $damageRoll['selectedIndex'],
-                            'attempts' => $damageRoll['attempts'] ?? [],
+                            'attempts' => $damageRolled['attempts'] ?? [],
                         ];
                         $attack['finalDamage'] = (int) $damageSummary['finalDamage'];
                         $initiative = applicationDomainPayload($records, $initiativeKey);

@@ -1145,7 +1145,7 @@ requireTactical(
 );
 $mixedHistory = onlineAttackHistoryDetail($mixedAttack);
 requireTactical(
-    str_contains($mixedHistory, 'Jet DMG 3')
+    str_contains($mixedHistory, 'Jet DMG · 1+2 : 3')
         && substr_count($mixedHistory, '1+2') === 1
         && !str_contains($mixedHistory, 'Jet DMG (Avantage)'),
     'The GM attack journal exposes the single normal damage attempt'
