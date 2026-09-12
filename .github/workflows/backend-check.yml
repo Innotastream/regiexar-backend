@@ -31,12 +31,16 @@ jobs:
         run: php tests/domain-backward-compatibility.php
       - name: Exact current-version login policy
         run: php tests/client-policy.php
+      - name: Monotonic backend release authority
+        run: php tests/backend-release-anti-rollback.php
       - name: Tactical lifecycle and concurrent conditions
         run: php tests/tactical-lifecycle.php
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
+      - name: Image Studio conversation idempotence
+        run: php tests/image-studio-idempotence-contract.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

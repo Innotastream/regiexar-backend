@@ -100,7 +100,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     }
     if ($plan !== null) {
         $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity);
-        onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . $cast['remainingRounds'] . ' tours' : ' · aucune recharge')]);
+        onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . applicationRoundCountLabel((int) $cast['remainingRounds']) : ' · aucune recharge')]);
     }
     $bundle = onlineAbilityRollBundle($cast, $effectRoll);
     $stored = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$result, ...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success']]);

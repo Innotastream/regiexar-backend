@@ -28,6 +28,7 @@ const XAR_PENDING_ATTACK_MAXIMUM = 100;
 const XAR_ATTACK_RECEIPT_MAXIMUM = 1024;
 const XAR_RESOURCE_RECEIPT_MAXIMUM = 1024;
 const XAR_PLAYER_ACTION_MAXIMUM = 300;
+const XAR_PLAYER_ACTION_DETAIL_MAXIMUM_BYTES = 2000;
 const XAR_LUCK_CHARACTER_MAXIMUM = 1000;
 const XAR_LUCK_ROLL_MAXIMUM = 1000000000;
 
@@ -52,6 +53,18 @@ function validApplicationDomainPrefix(string $prefix): bool
         'character:',
         'token:',
     ], true);
+}
+
+function validApplicationDomainOperation(mixed $operation): bool
+{
+    return is_string($operation) && in_array($operation, ['upsert', 'delete'], true);
+}
+
+function applicationDomainReadRequiresReset(int $since, int $globalRevision, int $minimumRetainedRevision = 0): bool
+{
+    return $since === 0
+        || $since > $globalRevision
+        || ($minimumRetainedRevision > 0 && $since < $minimumRetainedRevision - 1);
 }
 
 function applicationDomainArrayIsList(array $value): bool
@@ -2581,12 +2594,12 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     if ($prefix !== '' && (!validApplicationDomainPrefix($prefix) || $since !== 0)) {
         sendError(400, 'Sélection de domaines invalide.', 'invalid_domain_selection');
     }
-    $reset = $since === 0;
+    $reset = applicationDomainReadRequiresReset($since, $clock['globalRevision']);
     $wanted = [];
     $deleted = [];
     if (!$reset && $since < $clock['globalRevision']) {
         $minimum = (int) ($connection->query('SELECT COALESCE(MIN(global_revision), 0) FROM application_domain_changes')->fetchColumn() ?: 0);
-        if ($minimum > 0 && $since < $minimum - 1) {
+        if (applicationDomainReadRequiresReset($since, $clock['globalRevision'], $minimum)) {
             $reset = true;
         } else {
             $changes = $connection->prepare(
@@ -2661,9 +2674,13 @@ function patchApplicationDomains(PDO $connection): never
         if ($key === 'luck') {
             sendError(403, 'Le calculateur de chance est alimenté uniquement par les jets autoritatifs.', 'readonly_luck_domain');
         }
+        $operation = $change['operation'] ?? 'upsert';
+        if (!validApplicationDomainOperation($operation)) {
+            sendError(400, 'Opération de domaine invalide.', 'invalid_domain_operation');
+        }
         $seen[$key] = true;
         $keys[] = $key;
-        if (($change['operation'] ?? 'upsert') === 'delete' && str_starts_with($key, 'character:')) {
+        if ($operation === 'delete' && str_starts_with($key, 'character:')) {
             $deletedCharacterIds[] = substr($key, strlen('character:'));
         }
     }
@@ -2675,7 +2692,7 @@ function patchApplicationDomains(PDO $connection): never
         $conflicts = [];
         foreach ($changes as $change) {
             $key = trim((string) ($change['key'] ?? ''));
-            $operation = ($change['operation'] ?? 'upsert') === 'delete' ? 'delete' : 'upsert';
+            $operation = (string) ($change['operation'] ?? 'upsert');
             $current = $records[$key] ?? null;
             $prepared = $operation === 'upsert'
                 ? prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current, true)

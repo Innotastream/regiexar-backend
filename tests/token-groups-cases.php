@@ -62,9 +62,19 @@ $targetDb->put('map:scene-one', ['activeLayerId' => 'ground', 'viewLocked' => tr
 $targetSource = $targetDb->payload('token:scene-one:token-player');
 $targetSource['targetTokenId'] = 'token-monster';
 $targetDb->put('token:scene-one:token-player', $targetSource);
-$targetClone = runCommand($targetDb, 'token.clone', ['sceneId' => 'scene-one', 'tokenId' => 'token-player'], true);
+$targetClone = runCommand($targetDb, 'token.clone', ['requestId' => 'target-clone-request-0001', 'sceneId' => 'scene-one', 'tokenId' => 'token-player'], true);
 requireTactical($targetClone->status === 200 && ($targetClone->body['token']['targetTokenId'] ?? null) === null,
     'A clone never inherits the source directional target.');
+$legacyClone = runCommand($targetDb, 'token.clone', ['sceneId' => 'scene-one', 'tokenId' => 'token-monster'], true);
+requireTactical(
+    $legacyClone->status === 200
+        && !array_key_exists('deduplicated', $legacyClone->body)
+        && count(array_filter(
+            $targetDb->payload('activity')['resourceReceipts'] ?? [],
+            static fn (mixed $entry): bool => is_array($entry) && ($entry['kind'] ?? '') === 'token-clone'
+        )) === 1,
+    'A legacy token.clone request without a request id remains accepted without forging a durable receipt.'
+);
 
 $db = fixture();
 requireTactical(runCommand($db,'tokens.transform',groupArguments($db))->status === 403, 'Players cannot transform groups.');
@@ -102,12 +112,32 @@ requireTactical($response->status === 200, 'Legacy map changes are accepted.');
 requireTactical($db->payload('token:scene-one:token-player')['layerId'] === 'ground' && $db->payload('token:scene-one:token-monster')['layerId'] === 'ground', 'Legacy tokens remain on their previous floor.');
 $map['activeLayerId'] = 'ground'; $db->put('map:scene-one',$map);
 requireTactical(runCommand($db,'token.clone',['sceneId'=>'scene-one','tokenId'=>'token-player'])->status === 403, 'Players cannot create clones.');
-$response = runCommand($db,'token.clone',['sceneId'=>'scene-one','tokenId'=>'token-player'],true);
+$clonePayload = ['requestId'=>'token-clone-request-0001','sceneId'=>'scene-one','tokenId'=>'token-player'];
+$response = runCommand($db,'token.clone',$clonePayload,true);
 requireTactical($response->status === 200, 'The MJ explicitly creates a clone.');
 $clone = $response->body['token']; $cloneKey = 'token:scene-one:' . $clone['id'];
 requireTactical($clone['characterId'] === null && $clone['followCharacter'] === false && $clone['cloneSourceCharacterId'] === 'character-player', 'The clone has a distinct identity with provenance only.');
 requireTactical($clone['hp'] == 10 && $clone['name'] === 'Personnage' && $clone['controllerPlayerId'] === 'account-player', 'The clone uses the current sheet at invocation, not stale token HP.');
 requireTactical($clone['x'] !== $db->payload('token:scene-one:token-player')['x'], 'A clone is placed beside its source.');
+$cloneRevision = $db->revision;
+$cloneActions = count($db->payload('activity')['playerActions'] ?? []);
+$cloneRetry = runCommand($db, 'token.clone', $clonePayload, true);
+requireTactical(
+    $cloneRetry->status === 200
+        && ($cloneRetry->body['deduplicated'] ?? false) === true
+        && ($cloneRetry->body['token']['id'] ?? '') === $clone['id']
+        && $db->revision === $cloneRevision
+        && count($db->payload('token-index:scene-one')['order'] ?? []) === 4
+        && count($db->payload('activity')['playerActions'] ?? []) === $cloneActions,
+    'A lost token.clone response can be replayed without a second clone or journal entry.'
+);
+$cloneMismatch = runCommand($db, 'token.clone', [...$clonePayload, 'tokenId' => 'token-monster'], true);
+requireTactical(
+    $cloneMismatch->status === 409
+        && ($cloneMismatch->body['code'] ?? '') === 'token_clone_request_mismatch'
+        && $db->revision === $cloneRevision,
+    'A token.clone request id cannot be reused for another source.'
+);
 $character = $db->payload('character:character-player');
 $character['resources']['hp'] = -20; $character['name'] = 'Nouveau nom'; $character['conditions'] = ['Empoisonné'];
 $response = patchGroupDomains($db,['character:character-player'=>$character]);

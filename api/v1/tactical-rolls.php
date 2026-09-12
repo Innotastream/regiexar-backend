@@ -90,7 +90,26 @@ function applicationPublicResultRolls(array $result): array {
 }
 
 function applicationTacticalRollSignature(string $sceneId, array $arguments): string {
-    return json_encode(['token.roll', $sceneId, $arguments['tokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['kind'] ?? '', $arguments['statId'] ?? '', $arguments['weaponId'] ?? ''], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $kind = is_string($arguments['kind'] ?? null) ? $arguments['kind'] : '';
+    $formula = is_string($arguments['formula'] ?? null)
+        ? strtolower(preg_replace('/\s+/', '', $arguments['formula']) ?? '')
+        : '';
+    return json_encode([
+        'token.roll',
+        trim($sceneId),
+        trim((string) ($arguments['tokenId'] ?? '')),
+        trim((string) ($arguments['characterId'] ?? '')),
+        $kind,
+        trim((string) ($arguments['statId'] ?? '')),
+        trim((string) ($arguments['weaponId'] ?? '')),
+        is_string($arguments['label'] ?? null) ? trim($arguments['label']) : '',
+        $formula,
+        $arguments['threshold'] ?? null,
+        normalizeOnlineD100Modifier($arguments['modifier'] ?? 0),
+        ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
+        $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        is_string($arguments['visibility'] ?? null) ? $arguments['visibility'] : 'public',
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
 function applicationTacticalRollSpecification(array $source, array $arguments): array {

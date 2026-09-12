@@ -14,6 +14,28 @@ function requireDomainCompatibility(bool $condition, string $message): void
     exit(1);
 }
 
+requireDomainCompatibility(
+    validApplicationDomainOperation('upsert')
+        && validApplicationDomainOperation('delete')
+        && !validApplicationDomainOperation('remove')
+        && !validApplicationDomainOperation(null),
+    'Une opération de domaine inconnue doit être rejetée au lieu de devenir silencieusement un upsert.'
+);
+requireDomainCompatibility(
+    applicationDomainReadRequiresReset(0, 12)
+        && !applicationDomainReadRequiresReset(12, 12)
+        && !applicationDomainReadRequiresReset(11, 12, 10)
+        && applicationDomainReadRequiresReset(8, 12, 10)
+        && applicationDomainReadRequiresReset(13, 12),
+    'Une révision cliente future ou sortie de la rétention doit forcer une reconstruction complète.'
+);
+requireDomainCompatibility(
+    onlineStateRevisionIsCurrent(12, 12)
+        && !onlineStateRevisionIsCurrent(11, 12)
+        && !onlineStateRevisionIsCurrent(13, 12),
+    'La lecture d’état ne doit annoncer unchanged que pour une révision exactement courante.'
+);
+
 $luckTimestamp = '2026-09-10T12:00:00+00:00';
 $validLuck = ['characters' => [
     'character-owned' => ['rollCount'=>2,'rawTotal'=>83,'startedAt'=>$luckTimestamp,'updatedAt'=>$luckTimestamp],
@@ -871,22 +893,22 @@ $duplicateRoster = [
     ['id' => 'player-other', 'name' => 'Autre'],
 ];
 requireDomainCompatibility(
-    rosterMigrationCandidateIndex($duplicateRoster, 'usr_hira_12345678', $hiraIdentity, true) === 1,
-    'Un compte déjà présent doit retrouver son ancien identifiant player-<identifiant> exact.'
+    rosterMigrationCandidateIndex($duplicateRoster, 'usr_hira_12345678', $hiraIdentity) === -1,
+    'Même un identifiant player-<nom> plausible ne suffit pas sans déclaration historique exacte.'
 );
 requireDomainCompatibility(
     rosterMigrationCandidateIndex([
         ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
         ['id' => 'player-other', 'name' => 'Hira'],
-    ], 'usr_hira_12345678', $hiraIdentity, true) === 1,
-    'Une unique ancienne entrée de même identité doit être retrouvée même si le compte est déjà présent.'
+    ], 'usr_hira_12345678', $hiraIdentity) === -1,
+    'Un nom de roster seul ne constitue jamais une preuve de propriété.'
 );
 requireDomainCompatibility(
     rosterMigrationCandidateIndex([
         ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
         ['id' => 'player-other-a', 'name' => 'Hira'],
         ['id' => 'player-other-b', 'name' => 'Hira'],
-    ], 'usr_hira_12345678', $hiraIdentity, true) === -1,
+    ], 'usr_hira_12345678', $hiraIdentity) === -1,
     'Deux anciennes entrées homonymes doivent rester ambiguës et non fusionnées.'
 );
 requireDomainCompatibility(
@@ -894,7 +916,7 @@ requireDomainCompatibility(
         ['id' => 'usr_hira_12345678', 'name' => 'Hira'],
         ['id' => 'player-hira', 'name' => 'Hira'],
         ['id' => 'PLAYER-HIRA', 'name' => 'Hira bis'],
-    ], 'usr_hira_12345678', $hiraIdentity, true) === -1,
+    ], 'usr_hira_12345678', $hiraIdentity) === -1,
     'Deux anciens identifiants équivalents doivent rester ambigus et non fusionnés.'
 );
 
@@ -955,7 +977,7 @@ requireDomainCompatibility(
         $adaAccountId,
         ['id' => $adaAccountId, 'username' => 'ada', 'display_name' => 'Ada']
     ) === $adaLegacyId,
-    'Ada doit retrouver son ancien propriétaire grâce à la fiche homonyme, même si le roster affiche « À renseigner ».'
+    'Ada ne peut retrouver son ancien propriétaire que par la table exacte oldOwnerId vers compte.'
 );
 $inhoLegacyId = 'player-f11f894b-660c-4d2d-97e6-5de1b2b785e7';
 $inhoAccountId = 'usr_innota_12345678';
@@ -989,13 +1011,14 @@ requireDomainCompatibility(
         $inhoAccountId,
         ['id' => $inhoAccountId, 'username' => 'Innota', 'display_name' => 'Jonathan']
     ) === $inhoLegacyId,
-    'Le compte Innota doit retrouver explicitement la fiche Inho même si les noms du compte et du roster diffèrent.'
+    'Innota ne peut retrouver son ancien propriétaire que par la table exacte oldOwnerId vers compte.'
 );
 requireDomainCompatibility(
-    rosterRepairAliases(['username' => 'Goldark', 'display_name' => 'Goldark']) === ['goldark', 'kokaku']
-        && rosterRepairAliases(['username' => 'Hohachu', 'display_name' => 'Hohachu'])
-            === ['hohachu', 'gohachu', 'gohachu forgefer'],
-    'Les rattachements déclarés Goldark vers Kokaku et Hohachu vers Gohachu doivent rester explicites.'
+    onlineDeclaredLegacyOwnerAliases() === [
+        'player-7fd6193e-b970-4d76-bbb9-11fc8ef8d386' => 'ada',
+        'player-f11f894b-660c-4d2d-97e6-5de1b2b785e7' => 'innota',
+    ],
+    'Les anciens propriétaires récupérables sont une table fermée, jamais des identifiants dérivés d’un nom.'
 );
 $globalRepairRecords = [
     'roster' => [
@@ -1034,19 +1057,131 @@ requireDomainCompatibility(
     ($globalProposals[$adaAccountId]['oldId'] ?? null) === $adaLegacyId
         && ($globalProposals[$inhoAccountId]['oldId'] ?? null) === $inhoLegacyId
         && !isset($globalProposals['usr_autre_12345678']),
-    'La réconciliation globale doit préparer Ada et Innota ensemble sans inventer de propriétaire au compte sans fiche.'
-);
-requireDomainCompatibility(
-    onlineUnassignedCharacterCountAfterRepair($globalRepairRecords, $globalAccounts, $globalProposals) === 1,
-    'Le contrôle de migration doit encore signaler la seule fiche sans compte correspondant.'
+    'La réconciliation globale utilise seulement la table exacte des anciens propriétaires vérifiés.'
 );
 $declaredAssignments = onlineDeclaredCharacterAssignments($globalRepairRecords, $globalAccounts);
+requireDomainCompatibility(
+    onlineUnassignedCharacterCountAfterRepair($globalRepairRecords, $globalAccounts, $globalProposals, $declaredAssignments) === 1,
+    'Le contrôle de migration doit appliquer les seuls rattachements déclarés et signaler la fiche sans compte correspondant.'
+);
 requireDomainCompatibility(
     ($declaredAssignments['character:character-ada-12345678'] ?? null) === $adaAccountId
         && ($declaredAssignments['character:character-vraska-12345678'] ?? null) === $adaAccountId
         && ($declaredAssignments['character:character-inho-12345678'] ?? null) === $inhoAccountId
         && !isset($declaredAssignments['character:character-autre-12345678']),
     'La table déclarée doit affecter Ada et Vraska à Ada, puis Inho à Innota, fiche par fiche.'
+);
+$declaredAnalysis = onlineDeclaredCharacterAssignmentAnalysis($globalRepairRecords, $globalAccounts);
+requireDomainCompatibility(
+    ($declaredAnalysis['missing'] ?? null) === 2
+        && ($declaredAnalysis['ambiguous'] ?? null) === 0,
+    'Le diagnostic déclaré compte séparément les identités historiques absentes et ambiguës.'
+);
+$duplicateAdaRecords = $globalRepairRecords;
+$duplicateAdaRecords['character:character-ada-double-12345678'] = [
+    'revision' => 1,
+    'payload' => [
+        'id' => 'character-ada-double-12345678',
+        'ownerPlayerId' => 'player-autre',
+        'name' => 'Ada',
+    ],
+];
+$duplicateAdaAnalysis = onlineDeclaredCharacterAssignmentAnalysis($duplicateAdaRecords, $globalAccounts);
+requireDomainCompatibility(
+    !isset($duplicateAdaAnalysis['assignments']['character:character-ada-12345678'])
+        && !isset($duplicateAdaAnalysis['assignments']['character:character-ada-double-12345678'])
+        && ($duplicateAdaAnalysis['assignments']['character:character-vraska-12345678'] ?? null) === $adaAccountId
+        && ($duplicateAdaAnalysis['ambiguous'] ?? null) === 1,
+    'Deux fiches portant le même nom historique Ada restent toutes deux intactes et sont signalées ambiguës.'
+);
+$hohachuAccountId = 'usr_hohachu_12345678';
+$hohachuAccounts = [...$globalAccounts, [
+    'id' => $hohachuAccountId, 'username' => 'hohachu', 'display_name' => 'Hohachu',
+]];
+$gohachuRecords = $globalRepairRecords;
+$gohachuRecords['character:character-gohachu-12345678'] = ['revision' => 1, 'payload' => [
+    'id' => 'character-gohachu-12345678', 'ownerPlayerId' => 'player-gohachu', 'name' => 'Gohachu',
+]];
+$gohachuAssignments = onlineDeclaredCharacterAssignments($gohachuRecords, $hohachuAccounts);
+requireDomainCompatibility(
+    ($gohachuAssignments['character:character-gohachu-12345678'] ?? null) === $hohachuAccountId,
+    'Le nom historique court Gohachu peut être rattaché à l’unique compte Hohachu déclaré.'
+);
+$gohachuForgeferRecords = $globalRepairRecords;
+$gohachuForgeferRecords['character:character-gohachu-forgefer-12345678'] = ['revision' => 1, 'payload' => [
+    'id' => 'character-gohachu-forgefer-12345678', 'ownerPlayerId' => 'player-gohachu', 'name' => 'Gohachu Forgefer',
+]];
+$gohachuForgeferAssignments = onlineDeclaredCharacterAssignments($gohachuForgeferRecords, $hohachuAccounts);
+requireDomainCompatibility(
+    ($gohachuForgeferAssignments['character:character-gohachu-forgefer-12345678'] ?? null) === $hohachuAccountId,
+    'Le nom historique long Gohachu Forgefer peut être rattaché à l’unique compte Hohachu déclaré.'
+);
+$ambiguousGohachuRecords = $gohachuRecords;
+$ambiguousGohachuRecords['character:character-gohachu-forgefer-12345678'] =
+    $gohachuForgeferRecords['character:character-gohachu-forgefer-12345678'];
+$ambiguousGohachuAnalysis = onlineDeclaredCharacterAssignmentAnalysis($ambiguousGohachuRecords, $hohachuAccounts);
+requireDomainCompatibility(
+    !isset($ambiguousGohachuAnalysis['assignments']['character:character-gohachu-12345678'])
+        && !isset($ambiguousGohachuAnalysis['assignments']['character:character-gohachu-forgefer-12345678'])
+        && ($ambiguousGohachuAnalysis['ambiguous'] ?? null) === 1,
+    'Les deux variantes de Gohachu présentes simultanément constituent une identité ambiguë et restent intactes.'
+);
+$ambiguousAdaAccounts = [
+    ['id' => 'usr_ada_primary_12345678', 'username' => 'ada', 'display_name' => 'Compte principal'],
+    ['id' => 'usr_ada_display_12345678', 'username' => 'autre-compte', 'display_name' => 'Ada'],
+];
+requireDomainCompatibility(
+    onlineUniqueAccountIdForAlias($ambiguousAdaAccounts, 'ada') === ''
+        && onlineDeclaredCharacterAssignments($globalRepairRecords, $ambiguousAdaAccounts) === [],
+    'Un alias explicite ambigu entre username et display_name ne doit attribuer aucune fiche.'
+);
+$homonymOwnerId = 'player-owner-alice';
+$homonymBobAccountId = 'usr_bob_12345678';
+$homonymRecords = [
+    'roster' => ['revision' => 1, 'payload' => [
+        'players' => [
+            ['id' => $homonymOwnerId, 'name' => 'Bob'],
+            ['id' => $homonymBobAccountId, 'name' => 'Bob'],
+        ],
+        'characterOrder' => ['character-bob-12345678', 'character-alice-12345678'],
+        'playerPreferences' => [], 'playerTombstones' => [], 'characterTombstones' => [],
+    ]],
+    'character:character-bob-12345678' => ['revision' => 1, 'payload' => [
+        'id' => 'character-bob-12345678', 'ownerPlayerId' => $homonymOwnerId, 'name' => 'Bob',
+    ]],
+    'character:character-alice-12345678' => ['revision' => 1, 'payload' => [
+        'id' => 'character-alice-12345678', 'ownerPlayerId' => $homonymOwnerId, 'name' => 'Alice',
+    ]],
+    'token:scene-1:token-bob' => ['revision' => 1, 'payload' => [
+        'id' => 'token-bob', 'characterId' => 'character-bob-12345678',
+        'controllerPlayerId' => $homonymOwnerId, 'name' => 'Bob',
+    ]],
+    'activity' => ['revision' => 1, 'payload' => [
+        'actionTimers' => [[
+            'id' => 'timer-bob', 'characterId' => 'character-bob-12345678',
+            'ownerPlayerId' => $homonymOwnerId,
+        ]],
+    ]],
+];
+$homonymAccounts = [[
+    'id' => $homonymBobAccountId, 'username' => 'bob', 'display_name' => 'Bob',
+]];
+$homonymProposals = onlineRosterOwnershipProposals($homonymRecords, $homonymAccounts);
+$homonymAssignments = onlineDeclaredCharacterAssignments($homonymRecords, $homonymAccounts);
+$homonymPending = [];
+$homonymRepair = queueOnlineDeclaredCharacterAssignments(
+    $homonymPending, $homonymRecords, $homonymAssignments, 200
+);
+requireDomainCompatibility(
+    $homonymProposals === []
+        && $homonymAssignments === []
+        && $homonymPending === []
+        && $homonymRepair === ['characters' => 0, 'tokens' => 0, 'accounts' => []]
+        && ($homonymRecords['character:character-bob-12345678']['payload']['ownerPlayerId'] ?? '') === $homonymOwnerId
+        && ($homonymRecords['character:character-alice-12345678']['payload']['ownerPlayerId'] ?? '') === $homonymOwnerId
+        && ($homonymRecords['token:scene-1:token-bob']['payload']['controllerPlayerId'] ?? '') === $homonymOwnerId
+        && ($homonymRecords['activity']['payload']['actionTimers'][0]['ownerPlayerId'] ?? '') === $homonymOwnerId,
+    'Un compte Bob ne peut revendiquer par homonymie ni la fiche Bob d’Alice, ni ses autres fiches, tokens ou minuteurs.'
 );
 $wrongActiveOwnerRecords = $globalRepairRecords;
 $wrongActiveOwnerRecords['character:character-ada-12345678']['payload']['ownerPlayerId'] = $inhoAccountId;
@@ -1084,12 +1219,13 @@ requireDomainCompatibility(
     ($wrongOwnerPending['character:character-ada-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
         && ($wrongOwnerPending['character:character-vraska-12345678']['payload']['ownerPlayerId'] ?? null) === $adaAccountId
         && ($wrongOwnerPending['token:scene-1:token-ada']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
-        && ($wrongOwnerPending['token:scene-1:token-vraska-legacy']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
+        && !isset($wrongOwnerPending['token:scene-1:token-vraska-legacy'])
+        && ($wrongActiveOwnerRecords['token:scene-1:token-vraska-legacy']['payload']['controllerPlayerId'] ?? null) === $inhoAccountId
         && ($wrongOwnerPending['token:scene-1:token-ada-wolf']['payload']['controllerPlayerId'] ?? null) === $adaAccountId
         && ($wrongOwnerPending['activity']['payload']['actionTimers'][0]['ownerPlayerId'] ?? null) === $adaAccountId
         && (int) ($wrongOwnerRepair['characters'] ?? 0) === 3
-        && (int) ($wrongOwnerRepair['tokens'] ?? 0) === 3,
-    'Une fiche attachée au mauvais compte actif doit être réattribuée au compte déclaré, sans ambiguïté.'
+        && (int) ($wrongOwnerRepair['tokens'] ?? 0) === 2,
+    'Les fiches déclarées et leurs liens explicites sont réparés, jamais un token homonyme sans lien.'
 );
 $wrongTokenStatus = onlineDeclaredTokenOwnershipStatus(
     $wrongActiveOwnerRecords,
@@ -1097,8 +1233,8 @@ $wrongTokenStatus = onlineDeclaredTokenOwnershipStatus(
     onlineDeclaredCharacterAssignments($wrongActiveOwnerRecords, $globalAccounts)
 );
 requireDomainCompatibility(
-    $wrongTokenStatus === ['matched' => 3, 'correct' => 3, 'incorrect' => 0],
-    'La réparation doit prouver que tous les tokens directs, historiques et liés utilisent le bon compte.'
+    $wrongTokenStatus === ['matched' => 2, 'correct' => 2, 'incorrect' => 0],
+    'La réparation ne contrôle que les tokens rattachés par characterId ou linkedTokenId.'
 );
 requireDomainCompatibility(
     onlineEffectiveTokenControllerId(
@@ -1127,7 +1263,7 @@ $rosterWithGhosts = $globalRepairRecords['roster']['payload'];
 $rosterWithGhosts['players'][] = ['id' => $adaAccountId, 'name' => 'Ada en double'];
 $rosterWithGhosts['players'][] = ['id' => 'player-ghost-without-sheet', 'name' => 'Fantôme'];
 $rosterWithGhosts['playerPreferences']['player-ghost-without-sheet'] = ['activePage' => 'characters'];
-$removedRosterGhosts = cleanupOnlinePhantomRosterPlayers(
+$rosterOnlyCount = onlineRetainedRosterOnlyPlayerCount(
     $rosterWithGhosts,
     $globalAccounts,
     $globalRepairRecords,
@@ -1135,11 +1271,12 @@ $removedRosterGhosts = cleanupOnlinePhantomRosterPlayers(
     $declaredAssignments
 );
 requireDomainCompatibility(
-    $removedRosterGhosts === 4
+    $rosterOnlyCount === 3
         && findEntryIndex($rosterWithGhosts['players'], $adaAccountId) >= 0
-        && findEntryIndex($rosterWithGhosts['players'], 'player-ghost-without-sheet') < 0
-        && !isset($rosterWithGhosts['playerPreferences']['player-ghost-without-sheet']),
-    'Les doublons de roster et identités fantômes sans fiche doivent disparaître avec leurs préférences résiduelles.'
+        && findEntryIndex($rosterWithGhosts['players'], 'player-ghost-without-sheet') >= 0
+        && ($rosterWithGhosts['playerPreferences']['player-ghost-without-sheet']['activePage'] ?? '') === 'characters'
+        && !array_key_exists('_ownershipRepairRetainedRosterOnlyPlayers', $rosterWithGhosts),
+    'Une entrée roster volontaire sans fiche et ses préférences sont conservées, puis seulement comptées au diagnostic.'
 );
 requireDomainCompatibility(
     onlineDuplicateActiveAccountDisplayCount([
@@ -1225,4 +1362,50 @@ foreach (['pending', 'awaiting-opposition', 'missed', 'defended', 'rejected', 'b
     requireDomainCompatibility(!isset($projectedAttack['damage']) && !isset($projectedAttack['finalDamage']), 'Les dégâts présumés ne sont jamais projetés.');
     requireDomainCompatibility(isset($projectedAttack['appliedDamage']) === ($status === 'applied'), 'Seule une perte appliquée est publique.');
 }
+$privateAttackRoll = [
+    'rollId' => 'roll-private', 'statId' => 'monster-secret-force', 'statLabel' => 'Force secrète',
+    'label' => 'Jet ATK · Force secrète', 'formula' => '1d100+15', 'total' => 75,
+    'breakdown' => '[60] +15', 'rollMode' => 'advantage', 'selectedIndex' => 0,
+    'attempts' => [
+        ['rawD100' => 60, 'total' => 75, 'breakdown' => '[60] +15', 'secret' => 'private-attempt'],
+        ['rawD100' => 27, 'total' => 42, 'breakdown' => '[27] +15'],
+    ],
+    'outcome' => [
+        'raw' => 60, 'result' => 75, 'resultModifier' => 15, 'resultCustomized' => true,
+        'baseThreshold' => 70, 'modifier' => 10, 'threshold' => 80,
+        'code' => 'success', 'label' => 'RÉUSSITE', 'success' => true, 'privateNote' => 'private-outcome',
+    ],
+    'diceAppearance' => ['color' => '#000000', 'foreground' => '#ffffff', 'secret' => 'private-dice'],
+    'mapEvent' => ['kind' => 'roll', 'label' => 'Jet ATK', 'value' => 75, 'attackId' => 'attack-one', 'tokenId' => 'monster', 'secret' => 'private-event'],
+    'requestId' => 'private-request', 'damageFormula' => '99d99',
+];
+$redactedAttackRoll = publicOnlineAttackRoll($privateAttackRoll, false, 'hit');
+requireDomainCompatibility(
+    ($redactedAttackRoll['label'] ?? '') === 'Jet ATK'
+        && ($redactedAttackRoll['formula'] ?? '') === '1d100+15'
+        && ($redactedAttackRoll['total'] ?? null) === 75
+        && ($redactedAttackRoll['rollMode'] ?? '') === 'advantage'
+        && count($redactedAttackRoll['attempts'] ?? []) === 2
+        && ($redactedAttackRoll['outcome']['result'] ?? null) === 75
+        && ($redactedAttackRoll['outcome']['label'] ?? '') === 'RÉUSSITE',
+    'La projection publique conserve formule, tentatives, résultat sélectionné et issue.'
+);
+foreach (['statId', 'statLabel', 'requestId', 'damageFormula'] as $privateField) {
+    requireDomainCompatibility(!array_key_exists($privateField, $redactedAttackRoll), "Le champ privé $privateField ne doit pas être projeté.");
+}
+foreach (['baseThreshold', 'threshold', 'privateNote'] as $privateField) {
+    requireDomainCompatibility(!array_key_exists($privateField, $redactedAttackRoll['outcome'] ?? []), "Le seuil privé $privateField ne doit pas être projeté.");
+}
+requireDomainCompatibility(
+    !str_contains(json_encode($redactedAttackRoll, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), 'private-'),
+    'Une liste blanche empêche les secrets imbriqués futurs de fuir avec le jet.'
+);
+$sharedAttackRoll = publicOnlineAttackRoll($privateAttackRoll, true, 'hit');
+requireDomainCompatibility(
+    ($sharedAttackRoll['statId'] ?? '') === 'monster-secret-force'
+        && ($sharedAttackRoll['statLabel'] ?? '') === 'Force secrète'
+        && ($sharedAttackRoll['outcome']['baseThreshold'] ?? null) === 70
+        && ($sharedAttackRoll['outcome']['threshold'] ?? null) === 80,
+    'La révélation MJ explicite conserve les détails statistiques autorisés sans abandonner la liste blanche.'
+);
 echo "Combat 3.1.11 : résistance libre, scores effectifs et dégâts différés OK\n";

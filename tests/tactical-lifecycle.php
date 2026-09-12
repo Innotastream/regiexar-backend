@@ -32,6 +32,8 @@ final class MemoryStatement extends PDOStatement
 final class MemoryConnection extends PDO
 {
     public array $domains = [];
+    public array $healthOverlays = [];
+    public array $accounts = [];
     public int $revision = 1;
     private ?array $snapshot = null;
     public function __construct(array $domains)
@@ -61,13 +63,29 @@ final class MemoryConnection extends PDO
                 return !str_contains($sql, 'WHERE domain_key IN') || in_array($record['domain_key'], $params, true);
             }));
         }
+        if (str_contains($sql, 'FROM character_health_overlays o') && isset($params[':public_slug'])) {
+            $overlay = $this->healthOverlays[(string) $params[':public_slug']] ?? null;
+            $characterId = is_array($overlay) ? (string) ($overlay['character_id'] ?? '') : '';
+            $domain = $this->domains['character:' . $characterId] ?? null;
+            return is_array($overlay) && is_array($domain) ? [[
+                'character_id' => $characterId,
+                'payload' => json_encode($domain['payload'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'revision' => $domain['revision'],
+                'updated_at' => $domain['updated_at'],
+            ]] : [];
+        }
         if (str_starts_with($sql, 'INSERT INTO application_domains ')) {
             $this->put($params[':domain_key'], json_decode($params[':payload'], true, 512, JSON_THROW_ON_ERROR), $params[':revision']);
+            return [];
+        }
+        if (str_starts_with($sql, 'DELETE FROM application_domains WHERE domain_key')) {
+            unset($this->domains[(string) ($params[':domain_key'] ?? '')]);
             return [];
         }
         if (str_starts_with($sql, 'UPDATE application_domain_clock')) { $this->revision = $params[':global_revision']; return []; }
         if (str_starts_with($sql, 'INSERT INTO application_domain_history') || str_starts_with($sql, 'INSERT INTO application_domain_changes')) return [];
         if (str_contains($sql, 'FROM shared_settings')) return [];
+        if (str_contains($sql, 'FROM accounts') && str_contains($sql, 'revoked_at IS NULL')) return $this->accounts;
         throw new RuntimeException('Unexpected SQL in fixture: ' . $sql);
     }
 }
@@ -76,9 +94,22 @@ function requireTactical(bool $condition, string $message): void
     if (!$condition) throw new RuntimeException($message);
     $GLOBALS['checks'] = ($GLOBALS['checks'] ?? 0) + 1;
 }
-function runCommand(MemoryConnection $db, string $command, array $payload, bool $gm = false, string $account = 'account-player'): TestResponse
+function runCommand(
+    MemoryConnection $db,
+    string $command,
+    array $payload,
+    bool $gm = false,
+    string $account = 'account-player',
+    bool $administrator = false
+): TestResponse
 {
-    $GLOBALS['testIdentity'] = ['id' => $account, 'display_name' => $gm ? 'MJ test' : 'Joueur test', 'effective_mode' => $gm ? 'gm' : 'player', 'permanent_role' => $gm ? 'gm' : 'player'];
+    $GLOBALS['testIdentity'] = [
+        'id' => $account,
+        'display_name' => $gm ? 'MJ test' : 'Joueur test',
+        'effective_mode' => $gm ? 'gm' : 'player',
+        'permanent_role' => $gm ? 'gm' : 'player',
+        'can_administrate' => $administrator,
+    ];
     $GLOBALS['testBody'] = ['command' => $command, 'payload' => $payload];
     try { commandOnlineState($db, []); } catch (TestResponse $response) { return $response; }
     throw new RuntimeException('No command response');
@@ -103,6 +134,430 @@ function fixture(): MemoryConnection
         'activity' => ['actionTimers' => [], 'actionTimerTombstones' => [], 'mapPings' => [], 'shortcuts' => [], 'rolls' => [], 'playerActions' => [], 'pendingAttacks' => [], 'attackReceipts' => []],
     ]);
 }
+
+function deletionFixture(): MemoryConnection
+{
+    $database = fixture();
+    $database->put('roster', [
+        'players' => [['id' => 'account-player', 'name' => 'Joueur test']],
+        'characterOrder' => ['character-player'],
+        'playerPreferences' => ['account-player' => ['activeCharacterId' => 'character-player']],
+        'playerTombstones' => [],
+        'characterTombstones' => [],
+    ]);
+    $activity = $database->payload('activity');
+    $activity['actionTimers'] = [[
+        'id' => 'timer-character-delete',
+        'sceneId' => 'scene-one',
+        'label' => 'Recharge supprimée',
+        'cooldown' => 3,
+        'usedRound' => 1,
+        'readyRound' => 4,
+        'ownerPlayerId' => 'account-player',
+        'characterId' => 'character-player',
+    ]];
+    $database->put('activity', $activity);
+    $database->put('token-index:scene-two', ['order' => ['token-copy']]);
+    $database->put('initiative:scene-two', ['active' => false, 'order' => ['token-copy'], 'currentIndex' => 0]);
+    return $database;
+}
+
+// Exercise the player-account routes through the real command dispatcher. These
+// commands used to be covered only by source-pattern assertions in the Node suite.
+$accountDatabase = fixture();
+$ensureResponse = runCommand($accountDatabase, 'ensure-player', []);
+$ensuredRoster = $accountDatabase->payload('roster');
+requireTactical(
+    $ensureResponse->status === 200
+        && count($ensuredRoster['players'] ?? []) === 1
+        && ($ensuredRoster['players'][0]['id'] ?? '') === 'account-player'
+        && ($ensuredRoster['players'][0]['name'] ?? '') === 'Joueur test',
+    'The ensure-player command really creates the authenticated roster entry.'
+);
+$ensuredRevision = $accountDatabase->revision;
+$ensureRetry = runCommand($accountDatabase, 'ensure-player', []);
+requireTactical(
+    $ensureRetry->status === 200
+        && $accountDatabase->revision === $ensuredRevision
+        && count($accountDatabase->payload('roster')['players'] ?? []) === 1,
+    'The ensure-player route is idempotent for an unchanged authenticated account.'
+);
+
+$ambiguousEnsureDatabase = fixture();
+$legacyAdaOwnerId = 'player-7fd6193e-b970-4d76-bbb9-11fc8ef8d386';
+$ambiguousAdaAccountId = 'account-ada-primary';
+$ambiguousEnsureDatabase->put('roster', [
+    'players' => [
+        ['id' => $legacyAdaOwnerId, 'name' => 'Ancienne Ada'],
+        ['id' => $ambiguousAdaAccountId, 'name' => 'Joueur test'],
+    ],
+    'characterOrder' => ['character-legacy-ada'],
+    'playerPreferences' => [$legacyAdaOwnerId => ['activePage' => 'characters']],
+    'playerTombstones' => [],
+    'characterTombstones' => [],
+]);
+$ambiguousEnsureDatabase->put('character:character-legacy-ada', [
+    'id' => 'character-legacy-ada',
+    'ownerPlayerId' => $legacyAdaOwnerId,
+    'name' => 'Fiche historique',
+]);
+$ambiguousEnsureDatabase->put('token:scene-one:token-legacy-ada', [
+    'id' => 'token-legacy-ada',
+    'characterId' => 'character-legacy-ada',
+    'controllerPlayerId' => $legacyAdaOwnerId,
+]);
+$ambiguousActivity = $ambiguousEnsureDatabase->payload('activity');
+$ambiguousActivity['actionTimers'][] = [
+    'id' => 'timer-legacy-ada',
+    'characterId' => 'character-legacy-ada',
+    'ownerPlayerId' => $legacyAdaOwnerId,
+];
+$ambiguousEnsureDatabase->put('activity', $ambiguousActivity);
+$ambiguousEnsureDatabase->accounts = [
+    ['id' => $ambiguousAdaAccountId, 'username' => 'ada', 'display_name' => 'Ada principale'],
+    ['id' => 'account-ada-homonym', 'username' => 'autre', 'display_name' => 'Ada'],
+];
+$ambiguousEnsureBefore = $ambiguousEnsureDatabase->domains;
+$ambiguousEnsureRevision = $ambiguousEnsureDatabase->revision;
+$ambiguousEnsureResponse = runCommand(
+    $ambiguousEnsureDatabase,
+    'ensure-player',
+    [],
+    false,
+    $ambiguousAdaAccountId
+);
+requireTactical(
+    $ambiguousEnsureResponse->status === 200
+        && $ambiguousEnsureDatabase->revision === $ambiguousEnsureRevision
+        && $ambiguousEnsureDatabase->domains === $ambiguousEnsureBefore
+        && ($ambiguousEnsureDatabase->payload('character:character-legacy-ada')['ownerPlayerId'] ?? '') === $legacyAdaOwnerId
+        && ($ambiguousEnsureDatabase->payload('token:scene-one:token-legacy-ada')['controllerPlayerId'] ?? '') === $legacyAdaOwnerId
+        && ($ambiguousEnsureDatabase->payload('activity')['actionTimers'][0]['ownerPlayerId'] ?? '') === $legacyAdaOwnerId,
+    'An ambiguous active-account alias cannot migrate a legacy owner through ensure-player.'
+);
+
+$preferencesResponse = runCommand($accountDatabase, 'preferences.update', [
+    'musicMuted' => true,
+    'ambienceMuted' => false,
+    'activePage' => 'characters',
+    'activeCharacterId' => 'character-player',
+]);
+$storedPreferences = $accountDatabase->payload('roster')['playerPreferences']['account-player'] ?? [];
+requireTactical(
+    $preferencesResponse->status === 200
+        && ($preferencesResponse->body['preferences'] ?? null) === $storedPreferences
+        && ($storedPreferences['musicMuted'] ?? false) === true
+        && ($storedPreferences['ambienceMuted'] ?? true) === false
+        && ($storedPreferences['activePage'] ?? '') === 'characters'
+        && ($storedPreferences['activeCharacterId'] ?? '') === 'character-player',
+    'The preferences.update route persists and returns the normalized player preferences.'
+);
+$preferencesRevision = $accountDatabase->revision;
+$foreignPreferences = runCommand($accountDatabase, 'preferences.update', [
+    'activeCharacterId' => 'character-player',
+], false, 'intruder');
+requireTactical(
+    $foreignPreferences->status === 403
+        && ($foreignPreferences->body['code'] ?? '') === 'character_forbidden'
+        && $accountDatabase->revision === $preferencesRevision,
+    'The preferences route refuses a foreign active character without mutating the store.'
+);
+
+$requestedCharacterId = 'character-created-0001';
+$characterCreatePayload = ['requestId' => 'character-create-request-0001', 'character' => [
+    'id' => $requestedCharacterId,
+    'name' => 'Nouvelle fiche',
+    'ownerPlayerId' => 'intruder',
+    'resources' => ['hp' => 12, 'maxHp' => 20, 'mana' => 0, 'maxMana' => 0],
+]];
+$createResponse = runCommand($accountDatabase, 'character.create', $characterCreatePayload);
+$createdCharacterId = (string) ($createResponse->body['character']['id'] ?? '');
+$createdCharacter = $accountDatabase->payload('character:' . $createdCharacterId);
+requireTactical(
+    $createResponse->status === 200
+        && preg_match('/^character-[A-Za-z0-9_-]{16,}$/D', $createdCharacterId) === 1
+        && $createdCharacterId !== $requestedCharacterId
+        && ($createdCharacter['ownerPlayerId'] ?? '') === 'account-player'
+        && in_array($createdCharacterId, $accountDatabase->payload('roster')['characterOrder'] ?? [], true),
+    'The character.create route persists a server-id sheet and rejects injected identity fields.'
+);
+$characterCreateRevision = $accountDatabase->revision;
+$characterCreateActions = count($accountDatabase->payload('activity')['playerActions'] ?? []);
+$characterCreateRetry = runCommand($accountDatabase, 'character.create', $characterCreatePayload);
+requireTactical(
+    $characterCreateRetry->status === 200
+        && ($characterCreateRetry->body['deduplicated'] ?? false) === true
+        && ($characterCreateRetry->body['character']['id'] ?? '') === $createdCharacterId
+        && $accountDatabase->revision === $characterCreateRevision
+        && count($accountDatabase->payload('activity')['playerActions'] ?? []) === $characterCreateActions
+        && count(array_filter(
+            $accountDatabase->payload('activity')['resourceReceipts'] ?? [],
+            static fn (mixed $entry): bool => is_array($entry) && ($entry['requestId'] ?? '') === $characterCreatePayload['requestId']
+        )) === 1,
+    'A lost character.create response can be replayed without a second sheet or journal entry.'
+);
+$characterMismatch = runCommand($accountDatabase, 'character.create', [
+    ...$characterCreatePayload,
+    'character' => [...$characterCreatePayload['character'], 'name' => 'Autre fiche'],
+]);
+requireTactical(
+    $characterMismatch->status === 409
+        && ($characterMismatch->body['code'] ?? '') === 'character_create_request_mismatch'
+        && $accountDatabase->revision === $characterCreateRevision,
+    'A character.create request id cannot be reused for different sheet content.'
+);
+$legacyCharacterDatabase = fixture();
+runCommand($legacyCharacterDatabase, 'ensure-player', []);
+$legacyCharacterCreate = runCommand($legacyCharacterDatabase, 'character.create', ['character' => ['name' => 'Fiche héritée']]);
+requireTactical(
+    $legacyCharacterCreate->status === 200
+        && !array_key_exists('deduplicated', $legacyCharacterCreate->body)
+        && ($legacyCharacterDatabase->payload('activity')['resourceReceipts'] ?? []) === [],
+    'A legacy character.create request without a request id remains accepted during the compatibility window.'
+);
+$gmCharacterDatabase = fixture();
+$gmCharacterRevision = $gmCharacterDatabase->revision;
+$gmCharacterCreate = runCommand($gmCharacterDatabase, 'character.create', ['requestId' => 'gm-character-create-request-01', 'character' => [
+    'id' => 'character-created-by-gm',
+    'name' => 'Interdit',
+]], true, 'account-gm');
+requireTactical(
+    $gmCharacterCreate->status === 403
+        && ($gmCharacterCreate->body['code'] ?? '') === 'player_mode_required'
+        && $gmCharacterDatabase->revision === $gmCharacterRevision
+        && $gmCharacterDatabase->payload('roster') === []
+        && $gmCharacterDatabase->payload('character:character-created-by-gm') === [],
+    'The player character creation route is refused while authenticated in GM mode.'
+);
+
+$timerDatabase = fixture();
+$invalidTimerRevision = $timerDatabase->revision;
+$invalidTimer = runCommand($timerDatabase, 'timer.create', [
+    'requestId' => 'invalid-timer-create-request-01',
+    'sceneId' => 'scene-one',
+    'characterId' => 'character-player',
+    'label' => " \n ",
+    'cooldown' => 3,
+]);
+requireTactical(
+    $invalidTimer->status === 400
+        && ($invalidTimer->body['code'] ?? '') === 'invalid_timer'
+        && $timerDatabase->revision === $invalidTimerRevision,
+    'The timer.create route rejects a blank label without mutating activity.'
+);
+$timerCreatePayload = [
+    'requestId' => 'timer-create-request-0001',
+    'sceneId' => 'scene-one',
+    'characterId' => 'character-player',
+    'label' => 'Souffle draconique',
+    'cooldown' => 3,
+    'visibility' => 'public',
+];
+$timerResponse = runCommand($timerDatabase, 'timer.create', $timerCreatePayload);
+$timer = $timerResponse->body['timer'] ?? [];
+$timerId = (string) ($timer['id'] ?? '');
+requireTactical(
+    $timerResponse->status === 200
+        && preg_match('/^timer-[A-Za-z0-9_-]{16,}$/D', $timerId) === 1
+        && ($timer['ownerPlayerId'] ?? '') === 'account-player'
+        && ($timer['characterId'] ?? '') === 'character-player'
+        && ($timer['label'] ?? '') === 'Souffle draconique'
+        && ($timer['cooldown'] ?? 0) === 3
+        && ($timer['readyRound'] ?? 0) === 4
+        && ($timer['visibility'] ?? '') === 'public'
+        && findEntryIndex($timerDatabase->payload('activity')['actionTimers'] ?? [], $timerId) === 0,
+    'The timer.create route persists a complete owned cooldown.'
+);
+$timerCreateRevision = $timerDatabase->revision;
+$timerCreateActions = count($timerDatabase->payload('activity')['playerActions'] ?? []);
+$timerCreateRetry = runCommand($timerDatabase, 'timer.create', $timerCreatePayload);
+requireTactical(
+    $timerCreateRetry->status === 200
+        && ($timerCreateRetry->body['deduplicated'] ?? false) === true
+        && ($timerCreateRetry->body['timer']['id'] ?? '') === $timerId
+        && $timerDatabase->revision === $timerCreateRevision
+        && count($timerDatabase->payload('activity')['actionTimers'] ?? []) === 1
+        && count($timerDatabase->payload('activity')['playerActions'] ?? []) === $timerCreateActions,
+    'A lost timer.create response can be replayed without a second timer or journal entry.'
+);
+$timerMismatch = runCommand($timerDatabase, 'timer.create', [...$timerCreatePayload, 'cooldown' => 4]);
+requireTactical(
+    $timerMismatch->status === 409
+        && ($timerMismatch->body['code'] ?? '') === 'timer_create_request_mismatch'
+        && $timerDatabase->revision === $timerCreateRevision,
+    'A timer.create request id cannot be reused for another cooldown.'
+);
+$legacyTimerDatabase = fixture();
+$legacyTimerCreate = runCommand($legacyTimerDatabase, 'timer.create', [
+    'characterId' => 'character-player', 'label' => 'Ancienne recharge', 'cooldown' => 2,
+]);
+requireTactical(
+    $legacyTimerCreate->status === 200
+        && !array_key_exists('deduplicated', $legacyTimerCreate->body)
+        && ($legacyTimerDatabase->payload('activity')['resourceReceipts'] ?? []) === [],
+    'A legacy timer.create request without a request id remains accepted during the compatibility window.'
+);
+$timerRevision = $timerDatabase->revision;
+$earlyTimer = runCommand($timerDatabase, 'timer.update', ['timerId' => $timerId]);
+requireTactical(
+    $earlyTimer->status === 409
+        && ($earlyTimer->body['code'] ?? '') === 'timer_not_ready'
+        && $timerDatabase->revision === $timerRevision
+        && (($timerDatabase->payload('activity')['actionTimers'][0]['usedRound'] ?? 0) === 1),
+    'The timer.update route refuses a cooldown before its ready round without mutating activity.'
+);
+$foreignTimer = runCommand($timerDatabase, 'timer.update', ['timerId' => $timerId], false, 'intruder');
+requireTactical(
+    $foreignTimer->status === 403
+        && ($foreignTimer->body['code'] ?? '') === 'timer_forbidden'
+        && $timerDatabase->revision === $timerRevision,
+    'The timer update route refuses a foreign owner without mutating activity.'
+);
+$initiative = $timerDatabase->payload('initiative:scene-one');
+$initiative['round'] = 4;
+$timerDatabase->put('initiative:scene-one', $initiative);
+$timerUpdate = runCommand($timerDatabase, 'timer.update', ['timerId' => $timerId]);
+$updatedTimer = $timerUpdate->body['timer'] ?? [];
+requireTactical(
+    $timerUpdate->status === 200
+        && ($updatedTimer['usedRound'] ?? 0) === 4
+        && ($updatedTimer['readyRound'] ?? 0) === 7
+        && (($timerDatabase->payload('activity')['actionTimers'][0]['readyRound'] ?? 0) === 7),
+    'The timer.update route reuses the owned cooldown from the current combat round.'
+);
+$timerDelete = runCommand($timerDatabase, 'timer.delete', ['timerId' => $timerId]);
+$deletedActivity = $timerDatabase->payload('activity');
+requireTactical(
+    $timerDelete->status === 200
+        && ($timerDelete->body['timer']['id'] ?? '') === $timerId
+        && findEntryIndex($deletedActivity['actionTimers'] ?? [], $timerId) < 0
+        && findEntryIndex($deletedActivity['actionTimerTombstones'] ?? [], $timerId) >= 0,
+    'The timer.delete route removes the owned timer and persists its tombstone.'
+);
+$timerActions = array_values(array_filter(
+    $deletedActivity['playerActions'] ?? [],
+    static fn (mixed $entry): bool => is_array($entry) && ($entry['kind'] ?? '') === 'timer'
+));
+requireTactical(
+    count($timerActions) === 3
+        && ($timerActions[0]['summary'] ?? '') === 'Supprime une action en recharge'
+        && ($timerActions[1]['summary'] ?? '') === 'Réutilise une action en recharge'
+        && ($timerActions[2]['summary'] ?? '') === 'Ajoute une action en recharge',
+    'All three timer command routes emit their player activity entries.'
+);
+
+// Exercise both deletion authorities through the real dispatcher. The fixture
+// also proves that a rejected command is rolled back before any domain changes.
+$foreignDeletionDatabase = deletionFixture();
+$foreignDeletionDomains = $foreignDeletionDatabase->domains;
+$foreignDeletionRevision = $foreignDeletionDatabase->revision;
+$foreignDeletion = runCommand(
+    $foreignDeletionDatabase,
+    'character.delete',
+    ['characterId' => 'character-player'],
+    false,
+    'intruder'
+);
+requireTactical(
+    $foreignDeletion->status === 409
+        && ($foreignDeletion->body['code'] ?? '') === 'character_owner_changed'
+        && $foreignDeletionDatabase->domains === $foreignDeletionDomains
+        && $foreignDeletionDatabase->revision === $foreignDeletionRevision,
+    'A player cannot delete another owner\'s character and the rejected transaction is fully rolled back.'
+);
+
+$gmSelfDeletionDatabase = deletionFixture();
+$gmSelfDeletionDomains = $gmSelfDeletionDatabase->domains;
+$gmSelfDeletionRevision = $gmSelfDeletionDatabase->revision;
+$gmSelfDeletion = runCommand(
+    $gmSelfDeletionDatabase,
+    'character.delete',
+    ['characterId' => 'character-player'],
+    true,
+    'account-gm'
+);
+requireTactical(
+    $gmSelfDeletion->status === 403
+        && ($gmSelfDeletion->body['code'] ?? '') === 'player_mode_required'
+        && $gmSelfDeletionDatabase->domains === $gmSelfDeletionDomains
+        && $gmSelfDeletionDatabase->revision === $gmSelfDeletionRevision,
+    'The self-service deletion route is unavailable in GM mode and has no side effect.'
+);
+
+$playerDeletionDatabase = deletionFixture();
+$playerDeletion = runCommand(
+    $playerDeletionDatabase,
+    'character.delete',
+    ['characterId' => 'character-player']
+);
+$playerDeletionRoster = $playerDeletionDatabase->payload('roster');
+$playerDeletionActivity = $playerDeletionDatabase->payload('activity');
+requireTactical(
+    $playerDeletion->status === 200
+        && ($playerDeletion->body['character']['id'] ?? '') === 'character-player'
+        && ($playerDeletion->body['character']['removedTokens'] ?? -1) === 3
+        && ($playerDeletion->body['character']['removedTimers'] ?? -1) === 1
+        && $playerDeletionDatabase->payload('character:character-player') === []
+        && $playerDeletionDatabase->payload('token:scene-one:token-player') === []
+        && $playerDeletionDatabase->payload('token:scene-two:token-copy') === []
+        && $playerDeletionDatabase->payload('token:scene-one:token-independent') === []
+        && !in_array('character-player', $playerDeletionRoster['characterOrder'] ?? [], true)
+        && findEntryIndex($playerDeletionRoster['characterTombstones'] ?? [], 'character-player') >= 0
+        && findEntryIndex($playerDeletionActivity['actionTimers'] ?? [], 'timer-character-delete') < 0
+        && findEntryIndex($playerDeletionActivity['actionTimerTombstones'] ?? [], 'timer-character-delete') >= 0
+        && !in_array('token-player', $playerDeletionDatabase->payload('token-index:scene-one')['order'] ?? [], true)
+        && !in_array('token-copy', $playerDeletionDatabase->payload('token-index:scene-two')['order'] ?? [], true)
+        && !in_array('token-player', $playerDeletionDatabase->payload('initiative:scene-one')['order'] ?? [], true),
+    'A player deletion removes the owned sheet, every linked token and timer, then persists all tombstones and indexes.'
+);
+requireTactical(
+    count(array_filter(
+        $playerDeletionActivity['playerActions'] ?? [],
+        static fn (mixed $entry): bool => is_array($entry)
+            && ($entry['kind'] ?? '') === 'character'
+            && ($entry['summary'] ?? '') === 'Supprime une fiche'
+    )) === 1,
+    'A successful player deletion is journaled exactly once.'
+);
+
+$adminMismatchDatabase = deletionFixture();
+$adminMismatchDomains = $adminMismatchDatabase->domains;
+$adminMismatchRevision = $adminMismatchDatabase->revision;
+$adminMismatch = runCommand(
+    $adminMismatchDatabase,
+    'admin.character.delete',
+    ['characterId' => 'character-player', 'ownerPlayerId' => 'intruder-owner'],
+    true,
+    'account-gm',
+    true
+);
+requireTactical(
+    $adminMismatch->status === 409
+        && ($adminMismatch->body['code'] ?? '') === 'character_owner_changed'
+        && $adminMismatchDatabase->domains === $adminMismatchDomains
+        && $adminMismatchDatabase->revision === $adminMismatchRevision,
+    'Administrative deletion validates the selected owner and rolls back an ownership mismatch.'
+);
+
+$adminDeletionDatabase = deletionFixture();
+$adminDeletion = runCommand(
+    $adminDeletionDatabase,
+    'admin.character.delete',
+    ['characterId' => 'character-player', 'ownerPlayerId' => 'account-player'],
+    true,
+    'account-gm',
+    true
+);
+requireTactical(
+    $adminDeletion->status === 200
+        && ($adminDeletion->body['character']['ownerPlayerId'] ?? '') === 'account-player'
+        && ($adminDeletion->body['character']['removedTokens'] ?? -1) === 3
+        && ($adminDeletion->body['character']['removedTimers'] ?? -1) === 1
+        && $adminDeletionDatabase->payload('character:character-player') === []
+        && findEntryIndex($adminDeletionDatabase->payload('roster')['characterTombstones'] ?? [], 'character-player') >= 0
+        && findEntryIndex($adminDeletionDatabase->payload('activity')['actionTimerTombstones'] ?? [], 'timer-character-delete') >= 0,
+    'An authorized administrator can delete the selected owner\'s sheet with the same tombstone cascade.'
+);
 
 foreach ([[0,100,true,'down'],[-25,100,true,'down'],[-25.01,100,true,'dead'],[-26,100,true,'dead'],[0,100,false,'down'],[-1,100,false,'dead'],[9,100,true,'critical'],[10,100,true,'normal'],[0,0,true,'down'],[-1,0,true,'dead']] as [$hp,$max,$player,$code]) {
     requireTactical(onlineHealthState($hp,$max,$player)['code'] === $code, "Health boundary $hp/$max");
@@ -139,6 +594,24 @@ requireTactical(
         && $healthProjectionWithoutMana['manaPercentage'] === 0.0,
     'The stream projection rejects unsafe colors and hides absent mana pools.'
 );
+$healthDatabase = fixture();
+$healthSlug = str_repeat('h', 43);
+$healthDatabase->healthOverlays[$healthSlug] = ['character_id' => 'character-player'];
+try {
+    healthOverlayJson($healthDatabase, $healthSlug, false);
+    throw new RuntimeException('The public health route did not answer.');
+} catch (TestResponse $healthResponse) {
+    $routedHealth = $healthResponse->body['health'] ?? [];
+    requireTactical(
+        $healthResponse->status === 200
+            && ($routedHealth['name'] ?? '') === 'Personnage'
+            && ($routedHealth['color'] ?? '') === '#22aa33'
+            && ($routedHealth['hp'] ?? null) === 10.0
+            && ($routedHealth['mana'] ?? null) === 5.0
+            && ($routedHealth['hasMana'] ?? false) === true,
+        'The public health JSON route executes the enriched projection instead of only matching its source text.'
+    );
+}
 requireTactical(normalizeOnlineConditions(['poison', 'Empoisonné', 'endormis', 'KO', 'Mort', 'Marque du voile']) === ['Empoisonné','Endormi','Marque du voile'], 'Canonical labels, no duplicate or ordinary health states.');
 requireTactical(normalizeOnlineConditions([], 'Poison') === [], 'An explicit empty array does not resurrect the legacy field.');
 requireTactical(onlineManualDeath(['conditions'=>['Mort']]) && !onlineManualDeath(['conditions'=>['Mort'],'healthOverride'=>null]), 'Explicit override clearing wins over legacy Mort.');
@@ -291,9 +764,71 @@ $db = fixture();
 $response = runCommand($db, 'token.attack', [
     'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-monster-two',
     'requestId' => 'gm-creature-source-01', 'attackKind' => 'weapon', 'attackId' => 'monster-claw',
-    'statId' => 'monster-force',
+    'statId' => 'monster-force', 'rollMode' => 'advantage',
 ], true, 'account-gm');
 requireTactical($response->status === 200 && ($response->body['attack']['targetTokenId'] ?? '') === 'token-monster-two', 'The GM can target another creature with a creature: ' . $response->getMessage());
+$privateGmAttack = $response->body['attack'];
+requireTactical(
+    ($privateGmAttack['hit']['statId'] ?? '') === 'monster-force'
+        && ($privateGmAttack['hit']['statLabel'] ?? '') === 'Force'
+        && array_key_exists('baseThreshold', $privateGmAttack['hit']['outcome'] ?? [])
+        && array_key_exists('threshold', $privateGmAttack['hit']['outcome'] ?? [])
+        && count($privateGmAttack['hit']['attempts'] ?? []) === 2,
+    'The authoritative GM response retains the private creature statistic and full calculation.'
+);
+$privateGmAttack['status'] = 'awaiting-opposition';
+$privateGmAttack['targetTokenId'] = 'token-player';
+$privateGmAttack['targetName'] = 'Personnage';
+$activity = $db->payload('activity');
+$projectionState = [
+    'characters' => [$db->payload('character:character-player')],
+    'activeSceneId' => 'scene-one',
+    'activeScene' => ['id' => 'scene-one', 'name' => 'Scène'],
+    'map' => [
+        'gridSize' => 50,
+        'tokens' => [
+            $db->payload('token:scene-one:token-player'),
+            $db->payload('token:scene-one:token-monster'),
+            $db->payload('token:scene-one:token-monster-two'),
+        ],
+    ],
+    'initiative' => ['active' => false, 'order' => []],
+    'rolls' => $activity['rolls'] ?? [],
+    'pendingAttacks' => [$privateGmAttack],
+];
+$privateProjection = publicPlayerState($projectionState, ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+$privateMapAttack = $privateProjection['pendingMapAttacks'][0] ?? [];
+$privateOpposition = $privateProjection['pendingOppositions'][0] ?? [];
+$privateProjectedRoll = null;
+foreach ($privateProjection['rolls'] ?? [] as $projectedRoll) {
+    if (($projectedRoll['id'] ?? '') === ($privateGmAttack['hit']['rollId'] ?? '')) {
+        $privateProjectedRoll = $projectedRoll;
+        break;
+    }
+}
+foreach ([$privateMapAttack['hit'] ?? [], $privateOpposition['hit'] ?? [], $privateProjectedRoll ?? []] as $publicHit) {
+    requireTactical(
+        ($publicHit['label'] ?? '') === 'Jet ATK'
+            && ($publicHit['formula'] ?? '') === '1d100'
+            && count($publicHit['attempts'] ?? []) === 2
+            && isset($publicHit['outcome']['raw'])
+            && !array_key_exists('statId', $publicHit)
+            && !array_key_exists('statLabel', $publicHit)
+            && !array_key_exists('baseThreshold', $publicHit['outcome'] ?? [])
+            && !array_key_exists('threshold', $publicHit['outcome'] ?? []),
+        'Player/public attack projections retain dice and outcome but redact every private creature statistic and threshold.'
+    );
+}
+$projectionState['map']['tokens'][1]['revealDetailsToPlayers'] = true;
+$sharedProjection = publicPlayerState($projectionState, ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+$sharedHit = $sharedProjection['pendingMapAttacks'][0]['hit'] ?? [];
+requireTactical(
+    ($sharedHit['statId'] ?? '') === 'monster-force'
+        && ($sharedHit['statLabel'] ?? '') === 'Force'
+        && array_key_exists('baseThreshold', $sharedHit['outcome'] ?? [])
+        && array_key_exists('threshold', $sharedHit['outcome'] ?? []),
+    'An explicit GM detail reveal alone restores the creature statistic in public attack projections.'
+);
 
 $db = fixture();
 $character = $db->payload('character:character-player');
@@ -304,10 +839,12 @@ $staleToken = $db->payload('token:scene-one:token-player');
 $staleToken['name'] = 'Ancien nom';
 $staleToken['stats'] = [['id' => 'force', 'label' => 'Ancienne Force', 'value' => 1]];
 $db->put('token:scene-one:token-player', $staleToken);
-$response = runCommand($db, 'token.roll', [
+$playerTokenRollPayload = [
+    'requestId' => 'player-token-roll-request-0001',
     'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'stat', 'statId' => 'character-stat-force',
-    'rollMode' => 'advantage', 'modifier' => 0, 'modifierMode' => 'result',
-]);
+    'layerId' => 'ground', 'rollMode' => 'advantage', 'modifier' => 0, 'modifierMode' => 'result',
+];
+$response = runCommand($db, 'token.roll', $playerTokenRollPayload);
 requireTactical(
     $response->status === 200
         && ($response->body['roll']['characterName'] ?? '') === 'Nom autoritatif'
@@ -317,17 +854,212 @@ requireTactical(
         && count($response->body['roll']['attempts'] ?? []) === 2,
     'A Player token roll must resynchronize its authoritative sheet and preserve a zero custom-result choice'
 );
-$gmResponse = runCommand(fixture(), 'token.roll', [
+$playerTokenRollRevision = $db->revision;
+$playerTokenRollActivity = $db->payload('activity');
+$playerTokenRollLuck = $db->payload('luck');
+$changedCharacter = $db->payload('character:character-player');
+$changedCharacter['name'] = 'Nom modifié après le jet';
+$changedCharacter['stats'] = ['force' => 1];
+$db->put('character:character-player', $changedCharacter);
+$playerTokenRollRetry = runCommand($db, 'token.roll', $playerTokenRollPayload);
+requireTactical(
+    $playerTokenRollRetry->status === 200
+        && ($playerTokenRollRetry->body['deduplicated'] ?? false) === true
+        && ($playerTokenRollRetry->body['roll']['id'] ?? '') === ($response->body['roll']['id'] ?? null)
+        && ($playerTokenRollRetry->body['roll']['outcome']['threshold'] ?? null) === 64
+        && !array_key_exists('discordPosted', $playerTokenRollRetry->body)
+        && $db->revision === $playerTokenRollRevision
+        && $db->payload('activity') === $playerTokenRollActivity
+        && $db->payload('luck') === $playerTokenRollLuck,
+    'A token.roll retry restores the initial authority result before re-reading a concurrently edited sheet.'
+);
+$playerTokenRollMismatch = runCommand($db, 'token.roll', [...$playerTokenRollPayload, 'modifier' => 1]);
+requireTactical(
+    $playerTokenRollMismatch->status === 409
+        && ($playerTokenRollMismatch->body['code'] ?? '') === 'token_roll_request_mismatch'
+        && $db->revision === $playerTokenRollRevision,
+    'A token.roll request id cannot be reused with another modifier.'
+);
+$legacyTokenRollDatabase = fixture();
+$legacyTokenRoll = runCommand($legacyTokenRollDatabase, 'token.roll', [
+    'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'stat',
+    'statId' => 'character-stat-force', 'rollMode' => 'normal',
+]);
+requireTactical(
+    $legacyTokenRoll->status === 200
+        && !array_key_exists('deduplicated', $legacyTokenRoll->body)
+        && ($legacyTokenRollDatabase->payload('activity')['resourceReceipts'] ?? []) === [],
+    'A legacy token.roll without requestId remains accepted during the compatibility window.'
+);
+$initiativeRollDatabase = fixture();
+$initiativeRollPayload = [
+    'requestId' => 'player-initiative-roll-0001', 'sceneId' => 'scene-one', 'layerId' => 'ground',
+    'tokenId' => 'token-player', 'kind' => 'initiative', 'rollMode' => 'advantage',
+];
+$initiativeRoll = runCommand($initiativeRollDatabase, 'token.roll', $initiativeRollPayload);
+$initiativeRollRevision = $initiativeRollDatabase->revision;
+$initiativeRollToken = $initiativeRollDatabase->payload('token:scene-one:token-player');
+$initiativeRollState = $initiativeRollDatabase->payload('initiative:scene-one');
+$initiativeRollActivity = $initiativeRollDatabase->payload('activity');
+$initiativeRollLuck = $initiativeRollDatabase->payload('luck');
+$initiativeRollRetry = runCommand($initiativeRollDatabase, 'token.roll', $initiativeRollPayload);
+requireTactical(
+    $initiativeRoll->status === 200
+        && ($initiativeRoll->body['initiativeUpdated'] ?? false) === true
+        && $initiativeRollRetry->status === 200
+        && ($initiativeRollRetry->body['deduplicated'] ?? false) === true
+        && ($initiativeRollRetry->body['roll']['id'] ?? '') === ($initiativeRoll->body['roll']['id'] ?? null)
+        && $initiativeRollDatabase->revision === $initiativeRollRevision
+        && $initiativeRollDatabase->payload('token:scene-one:token-player') === $initiativeRollToken
+        && $initiativeRollDatabase->payload('initiative:scene-one') === $initiativeRollState
+        && $initiativeRollDatabase->payload('activity') === $initiativeRollActivity
+        && $initiativeRollDatabase->payload('luck') === $initiativeRollLuck,
+    'A token initiative retry neither rerolls nor reorders initiative, luck or the journal.'
+);
+$gmPayload = [
     'sceneId' => 'scene-one', 'tokenId' => 'token-monster', 'layerId' => 'ground',
     'kind' => 'stat', 'statId' => 'monster-force', 'rollMode' => 'advantage',
     'modifier' => 0, 'modifierMode' => 'result', 'requestId' => 'gm-role-parity-roll-0001',
-], true, 'account-gm');
+];
+$missingSceneResponse = runCommand(fixture(), 'token.roll', $gmPayload, true, 'account-gm');
+requireTactical(
+    $missingSceneResponse->status === 409 && ($missingSceneResponse->body['code'] ?? '') === 'stale_scene',
+    'The GM tactical route must reject a table pointer whose scene domain no longer exists'
+);
+$gmDatabase = fixture();
+$gmDatabase->put('scene:scene-one', ['id' => 'scene-one', 'name' => 'Scène test']);
+$gmResponse = runCommand($gmDatabase, 'token.roll', $gmPayload, true, 'account-gm');
 requireTactical(
     $gmResponse->status === 200
         && ($gmResponse->body['roll']['label'] ?? '') === 'Force'
+        && ($gmResponse->body['roll']['formula'] ?? '') === '1d100'
+        && ($gmResponse->body['roll']['rollMode'] ?? '') === 'advantage'
         && ($gmResponse->body['roll']['outcome']['resultCustomized'] ?? false) === true
         && count($gmResponse->body['roll']['attempts'] ?? []) === 2,
     'The GM tactical route preserves the same canonical mode and customized-result fields'
+);
+$gmRollRevision = $gmDatabase->revision;
+$gmRollActivity = $gmDatabase->payload('activity');
+$gmRetry = runCommand($gmDatabase, 'token.roll', $gmPayload, true, 'account-gm');
+requireTactical(
+    $gmRetry->status === 200
+        && ($gmRetry->body['deduplicated'] ?? false) === true
+        && ($gmRetry->body['roll']['id'] ?? '') === ($gmResponse->body['roll']['id'] ?? null)
+        && $gmDatabase->revision === $gmRollRevision
+        && $gmDatabase->payload('activity') === $gmRollActivity,
+    'An identical GM tactical retry restores the original roll without a second journal entry.'
+);
+$gmMismatch = runCommand(
+    $gmDatabase,
+    'token.roll',
+    [...$gmPayload, 'modifier' => 1],
+    true,
+    'account-gm'
+);
+requireTactical(
+    $gmMismatch->status === 409
+        && ($gmMismatch->body['code'] ?? '') === 'tactical_roll_request_mismatch'
+        && $gmDatabase->revision === $gmRollRevision
+        && $gmDatabase->payload('activity') === $gmRollActivity,
+    'A GM tactical request id cannot be reused with another modifier or mutate the journal.'
+);
+$gmPlayerDatabase = fixture();
+$gmPlayerDatabase->put('scene:scene-one', ['id' => 'scene-one', 'name' => 'Scène test']);
+$gmPlayerResponse = runCommand($gmPlayerDatabase, 'token.roll', [
+    'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'layerId' => 'ground',
+    'kind' => 'stat', 'statId' => 'character-stat-force', 'rollMode' => 'advantage',
+    'modifier' => 0, 'modifierMode' => 'result', 'requestId' => 'gm-player-token-roll-0001',
+], true, 'account-gm');
+$gmPlayerRoll = $gmPlayerResponse->body['roll'] ?? [];
+$gmPlayerAction = $gmPlayerDatabase->payload('activity')['playerActions'][0] ?? [];
+requireTactical(
+    $gmPlayerResponse->status === 200
+        && ($gmPlayerRoll['characterName'] ?? '') === 'Personnage'
+        && ($gmPlayerRoll['label'] ?? '') === 'Force'
+        && ($gmPlayerRoll['formula'] ?? '') === '1d100'
+        && ($gmPlayerRoll['rollMode'] ?? '') === 'advantage'
+        && ($gmPlayerRoll['rollerRole'] ?? '') === 'gm'
+        && ($gmPlayerRoll['visibility'] ?? '') === 'public'
+        && ($gmPlayerRoll['revealed'] ?? false) === true
+        && ($gmPlayerRoll['outcome']['resultCustomized'] ?? false) === true
+        && count($gmPlayerRoll['attempts'] ?? []) === 2,
+    'A GM rolling the same Player token receives the complete canonical roll without role-dependent vocabulary'
+);
+requireTactical(
+    ($gmPlayerAction['kind'] ?? '') === 'roll'
+        && ($gmPlayerAction['characterName'] ?? '') === 'Personnage'
+        && ($gmPlayerAction['summary'] ?? '') === 'Force (Avantage)'
+        && substr_count((string) ($gmPlayerAction['detail'] ?? ''), "\n") === 2
+        && str_contains((string) ($gmPlayerAction['detail'] ?? ''), '(jet ignoré)')
+        && !str_contains((string) ($gmPlayerAction['summary'] ?? ''), 'Lance ')
+        && !str_contains((string) ($gmPlayerAction['detail'] ?? ''), 'Nom :'),
+    'The GM journal stores character, type, both calculations and outcome with the same role-independent wording'
+);
+$shortcutDatabase = fixture();
+$shortcutCharacter = $shortcutDatabase->payload('character:character-player');
+$shortcutCharacter['shortcuts'] = [[
+    'id' => 'shortcut-perception', 'label' => 'Perception', 'kind' => 'roll', 'formula' => '1d100+15',
+]];
+$shortcutDatabase->put('character:character-player', $shortcutCharacter);
+$shortcutPayload = [
+    'requestId' => 'shortcut-roll-request-0001', 'sceneId' => 'scene-one',
+    'characterId' => 'character-player', 'shortcutId' => 'shortcut-perception', 'rollMode' => 'advantage',
+];
+$shortcutResponse = runCommand($shortcutDatabase, 'roll', $shortcutPayload);
+$shortcutRoll = $shortcutResponse->body['roll'] ?? [];
+$shortcutAction = $shortcutDatabase->payload('activity')['playerActions'][0] ?? [];
+requireTactical(
+    $shortcutResponse->status === 200
+        && ($shortcutRoll['characterName'] ?? '') === 'Personnage'
+        && ($shortcutRoll['label'] ?? '') === 'Perception'
+        && ($shortcutRoll['formula'] ?? '') === '1d100+15'
+        && ($shortcutRoll['rollMode'] ?? '') === 'advantage'
+        && count($shortcutRoll['attempts'] ?? []) === 2
+        && ($shortcutAction['summary'] ?? '') === 'Perception (Avantage)'
+        && substr_count((string) ($shortcutAction['detail'] ?? ''), '1d100+15 : ') === 2
+        && str_contains((string) ($shortcutAction['detail'] ?? ''), '(jet ignoré)')
+        && !str_contains((string) ($shortcutAction['detail'] ?? ''), 'Nom :'),
+    'The direct Player shortcut route executes the same two-attempt presentation instead of only matching source text'
+);
+$shortcutRevision = $shortcutDatabase->revision;
+$shortcutActivity = $shortcutDatabase->payload('activity');
+$shortcutLuck = $shortcutDatabase->payload('luck');
+$changedShortcutCharacter = $shortcutDatabase->payload('character:character-player');
+$changedShortcutCharacter['shortcuts'][0]['formula'] = '1d100-40';
+$shortcutDatabase->put('character:character-player', $changedShortcutCharacter);
+$shortcutRetry = runCommand($shortcutDatabase, 'roll', $shortcutPayload);
+requireTactical(
+    $shortcutRetry->status === 200
+        && ($shortcutRetry->body['deduplicated'] ?? false) === true
+        && ($shortcutRetry->body['roll']['id'] ?? '') === ($shortcutRoll['id'] ?? null)
+        && ($shortcutRetry->body['roll']['formula'] ?? '') === '1d100+15'
+        && !array_key_exists('discordPosted', $shortcutRetry->body)
+        && $shortcutDatabase->revision === $shortcutRevision
+        && $shortcutDatabase->payload('activity') === $shortcutActivity
+        && $shortcutDatabase->payload('luck') === $shortcutLuck,
+    'A shortcut retry restores its first roll before re-reading a concurrently edited shortcut.'
+);
+$shortcutMismatch = runCommand($shortcutDatabase, 'roll', [...$shortcutPayload, 'rollMode' => 'disadvantage']);
+requireTactical(
+    $shortcutMismatch->status === 409
+        && ($shortcutMismatch->body['code'] ?? '') === 'shortcut_roll_request_mismatch'
+        && $shortcutDatabase->revision === $shortcutRevision,
+    'A shortcut request id cannot be reused with another roll mode.'
+);
+$legacyShortcutDatabase = fixture();
+$legacyShortcutCharacter = $legacyShortcutDatabase->payload('character:character-player');
+$legacyShortcutCharacter['shortcuts'] = [[
+    'id' => 'shortcut-legacy', 'label' => 'Ancien raccourci', 'kind' => 'roll', 'formula' => '1d100',
+]];
+$legacyShortcutDatabase->put('character:character-player', $legacyShortcutCharacter);
+$legacyShortcutRoll = runCommand($legacyShortcutDatabase, 'roll', [
+    'characterId' => 'character-player', 'shortcutId' => 'shortcut-legacy', 'rollMode' => 'normal',
+]);
+requireTactical(
+    $legacyShortcutRoll->status === 200
+        && !array_key_exists('deduplicated', $legacyShortcutRoll->body)
+        && ($legacyShortcutDatabase->payload('activity')['resourceReceipts'] ?? []) === [],
+    'A legacy shortcut roll without requestId remains accepted during the compatibility window.'
 );
 
 $db = fixture();
@@ -346,6 +1078,95 @@ requireTactical(
         && str_contains(onlineAttackHistoryDetail($response->body['attack']), '(jet ignoré)')
         && str_contains(onlineAttackDiscordContent($response->body['attack']), '(jet ignoré)'),
     'Attack history and Discord retain both advantage attempts and identify the ignored one'
+);
+$attackRevision = $db->revision;
+$mismatchedAttack = runCommand($db, 'token.attack', [
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player',
+    'requestId' => 'attack-attempts-0001', 'attackKind' => 'weapon', 'attackId' => 'monster-claw',
+    'statId' => 'monster-force', 'rollMode' => 'advantage',
+], true, 'account-gm');
+$storedAttackReceipt = current(array_values(array_filter(
+    $db->payload('activity')['attackReceipts'] ?? [],
+    static fn (mixed $entry): bool => is_array($entry) && ($entry['requestId'] ?? '') === 'attack-attempts-0001'
+)));
+requireTactical(
+    $mismatchedAttack->status === 409
+        && ($mismatchedAttack->body['code'] ?? '') === 'attack_request_mismatch'
+        && $db->revision === $attackRevision
+        && is_string($storedAttackReceipt['requestSignature'] ?? null),
+    'Reusing an attack request id with another target must be rejected without a second mutation'
+);
+
+$mixedAttackSample = null;
+for ($attempt = 0; $attempt < 200 && $mixedAttackSample === null; $attempt += 1) {
+    $candidate = fixture();
+    $payload = [
+        'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-monster-two',
+        'requestId' => 'mixed-damage-attack-01', 'attackKind' => 'custom',
+        'customAttack' => [
+            'name' => 'Griffe mixte', 'customStat' => true, 'threshold' => 100, 'statLabel' => 'Force',
+            'damageComponents' => [
+                ['type' => 'physical', 'formula' => '1'],
+                ['type' => 'magical', 'formula' => '2'],
+            ],
+        ],
+        'rollMode' => 'advantage', 'opposed' => false,
+    ];
+    $candidateResponse = runCommand($candidate, 'token.attack', $payload, true, 'account-gm');
+    if ($candidateResponse->status === 200 && ($candidateResponse->body['attack']['status'] ?? '') === 'applied') {
+        $mixedAttackSample = [$candidate, $candidateResponse, $payload];
+    }
+}
+requireTactical(is_array($mixedAttackSample), 'A mixed advantage attack must reach an immediately applied ordinary success');
+[$db, $response, $payload] = $mixedAttackSample;
+$mixedAttack = $response->body['attack'];
+$mixedRollIds = array_column($response->body['rolls'] ?? [], 'id');
+$mixedActivity = $db->payload('activity');
+$mixedDamageRoll = $response->body['damageRoll'] ?? [];
+requireTactical(
+    count($mixedRollIds) === 2
+        && $mixedRollIds === [($mixedAttack['hitRoll']['id'] ?? ''), ($mixedAttack['damageRoll']['id'] ?? '')]
+        && array_column($mixedActivity['rolls'] ?? [], 'id') === $mixedRollIds
+        && count(array_unique($mixedRollIds)) === 2,
+    'Immediate attack response, receipt journal and activity retain hit then damage exactly once'
+);
+requireTactical(
+    ($mixedDamageRoll['rollMode'] ?? '') === 'advantage'
+        && is_int($mixedDamageRoll['selectedIndex'] ?? null)
+        && count($mixedDamageRoll['attempts'] ?? []) === 2
+        && ($mixedAttack['damage']['rollMode'] ?? '') === 'advantage'
+        && ($mixedAttack['damage']['selectedIndex'] ?? null) === ($mixedDamageRoll['selectedIndex'] ?? null)
+        && ($mixedAttack['damage']['attempts'] ?? null) === ($mixedDamageRoll['attempts'] ?? null)
+        && count($mixedAttack['damage']['components'] ?? []) === 2,
+    'Mixed damage preserves its two global attempts, selected index and retained component calculation in the attack receipt'
+);
+$mixedHistory = onlineAttackHistoryDetail($mixedAttack);
+requireTactical(
+    str_contains($mixedHistory, 'Jet DMG (Avantage)')
+        && substr_count($mixedHistory, '1+2 : 3') === 2
+        && str_contains($mixedHistory, '(jet ignoré)'),
+    'The GM attack journal exposes both complete damage attempts and identifies the ignored attempt'
+);
+$publicDamageRoll = publicOnlineAttackRoll($mixedAttack['damageRoll'], false, 'damage');
+requireTactical(
+    ($publicDamageRoll['total'] ?? null) === ($mixedAttack['appliedDamage'] ?? null)
+        && ($publicDamageRoll['breakdown'] ?? '') === ($mixedAttack['appliedDamage'] ?? 0) . ' PV perdus'
+        && !isset($publicDamageRoll['attempts'])
+        && !str_contains(onlineAttackDiscordContent($mixedAttack), '1+2'),
+    'The player projection and Discord expose only final applied HP loss, never raw damage or armor inference'
+);
+$mixedRevision = $db->revision;
+$mixedRollCount = count($mixedActivity['rolls'] ?? []);
+$mixedActionCount = count($mixedActivity['playerActions'] ?? []);
+$mixedRetry = runCommand($db, 'token.attack', $payload, true, 'account-gm');
+requireTactical(
+    $mixedRetry->status === 200
+        && ($mixedRetry->body['deduplicated'] ?? false) === true
+        && array_column($mixedRetry->body['rolls'] ?? [], 'id') === $mixedRollIds
+        && $db->revision === $mixedRevision
+        && count($db->payload('activity')['rolls'] ?? []) === $mixedRollCount
+        && count($db->payload('activity')['playerActions'] ?? []) === $mixedActionCount,
+    'Retrying an applied mixed attack returns the immutable hit and damage bundle without reroll, journal or HP mutation'
 );
 
 $db = fixture();
@@ -440,13 +1261,81 @@ $activity['resourceReceipts'] = [];
 $db->put('activity', $activity);
 $revision = $db->revision;
 $retry = runCommand($db, 'token.attack', $payload);
+$expectedRetryRollIds = array_column(
+    onlineAttackResponseRollFields($attackReceipt['attack'], false, true, false)['rolls'],
+    'id'
+);
 requireTactical(
     $retry->status === 200
         && ($retry->body['deduplicated'] ?? false) === true
         && ($retry->body['castRoll']['id'] ?? '') === $castRollId
-        && array_column($retry->body['rolls'] ?? [], 'id') === [$castRollId]
+        && array_column($retry->body['rolls'] ?? [], 'id') === $expectedRetryRollIds
+        && count($expectedRetryRollIds) === count(array_unique($expectedRetryRollIds))
         && $db->revision === $revision,
-    'An ability attack retry restores its cast from the attack receipt after the ability receipt expires'
+    'An ability attack retry restores every visible canonical roll from the attack receipt without duplication'
+);
+
+$appliedAbilityAttack = null;
+for ($attempt = 0; $attempt < 200 && $appliedAbilityAttack === null; $attempt += 1) {
+    $candidate = fixture();
+    $character = $candidate->payload('character:character-player');
+    $character['stats'] = ['force' => 100];
+    $character['abilities'] = [[
+        'id' => 'ability-applied', 'name' => 'Onde appliquée', 'effect' => 'damage', 'formula' => '1',
+        'damageType' => 'ignore', 'description' => '', 'manaCost' => 1, 'cooldownRounds' => 0,
+        'castingStatId' => 'force',
+    ]];
+    $candidate->put('character:character-player', $character);
+    $payload = [
+        'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster',
+        'requestId' => 'applied-cast-attack-001', 'attackKind' => 'ability',
+        'attackId' => 'ability-applied', 'abilityId' => 'ability-applied', 'opposed' => false,
+    ];
+    $candidateResponse = runCommand($candidate, 'token.attack', $payload);
+    if ($candidateResponse->status === 200 && ($candidateResponse->body['attack']['status'] ?? '') === 'applied') {
+        $appliedAbilityAttack = [$candidate, $candidateResponse, $payload];
+    }
+}
+requireTactical(is_array($appliedAbilityAttack), 'A checked ability attack must reach an immediately applied ordinary success');
+[$db, $response, $payload] = $appliedAbilityAttack;
+$actions = $db->payload('activity')['playerActions'] ?? [];
+$attackAction = current(array_values(array_filter($actions, static fn (mixed $entry): bool => is_array($entry) && ($entry['kind'] ?? '') === 'attack')));
+$abilityReceipt = current(array_values(array_filter(
+    $db->payload('activity')['resourceReceipts'] ?? [],
+    static fn (mixed $entry): bool => is_array($entry) && ($entry['requestId'] ?? '') === $payload['requestId']
+)));
+requireTactical(
+    is_array($attackAction) && is_array($abilityReceipt)
+        && ($abilityReceipt['actionId'] ?? '') === ($attackAction['id'] ?? null),
+    'An applied ability attack receipt must point to its attack action, not the later damage audit'
+);
+
+$longAttackDetail = onlineAttackHistoryDetail([
+    'damageType' => 'ignore',
+    'hit' => [
+        'formula' => '1d100+15', 'rollMode' => 'advantage', 'selectedIndex' => 0,
+        'attempts' => [['total' => 1], ['total' => 99]],
+        'outcome' => ['threshold' => 75, 'label' => 'Réussite', 'success' => true],
+    ],
+    'opposition' => [
+        'formula' => '1d100', 'rollMode' => 'disadvantage', 'selectedIndex' => 1,
+        'attempts' => [['total' => 2], ['total' => 98]],
+        'outcome' => ['threshold' => 60, 'label' => 'Échec', 'success' => false],
+    ],
+    'damage' => [
+        'components' => array_map(static fn (string $type): array => [
+            'type' => $type, 'formula' => str_repeat('1d6+', 20) . '1',
+            'breakdown' => str_repeat('[6]+', 44) . '[6]', 'rawDamage' => 121,
+            'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 121,
+        ], ['physical', 'magical', 'ignore']),
+        'rawDamage' => 363, 'preventedDamage' => 0, 'finalDamage' => 363,
+    ],
+]);
+requireTactical(
+    strlen($longAttackDetail) > 500
+        && strlen($longAttackDetail) <= XAR_PLAYER_ACTION_DETAIL_MAXIMUM_BYTES
+        && str_ends_with($longAttackDetail, 'final 363'),
+    'A complete multi-roll damage calculation must retain its final total beyond the old 500-byte truncation'
 );
 
 $db = fixture();
@@ -530,11 +1419,51 @@ foreach ([true,false] as $combatActive) {
     $response = runCommand($db,'token.attack.oppose',['attackId'=>$attack['id'],'requestId'=>'opposition-request-0001']);
     requireTactical($response->status === 200, 'A target that became KO can resolve without a defense stat: '.$response->getMessage());
     requireTactical(($response->body['attack']['opposition']['skipped'] ?? false) && $response->body['attack']['status'] === ($combatActive?'applied':'pending'), 'No opposition die is rolled for a KO target.');
-    requireTactical(count($db->payload('activity')['rolls']) === ($combatActive?1:0), 'Only actually applied damage has a public event.');
+    $storedDamageRolls = array_values(array_filter(
+        $db->payload('activity')['rolls'] ?? [],
+        static fn (mixed $roll): bool => is_array($roll) && str_contains((string) ($roll['label'] ?? ''), 'Dégâts')
+    ));
+    $publicDamageEvents = array_values(array_filter(
+        $storedDamageRolls,
+        static fn (array $roll): bool => ($roll['visibility'] ?? '') === 'public'
+            && ($roll['mapEvent']['kind'] ?? '') === 'damage'
+            && ($roll['mapEvent']['applied'] ?? false) === true
+    ));
+    requireTactical(
+        count($storedDamageRolls) === 1 && count($publicDamageEvents) === ($combatActive ? 1 : 0),
+        'A rolled damage die is retained once, but only actually applied damage becomes a public event.'
+    );
+    $storedAttack = $db->payload('activity')['attackReceipts'][0]['attack'] ?? [];
+    $storedDamageRollId = (string) ($storedAttack['damageRoll']['id'] ?? '');
+    requireTactical(
+        $storedDamageRollId !== ''
+            && ($storedAttack['damageRoll']['rollMode'] ?? '') === 'normal'
+            && ($storedAttack['damage']['rollId'] ?? '') === $storedDamageRollId
+            && ($storedDamageRolls[0]['id'] ?? '') === $storedDamageRollId,
+        'The KO opposition path stores its real normal damage roll in the receipt and activity.'
+    );
     if (!$combatActive) {
-        requireTactical(!isset($response->body['attack']['damage'],$response->body['attack']['appliedDamage']), 'Pending response hides prospective damage.');
+        requireTactical(
+            !isset($response->body['attack']['damage'],$response->body['attack']['appliedDamage'])
+                && ($response->body['damageRoll'] ?? null) === null
+                && ($storedAttack['damageRoll']['visibility'] ?? '') === 'gm',
+            'Pending response hides prospective damage while the authoritative receipt keeps the already rolled die.'
+        );
         $response = runCommand($db,'token.attack.resolve',['attackId'=>$attack['id'],'decision'=>'approve','confirmed'=>true],true,'account-gm');
         requireTactical($response->status === 200, 'The MJ explicitly approves damage out of combat.');
+        requireTactical(
+            ($response->body['damageRoll']['id'] ?? '') === $storedDamageRollId
+                && ($response->body['damageRoll']['visibility'] ?? '') === 'public'
+                && count(array_filter($db->payload('activity')['rolls'] ?? [], static fn (mixed $roll): bool => is_array($roll) && ($roll['id'] ?? '') === $storedDamageRollId)) === 1,
+            'Approval promotes the stored damage roll without rerolling or duplicating it.'
+        );
+    } else {
+        requireTactical(
+            ($response->body['damageRoll']['id'] ?? '') === $storedDamageRollId
+                && !isset($response->body['damageRoll']['attempts'])
+                && ($response->body['damageRoll']['total'] ?? null) === ($response->body['attack']['appliedDamage'] ?? null),
+            'A player sees only the sanitized applied-loss projection of the canonical damage roll.'
+        );
     }
     requireTactical($db->payload('character:character-player')['resources']['hp'] === -30, 'Full reduced damage below zero can cross the death threshold.');
     $revision=$db->revision;

@@ -253,6 +253,13 @@ function imageStudioConversationPayload(array $row): array
     ];
 }
 
+function imageStudioConversationCreateRequestSignature(string $title): string
+{
+    return onlineCommandRequestSignature('image-studio.conversation.create', [
+        'title' => $title,
+    ]);
+}
+
 function listImageStudioConversations(PDO $connection, bool $headOnly): never
 {
     $identity = requireImageStudioIdentity($connection);
@@ -287,23 +294,110 @@ function createImageStudioConversation(PDO $connection): never
 {
     $identity = requireImageStudioIdentity($connection);
     $payload = readJsonBody(8192);
+    $clientRequestId = trim((string) ($payload['clientRequestId'] ?? ''));
+    if ($clientRequestId !== '' && preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $clientRequestId) !== 1) {
+        sendError(400, 'Référence de création de conversation invalide.', 'invalid_conversation_create_request');
+    }
     $title = trim((string) ($payload['title'] ?? ''));
     if ($title === '') {
         $title = 'Nouvelle vision';
     }
     $title = cleanImageStudioSingleLineText($title, 180, 'Titre', 'invalid_conversation_title');
-    $id = randomToken(16);
-    $statement = $connection->prepare(
-        'INSERT INTO image_studio_conversations (id, owner_account_id, title) '
-        . 'VALUES (:id, :owner_account_id, :title)'
-    );
-    $statement->execute([
-        ':id' => $id,
-        ':owner_account_id' => (string) $identity['id'],
-        ':title' => $title,
+    if ($clientRequestId === '') {
+        $id = randomToken(16);
+        $statement = $connection->prepare(
+            'INSERT INTO image_studio_conversations (id, owner_account_id, title) '
+            . 'VALUES (:id, :owner_account_id, :title)'
+        );
+        $statement->execute([
+            ':id' => $id,
+            ':owner_account_id' => (string) $identity['id'],
+            ':title' => $title,
+        ]);
+        $conversation = imageStudioConversationRecord($connection, $id);
+        sendJson(201, [
+            'ok' => true,
+            'conversation' => imageStudioConversationPayload($conversation),
+            'deduplicated' => false,
+        ]);
+    }
+
+    ensureDomainStoreInitialized($connection);
+    $accountId = (string) $identity['id'];
+    $requestSignature = imageStudioConversationCreateRequestSignature($title);
+    $connection->beginTransaction();
+    try {
+        // Locking the shared domain clock serializes receipt lookup and insert:
+        // a retry after a lost response cannot create a second conversation.
+        $clock = domainClockRecord($connection, true);
+        $records = [];
+        $receiptContext = onlinePersistentCommandReceipt(
+            $connection,
+            $records,
+            'studio-conversation-create',
+            $clientRequestId,
+            $accountId,
+            $requestSignature,
+            'conversation_create'
+        );
+        $receipt = is_array($receiptContext['receipt'] ?? null) ? $receiptContext['receipt'] : null;
+        if (is_array($receipt)) {
+            $id = trim((string) ($receipt['result']['conversationId'] ?? ''));
+            $conversation = imageStudioConversationRecord($connection, $id);
+            if (!is_array($conversation) || (string) ($conversation['owner_account_id'] ?? '') !== $accountId) {
+                rejectOnlineCommand(
+                    $connection,
+                    409,
+                    'La conversation créée par cette requête n’existe plus.',
+                    'conversation_create_receipt_stale'
+                );
+            }
+            $connection->commit();
+            sendJson(200, [
+                'ok' => true,
+                'conversation' => imageStudioConversationPayload($conversation),
+                'deduplicated' => true,
+            ]);
+        }
+
+        $id = randomToken(16);
+        $statement = $connection->prepare(
+            'INSERT INTO image_studio_conversations (id, owner_account_id, title) '
+            . 'VALUES (:id, :owner_account_id, :title)'
+        );
+        $statement->execute([
+            ':id' => $id,
+            ':owner_account_id' => $accountId,
+            ':title' => $title,
+        ]);
+        $pending = [];
+        onlineStorePersistentCommandReceipt(
+            $records,
+            $pending,
+            $receiptContext,
+            'studio-conversation-create',
+            $clientRequestId,
+            $accountId,
+            'studio-conversation-' . $id,
+            $id,
+            $requestSignature,
+            ['conversationId' => $id]
+        );
+        persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
+        $conversation = imageStudioConversationRecord($connection, $id);
+        $connection->commit();
+        cleanupApplicationDomainHistory($connection);
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $error;
+    }
+    sendJson(201, [
+        'ok' => true,
+        'conversation' => imageStudioConversationPayload($conversation),
+        'deduplicated' => false,
     ]);
-    $conversation = imageStudioConversationRecord($connection, $id);
-    sendJson(201, ['ok' => true, 'conversation' => imageStudioConversationPayload($conversation)]);
 }
 
 function updateImageStudioConversation(PDO $connection, string $id): never

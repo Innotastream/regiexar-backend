@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.17';
-const XAR_BACKEND_BUILD = 'client-3-2-17-roll-vision-stream-candidate-20260912-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.17';
+const XAR_BACKEND_VERSION = '0.15.18';
+const XAR_BACKEND_BUILD = 'client-3-2-18-roll-vision-stream-candidate-20260912-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.18';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.17'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.18'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 19;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -949,11 +949,44 @@ function backendReleaseState(PDO $connection): ?array
     return is_array($record) ? $record : null;
 }
 
+function backendReleaseVersionStatus(?array $state, string $candidateVersion = XAR_BACKEND_VERSION): string
+{
+    $validVersion = static fn (string $version): bool =>
+        preg_match('/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/D', $version) === 1;
+    if (!$validVersion($candidateVersion)) {
+        return 'invalid';
+    }
+    if (!is_array($state)) {
+        return 'initialize';
+    }
+    $authorityVersion = trim((string) ($state['backend_version'] ?? ''));
+    if (!$validVersion($authorityVersion)) {
+        return 'invalid';
+    }
+    $comparison = version_compare($candidateVersion, $authorityVersion);
+    if ($comparison < 0) {
+        return 'stale';
+    }
+    return $comparison > 0 ? 'upgrade' : 'current';
+}
+
+function requireBackendReleaseAuthority(?array $state): string
+{
+    $status = backendReleaseVersionStatus($state);
+    if ($status === 'stale') {
+        throw new RuntimeException('stale_backend_instance');
+    }
+    if ($status === 'invalid') {
+        throw new RuntimeException('backend_release_version_invalid');
+    }
+    return $status;
+}
+
 function synchronizeBackendRelease(PDO $connection): void
 {
     $state = backendReleaseState($connection);
-    $currentGeneration = is_array($state)
-        && hash_equals(XAR_BACKEND_VERSION, (string) ($state['backend_version'] ?? ''));
+    $releaseStatus = requireBackendReleaseAuthority($state);
+    $currentGeneration = $releaseStatus === 'current';
     if ($currentGeneration && $state['drain_completed_at'] !== null) {
         return;
     }
@@ -967,9 +1000,9 @@ function synchronizeBackendRelease(PDO $connection): void
 
     try {
         $state = backendReleaseState($connection);
-        $currentGeneration = is_array($state)
-            && hash_equals(XAR_BACKEND_VERSION, (string) ($state['backend_version'] ?? ''));
-        if (!$currentGeneration) {
+        $releaseStatus = requireBackendReleaseAuthority($state);
+        $currentGeneration = $releaseStatus === 'current';
+        if ($releaseStatus === 'initialize' || $releaseStatus === 'upgrade') {
             $connection->beginTransaction();
             try {
                 $update = $connection->prepare(
@@ -1935,10 +1968,18 @@ try {
     ensureCurrentSchema($connection);
     synchronizeBackendRelease($connection);
 } catch (Throwable $error) {
-    error_log('[xar-regie-api] database connection failed: ' . get_class($error));
-    $code = $error instanceof RuntimeException && $error->getMessage() === 'configuration_required'
-        ? 'configuration_required'
-        : 'database_unreachable';
+    $runtimeCode = $error instanceof RuntimeException ? $error->getMessage() : '';
+    if (in_array($runtimeCode, ['stale_backend_instance', 'backend_release_version_invalid'], true)) {
+        error_log('[xar-regie-api] release authority rejected: ' . $runtimeCode);
+    } else {
+        error_log('[xar-regie-api] database connection failed: ' . get_class($error));
+    }
+    $code = match ($runtimeCode) {
+        'configuration_required' => 'configuration_required',
+        'stale_backend_instance' => 'stale_backend_instance',
+        'backend_release_version_invalid' => 'backend_release_version_invalid',
+        default => 'database_unreachable',
+    };
     sendJson(503, ['ok' => false, 'status' => 'unavailable', 'code' => $code], $headOnly);
 }
 

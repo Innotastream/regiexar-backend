@@ -43,20 +43,60 @@ function applicationCustomAttack(mixed $value): array {
     if ($customStat && (!is_numeric($threshold) || (float) $threshold != (int) $threshold || $threshold < 0 || $threshold > 100 || $label === '' || strlen($label) > 120)) throw new InvalidArgumentException('Statistique personnalisée invalide.');
     return ['name' => $name, 'damageComponents' => $parts, 'customStat' => $customStat, 'threshold' => (int) $threshold, 'statLabel' => $label];
 }
-function onlineRollAttackDamage(array $attack, array $target): array {
+function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
     $parts = applicationDamageComponents($attack['damageComponents'] ?? []);
     if ($parts === []) {
         $rolled = onlineRollFormulaWithMode($attack['damageFormula'], $attack['damageRollMode'] ?? 'normal');
         return ['rolled' => $rolled, 'damage' => onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, $attack['damageType'] ?? 'physical'))];
     }
-    $results = []; $raw = 0; $final = 0; $breakdown = [];
-    foreach ($parts as $part) {
-        $rolled = onlineRollFormulaWithMode($part['formula'], $attack['damageRollMode'] ?? 'normal');
-        $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, $part['type']));
-        $results[] = [...$part, 'breakdown' => $rolled['breakdown'], ...$summary];
-        $raw += $summary['rawDamage']; $final += $summary['finalDamage']; $breakdown[] = $part['type'] . ': ' . $rolled['breakdown'];
+    $rollFormula ??= static fn (string $formula): array => onlineRollFormula($formula);
+    $rollMode = normalizeOnlineRollMode($attack['damageRollMode'] ?? 'normal');
+    $attempts = [];
+    $attemptCount = $rollMode === 'normal' ? 1 : 2;
+    for ($attemptIndex = 0; $attemptIndex < $attemptCount; $attemptIndex += 1) {
+        $attemptTotal = 0; $attemptBreakdown = []; $attemptComponents = [];
+        foreach ($parts as $part) {
+            $componentRoll = $rollFormula($part['formula']);
+            $componentTotal = (int) ($componentRoll['total'] ?? 0);
+            $componentBreakdown = (string) ($componentRoll['breakdown'] ?? $componentTotal);
+            $attemptTotal += $componentTotal;
+            $attemptBreakdown[] = $part['type'] . ': ' . $componentBreakdown;
+            $attemptComponents[] = [
+                ...$part,
+                'total' => $componentTotal,
+                'breakdown' => $componentBreakdown,
+            ];
+        }
+        $attempts[] = [
+            'total' => $attemptTotal,
+            'breakdown' => implode(' ; ', $attemptBreakdown),
+            'rawD100' => null,
+            'components' => $attemptComponents,
+        ];
     }
-    return ['rolled' => ['formula' => applicationCombinedDamageFormula($parts), 'total' => $raw, 'breakdown' => implode(' ; ', $breakdown)],
+    $selectedIndex = selectOnlineRollAttemptIndex($attempts, $rollMode);
+    $selected = $attempts[$selectedIndex];
+    $results = []; $raw = 0; $final = 0;
+    foreach ($selected['components'] as $component) {
+        $summary = onlineAttackDamageSummary(max(0, (int) $component['total']), onlineAttackArmorPercent($target, $component['type']));
+        $results[] = [
+            'type' => $component['type'],
+            'formula' => $component['formula'],
+            'breakdown' => $component['breakdown'],
+            ...$summary,
+        ];
+        $raw += $summary['rawDamage'];
+        $final += $summary['finalDamage'];
+    }
+    return ['rolled' => [
+            'formula' => applicationCombinedDamageFormula($parts),
+            'total' => $selected['total'],
+            'breakdown' => $selected['breakdown'],
+            'rawD100' => null,
+            'rollMode' => $rollMode,
+            'selectedIndex' => $selectedIndex,
+            'attempts' => $attempts,
+        ],
         'damage' => ['rawDamage' => $raw, 'finalDamage' => $final, 'preventedDamage' => $raw - $final, 'armorPercent' => count($results) === 1 ? $results[0]['armorPercent'] : ($raw ? (int) round(100 * ($raw - $final) / $raw) : 0), 'components' => $results]];
 }
 
@@ -87,7 +127,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $now = (int) floor(microtime(true) * 1000);
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
-        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', ['ability-cast', 'token-roll'], true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', ['ability-cast', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'], true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         if (count($receipts) > XAR_RESOURCE_RECEIPT_MAXIMUM) sendError(409, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
         if (array_key_exists('resourceReceipts', $payload) || $receipts !== []) $payload['resourceReceipts'] = array_values($receipts);
         $timers = array_column($previous['actionTimers'] ?? [], null, 'id');
@@ -113,6 +153,16 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
                 foreach (['label', 'characterName', 'formula', 'total', 'rollMode', 'selectedIndex', 'attempts'] as $field) {
                     if (!array_key_exists($field, $attack[$rollKey]) && array_key_exists($field, $old[$rollKey])) {
                         $attack[$rollKey][$field] = $old[$rollKey][$field];
+                    }
+                }
+            }
+            foreach (['hitRoll', 'oppositionRoll', 'damageRoll'] as $rollKey) {
+                if (!array_key_exists($rollKey, $attack) && is_array($old[$rollKey] ?? null)) $attack[$rollKey] = $old[$rollKey];
+            }
+            if (is_array($attack['damage'] ?? null) && is_array($old['damage'] ?? null)) {
+                foreach (['rollId', 'total', 'rollMode', 'selectedIndex', 'attempts'] as $field) {
+                    if (!array_key_exists($field, $attack['damage']) && array_key_exists($field, $old['damage'])) {
+                        $attack['damage'][$field] = $old['damage'][$field];
                     }
                 }
             }

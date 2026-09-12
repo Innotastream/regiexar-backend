@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.17 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
+test("le backend 0.15.18 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.17'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-17-roll-vision-stream-candidate-20260912-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.18'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-18-roll-vision-stream-candidate-20260912-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -108,8 +108,8 @@ test("le backend 0.15.17 conserve la file Codex, porte le schéma de session 16 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.17");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.17");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.18");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.18");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -168,7 +168,9 @@ test("un jet de capacité journalise le même calcul pour le MJ et le joueur san
   assert.match(simpleAbility, /onlineAppendPlayerAction[\s\S]*?'kind' => 'ability'[\s\S]*?onlineAbilityRollBundle\(\$cast, \$effectRoll\)[\s\S]*?onlineStoreAbilityReceipt[\s\S]*?onlineAppendAbilityRollActions/);
   assert.match(simpleAbility, /onlineAbilityRollBundle\(\$cast, \$effectRoll\)/);
   assert.match(simpleAbility, /onlineAppendAbilityRollActions/);
-  const playerJournal = online.slice(online.indexOf("if (!$isGm && !in_array($command"), online.indexOf("$targetScenes = []"));
+  const journalStart = online.indexOf("$abilityRollAlreadyLogged = $command === 'token.roll'");
+  const playerJournal = online.slice(journalStart, online.indexOf("$targetScenes = []", journalStart));
+  assert.notEqual(journalStart, -1);
   assert.match(playerJournal, /\$abilityRollAlreadyLogged = \$command === 'token\.roll'[\s\S]*?\(\$arguments\['kind'\] \?\? ''\) === 'ability'/);
   assert.match(playerJournal, /if \(!\$abilityRollAlreadyLogged && in_array\(\$command, \['roll', 'token\.roll'\]/);
   const gmRoll = tactical.slice(tactical.indexOf("function onlineGmTacticalRoll"));
@@ -192,7 +194,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /normalizeOnlineAbilities/);
   assert.match(attack, /findEntryIndex\(\$stats/);
   assert.match(attack, /onlineRollAttackDamage\(\$damageSpecification, \$target\)/);
-  assert.match(effects, /foreach \(\$parts as \$part\)[\s\S]*?onlineAttackArmorPercent\(\$target, \$part\['type'\]\)/);
+  assert.match(effects, /foreach \(\$selected\['components'\] as \$(\w+)\)[\s\S]*?onlineAttackArmorPercent\(\$target, \$\1\['type'\]\)/);
   assert.match(effects, /onlineAttackArmorPercent\(\$target, \$attack\['damageType'\] \?\? 'physical'\)/);
   assert.match(effects, /\$final \+= \$summary\['finalDamage'\]/);
   assert.match(attack, /\$combatActive = \(\$initiative\['active'\] \?\? false\) === true/);
@@ -224,9 +226,13 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(online, /\$attack\['status'\] \?\? ''\) !== 'awaiting-opposition'[\s\S]*?\$attack\['sceneId'\][\s\S]*?ownedByYou/);
   assert.match(oppose, /Cette cible est déjà morte\.[\s\S]*?target_already_defeated[\s\S]*?\$stats =/);
   assert.match(oppose, /\$target === \[\] && \$decision !== 'cancel'/);
-  assert.match(oppose, /'opposition'\] = \['requestId' => \$requestId, 'cancelled' => true, 'rolledByGm' => true\]/);
+  assert.match(oppose, /'opposition'\] = \[[^\]]*'requestId' => \$requestId[^\]]*'requestSignature' => \$oppositionRequestSignature[^\]]*'cancelled' => true[^\]]*'rolledByGm' => true/);
   assert.match(attack, /Jet d’opposition demandé/);
   assert.match(attack, /onlineAttackHistoryDetail\(\$attack/);
+  assert.match(attack, /onlineAttackRequestSignature/);
+  assert.match(attack, /attack_request_mismatch/);
+  assert.match(online, /La recharge de cette compétence est gérée par son lancement et les rounds\./);
+  assert.match(attack, /\$attackAction = onlineAppendPlayerAction[\s\S]*?onlineStoreAbilityReceipt[\s\S]*?\$attackAction\['id'\]/);
   assert.match(attack, /validationKind'\] = 'outcome'/);
   assert.match(attack, /provisionalStatus/);
   assert.match(attack, /onlineDefenderWinsOpposition/);
@@ -255,6 +261,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(domains, /XAR_PENDING_ATTACK_MAXIMUM = 100/);
   assert.match(domains, /XAR_ATTACK_RECEIPT_MAXIMUM = 1024/);
   assert.match(domains, /XAR_PLAYER_ACTION_MAXIMUM = 300/);
+  assert.match(domains, /XAR_PLAYER_ACTION_DETAIL_MAXIMUM_BYTES = 2000/);
   assert.match(domains, /pendingAttacks'\] \?\? \[\], XAR_PENDING_ATTACK_MAXIMUM/);
   assert.match(domains, /attackReceipts'\] \?\? \[\], XAR_ATTACK_RECEIPT_MAXIMUM/);
   assert.match(online, /for \(\$suffix = 2; isset\(\$seen\[\$id\]\); \$suffix \+= 1\)/);
@@ -304,8 +311,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.17");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.17"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.18");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.18"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -318,7 +325,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.16 \/ 3\.2\.17 \/ 3\.2\.18 = 426 \/ 401 \/ 426/);
+  assert.match(readme, /3\.2\.17 \/ 3\.2\.18 \/ 3\.2\.19 = 426 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 
@@ -410,6 +417,7 @@ test("GET state évite toute projection et présence lorsque la révision est in
   assert.ok(reader.indexOf("requireIdentity($connection)") < reader.indexOf("requestedOnlineStateRevision()"));
   assert.match(fastPath, /domainClockRecord\(\$connection\)/);
   assert.match(fastPath, /'unchanged' => true/);
+  assert.match(fastPath, /onlineStateRevisionIsCurrent\(\$since, \(int\) \$clock\['globalRevision'\]\)/);
   assert.match(fastPath, /'state' => null/);
   assert.doesNotMatch(fastPath, /domainApplicationStateRecord|playerApplicationStateRecord|liveOnlinePresence/);
 });
@@ -723,20 +731,26 @@ test("un patch partiel conserve les autres ressources, stats et valeurs de fatig
   assert.match(patcher, /array_replace\(\$nestedCurrent, \$nestedPatch\)/);
 });
 
-test("le rapprochement automatique répare aussi un compte déjà présent en double", async () => {
+test("le rapprochement automatique utilise seulement les rattachements historiques déclarés", async () => {
   const online = await read("api/v1/online.php");
   const command = online.slice(online.indexOf("function commandOnlineState"), online.indexOf("function openOnlineConnection"));
   const ensurePlayer = command.slice(command.indexOf("$command === 'ensure-player'"), command.indexOf("$command === 'preferences.update'"));
-  assert.match(online, /function rosterRepairAliases[\s\S]*?return rosterAliases\(\$identity\)/);
+  assert.match(online, /function onlineDeclaredLegacyOwnerAliases/);
+  assert.doesNotMatch(online, /function (?:rosterAliases|rosterRepairAliases|rosterLegacyIdForAlias)\b/);
   assert.match(online, /function rosterMigrationCandidateIndex/);
   assert.match(online, /function onlineIdentityLegacyOwnerId/);
   assert.match(online, /function onlineRosterOwnershipProposals/);
-  assert.match(online, /\$characterNameOwners\[\$ownerPlayerId\] = true/);
-  assert.match(online, /'goldark' => \['kokaku'\]/);
-  assert.match(online, /'innota' => \['inho'\]/);
-  assert.match(online, /'hohachu' => \['gohachu', 'gohachu forgefer'\]/);
-  assert.match(online, /\$matchesDeterministicId/);
-  assert.match(online, /\$matchesUniqueName = \$name === \$alias/);
+  const candidate = online.slice(online.indexOf("function rosterMigrationCandidateIndex"), online.indexOf("function onlineRosterOwnershipRepairVersion"));
+  assert.match(candidate, /onlineDeclaredLegacyOwnerAliases\(\)/);
+  assert.match(candidate, /isset\(\$declaredOwnerIds\[\$id\]\)/);
+  assert.doesNotMatch(candidate, /\$accountAlreadyPresent/);
+  assert.doesNotMatch(candidate, /\$player\['name'\]|matchesUniqueName/);
+  const identityOwner = online.slice(online.indexOf("function onlineIdentityLegacyOwnerId"), online.indexOf("function onlineRosterOwnershipProposals"));
+  assert.doesNotMatch(identityOwner, /characterNameOwners|in_array\(\$name, \$aliases/);
+  const declaredAssignments = online.slice(online.indexOf("function onlineDeclaredCharacterAssignmentAnalysis"), online.indexOf("function onlinePendingDomainPayload"));
+  assert.match(declaredAssignments, /\['aliases' => \['gohachu', 'gohachu forgefer'\], 'accountAlias' => 'hohachu'\]/);
+  assert.match(declaredAssignments, /foreach \(\$declaration\['aliases'\] as \$characterAlias\)[\s\S]*?\$characterKeys = array_merge\(\$characterKeys/);
+  assert.match(declaredAssignments, /if \(count\(\$characterKeys\) !== 1\)[\s\S]*?\$ambiguous\+\+/);
   assert.match(online, /count\(\$candidates\) === 1/);
   const reader = online.slice(online.indexOf("function readOnlineState"), online.indexOf("function rejectLegacyOnlineState"));
   assert.match(reader, /repairOnlineRosterOwnershipsOnRead\(\$connection, \$identity\)[\s\S]*?requestedOnlineStateRevision/);
@@ -751,13 +765,16 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(repair, /_ownershipRepairDeclaredTokensIncorrect/);
   assert.match(repair, /_ownershipRepairUnassignedCharacters/);
   assert.match(online, /function onlineDeclaredCharacterAssignments/);
-  assert.match(online, /function cleanupOnlinePhantomRosterPlayers/);
+  assert.match(online, /function onlineRetainedRosterOnlyPlayerCount/);
+  const rosterOnlyCounter = online.slice(online.indexOf("function onlineRetainedRosterOnlyPlayerCount"), online.indexOf("function onlineUnassignedCharacterCountAfterRepair"));
+  assert.doesNotMatch(rosterOnlyCounter, /unset\(|array_splice|\$roster\[[^\]]+\]\s*=/);
   assert.match(repair, /_ownershipRepairRemovedRosterGhosts/);
+  assert.match(repair, /_ownershipRepairRetainedRosterOnlyPlayers/);
+  assert.match(online, /'retainedRosterOnlyPlayers' =>/);
   assert.match(repair, /_ownershipRepairDuplicateActiveAccountDisplays/);
-  assert.match(online, /'vraska' => 'ada'/);
-  assert.match(online, /'kokaku' => 'goldark'/);
-  assert.match(online, /'inho' => 'innota'/);
-  assert.match(online, /'gohachu' => 'hohachu'/);
+  assert.match(online, /\['aliases' => \['vraska'\], 'accountAlias' => 'ada'\]/);
+  assert.match(online, /\['aliases' => \['kokaku'\], 'accountAlias' => 'goldark'\]/);
+  assert.match(online, /\['aliases' => \['inho'\], 'accountAlias' => 'innota'\]/);
   assert.match(repair, /queueOnlineDeclaredCharacterAssignments/);
   assert.doesNotMatch(online.slice(online.indexOf("function onlineRosterOwnershipProposals"), online.indexOf("function queueOnlinePlayerOwnershipRepair")), /characterCounts\[\$accountId\].*continue/);
   assert.match(repair, /elseif \(\$pendingIndex >= 0\)/);
@@ -768,7 +785,11 @@ test("le rapprochement automatique répare aussi un compte déjà présent en do
   assert.match(repair, /queueOnlinePlayerOwnershipRepair/);
   assert.match(repair, /persistDomainChangesInTransaction/);
   assert.match(ensurePlayer, /\$accountIndex = findEntryIndex\(\$players, \$accountId\)/);
-  assert.match(ensurePlayer, /rosterMigrationCandidateIndex\([\s\S]*?\$accountIndex >= 0/);
+  assert.match(ensurePlayer, /SELECT id, username, display_name FROM accounts WHERE revoked_at IS NULL ORDER BY id/);
+  assert.match(ensurePlayer, /\$ownershipProposals = onlineRosterOwnershipProposals\(\$records, \$activeAccounts\)/);
+  assert.match(ensurePlayer, /\$proposedOldId = trim\([\s\S]*?\$ownershipProposals\[\$accountId\]\['oldId'\]/);
+  assert.match(ensurePlayer, /\$pendingIndex = \$proposedOldId !== '' \? findEntryIndex\(\$players, \$proposedOldId\) : -1/);
+  assert.doesNotMatch(ensurePlayer, /rosterMigrationCandidateIndex\(/);
   assert.match(ensurePlayer, /\$accountCharacters !== 0 \|\| \$candidateCharacters === 0/);
   assert.match(ensurePlayer, /\$rosterChanged = false/);
   assert.match(ensurePlayer, /if \(\$pendingIndex >= 0\)[\s\S]*?array_splice\(\$players, \$pendingIndex, 1\)/);
@@ -797,6 +818,7 @@ test("les vues administratives chargent les personnages sans reconstruire l’é
   assert.match(domains, /'character:'/);
   assert.match(reader, /applicationDomainRecordsByPrefix\(\$connection, \$prefix\)/);
   assert.match(reader, /invalid_domain_selection/);
+  assert.match(reader, /applicationDomainReadRequiresReset\(\$since, \$clock\['globalRevision'\]\)/);
 });
 
 test("les secrets ont une clé indépendante et les médias une rétention", async () => {
@@ -928,6 +950,7 @@ test("la réutilisation d’un minuteur reste liée au combat et à sa scène", 
   );
   assert.match(timerCommands, /\$command === 'timer\.update'[\s\S]*?\$initiative\['active'\]/);
   assert.match(timerCommands, /\$command === 'timer\.update'[\s\S]*?\$timers\[\$index\]\['sceneId'\][\s\S]*?\$sceneId/);
+  assert.match(timerCommands, /\$round < \$readyRound[\s\S]*?timer_not_ready/);
 });
 
 test("les variantes de cadre sont bornées et les détails tactiques restent en lecture seule", async () => {
@@ -955,6 +978,7 @@ test("plusieurs MJ sont sérialisés par transaction sans verrou de session glob
   assert.match(patch, /domainClockRecord\(\$connection, true\)/);
   assert.match(patch, /expectedRevision/);
   assert.match(patch, /domain_revision_conflict/);
+  assert.match(patch, /invalid_domain_operation/);
   assert.match(patch, /rollBack\(\)/);
   assert.ok(
     patch.indexOf("$prepared = $operation === 'upsert'") < patch.indexOf("if ($expected !== $currentRevision)"),

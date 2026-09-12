@@ -96,13 +96,30 @@ requireTactical($legacyPresentation['character'] === 'Innota', 'An empty legacy 
 
 $args = ['kind' => 'stat', 'tokenId' => 'monster-one', 'statId' => 'force'];
 $signature = applicationTacticalRollSignature('scene-one', $args);
-requireTactical($signature === '["token.roll","scene-one","monster-one","","stat","force",""]', 'The PHP signature must match the Node contract');
-requireTactical(applicationTacticalRollSignature('scene-one', [...$args, 'formula' => '1d2', 'modifier' => 50]) === $signature, 'A changed modifier cannot reroll the same request');
+requireTactical(
+    $signature === '["token.roll","scene-one","monster-one","","stat","force","","","",null,0,"threshold","normal","public"]',
+    'The PHP signature must match the complete Node contract'
+);
+foreach ([
+    [...$args, 'formula' => '1d2'],
+    [...$args, 'modifier' => 50],
+    [...$args, 'modifierMode' => 'result'],
+    [...$args, 'rollMode' => 'advantage'],
+    [...$args, 'visibility' => 'gm'],
+    [...$args, 'label' => 'Force secrète'],
+    [...$args, 'threshold' => 50],
+] as $changedArguments) {
+    requireTactical(
+        applicationTacticalRollSignature('scene-one', $changedArguments) !== $signature,
+        'Every result-affecting tactical-roll argument participates in the idempotency signature'
+    );
+}
 $receipt = ['kind' => 'token-roll', 'requestId' => 'tactical-roll-request-0001', 'accountId' => 'gm-one', 'actionId' => 'action-one', 'sourceKey' => 'monster-one', 'expiresAt' => 5000, 'requestSignature' => $signature, 'result' => ['roll' => ['id' => 'real-roll-one', 'total' => 42], 'initiativeUpdated' => false]];
 $replayed = applicationTacticalRollReceipt(['resourceReceipts' => [$receipt]], $receipt['requestId'], 'gm-one', $signature, 1000);
 requireTactical($replayed['roll']['id'] === 'real-roll-one' && $replayed['roll']['total'] === 42 && $replayed['deduplicated'], 'A retry must return the original roll without rerolling');
 rejectsTactical(fn() => applicationTacticalRollReceipt(['resourceReceipts' => [$receipt]], $receipt['requestId'], 'gm-two', $signature, 1000), 'tactical_roll_receipt_forbidden');
 rejectsTactical(fn() => applicationTacticalRollReceipt(['resourceReceipts' => [$receipt]], $receipt['requestId'], 'gm-one', applicationTacticalRollSignature('scene-one', [...$args, 'statId' => 'agility']), 1000), 'tactical_roll_request_mismatch');
+rejectsTactical(fn() => applicationTacticalRollReceipt(['resourceReceipts' => [$receipt]], $receipt['requestId'], 'gm-one', applicationTacticalRollSignature('scene-one', [...$args, 'modifier' => 50]), 1000), 'tactical_roll_request_mismatch');
 requireTactical(applicationTacticalRollReceipt(['resourceReceipts' => [$receipt]], $receipt['requestId'], 'gm-one', $signature, 6000) === null, 'Expired receipts are pruned');
 $receipt['expiresAt'] = (int) floor(microtime(true) * 1000) + 60000;
 requireTactical(preserveApplicationAbilityExtensions('activity', ['resourceReceipts' => []], ['resourceReceipts' => [$receipt]])['resourceReceipts'] === [$receipt], 'Old client normalizers cannot erase an authoritative tactical receipt');

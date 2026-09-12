@@ -16,6 +16,13 @@ function rejectsCasting(callable $action, string $code): void {
     throw new RuntimeException('Missing rejection: ' . $code);
 }
 
+requireCasting(
+    applicationRoundCountLabel(0) === '0 rounds'
+        && applicationRoundCountLabel(1) === '1 round'
+        && applicationRoundCountLabel(3) === '3 rounds',
+    'Le vocabulaire utilisateur des recharges doit refléter initiative.round sans parler de tours.'
+);
+
 $ability = ['id' => 'ability-mixed', 'name' => 'Flamme tranchante', 'formula' => '10+20+7', 'damageType' => 'physical', 'description' => '', 'effect' => 'damage',
     'damageComponents' => [['type' => 'physical', 'formula' => '10'], ['type' => 'magical', 'formula' => '20'], ['type' => 'ignore', 'formula' => '7']],
     'manaCost' => 8, 'cooldownRounds' => 3, 'castingStatId' => 'intelligence', 'image' => '/media/ability-test.png'];
@@ -208,6 +215,44 @@ requireCasting($parts[0]['armorPercent'] === onlineAttackArmorPercent(['armorCat
 requireCasting($parts[1]['finalDamage'] === 15 && $parts[1]['armorPercent'] === 25, 'Magical damage must use its own percentage');
 requireCasting($parts[2]['finalDamage'] === 7 && $parts[2]['armorPercent'] === 0, 'Ignoring armor must bypass both armor types');
 requireCasting($damage['damage']['finalDamage'] === array_sum(array_column($parts, 'finalDamage')), 'Mixed damage must sum separately reduced values');
+$crossedParts = [
+    ['type' => 'physical', 'formula' => '1d6'],
+    ['type' => 'magical', 'formula' => '1d6'],
+];
+$crossedValues = [6, 1, 1, 5];
+$crossedIndex = 0;
+$crossedDamage = onlineRollAttackDamage(
+    ['damageComponents' => $crossedParts, 'damageRollMode' => 'advantage'],
+    ['armor' => 0, 'magicArmor' => 0],
+    static function (string $formula) use (&$crossedValues, &$crossedIndex): array {
+        $value = $crossedValues[$crossedIndex++];
+        return ['formula' => $formula, 'total' => $value, 'breakdown' => '[' . $value . ']', 'rawD100' => null];
+    }
+);
+requireCasting(
+    ($crossedDamage['rolled']['rollMode'] ?? '') === 'advantage'
+        && ($crossedDamage['rolled']['selectedIndex'] ?? -1) === 0
+        && array_column($crossedDamage['rolled']['attempts'] ?? [], 'total') === [7, 6]
+        && array_column($crossedDamage['damage']['components'] ?? [], 'rawDamage') === [6, 1]
+        && ($crossedDamage['damage']['rawDamage'] ?? 0) === 7,
+    'Mixed advantage rolls the complete formula twice and selects one global attempt instead of combining each component best into 11'
+);
+$crossedValues = [6, 1, 1, 5];
+$crossedIndex = 0;
+$crossedDisadvantage = onlineRollAttackDamage(
+    ['damageComponents' => $crossedParts, 'damageRollMode' => 'disadvantage'],
+    ['armor' => 0, 'magicArmor' => 0],
+    static function (string $formula) use (&$crossedValues, &$crossedIndex): array {
+        $value = $crossedValues[$crossedIndex++];
+        return ['formula' => $formula, 'total' => $value, 'breakdown' => '[' . $value . ']', 'rawD100' => null];
+    }
+);
+requireCasting(
+    ($crossedDisadvantage['rolled']['selectedIndex'] ?? -1) === 1
+        && array_column($crossedDisadvantage['damage']['components'] ?? [], 'rawDamage') === [1, 5]
+        && ($crossedDisadvantage['damage']['rawDamage'] ?? 0) === 6,
+    'Mixed disadvantage selects the lower complete attempt before applying armor to its retained components'
+);
 
 $calculatedAttack = [
     'sourceName' => 'Héros', 'targetName' => 'Garde', 'attackName' => 'Lame', 'status' => 'applied',

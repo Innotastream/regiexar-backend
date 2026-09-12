@@ -44,6 +44,11 @@ function applicationAbilitySourceDefeated(array $source): bool {
         || onlineTokenIsDead($source, !empty($source['controllerPlayerId']));
 }
 
+function applicationRoundCountLabel(int $count): string {
+    $count = max(0, $count);
+    return $count . ' round' . ($count === 1 ? '' : 's');
+}
+
 // A round is a complete initiative cycle. Stopping combat freezes the existing
 // counter; beginning a new combat explicitly clears its timers in the MJ flow.
 function applicationAbilityCastingPlan(array $ability, array $source, string $sceneId, array $initiative, array $timers, ?string $legacyStatId = null): array {
@@ -219,12 +224,13 @@ function onlineAbilityReceipt(PDO $connection, array $activity, string $requestI
     return null;
 }
 
-function onlineStoreAbilityReceipt(array &$records, array &$pending, string $requestId, string $accountId, string $signature, array $result): array {
+function onlineStoreAbilityReceipt(array &$records, array &$pending, string $requestId, string $accountId, string $signature, array $result, ?string $committedActionId = null): array {
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     $now = (int) floor(microtime(true) * 1000);
     $receipts = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn($entry): bool => is_array($entry) && ($entry['expiresAt'] ?? 0) > $now));
     $parts = json_decode($signature, true);
-    $actionId = (string) ($activity['playerActions'][0]['id'] ?? '');
+    $actionId = trim((string) ($committedActionId ?? ''));
+    if ($actionId === '') $actionId = (string) ($activity['playerActions'][0]['id'] ?? '');
     if ($actionId === '') throw new RuntimeException('A casting receipt requires its committed action.');
     $receipts[] = ['kind' => 'ability-cast', 'requestId' => $requestId, 'accountId' => $accountId, 'actionId' => $actionId, 'sourceKey' => (string) (($parts[2] ?? '') ?: ($parts[3] ?? '')), 'abilityId' => (string) ($parts[4] ?? ''), 'expiresAt' => $now + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS, 'requestSignature' => $signature, 'result' => $result];
     $activity['resourceReceipts'] = $receipts; queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
@@ -282,7 +288,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
         onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
     }
     $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity);
-    onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . $cast['remainingRounds'] . ' tours' : ' · aucune recharge')]);
+    onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . applicationRoundCountLabel((int) $cast['remainingRounds']) : ' · aucune recharge')]);
     $bundle = onlineAbilityRollBundle($cast, $effectRoll);
     $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
