@@ -1,6 +1,63 @@
 <?php
 declare(strict_types=1);
 
+function applicationRollModeLabel(mixed $mode): string {
+    return normalizeOnlineRollMode($mode) === 'advantage' ? 'Avantage'
+        : (normalizeOnlineRollMode($mode) === 'disadvantage' ? 'Désavantage' : 'Jet normal');
+}
+
+function applicationRollUppercase(string $value): string {
+    return strtr(strtoupper($value), [
+        'à' => 'À', 'â' => 'Â', 'ä' => 'Ä', 'ç' => 'Ç', 'é' => 'É', 'è' => 'È', 'ê' => 'Ê', 'ë' => 'Ë',
+        'î' => 'Î', 'ï' => 'Ï', 'ô' => 'Ô', 'ö' => 'Ö', 'ù' => 'Ù', 'û' => 'Û', 'ü' => 'Ü', 'ÿ' => 'Ÿ', 'œ' => 'Œ',
+    ]);
+}
+
+function applicationRollPresentation(array $roll): array {
+    $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
+    $formula = trim((string) ($roll['formula'] ?? 'Jet')) ?: 'Jet';
+    $storedAttempts = array_values(array_filter(
+        is_array($roll['attempts'] ?? null) ? array_slice($roll['attempts'], 0, 2) : [],
+        static fn (mixed $attempt): bool => is_array($attempt)
+    ));
+    $attempts = $mode !== 'normal' && count($storedAttempts) > 1
+        ? $storedAttempts
+        : [['total' => $roll['total'] ?? 0]];
+    $selectedIndex = count($attempts) > 1 ? max(0, min(count($attempts) - 1, (int) ($roll['selectedIndex'] ?? 0))) : 0;
+    $calculations = [];
+    foreach ($attempts as $index => $attempt) {
+        $value = $attempt['total'] ?? $roll['total'] ?? 0;
+        $total = is_numeric($value) ? (string) (0 + $value) : '0';
+        $calculations[] = [
+            'formula' => $formula,
+            'total' => $total,
+            'ignored' => count($attempts) > 1 && $index !== $selectedIndex,
+        ];
+    }
+    $label = trim((string) ($roll['label'] ?? 'Jet')) ?: 'Jet';
+    $outcome = trim((string) ($roll['outcome']['label'] ?? ''));
+    return [
+        'character' => trim((string) ($roll['characterName'] ?? $roll['rollerName'] ?? 'MJ')) ?: 'MJ',
+        'type' => $label . ($mode === 'normal' ? '' : ' (' . applicationRollModeLabel($mode) . ')'),
+        'calculations' => $calculations,
+        'outcome' => $outcome === '' ? '' : applicationRollUppercase($outcome),
+    ];
+}
+
+function applicationRollActivityFields(array $roll): array {
+    $presentation = applicationRollPresentation($roll);
+    $lines = [];
+    foreach ($presentation['calculations'] as $calculation) {
+        $lines[] = $calculation['formula'] . ' : ' . $calculation['total'] . ($calculation['ignored'] ? ' (jet ignoré)' : '');
+    }
+    if ($presentation['outcome'] !== '') $lines[] = $presentation['outcome'];
+    return [
+        'characterName' => $presentation['character'],
+        'summary' => $presentation['type'],
+        'detail' => implode("\n", $lines),
+    ];
+}
+
 function applicationTacticalRollSignature(string $sceneId, array $arguments): string {
     return json_encode(['token.roll', $sceneId, $arguments['tokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['kind'] ?? '', $arguments['statId'] ?? '', $arguments['weaponId'] ?? ''], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -134,7 +191,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility']);
     $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $spec['label'], 'detail' => $roll['breakdown']]);
+    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);
     $activity = $pending['activity']['payload'] ?? $activity;
     $receipts = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn($entry): bool => is_array($entry) && ($entry['expiresAt'] ?? 0) > $now));
     $result = ['roll' => $roll, 'initiativeUpdated' => false];

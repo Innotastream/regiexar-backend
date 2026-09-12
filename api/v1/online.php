@@ -3851,18 +3851,17 @@ function safeOnlineDiscordLabel(mixed $value): string
 
 function onlineDiscordRollContent(array $roll): string
 {
-    $actor = safeOnlineDiscordLabel($roll['rollerName'] ?? 'Joueur');
-    $name = ($roll['characterName'] ?? '') !== ''
-        ? safeOnlineDiscordLabel($roll['characterName']) . ' · ' . $actor
-        : $actor;
-    $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
-    $type = safeOnlineDiscordLabel($roll['label'] ?? 'Jet') . ' · ' . safeOnlineDiscordLabel($roll['formula'] ?? '');
-    if ($mode !== 'normal') {
-        $type .= ' · ' . ($mode === 'advantage' ? 'Avantage' : 'Désavantage');
+    $presentation = applicationRollPresentation($roll);
+    $lines = [
+        '**' . safeOnlineDiscordLabel($presentation['character']) . '**',
+        safeOnlineDiscordLabel($presentation['type']),
+    ];
+    foreach ($presentation['calculations'] as $calculation) {
+        $lines[] = safeOnlineDiscordLabel($calculation['formula']) . ' : '
+            . safeOnlineDiscordLabel($calculation['total']) . ($calculation['ignored'] ? ' (jet ignoré)' : '');
     }
-    $content = '**Nom :** ' . $name
-        . "\n**Type de jet :** " . $type
-        . "\n**Résultats :** **" . (string) ($roll['total'] ?? 0) . '**';
+    if ($presentation['outcome'] !== '') $lines[] = '**' . safeOnlineDiscordLabel($presentation['outcome']) . '**';
+    $content = implode("\n", $lines);
     return substr($content, 0, 1900);
 }
 
@@ -5744,13 +5743,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $loggedAction = null;
             if (in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
                 $loggedRoll = $result['roll'];
-                $loggedAction = [
-                    'kind' => 'roll',
-                    'characterName' => (string) ($loggedRoll['characterName'] ?? ''),
-                    'summary' => 'Lance ' . (string) ($loggedRoll['label'] ?? 'un jet'),
-                    'detail' => (string) ($loggedRoll['formula'] ?? '') . ' · résultat ' . (string) ($loggedRoll['total'] ?? '—')
-                        . (isset($loggedRoll['outcome']['label']) ? ' · ' . (string) $loggedRoll['outcome']['label'] : ''),
-                ];
+                $loggedAction = ['kind' => 'roll', ...applicationRollActivityFields($loggedRoll)];
             } elseif (in_array($command, ['timer.create', 'timer.update', 'timer.delete'], true) && is_array($result['timer'] ?? null)) {
                 $loggedAction = [
                     'kind' => 'timer',

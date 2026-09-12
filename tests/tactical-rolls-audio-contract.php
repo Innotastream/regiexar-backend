@@ -52,6 +52,24 @@ foreach (['gm', 'queued'] as $visibility) {
 }
 requireTactical(applicationTacticalRollVisibility($roll, ['controllerPlayerId' => 'player-one', 'hidden' => true], 'luck')['visibility'] === 'gm', 'A hidden token never emits a public roll');
 
+$presentedRoll = [
+    'rollerName' => 'Innota', 'characterName' => 'Inho', 'label' => 'Force', 'formula' => '1d100+15',
+    'total' => 75, 'rollMode' => 'advantage', 'selectedIndex' => 0,
+    'attempts' => [['total' => 75, 'breakdown' => '[60] +15'], ['total' => 42, 'breakdown' => '[27] +15']],
+    'outcome' => ['label' => 'Réussite'],
+];
+$presentation = applicationRollPresentation($presentedRoll);
+requireTactical($presentation['character'] === 'Inho' && $presentation['type'] === 'Force (Avantage)'
+    && $presentation['calculations'][0]['total'] === '75' && !$presentation['calculations'][0]['ignored']
+    && $presentation['calculations'][1]['total'] === '42' && $presentation['calculations'][1]['ignored']
+    && $presentation['outcome'] === 'RÉUSSITE', 'MJ and player rolls must share the canonical presentation');
+$activityFields = applicationRollActivityFields($presentedRoll);
+requireTactical($activityFields === [
+    'characterName' => 'Inho',
+    'summary' => 'Force (Avantage)',
+    'detail' => "1d100+15 : 75\n1d100+15 : 42 (jet ignoré)\nRÉUSSITE",
+], 'The private activity log must retain both attempts and the final outcome');
+
 $args = ['kind' => 'stat', 'tokenId' => 'monster-one', 'statId' => 'force'];
 $signature = applicationTacticalRollSignature('scene-one', $args);
 requireTactical($signature === '["token.roll","scene-one","monster-one","","stat","force",""]', 'The PHP signature must match the Node contract');

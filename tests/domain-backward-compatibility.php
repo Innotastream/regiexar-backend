@@ -670,11 +670,12 @@ $discordRoll = onlineDiscordRollContent([
     'outcome' => ['label' => 'Réussite', 'raw' => 16],
 ]);
 requireDomainCompatibility(
-    $discordRoll === "**Nom :** Hilbours · June\n**Type de jet :** Perception · 2d10+3 · Désavantage\n**Résultats :** **16**"
+    $discordRoll === "**Hilbours**\nPerception (Désavantage)\n2d10+3 : 16\n2d10+3 : 20 (jet ignoré)\n**RÉUSSITE**"
         && !str_contains($discordRoll, '🎲')
         && !str_contains($discordRoll, '[6, 7]')
-        && !str_contains($discordRoll, 'Réussite'),
-    'Discord doit publier uniquement le nom, le type de jet et le résultat retenu, sans icône ni calcul MJ.'
+        && !str_contains($discordRoll, 'June')
+        && !str_contains($discordRoll, 'Nom :'),
+    'Discord doit publier la présentation homogène, les deux tentatives et le verdict sans calcul MJ privé.'
 );
 $staleCharacter = [
     'id' => 'character-hira',

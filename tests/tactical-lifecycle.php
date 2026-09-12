@@ -107,6 +107,37 @@ foreach ([[0,100,true,'down'],[-25,100,true,'down'],[-25.01,100,true,'dead'],[-2
     requireTactical(onlineHealthState($hp,$max,$player)['code'] === $code, "Health boundary $hp/$max");
 }
 requireTactical(healthOverlayState(-26,100)['effect'] === 'Mort', 'The stream HP overlay must agree on player death.');
+$healthProjection = healthOverlayProjection([
+    'name' => 'Personnage public',
+    'color' => '#22AA33',
+    'resources' => ['hp' => 25, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 20],
+    'conditions' => ['Empoisonné'],
+], ['revision' => 7, 'updated_at' => '2026-09-12T12:00:00Z']);
+requireTactical(
+    $healthProjection['name'] === 'Personnage public'
+        && $healthProjection['color'] === '#22aa33'
+        && $healthProjection['hp'] === 25.0
+        && $healthProjection['maxHp'] === 100.0
+        && $healthProjection['percentage'] === 25.0
+        && $healthProjection['mana'] === 5.0
+        && $healthProjection['maxMana'] === 20.0
+        && $healthProjection['hasMana'] === true
+        && $healthProjection['manaPercentage'] === 25.0
+        && $healthProjection['revision'] === 7
+        && !array_key_exists('conditions', $healthProjection),
+    'The public stream projection exposes color, HP and optional mana without ordinary conditions.'
+);
+$healthProjectionWithoutMana = healthOverlayProjection([
+    'name' => 'Sans mana',
+    'color' => 'red;display:none',
+    'resources' => ['hp' => 1, 'maxHp' => 10, 'mana' => 12, 'maxMana' => 0],
+], []);
+requireTactical(
+    $healthProjectionWithoutMana['color'] === '#8d72cb'
+        && $healthProjectionWithoutMana['hasMana'] === false
+        && $healthProjectionWithoutMana['manaPercentage'] === 0.0,
+    'The stream projection rejects unsafe colors and hides absent mana pools.'
+);
 requireTactical(normalizeOnlineConditions(['poison', 'Empoisonné', 'endormis', 'KO', 'Mort', 'Marque du voile']) === ['Empoisonné','Endormi','Marque du voile'], 'Canonical labels, no duplicate or ordinary health states.');
 requireTactical(normalizeOnlineConditions([], 'Poison') === [], 'An explicit empty array does not resurrect the legacy field.');
 requireTactical(onlineManualDeath(['conditions'=>['Mort']]) && !onlineManualDeath(['conditions'=>['Mort'],'healthOverride'=>null]), 'Explicit override clearing wins over legacy Mort.');

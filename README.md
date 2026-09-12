@@ -1,4 +1,8 @@
-# Backend OVH — Régie du Seuil 0.15.14
+# Backend OVH — Régie du Seuil 0.15.15
+
+Le candidat 0.15.15 accompagne le client 3.2.15 et le build `client-3-2-15-roll-vision-stream-candidate-20260912-1`. Les jets MJ et Joueur partagent désormais la même présentation : personnage, type et mode, formule et total de chaque tentative, marque explicite du jet ignoré, puis verdict lorsqu’il existe. Discord suit ce format sans publier les décompositions, seuils ni informations tactiques privées.
+
+Les calques Stream individuels ont une largeur divisée par deux. Ils affichent le nom au-dessus, deux fois plus grand, dans la couleur de la fiche avec contour noir, puis les PV, le mana lorsqu’il existe et l’état automatique de santé. L’URL-capacité ne publie aucune condition ordinaire ni donnée privée supplémentaire.
 
 Le candidat 0.15.14 exécute toujours deux fois la formule complète sous Avantage ou Désavantage, puis retient respectivement le total le plus élevé ou le plus faible. Le détail des deux tirages et de leurs dés reste disponible dans la Régie MJ. Les notifications Discord sont volontairement réduites à trois lignes — nom, type de jet et résultat retenu — sans icône de dé, décomposition, seuil ni verdict.
 
@@ -8,7 +12,7 @@ Le domaine est projeté en lecture seule : chaque joueur ne reçoit que ses prop
 
 Cette évolution accompagne le client 3.2.13. Le build candidat est `client-3-2-13-media-targeting-stream-light-candidate-20260911-1`. Elle accepte et arbitre les cibles directionnelles entre tokens du même niveau, efface leurs références devenues invalides, conserve la file de répertoire audio et augmente de 50 % le fondu du champ de vision sans élargir le masque strict. Les identifiants de fiches de métamorphose utilisent la même borne de 180 caractères que les fiches. Les 0.15.10, 0.15.11 et 0.15.12, publiées mais jamais déployées sur OVH, avaient conservé respectivement six empreintes de géométrie, sept empreintes de relais et deux valeurs PHP décrivant encore l’ancien fondu. La 0.15.13 aligne ces trois contrôles sur le rendu JavaScript et rejoue toute la qualification PHP.
 
-La santé et les informations de mise à jour Microsoft Store restent publiques pour tous les launchers, mais seule la version 3.2.14 peut ouvrir une session MJ/Joueur ou accéder aux données. Toute autre version reçoit `426 client_update_required` avec la version 3.2.14 à installer.
+La santé et les informations de mise à jour Microsoft Store restent publiques pour tous les launchers, mais seule la version 3.2.15 peut ouvrir une session MJ/Joueur ou accéder aux données. Toute autre version reçoit `426 client_update_required` avec la version 3.2.15 à installer.
 
 Le candidat 0.15.7 renvoie dans chaque accusé de déplacement Joueur la projection autoritaire du niveau déjà engagé : masque de vision et lumières visibles sont donc rafraîchis sans attendre une seconde lecture réseau. Cette projection est reconstruite par les fonctions publiques canoniques après le commit ; elle reste liée à la scène et au niveau demandés, et ne divulgue ni créature, ni lumière, ni statistique privée.
 
@@ -36,7 +40,7 @@ Le contrôle complémentaire du 8 septembre renforce les frontières de lancemen
 
 Les sources de lumière restent bornées à 40 par niveau et à une portée de 1 à 40 cases. Les chaînes sont déterministes ; les vues publiques, les attaques et les déplacements utilisent les mêmes autorités. Le MJ peut traverser les murs pendant un placement ; la destination doit rester libre pour toute l’empreinte du pion ou du groupe. Le trajet Joueur reste soumis aux collisions, avec contournement assisté dans les zones strictement visibles. La taille par défaut reste 40. Les schémas session **16**, domaines **1** et fiche **5** restent inchangés ; le schéma MySQL passe à **19** pour le domaine de chance.
 
-PHP est indisponible dans l’environnement local de préparation ; les tests Node ne remplacent pas l’exécution PHP réelle du workflow. Après déploiement OVH, la barrière publique attend **3.2.13 / 3.2.14 / 3.2.15 = 426 / 401 / 426** tout en exigeant une santé publique accessible sans version cliente. Le 401 prouve seulement que la version courante franchit le verrou avant authentification. L’installation Windows, l’écoute audio, Streamlabs et l’ultrawide réel restent des recettes distinctes.
+PHP est indisponible dans l’environnement local de préparation ; les tests Node ne remplacent pas l’exécution PHP réelle du workflow. Après déploiement OVH, la barrière publique attend **3.2.14 / 3.2.15 / 3.2.16 = 426 / 401 / 426** tout en exigeant une santé publique accessible sans version cliente. Le 401 prouve seulement que la version courante franchit le verrou avant authentification. L’installation Windows, l’écoute audio, Streamlabs et l’ultrawide réel restent des recettes distinctes.
 
 ### Historique 0.15.1
 
