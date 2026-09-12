@@ -108,6 +108,39 @@ function onlineAbilityRollVisibility(array $roll, array $source, array $identity
     return $roll;
 }
 
+function onlineAbilityRollBundle(array $cast, ?array $effectRoll = null): array {
+    $castRoll = is_array($cast['roll'] ?? null) ? $cast['roll'] : null;
+    $rolls = applicationUniqueRolls([$castRoll, $effectRoll]);
+    return [
+        // `roll` remains the historical primary result consumed by clients up
+        // to 3.2.16: the effect when one was rolled, otherwise the cast.
+        'roll' => $effectRoll ?? $castRoll,
+        'castRoll' => $castRoll,
+        'effectRoll' => $effectRoll,
+        'rolls' => $rolls,
+    ];
+}
+
+function onlineAppendAbilityEffectRoll(array &$records, array &$pending, array $roll): void {
+    $activity = is_array($pending['activity']['payload'] ?? null)
+        ? $pending['activity']['payload']
+        : applicationDomainPayload($records, 'activity');
+    $existing = is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [];
+    $activity['rolls'] = array_slice(applicationUniqueRolls([$roll, ...$existing]), 0, 100);
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+}
+
+function onlineAppendAbilityRollActions(PDO $connection, array &$records, array &$pending, array $identity, string $sceneId, array $rolls): void {
+    // Player actions are stored newest first. Append in reverse so a single
+    // cast is presented before its effect, matching the response bundle.
+    foreach (array_reverse(applicationUniqueRolls($rolls)) as $roll) {
+        onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
+            'kind' => 'roll',
+            ...applicationRollActivityFields($roll),
+        ]);
+    }
+}
+
 // Queue costs after effect preparation, in the same locked transaction. Read
 // pending payloads first so healing oneself never restores the mana just spent.
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true): array {
@@ -237,7 +270,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if (applicationAbilitySourceDefeated($source)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     $plan = onlinePrepareAbilityCasting($connection, $ability, $source, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
     $cast = onlineAbilityCastingRoll($plan, $source, $identity, $arguments);
-    $roll = $cast['roll'];
+    $effectRoll = null;
     if ($cast['success']) {
         $parts = applicationDamageComponents($ability['damageComponents'] ?? []);
         $formula = ($ability['effect'] ?? '') === 'healing' ? $ability['healingFormula'] : ($parts !== [] ? applicationCombinedDamageFormula($parts) : $ability['formula']);
@@ -245,15 +278,13 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
         $formula .= $modifier !== 0 ? ($modifier > 0 ? '+' : '') . $modifier : '';
         if (!validOnlineRollFormula($formula) || strlen($formula) > 100) rejectOnlineCommand($connection, 400, 'Formule de compétence invalide.', 'invalid_roll');
         $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'));
-        $roll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity);
-        $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
-        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        $effectRoll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity);
+        onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
     }
     $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity);
     onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . $cast['remainingRounds'] . ' tours' : ' · aucune recharge')]);
-    $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, ['roll' => $roll, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
-    if (is_array($roll)) {
-        onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);
-    }
+    $bundle = onlineAbilityRollBundle($cast, $effectRoll);
+    $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
+    onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
     return $result;
 }

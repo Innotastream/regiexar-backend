@@ -137,13 +137,69 @@ $preservedActivity = preserveApplicationAbilityExtensions('activity', ['resource
 requireCasting($preservedActivity['resourceReceipts'] === [$receipt], 'The result of an already receipted attempt is immutable');
 $expiredReceipt = array_replace($receipt, ['expiresAt' => 1]);
 requireCasting(preserveApplicationAbilityExtensions('activity', ['resourceReceipts' => []], ['resourceReceipts' => [$expiredReceipt]])['resourceReceipts'] === [], 'Expired receipts must not be resurrected');
+$castRoll = [
+    'id' => 'cast-roll-one', 'characterName' => 'Inho', 'label' => 'Onde · Lancement · Force',
+    'formula' => '1d100', 'total' => 42, 'rollMode' => 'normal', 'visibility' => 'public', 'revealed' => true,
+    'outcome' => ['label' => 'Réussite', 'success' => true],
+];
+$effectRoll = [
+    'id' => 'effect-roll-one', 'characterName' => 'Inho', 'label' => 'Onde',
+    'formula' => '1d6', 'total' => 5, 'rollMode' => 'normal', 'visibility' => 'public', 'revealed' => true,
+];
+$successfulBundle = onlineAbilityRollBundle(['success' => true, 'roll' => $castRoll], $effectRoll);
+requireCasting(
+    $successfulBundle['roll'] === $effectRoll
+        && $successfulBundle['castRoll'] === $castRoll
+        && $successfulBundle['effectRoll'] === $effectRoll
+        && array_column($successfulBundle['rolls'], 'id') === ['cast-roll-one', 'effect-roll-one'],
+    'A successful checked ability exposes cast then effect while preserving the historical effect roll'
+);
+$failedBundle = onlineAbilityRollBundle(['success' => false, 'roll' => $castRoll]);
+requireCasting(
+    $failedBundle['roll'] === $castRoll
+        && $failedBundle['castRoll'] === $castRoll
+        && $failedBundle['effectRoll'] === null
+        && array_column($failedBundle['rolls'], 'id') === ['cast-roll-one'],
+    'A failed checked ability exposes only its canonical casting roll'
+);
+$deduplicatedBundle = onlineAbilityRollBundle(['success' => true, 'roll' => $castRoll], $castRoll);
+requireCasting(array_column($deduplicatedBundle['rolls'], 'id') === ['cast-roll-one'], 'A repeated roll id cannot be exposed or journaled twice');
+$discordBundle = onlineDiscordResultRollContent($successfulBundle);
+requireCasting(
+    substr_count($discordBundle, '**Inho**') === 2
+        && strpos($discordBundle, 'Onde · Lancement · Force') < strpos($discordBundle, "\n\n**Inho**\nOnde\n")
+        && substr_count($discordBundle, '1d100 : 42') === 1
+        && substr_count($discordBundle, '1d6 : 5') === 1,
+    'Discord renders each public ability roll once and in cast/effect order'
+);
 $legacyTimer = $timer; unset($legacyTimer['abilityId'], $legacyTimer['tokenId']);
 $keptTimer = preserveApplicationAbilityExtensions('activity', ['actionTimers' => [$legacyTimer]], ['actionTimers' => [$timer]])['actionTimers'][0];
 requireCasting($keptTimer['abilityId'] === $timer['abilityId'] && $keptTimer['tokenId'] === '', 'Old timer normalization must retain its managed ability association');
-$remarkableAttack = ['id' => 'attack-remarkable-old-client', 'damageComponents' => [['type' => 'physical', 'formula' => '1d6']], 'damageModifier' => 7, 'validationKind' => 'outcome', 'provisionalStatus' => 'applied'];
-$oldClientAttack = ['id' => $remarkableAttack['id']];
+$remarkableAttack = [
+    'id' => 'attack-remarkable-old-client',
+    'damageComponents' => [['type' => 'physical', 'formula' => '1d6']],
+    'damageModifier' => 7, 'validationKind' => 'outcome', 'provisionalStatus' => 'applied',
+    'hit' => [
+        'raw' => 42, 'outcome' => ['success' => true], 'label' => 'Onde · Force', 'characterName' => 'Inho',
+        'formula' => '1d100+3', 'total' => 45, 'rollMode' => 'advantage', 'selectedIndex' => 1,
+        'attempts' => [['total' => 11], ['total' => 45]],
+    ],
+    'opposition' => [
+        'raw' => 60, 'outcome' => ['success' => false], 'label' => 'Opposition · Agilité', 'characterName' => 'Garde',
+        'formula' => '1d100', 'total' => 60, 'rollMode' => 'disadvantage', 'selectedIndex' => 0,
+        'attempts' => [['total' => 60], ['total' => 80]],
+    ],
+];
+$oldClientAttack = [
+    'id' => $remarkableAttack['id'],
+    'hit' => ['raw' => 42, 'outcome' => ['success' => true]],
+    'opposition' => ['raw' => 60, 'outcome' => ['success' => false]],
+];
 $preservedAttack = preserveApplicationAbilityExtensions('activity', ['pendingAttacks' => [$oldClientAttack]], ['pendingAttacks' => [$remarkableAttack]])['pendingAttacks'][0];
 foreach (['damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) requireCasting($preservedAttack[$field] === $remarkableAttack[$field], 'Old clients must preserve pending attack field ' . $field);
+foreach (['hit', 'opposition'] as $rollKey) foreach (['label', 'characterName', 'formula', 'total', 'rollMode', 'selectedIndex', 'attempts'] as $field) {
+    requireCasting($preservedAttack[$rollKey][$field] === $remarkableAttack[$rollKey][$field], 'Old clients must preserve ' . $rollKey . ' roll field ' . $field);
+}
 
 $damage = onlineRollAttackDamage(['damageComponents' => $ability['damageComponents'], 'damageRollMode' => 'normal'], ['armorCategory' => 'heavy', 'armor' => 50, 'magicArmor' => 25]);
 requireCasting($damage['damage']['rawDamage'] === 37, 'Mixed raw damage must sum all components');
@@ -156,12 +212,14 @@ requireCasting($damage['damage']['finalDamage'] === array_sum(array_column($part
 $calculatedAttack = [
     'sourceName' => 'Héros', 'targetName' => 'Garde', 'attackName' => 'Lame', 'status' => 'applied',
     'damageType' => 'physical', 'damageModifier' => 3, 'appliedDamage' => 12,
-    'hit' => ['raw' => 38, 'outcome' => ['raw' => 38, 'result' => 36, 'resultModifier' => -2, 'baseThreshold' => 50, 'modifier' => 5, 'threshold' => 55, 'code' => 'success', 'label' => 'RÉUSSITE', 'success' => true]],
-    'opposition' => ['raw' => 71, 'outcome' => ['raw' => 71, 'baseThreshold' => 45, 'modifier' => -5, 'threshold' => 40, 'code' => 'failure', 'label' => 'ÉCHEC', 'success' => false]],
+    'hit' => ['raw' => 38, 'statLabel' => 'Force', 'outcome' => ['raw' => 38, 'result' => 36, 'resultModifier' => -2, 'baseThreshold' => 50, 'modifier' => 5, 'threshold' => 55, 'code' => 'success', 'label' => 'RÉUSSITE', 'success' => true]],
+    'opposition' => ['raw' => 71, 'statLabel' => 'Agilité', 'outcome' => ['raw' => 71, 'baseThreshold' => 45, 'modifier' => -5, 'threshold' => 40, 'code' => 'failure', 'label' => 'ÉCHEC', 'success' => false]],
     'damage' => ['formula' => '2d6+3', 'rawDamage' => 18, 'preventedDamage' => 6, 'finalDamage' => 12, 'components' => [['type' => 'physical', 'formula' => '2d6+3', 'breakdown' => '6 + 9 + 3', 'rawDamage' => 18, 'armorPercent' => 35, 'preventedDamage' => 6, 'finalDamage' => 12]]],
 ];
 $history = onlineAttackHistoryDetail($calculatedAttack);
-requireCasting(str_contains($history, 'dé brut 38 −2 = 36') && str_contains($history, 'seuil 50 +5 = 55'), 'GM history must show the complete hit calculation');
+requireCasting(str_contains($history, 'Jet ATK · Force') && str_contains($history, 'Jet OPP · Agilité')
+    && str_contains($history, 'dé brut 38 −2 = 36') && str_contains($history, 'seuil 50 +5 = 55'),
+    'GM history must show the roll types and complete hit calculation');
 requireCasting(str_contains($history, 'armure 35 % : −6') && str_contains($history, 'total brut 18') && str_contains($history, 'final 12'), 'GM history must show armor absorption and final damage');
 $discord = onlineAttackDiscordContent($calculatedAttack);
 requireCasting(str_contains($discord, 'Modificateurs') && str_contains($discord, 'bonus de seuil +5') && str_contains($discord, 'bonus de résultat −2') && str_contains($discord, 'bonus de dégâts +3'), 'Discord must show the simplified modifiers');

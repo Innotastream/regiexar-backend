@@ -69,6 +69,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if (!$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     $plan = $returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
     $cast = $returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments);
+    $effectRoll = null;
     $result = ['effect' => $metamorphosis ? 'metamorphosis' : 'healing', 'appliedDelta' => 0];
     if ($cast['success'] && $metamorphosis) {
         $form = applicationDomainPayload($records, 'character:' . $formPlan['activeCharacterId']);
@@ -82,6 +83,12 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
         onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);
         if ($rolled['total'] <= 0) rejectOnlineCommand($connection, 400, 'Le soin doit rendre au moins un PV.', 'invalid_healing_total');
+        $effectRoll = onlineAbilityRollVisibility(
+            onlineRollEntry($identity, $rolled, (string) $ability['name'] . ' · Soin', (string) ($rules['name'] ?? 'Personnage')),
+            $rules,
+            $identity
+        );
+        onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
         $amount = max(0, min(1000000000, $rolled['total']));
         if ($amount > 0) {
             // The owner and visible target were checked above. No armor is used.
@@ -95,5 +102,8 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity);
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . ($cast['success'] ? ' · recharge ' . $cast['remainingRounds'] . ' tours' : ' · aucune recharge')]);
     }
-    return onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$result, 'cast' => $cast, 'castSucceeded' => $cast['success']]);
+    $bundle = onlineAbilityRollBundle($cast, $effectRoll);
+    $stored = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$result, ...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success']]);
+    onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
+    return $stored;
 }

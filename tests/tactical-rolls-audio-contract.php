@@ -25,11 +25,17 @@ requireTactical($outcome['raw'] === 55 && $outcome['result'] === 43 && $outcome[
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'hit'])['threshold'] === 42, 'Hit uses the stored threshold');
 $luck = applicationTacticalRollSpecification($creature, ['kind' => 'luck', 'formula' => '8d20', 'modifier' => 99, 'rollMode' => 'advantage']);
 requireTactical($luck['formula'] === '1d100' && $luck['rollMode'] === 'normal', 'Luck remains a single unmodified d100');
-requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'damage'])['formula'] === '3d4', 'Default damage uses the first stored weapon, as on the tactical sheet');
+requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'damage'])['formula'] === '3d4'
+    && applicationTacticalRollSpecification($creature, ['kind' => 'damage'])['label'] === 'Dégâts',
+    'Default damage uses the first stored weapon and the same label as the player route');
 requireTactical(applicationTacticalRollSpecification([...$creature, 'weaponAttacks' => [], 'weaponText' => ''], ['kind' => 'damage'])['formula'] === '2d6+3', 'Damage falls back to its stored base formula without a weapon');
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'damage', 'weaponId' => 'claws'])['formula'] === '3d4', 'A chosen weapon uses its stored formula');
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'custom-damage', 'formula' => '3d8+4', 'modifier' => 2])['formula'] === '3d8+4', 'Custom damage retains the complete bounded formula without adding the UI modifier twice');
-requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '2d10'])['formula'] === '2d10', 'Custom dice remain supported');
+requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '2d10'])['formula'] === '2d10'
+    && applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '2d10'])['label'] === 'Test personnalisé',
+    'Custom dice remain supported with the role-independent label');
+requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'custom-damage', 'formula' => '2d10'])['label'] === 'Dégâts personnalisés',
+    'Custom damage uses the same vocabulary regardless of the roller role');
 foreach ([-1, 101, 70.5, '70', null] as $threshold) rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'custom-stat', 'threshold' => $threshold]), 'invalid_tactical_roll_threshold');
 rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => str_repeat('1+', 60) . '1']), 'invalid_tactical_roll_formula');
 rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => 'phpinfo()']), 'invalid_tactical_roll_formula');
@@ -69,6 +75,20 @@ requireTactical($activityFields === [
     'summary' => 'Force (Avantage)',
     'detail' => "1d100+15 : 75\n1d100+15 : 42 (jet ignoré)\nRÉUSSITE",
 ], 'The private activity log must retain both attempts and the final outcome');
+$castRoll = [...$presentedRoll, 'id' => 'cast-roll-one', 'label' => 'Frappe · Lancement · Force', 'visibility' => 'public', 'revealed' => true];
+$effectRoll = [...$presentedRoll, 'id' => 'effect-roll-one', 'label' => 'Frappe', 'formula' => '2d6', 'outcome' => null];
+$bundle = onlineAbilityRollBundle(['success' => true, 'roll' => $castRoll], $effectRoll);
+requireTactical($bundle['roll'] === $effectRoll && $bundle['castRoll'] === $castRoll && $bundle['effectRoll'] === $effectRoll
+    && array_column($bundle['rolls'], 'id') === ['cast-roll-one', 'effect-roll-one'],
+    'A successful checked ability exposes cast then effect while retaining the historical effect roll');
+$failedBundle = onlineAbilityRollBundle(['success' => false, 'roll' => $castRoll]);
+requireTactical($failedBundle['roll'] === $castRoll && $failedBundle['castRoll'] === $castRoll && $failedBundle['effectRoll'] === null
+    && array_column($failedBundle['rolls'], 'id') === ['cast-roll-one'],
+    'A failed checked ability exposes only its canonical casting roll');
+requireTactical(array_column(applicationUniqueRolls([$castRoll, $castRoll, null, $effectRoll]), 'id') === ['cast-roll-one', 'effect-roll-one'],
+    'Roll bundles filter null values and duplicate ids without changing order');
+requireTactical(array_column(applicationPublicResultRolls(['roll' => $effectRoll, 'rolls' => [$castRoll, [...$effectRoll, 'visibility' => 'gm', 'revealed' => false]]]), 'id') === ['cast-roll-one'],
+    'Discord selection keeps every public bundled roll and withholds private effects');
 $legacyPresentation = applicationRollPresentation([
     'rollerName' => 'Innota', 'characterName' => '', 'label' => 'Chance', 'formula' => '1d100', 'total' => 38,
 ]);

@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.16 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
+test("le backend 0.15.17 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.16'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-16-roll-vision-stream-candidate-20260912-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.17'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-17-roll-vision-stream-candidate-20260912-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -108,8 +108,8 @@ test("le backend 0.15.16 conserve la file Codex, porte le schéma de session 16 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.16");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.16");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.15.17");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.17");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -130,8 +130,11 @@ test("les calques PV sont publics en lecture seule, stables et gérés uniquemen
   assert.match(overlays, /elseif \(\$action === 'regenerate'\)[\s\S]*?public_slug = :public_slug/);
   assert.match(overlays, /'name' =>[\s\S]*?'color' =>[\s\S]*?'hp' =>[\s\S]*?'maxHp' =>[\s\S]*?'mana' =>[\s\S]*?'maxMana' =>[\s\S]*?'hasMana' =>[\s\S]*?'manaPercentage' =>[\s\S]*?'effect' =>/);
   assert.match(overlays, /preg_match\('\/\^#\[0-9a-f\]\{6\}\$\/iD',[\s\S]*?'#8d72cb'/);
-  assert.match(overlays, /min-width:155px;max-width:360px/);
+  assert.match(overlays, /width:180px;min-width:155px;max-width:180px/);
+  assert.doesNotMatch(overlays, /\.overlay\{[^}]*width:100%|max-width:360px/);
   assert.match(overlays, /color:var\(--character-color\);font:700 42px\/1 Georgia,serif/);
+  assert.match(overlays, /overflow-wrap:anywhere;text-align:center/);
+  assert.doesNotMatch(overlays, /\.name\{[^}]*white-space:nowrap|\.name\{[^}]*text-overflow:ellipsis/);
   assert.match(overlays, /-webkit-text-stroke:1px #000/);
   assert.match(overlays, /id="name"[\s\S]*?id="health-value"[\s\S]*?id="mana"[\s\S]*?id="effect"/);
   assert.match(overlays, /manaRow\.hidden=health\.hasMana!==true/);
@@ -162,8 +165,9 @@ test("un jet de capacité journalise le même calcul pour le MJ et le joueur san
     read("api/v1/online.php"), read("api/v1/ability-casting.php"), read("api/v1/tactical-rolls.php")
   ]);
   const simpleAbility = abilities.slice(abilities.indexOf("function onlineSimpleAbilityRoll"));
-  assert.match(simpleAbility, /onlineAppendPlayerAction[\s\S]*?'kind' => 'ability'[\s\S]*?onlineStoreAbilityReceipt[\s\S]*?is_array\(\$roll\)[\s\S]*?'kind' => 'roll'[\s\S]*?applicationRollActivityFields\(\$roll\)/);
-  assert.equal((simpleAbility.match(/'kind' => 'roll'/g) ?? []).length, 1);
+  assert.match(simpleAbility, /onlineAppendPlayerAction[\s\S]*?'kind' => 'ability'[\s\S]*?onlineAbilityRollBundle\(\$cast, \$effectRoll\)[\s\S]*?onlineStoreAbilityReceipt[\s\S]*?onlineAppendAbilityRollActions/);
+  assert.match(simpleAbility, /onlineAbilityRollBundle\(\$cast, \$effectRoll\)/);
+  assert.match(simpleAbility, /onlineAppendAbilityRollActions/);
   const playerJournal = online.slice(online.indexOf("if (!$isGm && !in_array($command"), online.indexOf("$targetScenes = []"));
   assert.match(playerJournal, /\$abilityRollAlreadyLogged = \$command === 'token\.roll'[\s\S]*?\(\$arguments\['kind'\] \?\? ''\) === 'ability'/);
   assert.match(playerJournal, /if \(!\$abilityRollAlreadyLogged && in_array\(\$command, \['roll', 'token\.roll'\]/);
@@ -300,8 +304,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.16");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.16"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.2.17");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.17"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -314,7 +318,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.15 \/ 3\.2\.16 \/ 3\.2\.17 = 426 \/ 401 \/ 426/);
+  assert.match(readme, /3\.2\.16 \/ 3\.2\.17 \/ 3\.2\.18 = 426 \/ 401 \/ 426/);
   assert.match(readme, /interdit de remettre un MSIX plus récent que la santé publique/);
 });
 

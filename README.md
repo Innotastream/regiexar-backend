@@ -1,4 +1,8 @@
-# Backend OVH — Régie du Seuil 0.15.16
+# Backend OVH — Régie du Seuil 0.15.17
+
+Le candidat 0.15.17 accompagne le client 3.2.17 et le build `client-3-2-17-roll-vision-stream-candidate-20260912-1`. Une capacité avec jet de lancement conserve désormais séparément `castRoll` et `effectRoll`, expose la liste ordonnée `rolls` tout en gardant le champ historique `roll`, et restitue exactement ce faisceau lors d’une reprise dédupliquée. Le journal privé, les actions MJ/Joueur et Discord montrent chaque jet public une seule fois, avec les deux tentatives d’avantage ou de désavantage et la tentative ignorée. Les soins et les attaques conservent le même contrat, sans publier les dégâts présumés.
+
+Les jets depuis un pion joueur relisent la fiche autoritative avant d’utiliser son nom, ses statistiques ou ses formules. Les libellés de dégâts et de jets personnalisés ne varient plus selon le rôle. Les sous-objets `attack.hit` et `attack.opposition` conservent le total, le mode, l’index retenu et chaque tentative pour le journal et Discord. Le calque santé dédié possède une largeur réelle bornée à 180 px, avec un minimum contractuel de 155 px, au lieu de remplir une source jusqu’à 360 px.
 
 Le candidat 0.15.16 accompagne le client 3.2.16 et le build `client-3-2-16-roll-vision-stream-candidate-20260912-1`. Il journalise désormais chaque `token.roll` de capacité avec la même entrée canonique `roll` pour le MJ et le Joueur, en plus de l’action `ability`, sans doubler les autres jets tactiques MJ ni les reprises dédupliquées. Un ancien jet dont `characterName` est vide reprend aussi `rollerName`, comme le client.
 
@@ -14,7 +18,7 @@ Le domaine est projeté en lecture seule : chaque joueur ne reçoit que ses prop
 
 Cette évolution accompagne le client 3.2.13. Le build candidat est `client-3-2-13-media-targeting-stream-light-candidate-20260911-1`. Elle accepte et arbitre les cibles directionnelles entre tokens du même niveau, efface leurs références devenues invalides, conserve la file de répertoire audio et augmente de 50 % le fondu du champ de vision sans élargir le masque strict. Les identifiants de fiches de métamorphose utilisent la même borne de 180 caractères que les fiches. Les 0.15.10, 0.15.11 et 0.15.12, publiées mais jamais déployées sur OVH, avaient conservé respectivement six empreintes de géométrie, sept empreintes de relais et deux valeurs PHP décrivant encore l’ancien fondu. La 0.15.13 aligne ces trois contrôles sur le rendu JavaScript et rejoue toute la qualification PHP.
 
-La santé et les informations de mise à jour Microsoft Store restent publiques pour tous les launchers, mais seule la version 3.2.16 peut ouvrir une session MJ/Joueur ou accéder aux données. Toute autre version reçoit `426 client_update_required` avec la version 3.2.16 à installer.
+La santé et les informations de mise à jour Microsoft Store restent publiques pour tous les launchers, mais seule la version 3.2.17 peut ouvrir une session MJ/Joueur ou accéder aux données. Toute autre version reçoit `426 client_update_required` avec la version 3.2.17 à installer.
 
 Le candidat 0.15.7 renvoie dans chaque accusé de déplacement Joueur la projection autoritaire du niveau déjà engagé : masque de vision et lumières visibles sont donc rafraîchis sans attendre une seconde lecture réseau. Cette projection est reconstruite par les fonctions publiques canoniques après le commit ; elle reste liée à la scène et au niveau demandés, et ne divulgue ni créature, ni lumière, ni statistique privée.
 
@@ -42,7 +46,7 @@ Le contrôle complémentaire du 8 septembre renforce les frontières de lancemen
 
 Les sources de lumière restent bornées à 40 par niveau et à une portée de 1 à 40 cases. Les chaînes sont déterministes ; les vues publiques, les attaques et les déplacements utilisent les mêmes autorités. Le MJ peut traverser les murs pendant un placement ; la destination doit rester libre pour toute l’empreinte du pion ou du groupe. Le trajet Joueur reste soumis aux collisions, avec contournement assisté dans les zones strictement visibles. La taille par défaut reste 40. Les schémas session **16**, domaines **1** et fiche **5** restent inchangés ; le schéma MySQL passe à **19** pour le domaine de chance.
 
-PHP est indisponible dans l’environnement local de préparation ; les tests Node ne remplacent pas l’exécution PHP réelle du workflow. Après déploiement OVH, la barrière publique attend **3.2.15 / 3.2.16 / 3.2.17 = 426 / 401 / 426** tout en exigeant une santé publique accessible sans version cliente. Le 401 prouve seulement que la version courante franchit le verrou avant authentification. L’installation Windows, l’écoute audio, Streamlabs et l’ultrawide réel restent des recettes distinctes.
+PHP est indisponible dans l’environnement local de préparation ; les tests Node ne remplacent pas l’exécution PHP réelle du workflow. Après déploiement OVH, la barrière publique attend **3.2.16 / 3.2.17 / 3.2.18 = 426 / 401 / 426** tout en exigeant une santé publique accessible sans version cliente. Le 401 prouve seulement que la version courante franchit le verrou avant authentification. L’installation Windows, l’écoute audio, Streamlabs et l’ultrawide réel restent des recettes distinctes.
 
 ### Historique 0.15.1
 
@@ -78,7 +82,7 @@ Les garanties de la 0.14.9 restent actives : `token.attack` revérifie côté se
 
 Chaque nouvelle génération backend ouvre une fenêtre de transfert de trente secondes pour les sessions déjà actives. Leur flux SSE demande au MJ ou au joueur de synchroniser ses données puis de se déconnecter ; après cette fenêtre, les sessions de l’ancienne génération sont supprimées. Une nouvelle connexion reste soumise immédiatement à la version applicative exacte annoncée.
 
-Elle conserve les calques Stream de PV des personnages joueurs ajoutés en 0.12.9 : chaque URL-capacité reste fixe jusqu’à sa régénération manuelle, ne révèle que le nom, les PV et l’état calculé, et cesse de répondre si la fiche n’est plus un personnage joueur. Elle conserve aussi le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage, les jets propriétaires avec ou sans token, le déplacement hors tour soumis à une autorisation MJ temporaire et la variante visuelle `elite` en cuivre.
+Elle conserve les calques Stream de PV des personnages joueurs ajoutés en 0.12.9 : chaque URL-capacité reste fixe jusqu’à sa régénération manuelle, ne révèle que le nom, les PV, le mana lorsqu’il existe et l’état calculé, et cesse de répondre si la fiche n’est plus un personnage joueur. Elle conserve aussi le jet de **Chance** strictement borné à un unique `1d100` sans modificateur ni avantage/désavantage, les jets propriétaires avec ou sans token, le déplacement hors tour soumis à une autorisation MJ temporaire et la variante visuelle `elite` en cuivre.
 
 Ce dépôt est l’autorité PHP/MySQL de l’application autonome « Xar Tsaroth — Régie du Seuil ». Il est distinct du site public `xar-tsaroth.fr` et se déploie uniquement depuis `https://github.com/Innotastream/regiexar-backend.git`, en HTTPS, sur `main`.
 
@@ -179,11 +183,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.2.16`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.2.16`, `latestVersion=3.2.16` et `allowedVersions=["3.2.16"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.2.17`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.2.17`, `latestVersion=3.2.17` et `allowedVersions=["3.2.17"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.2.16 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.2.17 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.15 / 3.2.16 / 3.2.17 = 426 / 401 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.16 / 3.2.17 / 3.2.18 = 426 / 401 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 

@@ -104,6 +104,18 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
+            // A 3.2.16 activity snapshot knows the attack objects but not the
+            // complete canonical roll presentation added in 3.2.17. Keep
+            // those authoritative fields when that client writes the same
+            // pending attack or receipt back without them.
+            foreach (['hit', 'opposition'] as $rollKey) {
+                if (!is_array($attack[$rollKey] ?? null) || !is_array($old[$rollKey] ?? null)) continue;
+                foreach (['label', 'characterName', 'formula', 'total', 'rollMode', 'selectedIndex', 'attempts'] as $field) {
+                    if (!array_key_exists($field, $attack[$rollKey]) && array_key_exists($field, $old[$rollKey])) {
+                        $attack[$rollKey][$field] = $old[$rollKey][$field];
+                    }
+                }
+            }
             return $attack;
         };
         if (isset($payload['pendingAttacks'])) $payload['pendingAttacks'] = array_map($preserve, $payload['pendingAttacks']);

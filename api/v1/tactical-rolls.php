@@ -61,6 +61,34 @@ function applicationRollActivityFields(array $roll): array {
     ];
 }
 
+function applicationUniqueRolls(array $candidates): array {
+    $rolls = [];
+    $seen = [];
+    foreach ($candidates as $candidate) {
+        if (!is_array($candidate)) continue;
+        $id = trim((string) ($candidate['id'] ?? ''));
+        $fingerprint = $id !== ''
+            ? 'id:' . $id
+            : 'value:' . hash('sha256', serialize($candidate));
+        if (isset($seen[$fingerprint])) continue;
+        $seen[$fingerprint] = true;
+        $rolls[] = $candidate;
+    }
+    return $rolls;
+}
+
+function applicationResultRolls(array $result): array {
+    if (is_array($result['rolls'] ?? null)) return applicationUniqueRolls($result['rolls']);
+    return applicationUniqueRolls([$result['roll'] ?? null]);
+}
+
+function applicationPublicResultRolls(array $result): array {
+    return array_values(array_filter(
+        applicationResultRolls($result),
+        static fn (array $roll): bool => ($roll['visibility'] ?? '') === 'public' || ($roll['revealed'] ?? false) === true
+    ));
+}
+
 function applicationTacticalRollSignature(string $sceneId, array $arguments): string {
     return json_encode(['token.roll', $sceneId, $arguments['tokenId'] ?? '', $arguments['characterId'] ?? '', $arguments['kind'] ?? '', $arguments['statId'] ?? '', $arguments['weaponId'] ?? ''], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -98,11 +126,11 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
         } else {
             $formula = (string) ($weapons[0]['formula'] ?? $source['damageDice'] ?? '');
         }
-        $label = 'Dégâts présumés';
+        $label = 'Dégâts';
     } else {
         if (!validApplicationDomainText($arguments['formula'] ?? null, 100, false)) throw new RuntimeException('invalid_tactical_roll_formula');
         $formula = $arguments['formula'];
-        if ($label === '') $label = $kind === 'custom-damage' ? 'Dégâts personnalisés présumés' : 'Jet personnalisé';
+        if ($label === '') $label = $kind === 'custom-damage' ? 'Dégâts personnalisés' : 'Test personnalisé';
     }
     $formula = strtolower(preg_replace('/\s+/', '', $formula));
     if ($threshold !== null) {

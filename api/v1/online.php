@@ -3592,7 +3592,13 @@ function onlineD100CalculationDetail(mixed $value, string $label): string
     $entry = is_array($value) ? $value : [];
     $outcome = is_array($entry['outcome'] ?? null) ? $entry['outcome'] : [];
     if (($outcome['automatic'] ?? false) === true) return $label . ' : lancement sans jet';
-    $parts = [$label . ' ' . onlineOutcomeResultLabel($outcome, $entry['raw'] ?? '—')];
+    $roll = onlineAttackRollForPresentation($entry, $label, (string) ($entry['characterName'] ?? 'Personnage'));
+    $presentation = applicationRollPresentation($roll);
+    $parts = [$presentation['type']];
+    foreach ($presentation['calculations'] as $calculation) {
+        $parts[] = $calculation['formula'] . ' : ' . $calculation['total']
+            . ($calculation['ignored'] ? ' (jet ignoré)' : '');
+    }
     $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
     $thresholdModifier = (int) ($outcome['modifier'] ?? 0);
     if ($resultModifier !== 0) {
@@ -3604,9 +3610,25 @@ function onlineD100CalculationDetail(mixed $value, string $label): string
             ? 'seuil ' . (int) ($outcome['baseThreshold'] ?? 0) . ' ' . onlineSignedCalculationNumber($thresholdModifier) . ' = ' . (int) $outcome['threshold']
             : 'seuil ' . (int) $outcome['threshold'];
     }
-    if (trim((string) ($outcome['label'] ?? '')) !== '') $parts[] = (string) $outcome['label'];
+    if ($presentation['outcome'] !== '') $parts[] = $presentation['outcome'];
     if (($outcome['breaksOpposition'] ?? false) === true) $parts[] = 'résultat immédiat · opposition brisée · validation MJ requise';
     return implode(' · ', $parts);
+}
+
+function onlineAttackRollForPresentation(array $entry, string $label, string $characterName): array
+{
+    $roll = [
+        'id' => (string) ($entry['rollId'] ?? ''),
+        'label' => $label,
+        'characterName' => trim($characterName) !== '' ? $characterName : 'Personnage',
+        'formula' => trim((string) ($entry['formula'] ?? '')) ?: '1d100',
+        'total' => $entry['total'] ?? $entry['outcome']['result'] ?? $entry['raw'] ?? 0,
+        'rollMode' => normalizeOnlineRollMode($entry['rollMode'] ?? 'normal'),
+        'selectedIndex' => (int) ($entry['selectedIndex'] ?? 0),
+        'outcome' => is_array($entry['outcome'] ?? null) ? $entry['outcome'] : [],
+    ];
+    if (is_array($entry['attempts'] ?? null)) $roll['attempts'] = $entry['attempts'];
+    return $roll;
 }
 
 function onlineDamageComponentDetail(array $component, string $fallbackType = 'physical'): string
@@ -3639,8 +3661,16 @@ function onlineDamageCalculationDetail(mixed $value, string $damageType = 'physi
 function onlineAttackHistoryDetail(array $attack, bool $includeOpposition = true): string
 {
     $parts = [];
-    if (is_array($attack['hit'] ?? null)) $parts[] = onlineD100CalculationDetail($attack['hit'], 'Jet ATK');
-    if ($includeOpposition && is_array($attack['opposition']['outcome'] ?? null)) $parts[] = onlineD100CalculationDetail($attack['opposition'], 'Jet OPP');
+    if (is_array($attack['hit'] ?? null)) {
+        $hitLabel = 'Jet ATK';
+        if (trim((string) ($attack['hit']['statLabel'] ?? '')) !== '') $hitLabel .= ' · ' . (string) $attack['hit']['statLabel'];
+        $parts[] = onlineD100CalculationDetail($attack['hit'], $hitLabel);
+    }
+    if ($includeOpposition && is_array($attack['opposition']['outcome'] ?? null)) {
+        $oppositionLabel = 'Jet OPP';
+        if (trim((string) ($attack['opposition']['statLabel'] ?? '')) !== '') $oppositionLabel .= ' · ' . (string) $attack['opposition']['statLabel'];
+        $parts[] = onlineD100CalculationDetail($attack['opposition'], $oppositionLabel);
+    }
     $damage = onlineDamageCalculationDetail($attack['damage'] ?? null, normalizeOnlineDamageType($attack['damageType'] ?? null));
     if ($damage !== '') $parts[] = $damage;
     return onlineUtf8ByteSlice(implode(' · ', array_filter($parts)), 500);
@@ -3662,22 +3692,18 @@ function onlineAttackDiscordContent(array $attack): string
 {
     $hit = is_array($attack['hit'] ?? null) ? $attack['hit'] : [];
     $outcome = is_array($hit['outcome'] ?? null) ? $hit['outcome'] : [];
-    $labels = [
-        'critical-success' => 'réussite critique',
-        'special-success' => 'réussite spéciale',
-        'success' => 'réussite',
-        'failure' => 'échec',
-        'critical-failure' => 'échec critique',
-    ];
-    $status = $labels[(string) ($outcome['code'] ?? '')] ?? (($outcome['success'] ?? false) === true ? 'réussite' : 'échec');
     $content = '**' . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant')
-        . ' attaque ' . safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible') . ' avec ' . safeOnlineDiscordLabel($attack['attackName'] ?? 'Attaque') . "**\n"
-        . 'Jet ATK **' . onlineOutcomeResultLabel($outcome, $hit['raw'] ?? '—') . '** — ' . $status;
+        . ' attaque ' . safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible') . ' avec ' . safeOnlineDiscordLabel($attack['attackName'] ?? 'Attaque') . '**';
+    if (($outcome['automatic'] ?? false) === true) {
+        $content .= "\n\n**" . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant') . "**\nJet ATK\nLancement sans jet";
+    } else {
+        $hitLabel = 'Jet ATK' . (trim((string) ($hit['statLabel'] ?? '')) !== '' ? ' · ' . (string) $hit['statLabel'] : '');
+        $content .= "\n\n" . onlineDiscordRollContent(onlineAttackRollForPresentation($hit, $hitLabel, (string) ($attack['sourceName'] ?? 'Attaquant')));
+    }
     if (is_array($attack['opposition']['outcome'] ?? null)) {
-        $oppositionOutcome = $attack['opposition']['outcome'];
-        $oppositionStatus = $labels[(string) ($oppositionOutcome['code'] ?? '')]
-            ?? (($oppositionOutcome['success'] ?? false) === true ? 'réussite' : 'échec');
-        $content .= "\n" . 'Jet OPP **' . onlineOutcomeResultLabel($oppositionOutcome, $attack['opposition']['raw'] ?? '—') . '** — ' . $oppositionStatus;
+        $opposition = $attack['opposition'];
+        $oppositionLabel = 'Jet OPP' . (trim((string) ($opposition['statLabel'] ?? '')) !== '' ? ' · ' . (string) $opposition['statLabel'] : '');
+        $content .= "\n\n" . onlineDiscordRollContent(onlineAttackRollForPresentation($opposition, $oppositionLabel, (string) ($opposition['defenderName'] ?? $attack['targetName'] ?? 'Défenseur')));
     }
     $modifiers = onlineAttackDiscordModifierSummary($attack);
     if ($modifiers !== '') $content .= "\n" . 'Modificateurs · ' . $modifiers;
@@ -3863,6 +3889,11 @@ function onlineDiscordRollContent(array $roll): string
     if ($presentation['outcome'] !== '') $lines[] = '**' . safeOnlineDiscordLabel($presentation['outcome']) . '**';
     $content = implode("\n", $lines);
     return substr($content, 0, 1900);
+}
+
+function onlineDiscordResultRollContent(array $result): string
+{
+    return substr(implode("\n\n", array_map('onlineDiscordRollContent', applicationPublicResultRolls($result))), 0, 1900);
 }
 
 function tryPostOnlineDiscordText(PDO $connection, array $configuration, string $target, string $content): array
@@ -4594,7 +4625,13 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (is_array($deduplicatedAttack)) {
                 if (!isset($deduplicatedAttack['cast']) && is_array($abilityReceipt['cast'] ?? null)) $deduplicatedAttack['cast'] = $abilityReceipt['cast'];
                 $result['attack'] = $isGm ? $deduplicatedAttack : publicOnlineAttackResult($deduplicatedAttack);
-                if (is_array($deduplicatedAttack['cast'] ?? null)) { $result['cast'] = $deduplicatedAttack['cast']; $result['castSucceeded'] = $deduplicatedAttack['cast']['success']; }
+                if (is_array($deduplicatedAttack['cast'] ?? null)) {
+                    $result['cast'] = $deduplicatedAttack['cast'];
+                    $result['castSucceeded'] = $deduplicatedAttack['cast']['success'];
+                    $castBundle = onlineAbilityRollBundle($deduplicatedAttack['cast']);
+                    $result['castRoll'] = $castBundle['castRoll'];
+                    $result['rolls'] = $castBundle['rolls'];
+                }
                 $result['deduplicated'] = true;
             } else {
                 if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) {
@@ -4769,7 +4806,17 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'damageModifier' => $damageModifier,
                     'defenderAccountId' => $targetController,
                     'damageType' => $damageType,
-                    'hit' => ['rollId' => $hitRoll['id'], 'diceAppearance' => $diceAppearance, 'statId' => (string) ($stats[$statIndex]['id'] ?? ''), 'statLabel' => $statLabel, 'raw' => $hitRolled['rawD100'] ?? null, 'formula' => $hitRolled['formula'], 'breakdown' => $hitRolled['breakdown'], 'outcome' => $hitOutcome],
+                    'hit' => [
+                        'rollId' => $hitRoll['id'], 'diceAppearance' => $diceAppearance,
+                        'label' => $hitRoll['label'], 'characterName' => $hitRoll['characterName'],
+                        'statId' => (string) ($stats[$statIndex]['id'] ?? ''), 'statLabel' => $statLabel,
+                        'raw' => $hitRolled['rawD100'] ?? null, 'total' => $hitRolled['total'],
+                        'formula' => $hitRolled['formula'], 'breakdown' => $hitRolled['breakdown'],
+                        'rollMode' => $hitRolled['rollMode'] ?? 'normal',
+                        'selectedIndex' => $hitRolled['selectedIndex'] ?? 0,
+                        'attempts' => $hitRolled['attempts'] ?? [],
+                        'outcome' => $hitOutcome,
+                    ],
                     ...($opposed && ($hitOutcome['breaksOpposition'] ?? false) === true
                         ? ['opposition' => ['skipped' => true, 'reason' => 'immediate-outcome', 'requiresGmValidation' => true]]
                         : []),
@@ -4830,7 +4877,20 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $cast = ['success' => ($hitOutcome['success'] ?? false) === true, 'statId' => $castingPlan['statId'], 'statLabel' => $castingPlan['statLabel'], 'outcome' => $hasCastingCheck ? $hitOutcome : null, 'roll' => $hasCastingCheck ? $hitRoll : null];
                     $cast = onlineCommitAbilityCasting($connection, $records, $pending, $castingPlan, $cast, $source, $identity, false);
                     $attack['cast'] = $cast; $activity = $pending['activity']['payload'] ?? $activity;
+                    // The status branch above may already have copied the
+                    // attack into the pending queue. Replace that copy after
+                    // committing the cast so later opposition/resolution can
+                    // never erase the canonical casting roll from receipts.
+                    foreach (is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [] as $pendingIndex => $pendingAttack) {
+                        if (is_array($pendingAttack) && (string) ($pendingAttack['id'] ?? '') === $attack['id']) {
+                            $activity['pendingAttacks'][$pendingIndex] = $attack;
+                            break;
+                        }
+                    }
+                    $castBundle = onlineAbilityRollBundle($cast);
                     $result['cast'] = $cast; $result['castSucceeded'] = $cast['success'];
+                    $result['castRoll'] = $castBundle['castRoll'];
+                    $result['rolls'] = $castBundle['rolls'];
                 }
                 $receipts[] = ['requestId' => $requestId, 'accountId' => $accountId, 'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS, 'attack' => $attack];
                 $activity['attackReceipts'] = $receipts;
@@ -4849,7 +4909,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $attack);
                 }
                 $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack);
-                if ($abilityRequestSignature !== null) onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $abilityRequestSignature, ['attackId' => $attack['id'], 'cast' => $result['cast'], 'castSucceeded' => $result['castSucceeded']]);
+                if ($abilityRequestSignature !== null) onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $abilityRequestSignature, [
+                    'attackId' => $attack['id'],
+                    'cast' => $result['cast'],
+                    'castSucceeded' => $result['castSucceeded'],
+                    'castRoll' => $result['castRoll'],
+                    'effectRoll' => null,
+                    'rolls' => $result['rolls'],
+                ]);
             }
         } elseif ($command === 'token.attack.oppose') {
             $requestId = trim((string) ($arguments['requestId'] ?? ''));
@@ -4990,14 +5057,19 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $attack['defenderAccountId'] = $defenderAccountId;
                         $attack['opposition'] = [
                             'rollId' => $defenseRoll['id'], 'diceAppearance' => $defenseDice,
+                            'label' => $defenseRoll['label'], 'characterName' => $defenseRoll['characterName'],
                             'requestId' => $requestId,
                             'statId' => (string) ($stats[$statIndex]['id'] ?? ''),
                             'statLabel' => $statLabel,
                             'defenderName' => substr((string) ($target['name'] ?? 'Défenseur'), 0, 120),
                             'rolledByGm' => $isGm,
                             'raw' => $rolled['rawD100'] ?? null,
+                            'total' => $rolled['total'],
                             'formula' => $rolled['formula'],
                             'breakdown' => $rolled['breakdown'],
+                            'rollMode' => $rolled['rollMode'] ?? 'normal',
+                            'selectedIndex' => $rolled['selectedIndex'] ?? 0,
+                            'attempts' => $rolled['attempts'] ?? [],
                             'outcome' => $outcome,
                         ];
                     }
@@ -5250,6 +5322,15 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($token === [] || $effectiveControllerId !== $accountId || ($token['hidden'] ?? false) === true) {
                     rejectOnlineCommand($connection, 403, 'Ce token ne vous appartient pas.', 'token_forbidden');
                 }
+                $owner = applicationAbilityCastingOwner($token);
+                if ($owner['characterId'] !== '') {
+                    $characterKey = 'character:' . $owner['characterId'];
+                    if (!isset($records[$characterKey])) {
+                        $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
+                    }
+                    $character = applicationDomainPayload($records, $characterKey);
+                    if ($character !== []) $token = synchronizeOnlineCharacterToken($token, $character);
+                }
             } else {
                 $characterKey = 'character:' . $characterId;
                 if ($characterId === '' || !validApplicationDomainKey($characterKey)) {
@@ -5274,6 +5355,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $threshold = null;
             $modifier = 0;
             $resultModifier = 0;
+            $modifierMode = 'threshold';
             $rollMode = $kind === 'luck' ? 'normal' : normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
             if ($kind === 'luck') {
                 $label = 'Chance';
@@ -5345,6 +5427,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $outcome = in_array($kind, ['stat', 'hit'], true)
                 ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier)
                 : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
+            if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
+                $outcome['resultCustomized'] = $modifierMode === 'result';
+            }
             onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $token['characterId'] ?? $characterId, $rolled, in_array($kind, ['damage', 'ability'], true));
             $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
             $activity = applicationDomainPayload($records, 'activity');
@@ -5796,8 +5881,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 ];
             }
         }
-        if (in_array($command, ['roll', 'token.roll'], true) && ($result['deduplicated'] ?? false) !== true && is_array($result['roll'] ?? null) && (($result['roll']['visibility'] ?? '') === 'public' || ($result['roll']['revealed'] ?? false) === true)) {
-            $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordRollContent($result['roll']));
+        $publicResultRolls = applicationPublicResultRolls($result);
+        if (in_array($command, ['roll', 'token.roll', 'ability.use'], true) && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
+            $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordResultRollContent($result));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];
         }

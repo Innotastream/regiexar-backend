@@ -296,6 +296,160 @@ $response = runCommand($db, 'token.attack', [
 requireTactical($response->status === 200 && ($response->body['attack']['targetTokenId'] ?? '') === 'token-monster-two', 'The GM can target another creature with a creature: ' . $response->getMessage());
 
 $db = fixture();
+$character = $db->payload('character:character-player');
+$character['name'] = 'Nom autoritatif';
+$character['stats'] = ['force' => 64];
+$db->put('character:character-player', $character);
+$staleToken = $db->payload('token:scene-one:token-player');
+$staleToken['name'] = 'Ancien nom';
+$staleToken['stats'] = [['id' => 'force', 'label' => 'Ancienne Force', 'value' => 1]];
+$db->put('token:scene-one:token-player', $staleToken);
+$response = runCommand($db, 'token.roll', [
+    'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'stat', 'statId' => 'character-stat-force',
+    'rollMode' => 'advantage', 'modifier' => 0, 'modifierMode' => 'result',
+]);
+requireTactical(
+    $response->status === 200
+        && ($response->body['roll']['characterName'] ?? '') === 'Nom autoritatif'
+        && ($response->body['roll']['label'] ?? '') === 'Force'
+        && ($response->body['roll']['outcome']['threshold'] ?? null) === 64
+        && ($response->body['roll']['outcome']['resultCustomized'] ?? false) === true
+        && count($response->body['roll']['attempts'] ?? []) === 2,
+    'A Player token roll must resynchronize its authoritative sheet and preserve a zero custom-result choice'
+);
+$gmResponse = runCommand(fixture(), 'token.roll', [
+    'sceneId' => 'scene-one', 'tokenId' => 'token-monster', 'layerId' => 'ground',
+    'kind' => 'stat', 'statId' => 'monster-force', 'rollMode' => 'advantage',
+    'modifier' => 0, 'modifierMode' => 'result', 'requestId' => 'gm-role-parity-roll-0001',
+], true, 'account-gm');
+requireTactical(
+    $gmResponse->status === 200
+        && ($gmResponse->body['roll']['label'] ?? '') === 'Force'
+        && ($gmResponse->body['roll']['outcome']['resultCustomized'] ?? false) === true
+        && count($gmResponse->body['roll']['attempts'] ?? []) === 2,
+    'The GM tactical route preserves the same canonical mode and customized-result fields'
+);
+
+$db = fixture();
+$response = runCommand($db, 'token.attack', [
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-monster-two',
+    'requestId' => 'attack-attempts-0001', 'attackKind' => 'weapon', 'attackId' => 'monster-claw',
+    'statId' => 'monster-force', 'rollMode' => 'advantage',
+], true, 'account-gm');
+$hit = $response->body['attack']['hit'] ?? [];
+requireTactical(
+    $response->status === 200
+        && ($hit['rollMode'] ?? '') === 'advantage'
+        && is_int($hit['selectedIndex'] ?? null)
+        && count($hit['attempts'] ?? []) === 2
+        && str_contains(onlineAttackHistoryDetail($response->body['attack']), '(Avantage)')
+        && str_contains(onlineAttackHistoryDetail($response->body['attack']), '(jet ignoré)')
+        && str_contains(onlineAttackDiscordContent($response->body['attack']), '(jet ignoré)'),
+    'Attack history and Discord retain both advantage attempts and identify the ignored one'
+);
+
+$db = fixture();
+$character = $db->payload('character:character-player');
+$character['stats'] = ['force' => 50];
+$db->put('character:character-player', $character);
+$pendingAttack = [
+    'id' => 'attack-opposed-0001', 'requestId' => 'attack-opposed-request1', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player',
+    'sourceName' => 'Créature', 'targetName' => 'Personnage', 'attackName' => 'Griffe',
+    'accountId' => 'account-gm', 'attackerRole' => 'gm', 'playerName' => 'MJ test',
+    'defenderAccountId' => 'account-player', 'status' => 'awaiting-opposition',
+    'damageType' => 'ignore', 'damageFormula' => '1', 'damageRollMode' => 'normal',
+    'hit' => [
+        'raw' => 40, 'total' => 40, 'formula' => '1d100', 'rollMode' => 'normal',
+        'selectedIndex' => 0, 'attempts' => [['total' => 40, 'rawD100' => 40, 'breakdown' => '[40]']],
+        'outcome' => classifyOnlineD100Outcome(40, 50),
+    ],
+];
+$activity = $db->payload('activity');
+$activity['pendingAttacks'] = [$pendingAttack];
+$activity['attackReceipts'] = [[
+    'requestId' => $pendingAttack['requestId'], 'accountId' => 'account-gm',
+    'expiresAt' => PHP_INT_MAX, 'attack' => $pendingAttack,
+]];
+$db->put('activity', $activity);
+$response = runCommand($db, 'token.attack.oppose', [
+    'attackId' => $pendingAttack['id'], 'requestId' => 'opposition-attempts-01',
+    'statId' => 'character-stat-force', 'rollMode' => 'advantage',
+]);
+$opposition = $response->body['attack']['opposition'] ?? [];
+$opposedReceiptAttack = $db->payload('activity')['attackReceipts'][0]['attack'] ?? [];
+requireTactical(
+    $response->status === 200
+        && ($opposition['rollMode'] ?? '') === 'advantage'
+        && is_int($opposition['selectedIndex'] ?? null)
+        && count($opposition['attempts'] ?? []) === 2
+        && str_contains(onlineAttackHistoryDetail($opposedReceiptAttack), 'Jet OPP · Force (Avantage)')
+        && str_contains(onlineAttackHistoryDetail($opposedReceiptAttack), '(jet ignoré)')
+        && str_contains(onlineAttackDiscordContent($opposedReceiptAttack), 'Jet OPP · Force (Avantage)')
+        && str_contains(onlineAttackDiscordContent($opposedReceiptAttack), '(jet ignoré)'),
+    'Opposition receipts and history retain both attempts for Player and GM renderers'
+);
+
+$pendingAbilityAttack = null;
+for ($attempt = 0; $attempt < 200 && $pendingAbilityAttack === null; $attempt += 1) {
+    $candidate = fixture();
+    $character = $candidate->payload('character:character-player');
+    $character['stats'] = ['force' => 100];
+    $character['abilities'] = [[
+        'id' => 'ability-opposed', 'name' => 'Onde opposée', 'effect' => 'damage', 'formula' => '1',
+        'damageType' => 'magical', 'description' => '', 'manaCost' => 1, 'cooldownRounds' => 0,
+        'castingStatId' => 'force',
+    ]];
+    $candidate->put('character:character-player', $character);
+    $payload = [
+        'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster',
+        'requestId' => 'pending-cast-attack-0001', 'attackKind' => 'ability',
+        'attackId' => 'ability-opposed', 'abilityId' => 'ability-opposed', 'opposed' => true,
+        'rollMode' => 'advantage',
+    ];
+    $candidateResponse = runCommand($candidate, 'token.attack', $payload);
+    if ($candidateResponse->status === 200 && ($candidateResponse->body['attack']['status'] ?? '') === 'awaiting-opposition') {
+        $pendingAbilityAttack = [$candidate, $candidateResponse, $payload];
+    }
+}
+requireTactical(is_array($pendingAbilityAttack), 'A checked ability attack must reach an ordinary success awaiting opposition');
+[$db, $response, $payload] = $pendingAbilityAttack;
+$castRollId = (string) ($response->body['castRoll']['id'] ?? '');
+$pending = $db->payload('activity')['pendingAttacks'][0] ?? [];
+requireTactical(
+    $castRollId !== ''
+        && ($pending['cast']['roll']['id'] ?? '') === $castRollId
+        && array_column($response->body['rolls'] ?? [], 'id') === [$castRollId],
+    'A pending ability attack retains its canonical cast before opposition'
+);
+$opposed = runCommand($db, 'token.attack.oppose', [
+    'attackId' => $response->body['attack']['id'], 'requestId' => 'pending-cast-oppose-01',
+    'statId' => 'monster-force', 'rollMode' => 'advantage',
+], true, 'account-gm');
+requireTactical($opposed->status === 200, 'The pending ability attack can complete its opposition: ' . $opposed->getMessage());
+$activity = $db->payload('activity');
+$attackReceipt = null;
+foreach ($activity['attackReceipts'] ?? [] as $receipt) {
+    if (($receipt['requestId'] ?? '') === $payload['requestId']) { $attackReceipt = $receipt; break; }
+}
+requireTactical(
+    is_array($attackReceipt) && ($attackReceipt['attack']['cast']['roll']['id'] ?? '') === $castRollId,
+    'Opposition cannot erase the casting roll from the authoritative attack receipt'
+);
+$activity['resourceReceipts'] = [];
+$db->put('activity', $activity);
+$revision = $db->revision;
+$retry = runCommand($db, 'token.attack', $payload);
+requireTactical(
+    $retry->status === 200
+        && ($retry->body['deduplicated'] ?? false) === true
+        && ($retry->body['castRoll']['id'] ?? '') === $castRollId
+        && array_column($retry->body['rolls'] ?? [], 'id') === [$castRollId]
+        && $db->revision === $revision,
+    'An ability attack retry restores its cast from the attack receipt after the ability receipt expires'
+);
+
+$db = fixture();
 $remarkableFailure = [
     'id' => 'attack-critical-failure01', 'requestId' => 'critical-failure-request1', 'sceneId' => 'scene-one',
     'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player', 'sourceName' => 'Créature', 'targetName' => 'Personnage',
@@ -399,6 +553,12 @@ foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$
     $response = runCommand($db, 'token.roll', $payload, $gm, $account);
     $actions = $db->payload('activity')['playerActions'];
     requireTactical($response->status === 200 && array_column($actions, 'kind') === ['roll', 'ability'], "$role ability roll must append exactly one canonical roll action and one ability action: " . $response->getMessage());
+    requireTactical(
+        ($response->body['castRoll'] ?? null) === null
+            && ($response->body['effectRoll']['id'] ?? '') === ($response->body['roll']['id'] ?? null)
+            && array_column($response->body['rolls'] ?? [], 'id') === [($response->body['roll']['id'] ?? '')],
+        "$role legacy ability without a casting check keeps its effect as the primary and sole roll"
+    );
     $rollAction = $actions[0];
     $abilityAction = $actions[1];
     $abilityRollFields[$role] = array_intersect_key($rollAction, array_flip(['kind', 'characterName', 'summary', 'detail']));
@@ -412,9 +572,165 @@ foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$
     requireTactical(count($receipts) === 1 && ($receipts[0]['actionId'] ?? '') === $abilityAction['id'], "$role ability receipt must keep pointing to the ability action");
     $revision = $db->revision;
     $retry = runCommand($db, 'token.roll', $payload, $gm, $account);
-    requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) === true && $db->revision === $revision && count($db->payload('activity')['playerActions']) === 2, "$role ability retry must not duplicate either journal entry");
+    requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) === true
+        && array_column($retry->body['rolls'] ?? [], 'id') === array_column($response->body['rolls'] ?? [], 'id')
+        && $db->revision === $revision && count($db->payload('activity')['playerActions']) === 2,
+        "$role ability retry must return the same bundle without duplicating either journal entry");
 }
 requireTactical($abilityRollFields['player'] === $abilityRollFields['gm'], 'Player and GM ability rolls must produce identical canonical roll fields');
+
+$checkedRoleFields = [];
+foreach ([['player', false, 'account-player'], ['gm', true, 'account-gm']] as [$role, $gm, $account]) {
+    $successful = null;
+    for ($attempt = 0; $attempt < 200 && $successful === null; $attempt += 1) {
+        $candidate = fixture();
+        $character = $candidate->payload('character:character-player');
+        $character['stats'] = ['force' => 100];
+        $character['abilities'] = [[
+            'id' => 'ability-checked', 'name' => 'Onde vérifiée', 'effect' => 'damage', 'formula' => '2',
+            'damageType' => 'magical', 'description' => '', 'manaCost' => 1, 'cooldownRounds' => 0,
+            'castingStatId' => 'force',
+        ]];
+        $candidate->put('character:character-player', $character);
+        $payload = [
+            'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'ability',
+            'abilityId' => 'ability-checked', 'rollMode' => 'advantage',
+            'requestId' => 'checked-ability-' . $role . '-0001',
+        ];
+        $candidateResponse = runCommand($candidate, 'token.roll', $payload, $gm, $account);
+        if ($candidateResponse->status === 200 && ($candidateResponse->body['castSucceeded'] ?? false) === true) {
+            $successful = [$candidate, $candidateResponse, $payload];
+        }
+    }
+    requireTactical(is_array($successful), "$role checked ability must reach a successful casting sample");
+    [$db, $response, $payload] = $successful;
+    $rolls = $response->body['rolls'] ?? [];
+    requireTactical(
+        count($rolls) === 2
+            && array_column($rolls, 'id') === [($response->body['castRoll']['id'] ?? ''), ($response->body['effectRoll']['id'] ?? '')]
+            && ($response->body['roll']['id'] ?? '') === ($response->body['effectRoll']['id'] ?? null)
+            && ($response->body['cast']['roll']['id'] ?? '') === ($response->body['castRoll']['id'] ?? null),
+        "$role successful checked ability must expose cast then effect without hiding the historical primary"
+    );
+    requireTactical(
+        count($response->body['castRoll']['attempts'] ?? []) === 2
+            && count($response->body['effectRoll']['attempts'] ?? []) === 2
+            && array_column($db->payload('activity')['rolls'], 'id') === array_column($rolls, 'id')
+            && array_column($db->payload('activity')['playerActions'], 'kind') === ['roll', 'roll', 'ability'],
+        "$role journal and actions must contain both advantage rolls exactly once"
+    );
+    $checkedRoleFields[$role] = [
+        $response->body['castRoll']['label'] ?? '',
+        $response->body['effectRoll']['label'] ?? '',
+        array_column($db->payload('activity')['playerActions'], 'summary'),
+    ];
+    $revision = $db->revision;
+    $retry = runCommand($db, 'token.roll', $payload, $gm, $account);
+    requireTactical(
+        $retry->status === 200 && ($retry->body['deduplicated'] ?? false) === true
+            && array_column($retry->body['rolls'] ?? [], 'id') === array_column($rolls, 'id')
+            && $db->revision === $revision
+            && count($db->payload('activity')['rolls']) === 2
+            && count($db->payload('activity')['playerActions']) === 3,
+        "$role checked ability retry must return both immutable rolls without republishing them"
+    );
+}
+requireTactical($checkedRoleFields['player'][0] === $checkedRoleFields['gm'][0]
+    && $checkedRoleFields['player'][1] === $checkedRoleFields['gm'][1],
+    'Successful checked ability labels are identical for Player and GM');
+
+$healingSuccess = null;
+for ($attempt = 0; $attempt < 200 && $healingSuccess === null; $attempt += 1) {
+    $candidate = fixture();
+    $character = $candidate->payload('character:character-player');
+    $character['stats'] = ['force' => 100];
+    $character['abilities'] = [[
+        'id' => 'ability-healing', 'name' => 'Souffle réparateur', 'effect' => 'healing',
+        'formula' => '2', 'healingFormula' => '2', 'description' => '',
+        'manaCost' => 1, 'cooldownRounds' => 0, 'castingStatId' => 'force',
+    ]];
+    $candidate->put('character:character-player', $character);
+    $payload = [
+        'sceneId' => 'scene-one', 'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-player',
+        'abilityId' => 'ability-healing', 'rollMode' => 'advantage',
+        'requestId' => 'healing-ability-player-0001',
+    ];
+    $candidateResponse = runCommand($candidate, 'ability.use', $payload);
+    if ($candidateResponse->status === 200 && ($candidateResponse->body['castSucceeded'] ?? false) === true) {
+        $healingSuccess = [$candidate, $candidateResponse, $payload];
+    }
+}
+requireTactical(is_array($healingSuccess), 'A checked healing ability must reach a successful casting sample');
+[$db, $response, $payload] = $healingSuccess;
+$healingRolls = $response->body['rolls'] ?? [];
+requireTactical(
+    count($healingRolls) === 2
+        && array_column($healingRolls, 'id') === [($response->body['castRoll']['id'] ?? ''), ($response->body['effectRoll']['id'] ?? '')]
+        && ($response->body['effectRoll']['label'] ?? '') === 'Souffle réparateur · Soin'
+        && array_column($db->payload('activity')['rolls'], 'id') === array_column($healingRolls, 'id')
+        && array_column($db->payload('activity')['playerActions'], 'kind') === ['roll', 'roll', 'ability', 'resource'],
+    'Healing exposes and journals its cast and effect exactly once'
+);
+$healingDiscord = onlineDiscordResultRollContent($response->body);
+requireTactical(
+    substr_count($healingDiscord, '**Personnage**') === 2
+        && str_contains($healingDiscord, 'Souffle réparateur · Lancement · Force (Avantage)')
+        && str_contains($healingDiscord, 'Souffle réparateur · Soin')
+        && str_contains($healingDiscord, '(jet ignoré)'),
+    'Healing Discord output contains both public presentations and their ignored attempts'
+);
+$revision = $db->revision;
+$retry = runCommand($db, 'ability.use', $payload);
+requireTactical(
+    $retry->status === 200 && ($retry->body['deduplicated'] ?? false) === true
+        && array_column($retry->body['rolls'] ?? [], 'id') === array_column($healingRolls, 'id')
+        && $db->revision === $revision
+        && count($db->payload('activity')['playerActions']) === 4,
+    'Healing retry restores both rolls without a second heal, journal entry or Discord publication'
+);
+
+$failed = null;
+for ($attempt = 0; $attempt < 200 && $failed === null; $attempt += 1) {
+    $candidate = fixture();
+    $character = $candidate->payload('character:character-player');
+    $character['stats'] = ['force' => 0];
+    $character['abilities'] = [[
+        'id' => 'ability-failed', 'name' => 'Onde manquée', 'effect' => 'damage', 'formula' => '2',
+        'damageType' => 'magical', 'description' => '', 'manaCost' => 1, 'cooldownRounds' => 3,
+        'castingStatId' => 'force',
+    ]];
+    $candidate->put('character:character-player', $character);
+    $payload = [
+        'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'ability',
+        'abilityId' => 'ability-failed', 'requestId' => 'failed-ability-player-0001',
+    ];
+    $candidateResponse = runCommand($candidate, 'token.roll', $payload);
+    if ($candidateResponse->status === 200 && ($candidateResponse->body['castSucceeded'] ?? true) === false) {
+        $failed = [$candidate, $candidateResponse, $payload];
+    }
+}
+requireTactical(is_array($failed), 'A checked ability must reach a failed casting sample');
+[$db, $response, $payload] = $failed;
+requireTactical(
+    ($response->body['effectRoll'] ?? null) === null
+        && count($response->body['rolls'] ?? []) === 1
+        && ($response->body['roll']['id'] ?? '') === ($response->body['castRoll']['id'] ?? null)
+        && count($db->payload('activity')['rolls']) === 1
+        && array_column($db->payload('activity')['playerActions'], 'kind') === ['roll', 'ability']
+        && ($response->body['cast']['remainingRounds'] ?? -1) === 0,
+    'A failed checked ability records only the cast, applies no effect and starts no cooldown'
+);
+$failedRevision = $db->revision;
+$failedRetry = runCommand($db, 'token.roll', $payload);
+requireTactical(
+    $failedRetry->status === 200
+        && ($failedRetry->body['deduplicated'] ?? false) === true
+        && array_column($failedRetry->body['rolls'] ?? [], 'id') === array_column($response->body['rolls'] ?? [], 'id')
+        && $db->revision === $failedRevision
+        && count($db->payload('activity')['rolls']) === 1
+        && count($db->payload('activity')['playerActions']) === 2,
+    'A failed checked ability retry restores its cast without another mana cost or journal entry'
+);
 require __DIR__ . '/token-groups-cases.php';
 require __DIR__ . '/token-size-defaults-cases.php';
 require __DIR__ . '/gm-wall-placement-cases.php';
