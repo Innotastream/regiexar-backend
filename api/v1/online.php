@@ -4115,11 +4115,15 @@ function onlineFinalizeAttackDamageRoll(array $attack): array
     }
     $attack['damageRoll'] = $damageRoll;
     if (is_array($attack['damage'] ?? null)) {
+        $storedAttempts = is_array($attack['damage']['attempts'] ?? null) ? $attack['damage']['attempts'] : [];
+        $publicAttempts = is_array($damageRoll['attempts'] ?? null) ? $damageRoll['attempts'] : [];
         $attack['damage']['rollId'] = (string) ($damageRoll['id'] ?? '');
         $attack['damage']['total'] = $damageRoll['total'] ?? 0;
         $attack['damage']['rollMode'] = normalizeOnlineRollMode($damageRoll['rollMode'] ?? 'normal');
         $attack['damage']['selectedIndex'] = (int) ($damageRoll['selectedIndex'] ?? 0);
-        $attack['damage']['attempts'] = is_array($damageRoll['attempts'] ?? null) ? $damageRoll['attempts'] : [];
+        // Le jet public normal n'expose volontairement aucune tentative, mais le
+        // reçu MJ conserve son calcul interne unique pour le détail d'historique.
+        $attack['damage']['attempts'] = $publicAttempts !== [] ? $publicAttempts : $storedAttempts;
     }
     return $attack;
 }
