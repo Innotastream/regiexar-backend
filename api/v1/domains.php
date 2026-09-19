@@ -10,7 +10,7 @@ require_once __DIR__ . '/ability-casting.php';
 require_once __DIR__ . '/tactical-rolls.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 16;
+const XAR_SESSION_SCHEMA_VERSION = 17;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -276,6 +276,7 @@ function validApplicationMapFogState(array $map): bool
     if (array_key_exists('lightingMode', $map) && !validApplicationMapLightingMode($map['lightingMode'])) {
         return false;
     }
+    if (array_key_exists('customLighting', $map) && !validApplicationCustomLighting($map['customLighting'])) return false;
     if (!array_key_exists('layers', $map)) {
         return true;
     }
@@ -289,6 +290,7 @@ function validApplicationMapFogState(array $map): bool
             || (array_key_exists('walls', $layer) && !validApplicationWallState($layer['walls']))
             || (array_key_exists('lights', $layer) && !validApplicationMapLights($layer['lights']))
             || (array_key_exists('vision', $layer) && !validApplicationVisionSettings($layer['vision']))
+            || (array_key_exists('customLighting', $layer) && !validApplicationCustomLighting($layer['customLighting']))
             || (array_key_exists('lightingMode', $layer) && !validApplicationMapLightingMode($layer['lightingMode']))) {
             return false;
         }
@@ -296,14 +298,19 @@ function validApplicationMapFogState(array $map): bool
     return true;
 }
 
+function validApplicationCustomLighting(mixed $value): bool
+{
+    return is_array($value) && is_int($value['distance'] ?? null) && $value['distance'] >= 1 && $value['distance'] <= 40 && is_bool($value['night'] ?? null);
+}
+
 function normalizeApplicationMapLightingMode(mixed $value): string
 {
-    return in_array($value, ['dark', 'normal', 'bright'], true) ? $value : 'normal';
+    return in_array($value, ['dark', 'normal', 'bright', 'custom'], true) ? $value : 'normal';
 }
 
 function validApplicationMapLightingMode(mixed $value): bool
 {
-    return is_string($value) && in_array($value, ['dark', 'normal', 'bright'], true);
+    return is_string($value) && in_array($value, ['dark', 'normal', 'bright', 'custom'], true);
 }
 
 function normalizeApplicationDarkVision(mixed $value): string
@@ -629,6 +636,7 @@ function applicationActiveMapOcclusionState(array $map, ?array $tokens = null): 
         'lights' => applicationMapLightsForLayer($map, $activeLayerId, $tokens),
         'vision' => applicationMapVisionSettings($map),
         'lightingMode' => normalizeApplicationMapLightingMode($activeLayer['lightingMode'] ?? ($map['lightingMode'] ?? null)),
+        'customLighting' => $activeLayer['customLighting'] ?? $map['customLighting'] ?? [],
         'naturalWidth' => is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0,
         'naturalHeight' => is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0,
     ];
@@ -1024,11 +1032,12 @@ function applicationOriginVisionDistance(array $origin, array $vision): int
         : (int) $vision['distance'];
 }
 
-function applicationEffectiveVisionDistance(mixed $baseDistance, mixed $lightingMode, mixed $darkVision): int
+function applicationEffectiveVisionDistance(mixed $baseDistance, mixed $lightingMode, mixed $darkVision, array $custom = []): int
 {
     $mode = normalizeApplicationMapLightingMode($lightingMode);
     $sight = normalizeApplicationDarkVision($darkVision);
     $base = normalizeApplicationVisionDistance($baseDistance);
+    if ($mode === 'custom') return max(1, min(40, (int) ($custom['distance'] ?? 8))) * (($custom['night'] ?? false) === true && $sight === 'full' ? 2 : 1);
     if ($mode === 'bright') return 16;
     if ($mode === 'dark') return $sight === 'full' ? 8 : 4;
     return $base;
@@ -1056,10 +1065,10 @@ function applicationPreparedVisionOrigins(array $occlusion, array $origins): arr
     foreach (array_slice($origins, 0, 40) as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
         $source = ($origin['source'] ?? null) === 'light' ? 'light' : 'token';
-        $darkVision = normalizeApplicationDarkVision($origin['darkVision'] ?? null);
+        $darkVision = $mode === 'custom' && ($occlusion['customLighting']['night'] ?? false) !== true ? 'none' : normalizeApplicationDarkVision($origin['darkVision'] ?? null);
         $distance = ($origin['environmentAdjusted'] ?? false) === true || $source === 'light' || !$applyEnvironment
             ? applicationOriginVisionDistance($origin, $vision)
-            : applicationEffectiveVisionDistance(applicationOriginVisionDistance($origin, $vision), $mode, $darkVision);
+            : applicationEffectiveVisionDistance(applicationOriginVisionDistance($origin, $vision), $mode, $darkVision, $occlusion['customLighting'] ?? []);
         $prepared[] = [
             ...$origin,
             'x' => max(0.0, min(100.0, (float) $origin['x'])),
@@ -1377,7 +1386,7 @@ function validApplicationTokenDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('layerId', $payload) && !in_array($payload['layerId'], ['basement', 'ground', 'upper'], true)) return false;
-    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers'] as $key) {
+    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable'] as $key) {
         if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
             return false;
         }
@@ -1598,7 +1607,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 5)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 6)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
@@ -1638,7 +1647,7 @@ function validApplicationCharacterDomain(array $payload): bool
     if (array_key_exists('temporalPerception', $payload) && !in_array($payload['temporalPerception'], ['normal', 'fast'], true)) {
         return false;
     }
-    foreach (['resources', 'stats', 'fatigue', 'secret'] as $key) {
+    foreach (['resources', 'stats', 'temporaryStats', 'fatigue', 'secret'] as $key) {
         if (isset($payload[$key]) && (!is_array($payload[$key]) || count($payload[$key]) > 64)) {
             return false;
         }

@@ -46,7 +46,7 @@ rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' 
 rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '1d20', 'label' => str_repeat('x', 121)]), 'invalid_tactical_roll_label');
 rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'stat', 'statId' => 'missing']), 'token_stat_missing');
 rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'damage', 'weaponId' => 'missing']), 'attack_weapon_missing');
-rejectsTactical(fn() => applicationTacticalRollSpecification($creature, ['kind' => 'initiative']), 'invalid_tactical_roll_kind');
+requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'initiative'])['formula'] === '1d100', 'GM creature initiative is an ordinary authoritative roll.');
 
 $roll = ['formula' => '1d100', 'total' => 42, 'mapEvent' => ['kind' => 'damage']];
 foreach (['damage', 'custom-damage'] as $kind) {

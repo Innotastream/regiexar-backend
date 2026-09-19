@@ -14,7 +14,7 @@ function patchGroupDomains(MemoryConnection $db, array $payloads): TestResponse
     $GLOBALS['testIdentity'] = ['id' => 'account-gm', 'display_name' => 'MJ', 'effective_mode' => 'gm', 'permanent_role' => 'gm'];
     $changes = [];
     foreach ($payloads as $key => $payload) $changes[] = ['key' => $key, 'payload' => $payload, 'operation' => 'upsert', 'expectedRevision' => $db->domains[$key]['revision'] ?? 0];
-    $GLOBALS['testBody'] = ['stateSchemaVersion' => 16, 'domainSchemaVersion' => 1, 'changes' => $changes];
+    $GLOBALS['testBody'] = ['stateSchemaVersion' => XAR_SESSION_SCHEMA_VERSION, 'domainSchemaVersion' => 1, 'changes' => $changes];
     try { patchApplicationDomains($db); } catch (TestResponse $response) { return $response; }
     throw new RuntimeException('No domain response');
 }

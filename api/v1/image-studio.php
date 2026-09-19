@@ -229,8 +229,7 @@ function assertImageStudioConversationAccess(array $identity, ?array $conversati
     if (!is_array($conversation)) {
         sendError(404, 'Conversation introuvable.', 'conversation_missing');
     }
-    if ((string) $conversation['owner_account_id'] !== (string) $identity['id']
-        && (!$allowAdministrator || !(bool) ($identity['can_administrate'] ?? false))) {
+    if (($identity['permanent_role'] ?? '') !== 'gm' || ($identity['effective_mode'] ?? '') !== 'gm') {
         sendError(403, 'Cette conversation appartient à un autre MJ.', 'conversation_forbidden');
     }
     return $conversation;
@@ -263,8 +262,8 @@ function imageStudioConversationCreateRequestSignature(string $title): string
 function listImageStudioConversations(PDO $connection, bool $headOnly): never
 {
     $identity = requireImageStudioIdentity($connection);
-    $scopeAll = ($_GET['scope'] ?? '') === 'all' && (bool) ($identity['can_administrate'] ?? false);
-    $includeArchived = ($_GET['archived'] ?? '') === '1' || $scopeAll;
+    $scopeAll = true;
+    $includeArchived = ($_GET['archived'] ?? '') === '1';
     $where = $scopeAll ? '1 = 1' : 'c.owner_account_id = :owner_account_id';
     if (!$includeArchived) {
         $where .= ' AND c.owner_archived_at IS NULL';
@@ -698,8 +697,7 @@ function listImageStudioMessages(PDO $connection, string $conversationId, bool $
         $identity,
         imageStudioConversationRecord($connection, $conversationId)
     );
-    $administratorView = ((string) $conversation['owner_account_id'] !== (string) $identity['id'])
-        || (($_GET['audit'] ?? '') === '1' && (bool) ($identity['can_administrate'] ?? false));
+    $administratorView = ($_GET['audit'] ?? '') === '1' && (bool) ($identity['can_administrate'] ?? false);
     $statement = $connection->prepare(
         'SELECT m.*, mo.public_slug, mo.pending_delete_at, mo.content_type AS media_content_type '
         . 'FROM image_studio_messages m LEFT JOIN media_objects mo ON mo.id = m.media_id '
@@ -1454,7 +1452,7 @@ function hideImageStudioMessage(PDO $connection, string $id): never
 function listImageStudioGallery(PDO $connection, bool $headOnly): never
 {
     $identity = requireImageStudioIdentity($connection);
-    $scopeAll = ($_GET['scope'] ?? '') === 'all' && (bool) ($identity['can_administrate'] ?? false);
+    $scopeAll = true;
     $where = $scopeAll
         ? "m.status = 'succeeded'"
         : "m.status = 'succeeded' AND m.author_account_id = :account_id AND m.owner_hidden_at IS NULL";

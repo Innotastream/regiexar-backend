@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.15.20';
-const XAR_BACKEND_BUILD = 'client-3-2-20-roll-eligibility-vision-folders-candidate-20260912-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.2.20';
+const XAR_BACKEND_VERSION = '0.16.0';
+const XAR_BACKEND_BUILD = 'client-3-3-0-tactical-sync-abilities-candidate-20260919-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.0';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.2.20'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.0'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 19;
+const XAR_DATABASE_SCHEMA_VERSION = 20;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -928,6 +928,33 @@ function ensureCurrentSchema(PDO $connection): void
                 throw $error;
             }
             $version = 19;
+        }
+        if ($version < 20) {
+            $connection->exec("CREATE TABLE IF NOT EXISTS client_error_events (sequence_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, event_id VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, account_id VARCHAR(128) NOT NULL, effective_mode VARCHAR(16) NOT NULL, client_version VARCHAR(40) NOT NULL, payload_json LONGTEXT NOT NULL, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), UNIQUE KEY unique_event (account_id,event_id), KEY recent_account (account_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            $connection->exec("CREATE TABLE IF NOT EXISTS diagnostic_shares (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE, account_id VARCHAR(128) NOT NULL, expires_at DATETIME(3) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true); $records = applicationDomainRecords($connection); $pending = []; $characters = [];
+                foreach ($records as $key => $record) if (str_starts_with($key, 'character:')) {
+                    $character = applicationDomainPayload($records, $key);
+                    if (($character['characterSchemaVersion'] ?? 0) > 6) throw new RuntimeException('future_character_schema');
+                    $character = applicationPublicCharacterResources($character); $character['characterSchemaVersion'] = 6;
+                    $character['temporaryStats'] ??= [];
+                    $characters[$character['id']] = $character;
+                    $change = prepareApplicationDomainUpsert($key, $character, $record); if ($change !== null) $pending[$key] = $change;
+                }
+                foreach ($records as $key => $record) if (str_starts_with($key, 'token:')) {
+                    $token = applicationDomainPayload($records, $key); $character = $characters[$token['characterId'] ?? ''] ?? null;
+                    if ($character !== null && ($token['followCharacter'] ?? true) !== false && empty($token['linkedTokenId'])) {
+                        $change = prepareApplicationDomainUpsert($key, synchronizeOnlineCharacterToken($token, $character), $record); if ($change !== null) $pending[$key] = $change;
+                    }
+                }
+                if ($pending !== []) persistDomainChangesInTransaction($connection, [], $clock, array_values($pending));
+                $connection->exec("UPDATE application_domain_clock SET state_schema_version = " . XAR_SESSION_SCHEMA_VERSION . " WHERE singleton_id = 1");
+                $connection->exec("INSERT IGNORE INTO schema_migrations (version,name,checksum) VALUES (20,'regie_3_3_character_resources_and_diagnostics','6f6025e23e3f68fe171dc1885a5cdf28bd9b57a22c1d7f62b6d9ef5070e3e346')");
+                $connection->commit();
+            } catch (Throwable $error) { if ($connection->inTransaction()) $connection->rollBack(); throw $error; }
+            $version = 20;
         }
     } finally {
         try {
@@ -1932,6 +1959,7 @@ require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/image-studio.php';
 require_once __DIR__ . '/health-overlays.php';
+require_once __DIR__ . '/diagnostics.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
@@ -2013,6 +2041,7 @@ if ($route === '/api/v1/health') {
 }
 
 try {
+    if (handlePublicDiagnosticShare($connection, $route, $method, $headOnly)) exit;
     if (handlePublicHealthOverlayRoute($connection, $route, $method, $headOnly)) {
         exit;
     }
@@ -2153,6 +2182,7 @@ try {
         requireMethod($method, ['GET', 'HEAD', 'POST', 'PATCH']);
     }
 
+    if (handleDiagnosticRoute($connection, $route, $method, $headOnly)) exit;
     handleOnlineRoute($connection, $configuration, $route, $method, $headOnly);
 } catch (Throwable $error) {
     error_log('[xar-regie-api] authentication request failed: ' . get_class($error));

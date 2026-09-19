@@ -276,7 +276,7 @@ $migratedStandaloneToken = migrateOnlineCombatTokenPayload([
     'weaponAttacks' => [['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical']],
 ]);
 requireDomainCompatibility(
-    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 5
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 6
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
         && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'
         && !array_key_exists('speed', $migratedCombatCharacter)
@@ -485,7 +485,7 @@ $genericCharacterPatch = playerCharacterPatch([
     'fatigue' => ['current' => 13],
 ]);
 requireDomainCompatibility(
-    ($genericCharacterPatch['resources'] ?? null) === ['hp' => 42, 'maxHp' => 80, 'mana' => 70, 'maxMana' => 100]
+    ($genericCharacterPatch['resources'] ?? null) === ['hp' => 42, 'maxHp' => 80, 'mana' => 70, 'maxMana' => 100, 'mentalResistance' => 0.0, 'mentalResistanceMax' => 100.0]
         && ($genericCharacterPatch['stats'] ?? null) === ['force' => 62, 'dexterity' => 52, 'agility' => 48, 'intelligence' => 73]
         && ($genericCharacterPatch['fatigue'] ?? null) === ['current' => 13, 'max' => 100],
     'Un patch partiel de n’importe quelle fiche doit préserver toutes les autres ressources, stats et valeurs de fatigue.'

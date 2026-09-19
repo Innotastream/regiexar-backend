@@ -63,7 +63,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         try { $formPlan = planApplicationMetamorphosis($source, $characters, $tokens, $ability, $arguments, $accountId, $isGm, $activity['pendingAttacks'] ?? []); }
         catch (RuntimeException $error) { rejectOnlineCommand($connection, 409, $error->getMessage(), 'form_conflict'); }
         if ($formPlan['deduplicated']) return ['effect' => 'metamorphosis', 'activeCharacterId' => $formPlan['activeCharacterId'], 'deduplicated' => true];
-    } else {
+    } elseif (!in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
         if (($ability['effect'] ?? '') !== 'healing') rejectOnlineCommand($connection, 404, 'Cette capacité de soin n’existe plus.', 'healing_ability_missing');
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
         if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403, 'La cible du soin n’est pas visible.', 'healing_target_hidden');
@@ -73,7 +73,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $cast = $returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map));
     $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
     $effectRoll = null;
-    $result = ['effect' => $metamorphosis ? 'metamorphosis' : 'healing', 'appliedDelta' => 0];
+    $result = ['effect' => $metamorphosis ? 'metamorphosis' : ($ability['effect'] ?? 'healing'), 'appliedDelta' => 0];
     if ($cast['success'] && $metamorphosis) {
         $form = applicationDomainPayload($records, 'character:' . $formPlan['activeCharacterId']);
         foreach ($formPlan['changes'] as $key => $change) {
@@ -82,6 +82,27 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         }
         $result['activeCharacterId'] = $formPlan['activeCharacterId'];
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'character', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $returning ? 'Reprend sa forme initiale' : 'Change de forme']);
+    } elseif ($cast['success'] && in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
+        if ($ability['effect'] === 'summoning') {
+            $templates = normalizeOnlineLinkedTokens($character['linkedTokens'] ?? []);
+            $templateIndex = findEntryIndex($templates, (string) ($ability['summonLinkedTokenId'] ?? ''));
+            $indexKey = 'token-index:' . $sceneId;
+            $index = $pending[$indexKey]['payload'] ?? applicationDomainPayload($records, $indexKey, ['order' => []]);
+            if ($templateIndex < 0 || count($index['order'] ?? []) >= 2000) rejectOnlineCommand($connection, 409, 'Invocation absente ou limite de pions atteinte.', 'summoning_unavailable');
+            $template = $templates[$templateIndex];
+            $token = ['id' => 'token-' . randomToken(12), 'characterId' => $character['id'], 'linkedTokenId' => $template['id'],
+                'controllerPlayerId' => $character['ownerPlayerId'] ?? $rules['controllerPlayerId'], 'followCharacter' => false,
+                'name' => $template['name'] ?? 'Invocation', 'image' => $template['image'] ?? null, 'color' => $template['color'] ?? $character['color'] ?? '#8d72cb',
+                'frameVariant' => 'player', 'x' => $source['x'], 'y' => $source['y'], 'layerId' => onlineTokenLayerId($source, $map),
+                'size' => $template['size'] ?? 40, 'visionDistance' => $template['visionDistance'] ?? 8, 'darkVision' => $template['darkVision'] ?? 'none',
+                'hp' => (float) ($template['hp'] ?? 1), 'maxHp' => (float) ($template['maxHp'] ?? 1), 'mana' => (float) ($template['mana'] ?? 0), 'maxMana' => (float) ($template['maxMana'] ?? 0),
+                'damageDice' => (string) ($template['damageDice'] ?? ''), 'hitThreshold' => $template['hitThreshold'] ?? null, 'initiativeBonus' => $template['initiativeBonus'] ?? 0,
+                'stats' => [], 'abilities' => [], 'conditions' => [], 'hidden' => false, '_updatedAt' => (int) floor(microtime(true) * 1000)];
+            if (!validApplicationTokenDomain($token)) rejectOnlineCommand($connection, 400, 'Le modèle d’invocation contient des valeurs invalides.', 'invalid_summoning_template');
+            queueOnlineDomainUpsert($pending, $records, onlineTokenDomainKey($sceneId, $token['id']), $token);
+            $index['order'][] = $token['id']; queueOnlineDomainUpsert($pending, $records, $indexKey, $index);
+            $result['summonedTokenId'] = $token['id'];
+        }
     } elseif ($cast['success']) {
         $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
         onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);

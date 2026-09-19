@@ -54,7 +54,7 @@ final class MemoryConnection extends PDO
     public function executeSql(string $sql, array $params): array
     {
         if (str_starts_with($sql, 'SELECT global_revision, state_schema_version')) return [[
-            'global_revision' => $this->revision, 'state_schema_version' => 16, 'domain_schema_version' => 1, 'legacy_revision' => null, 'initialized_at' => 'done',
+            'global_revision' => $this->revision, 'state_schema_version' => XAR_SESSION_SCHEMA_VERSION, 'domain_schema_version' => 1, 'legacy_revision' => null, 'initialized_at' => 'done',
         ]];
         if (str_starts_with($sql, 'SELECT domain_key, schema_version')) {
             return array_values(array_filter($this->domains, static function (array $record) use ($sql, $params): bool {
@@ -1681,4 +1681,5 @@ require __DIR__ . '/vision-stream-layers-cases.php';
 require __DIR__ . '/map-visibility-cases.php';
 require __DIR__ . '/light-relay-cases.php';
 require __DIR__ . '/lighting-carry-cases.php';
+require __DIR__ . '/regie-3.3.0-cases.php';
 fwrite(STDOUT, 'Cycle tactique PHP 3.2.0 : ' . $GLOBALS['checks'] . " contrôles réussis\n");

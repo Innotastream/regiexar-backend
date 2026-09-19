@@ -1,3 +1,11 @@
+# Backend OVH — Régie du Seuil 0.16.0
+
+Client 3.3.0 uniquement, build `client-3-3-0-tactical-sync-abilities-candidate-20260919-1`. Schéma session 17, fiche 6 et base 20. Ce candidat corrige les activités synchronisées et les initiatives, ajoute les coûts PV/fatigue, recharges par repos et réutilisation, invocations et effets, vision custom et journal central. Il conserve l’éligibilité stricte des d100 et les barrières de propriété. Le journal est privé aux MJ ; un lien de lecture de 24 heures peut être créé par un MJ.
+
+Matrice attendue : 3.2.18 / 3.2.19 / 3.3.0 / 3.2.21 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426. Les anciens 3.2.20 et le futur 3.3.1 doivent aussi être refusés.
+
+## Historique conservé
+
 # Backend OVH — Régie du Seuil 0.15.20
 
 Le candidat 0.15.20 accompagne le client 3.2.20 et le build `client-3-2-20-roll-eligibility-vision-folders-candidate-20260912-1`. Cette montée d’autorité reprend sans changement métier la logique qualifiée en 0.15.19. Une capacité avec jet de lancement conserve séparément `castRoll` et `effectRoll`, expose la liste ordonnée `rolls` tout en gardant le champ historique `roll`, et restitue exactement ce faisceau lors d’une reprise dédupliquée. Le journal privé, les actions MJ/Joueur et Discord montrent chaque jet public une seule fois, avec les deux tentatives d’avantage ou de désavantage et la tentative ignorée. Seuls les vrais jets de statistique et Chance acceptent ces modes et les critiques : l’avantage retient le plus petit d100 brut et le désavantage le plus grand. Touché, initiative, dégâts, soins, effets et jets libres restent normaux et ne produisent aucun critique. Les attaques conservent le même contrat, sans publier les dégâts présumés ni les seuils privés des créatures.

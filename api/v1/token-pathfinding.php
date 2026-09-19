@@ -93,12 +93,19 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     $distance = static fn (array $a, array $b): float => hypot(($a['x'] - $b['x']) * $naturalWidth / 100, ($a['y'] - $b['y']) * $naturalHeight / 100);
     $recoveryOrigin = $origin;
     if (!$free($origin)) {
-        $rasterDistance = hypot(($goal['x'] - $origin['x']) * ($width - 1) / 100, ($goal['y'] - $origin['y']) * ($height - 1) / 100);
-        $progress = $rasterDistance > 0 ? min(1.0, 0.02 / $rasterDistance) : 0.0;
-        $point = ['x' => $origin['x'] + ($goal['x'] - $origin['x']) * $progress, 'y' => $origin['y'] + ($goal['y'] - $origin['y']) * $progress];
-        $recovery = applicationResolveWallCollision($walls, $origin, $point, $diameter - 2.0, $naturalWidth, $naturalHeight, false);
-        if (!$progress || !$inBounds($origin) || !$visibleDisk($origin) || $recovery['blocked'] || !$free($point)) return $failed('start-overlaps-wall');
-        $recoveryOrigin = $point;
+        $recoveryDistance = $distance($origin, $goal);
+        $limit = min($recoveryDistance, $radius + max($naturalWidth / $width, $naturalHeight / $height));
+        $steps = max(1, (int) ceil($limit / max(0.25, min($naturalWidth / $width, $naturalHeight / $height) / 2)));
+        $recovered = null;
+        for ($i = 0; $i <= $steps; $i++) {
+            $progress = $recoveryDistance > 0 ? $limit * $i / $steps / $recoveryDistance : 0;
+            $point = ['x' => $origin['x'] + ($goal['x'] - $origin['x']) * $progress, 'y' => $origin['y'] + ($goal['y'] - $origin['y']) * $progress];
+            $cell = (int) round($point['y'] / 100 * ($height - 1)) * $width + (int) round($point['x'] / 100 * ($width - 1));
+            if (!$visible($point['x'], $point['y']) || ($wallBytes !== null && applicationMaskBit($wallBytes, $cell))) return $failed('start-overlaps-wall');
+            if ($free($point)) { $recovered = $point; break; }
+        }
+        if ($recovered === null) return $failed('start-overlaps-wall');
+        $recoveryOrigin = $recovered;
     }
     $segmentFree = static function (array $a, array $b) use ($width, $height, $free): bool {
         $requiredSteps = max(1, (int) ceil(max(abs($a['x'] - $b['x']) * ($width - 1), abs($a['y'] - $b['y']) * ($height - 1)) / 100 * 2));

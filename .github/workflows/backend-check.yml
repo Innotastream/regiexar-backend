@@ -41,6 +41,8 @@ jobs:
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence
         run: php tests/image-studio-idempotence-contract.php
+      - name: Authenticated diagnostic logs and expiring shares
+        run: php tests/diagnostics-contract.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

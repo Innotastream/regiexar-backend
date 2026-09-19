@@ -430,5 +430,12 @@ requireImageStudioIdempotence(
     'Un reçu dont la conversation a disparu doit échouer sans recréation implicite.'
 );
 
+$conversation = ['id' => 'shared', 'owner_account_id' => 'account-first-gm'];
+requireImageStudioIdempotence(assertImageStudioConversationAccess(['id' => 'account-second-gm', 'permanent_role' => 'gm', 'effective_mode' => 'gm'], $conversation) === $conversation, 'Un second MJ accède aux conversations existantes du premier.');
+foreach ([['permanent_role' => 'player', 'effective_mode' => 'player'], ['permanent_role' => 'gm', 'effective_mode' => 'player']] as $identity) {
+    try { assertImageStudioConversationAccess($identity, $conversation); throw new RuntimeException('Player access accepted'); }
+    catch (ImageStudioTestResponse $response) { requireImageStudioIdempotence($response->status === 403, 'Le partage entre MJ ne divulgue aucune discussion en mode joueur.'); }
+}
+
 $checks = (int) ($GLOBALS['imageStudioChecks'] ?? 0);
 echo "Idempotence Studio PHP : {$checks} contrôles réussis.\n";

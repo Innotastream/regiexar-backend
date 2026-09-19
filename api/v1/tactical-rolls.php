@@ -114,7 +114,7 @@ function applicationTacticalRollSignature(string $sceneId, array $arguments): st
 
 function applicationTacticalRollSpecification(array $source, array $arguments): array {
     $kind = $arguments['kind'] ?? '';
-    if (!is_string($kind) || !in_array($kind, ['stat', 'hit', 'luck', 'damage', 'custom', 'custom-stat', 'custom-damage'], true)) throw new RuntimeException('invalid_tactical_roll_kind');
+    if (!is_string($kind) || !in_array($kind, ['coin', 'stat', 'hit', 'luck', 'initiative', 'damage', 'custom', 'custom-stat', 'custom-damage'], true)) throw new RuntimeException('invalid_tactical_roll_kind');
     if (array_key_exists('label', $arguments) && !validApplicationDomainText($arguments['label'], 120)) throw new RuntimeException('invalid_tactical_roll_label');
     if (array_key_exists('visibility', $arguments) && !in_array($arguments['visibility'], ['public', 'gm', 'queued'], true)) throw new RuntimeException('invalid_tactical_roll_visibility');
     $label = trim((string) ($arguments['label'] ?? ''));
@@ -133,8 +133,15 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
         if (!is_int($arguments['threshold'] ?? null) || !validApplicationDomainNumber($arguments['threshold'], 0, 100)) throw new RuntimeException('invalid_tactical_roll_threshold');
         $threshold = (int) $arguments['threshold'];
         if ($label === '') $label = 'Statistique personnalisée';
+    } elseif ($kind === 'coin') {
+        $label = 'Pile ou face'; $formula = '1d2';
     } elseif ($kind === 'luck') {
         $label = 'Chance';
+    } elseif ($kind === 'initiative') {
+        $modifier = -(int) ($source['initiativeBonus'] ?? 0);
+        $formula = '1d100' . ($modifier === 0 ? '' : ($modifier > 0 ? '+' : '') . $modifier);
+        $modifier = 0;
+        $label = 'Initiative';
     } elseif ($kind === 'damage') {
         $weaponId = (string) ($arguments['weaponId'] ?? '');
         $weapons = normalizeOnlineWeaponAttacks($source['weaponAttacks'] ?? [], extractOnlineDamageFormulas($source['weaponText'] ?? ''));
@@ -170,7 +177,7 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
 
 function applicationTacticalRollVisibility(array $roll, array $source, string $kind, string $requestedVisibility = 'public'): array {
     $private = ($source['hidden'] ?? false) === true || in_array($kind, ['damage', 'custom-damage'], true)
-        || (empty($source['controllerPlayerId']) && ($source['revealDetailsToPlayers'] ?? false) !== true);
+        || ($kind !== 'initiative' && empty($source['controllerPlayerId']) && ($source['revealDetailsToPlayers'] ?? false) !== true);
     $canonicalVisibility = in_array($requestedVisibility, ['public', 'gm', 'queued'], true) ? $requestedVisibility : 'gm';
     $roll['rollerRole'] = 'gm'; $roll['visibility'] = $private ? 'gm' : $canonicalVisibility; $roll['revealed'] = $roll['visibility'] === 'public';
     if (in_array($kind, ['damage', 'custom-damage'], true)) unset($roll['mapEvent']);
@@ -238,14 +245,17 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);
-    if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['rawD100'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal'];
+    $roll['diceAppearance'] = onlineDiceAppearance($source, !empty($source['controllerPlayerId']), $character ?? null);
+    if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal', 'diceAppearance' => $roll['diceAppearance']];
     $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility']);
     $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);
     $activity = $pending['activity']['payload'] ?? $activity;
     $receipts = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn($entry): bool => is_array($entry) && ($entry['expiresAt'] ?? 0) > $now));
-    $result = ['roll' => $roll, 'initiativeUpdated' => false];
+    $initiativeUpdated = $tokenId !== '' && $spec['kind'] === 'initiative';
+    if ($initiativeUpdated) onlineRecordTokenInitiative($connection, $records, $pending, $sceneId, $source, $rolled['total']);
+    $result = ['roll' => $roll, 'initiativeUpdated' => $initiativeUpdated];
     $receipts[] = ['kind' => 'token-roll', 'requestId' => $requestId, 'accountId' => $accountId, 'actionId' => $action['id'], 'sourceKey' => $tokenId !== '' ? $tokenId : $characterId, 'requestSignature' => $signature, 'expiresAt' => $now + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS, 'result' => $result];
     $activity['resourceReceipts'] = $receipts; queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     return [...$result, 'deduplicated' => false];

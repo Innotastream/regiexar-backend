@@ -75,10 +75,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.15.20 conserve la file Codex, porte le schéma de session 16 et le domaine chance", async () => {
+test("le backend 0.16.0 conserve la file Codex, porte le schéma de session 17 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.15\.20'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-2-20-roll-eligibility-vision-folders-candidate-20260912-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.16\.0'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-0-tactical-sync-abilities-candidate-20260919-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -104,13 +104,13 @@ test("le backend 0.15.20 conserve la file Codex, porte le schéma de session 16 
   assert.match(index, /\$activity\['resourceReceipts'\] = \[\]/);
   assert.match(index, /SMALLINT UNSIGNED NOT NULL DEFAULT 16/);
   assert.match(index, /state_schema_version = :state_schema_version/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 17/);
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.15.20");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.2.20");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 19);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.16.0");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.0");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 20);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
 
@@ -130,11 +130,12 @@ test("les calques PV sont publics en lecture seule, stables et gérés uniquemen
   assert.match(overlays, /elseif \(\$action === 'regenerate'\)[\s\S]*?public_slug = :public_slug/);
   assert.match(overlays, /'name' =>[\s\S]*?'color' =>[\s\S]*?'hp' =>[\s\S]*?'maxHp' =>[\s\S]*?'mana' =>[\s\S]*?'maxMana' =>[\s\S]*?'hasMana' =>[\s\S]*?'manaPercentage' =>[\s\S]*?'effect' =>/);
   assert.match(overlays, /preg_match\('\/\^#\[0-9a-f\]\{6\}\$\/iD',[\s\S]*?'#8d72cb'/);
-  assert.match(overlays, /width:180px;min-width:155px;max-width:180px/);
+  assert.match(overlays, /width:max-content;min-width:220px;max-width:none/);
   assert.doesNotMatch(overlays, /\.overlay\{[^}]*width:100%|max-width:360px/);
   assert.match(overlays, /color:var\(--character-color\);font:700 42px\/1 Georgia,serif/);
-  assert.match(overlays, /overflow-wrap:anywhere;text-align:center/);
-  assert.doesNotMatch(overlays, /\.name\{[^}]*white-space:nowrap|\.name\{[^}]*text-overflow:ellipsis/);
+  assert.match(overlays, /white-space:nowrap;text-align:center/);
+  assert.doesNotMatch(overlays, /\.name\{[^}]*text-overflow:ellipsis/);
+  assert.match(overlays, /width:max-content;min-width:220px;max-width:none/);
   assert.match(overlays, /-webkit-text-stroke:1px #000/);
   assert.match(overlays, /id="name"[\s\S]*?id="health-value"[\s\S]*?id="mana"[\s\S]*?id="effect"/);
   assert.match(overlays, /manaRow\.hidden=health\.hasMana!==true/);
@@ -154,7 +155,7 @@ test("les jets sans token restent propriétaires et seuls statistique et Chance 
   assert.match(command, /'character:' \. \$characterId/);
   assert.match(command, /\(\$character\['ownerPlayerId'\] \?\? null\) !== \$accountId/);
   assert.match(command, /synchronizeOnlineCharacterToken\(\[\], \$character\)/);
-  assert.match(command, /\['luck', 'stat', 'hit', 'initiative', 'damage', 'ability', 'custom'\]/);
+  assert.match(command, /\['coin', 'luck', 'stat', 'hit', 'initiative', 'damage', 'ability', 'custom'\]/);
   assert.match(command, /\$rollMode = onlineRollModeForKind\(\$arguments\['rollMode'\] \?\? 'normal', \$kind\)/);
   assert.match(command, /\$eligibleD100 = in_array\(\$kind, \['stat', 'luck'\], true\)/);
   assert.match(command, /\$kind === 'luck'[\s\S]*?\$label = 'Chance'[\s\S]*?\$formula = '1d100'/);
@@ -256,7 +257,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(online, /breaksOpposition'[\s\S]*?requiresGmValidation'/);
   assert.match(online, /'token\.attack\.resolve'/);
   assert.match(online, /'token\.attack\.oppose'/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 16/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 17/);
   assert.match(domains, /pendingAttacks/);
   assert.match(domains, /attackReceipts/);
   assert.match(domains, /XAR_PENDING_ATTACK_MAXIMUM = 100/);
@@ -301,7 +302,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
   assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
-  assert.match(online, /'controllable' => \$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
+  assert.match(online, /'controllable' => [^\n]*\$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
   assert.match(domains, /function validApplicationMovementOverrides/);
   assert.match(domains, /\$allowed !== true/);
@@ -312,8 +313,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.2.20");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.2.20"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.3.0");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.0"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -326,7 +327,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.18 \/ 3\.2\.19 \/ 3\.2\.20 \/ 3\.2\.21 \/ absente \/ mal formée = 426 \/ 426 \/ 401 \/ 426 \/ 426 \/ 426/);
+  assert.match(readme, /3\.2\.18 \/ 3\.2\.19 \/ 3\.3\.0 \/ 3\.2\.21 \/ absente \/ mal formée = 426 \/ 426 \/ 401 \/ 426 \/ 426 \/ 426/);
   assert.match(readme, /0\.15\.14 appliquait encore un comportement historique erroné/);
   assert.match(readme, /Depuis la 0\.15\.19,[\s\S]*?l’avantage conserve le plus petit d100 brut et le désavantage le plus grand/);
   assert.doesNotMatch(readme, /Le candidat 0\.15\.14 exécute toujours deux fois/);
@@ -731,7 +732,7 @@ test("une ancienne restauration complète ne peut plus remettre une fiche joueur
 test("un patch partiel conserve les autres ressources, stats et valeurs de fatigue", async () => {
   const online = await read("api/v1/online.php");
   const patcher = online.slice(online.indexOf("function playerCharacterPatch"), online.indexOf("function legacyWholePlayerCharacterPatch"));
-  assert.match(patcher, /in_array\(\$key, \['resources', 'stats', 'fatigue'\], true\)/);
+  assert.match(patcher, /in_array\(\$key, \['resources', 'stats', 'temporaryStats', 'fatigue'\], true\)/);
   assert.match(patcher, /array_replace\(\$nestedCurrent, \$nestedPatch\)/);
 });
 
@@ -870,7 +871,7 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 5/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 6/);
   assert.match(online, /normalizeOnlineAbilities/);
   assert.match(online, /'hitThreshold'/);
   assert.match(online, /\['stat', 'hit'\]/);
@@ -990,7 +991,7 @@ test("les variantes de cadre sont bornées et les détails tactiques restent en 
   assert.match(projection, /if \(!\$details\) unset\(\$visible\['visionDistance'\], \$visible\['darkVision'\]\)/);
   assert.match(projection, /'publicHealth' => onlineHealthState/);
   assert.doesNotMatch(projection, /\$details = true/);
-  assert.match(projection, /'controllable' => \$owned && !\$paused/);
+  assert.match(projection, /'controllable' => [^\n]*\$owned && !\$paused/);
 });
 
 test("plusieurs MJ sont sérialisés par transaction sans verrou de session global", async () => {

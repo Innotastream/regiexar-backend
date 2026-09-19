@@ -17,8 +17,11 @@ function applicationCombinedDamageFormula(array $parts): string {
 }
 function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
+    if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning'], true)) return false;
+    if ($effect === 'movement') return true;
+    if ($effect === 'summoning') return validApplicationDomainIdentifier($entry['summonLinkedTokenId'] ?? null, 180);
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);
     if ($effect === 'metamorphosis') return validApplicationDomainIdentifier($entry['formCharacterId'] ?? null, 180);
     if (!array_key_exists('damageComponents', $entry)) return true;
@@ -28,10 +31,12 @@ function validApplicationAbilityEffects(array $entry): bool {
 function applicationAbilityEffectFields(array $entry): array {
     $casting = applicationAbilityCastingFields($entry);
     $effect = $entry['effect'] ?? 'damage';
+    if ($effect === 'movement') return [...$casting, 'effect' => 'movement'];
+    if ($effect === 'summoning') return [...$casting, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
     if ($effect === 'metamorphosis') return [...$casting, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
-    return [...$casting, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : [])];
+    return [...$casting, ...(array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : []), ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : [])];
 }
 function applicationCustomAttack(mixed $value): array {
     if (!is_array($value)) throw new InvalidArgumentException('Attaque personnalisée invalide.');
@@ -107,14 +112,16 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
-        foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }
 function preserveApplicationAbilityExtensions(string $key, array $payload, array $previous): array {
+    if (str_starts_with($key, 'token:') && ($previous['immovable'] ?? false) === true && ($payload['immovable'] ?? true) === true
+        && (($payload['x'] ?? $previous['x']) != $previous['x'] || ($payload['y'] ?? $previous['y']) != $previous['y'] || ($payload['layerId'] ?? 'ground') !== ($previous['layerId'] ?? 'ground'))) sendError(409, 'Ce pion est inamovible. Désactivez cette option pour le déplacer.', 'token_immovable');
     if (str_starts_with($key, 'character:') || str_starts_with($key, 'token:')) {
         if (is_array($payload['abilities'] ?? null)) $payload['abilities'] = preserveApplicationAbilityRows($payload['abilities'], $previous['abilities'] ?? []);
     }
@@ -133,14 +140,14 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $timers = array_column($previous['actionTimers'] ?? [], null, 'id');
         foreach ($payload['actionTimers'] ?? [] as $index => $timer) {
             $old = $timers[$timer['id'] ?? ''] ?? [];
-            foreach (['abilityId', 'characterId', 'tokenId'] as $field) if (!array_key_exists($field, $timer) && array_key_exists($field, $old)) $payload['actionTimers'][$index][$field] = $old[$field];
+            foreach (['abilityId', 'characterId', 'tokenId', 'restRecharge', 'reusableInTurn', 'turnKey', 'useCount', 'cooldownActive'] as $field) if (!array_key_exists($field, $timer) && array_key_exists($field, $old)) $payload['actionTimers'][$index][$field] = $old[$field];
         }
         $attacks = array_column($previous['pendingAttacks'] ?? [], null, 'id');
         foreach ($previous['attackReceipts'] ?? [] as $r) if (is_array($r['attack'] ?? null)) $attacks[$r['attack']['id'] ?? ''] = $r['attack'];
         $preserve = static function ($attack) use ($attacks) {
             if (!is_array($attack)) return $attack;
             $old = $attacks[$attack['id'] ?? ''] ?? [];
-            foreach (['damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
