@@ -59,3 +59,14 @@ checkDiagnostic(diagnosticCall($db, $route)->status === 200, 'The explicitly cre
 checkDiagnostic(diagnosticCall($db, $route, 'POST')->status === 405, 'A diagnostic share cannot write.');
 $db->expired = true; checkDiagnostic(diagnosticCall($db, $route)->status === 404, 'An expired share exposes nothing.');
 echo "Diagnostics PHP : $checks contrôles réussis.\n";
+// Defense in depth against arbitrary client payloads, not only a few secret keys.
+$clean = sanitizeApplicationDiagnostic(['id' => 'diagnostic-event-0002', 'notes' => 'CANARY', 'character' => ['name' => 'CANARY'], 'headers' => ['authorization' => 'CANARY'], 'request' => ['body' => ['password' => 'CANARY'], 'command' => 'token.roll'], 'message' => 'password=CANARY secret=CANARY cookie="CANARY" https://user:CANARY@example.invalid/path?key=CANARY', 'stack' => 'C:\\Users\\Private\\CANARY.txt']);
+checkDiagnostic(!str_contains(json_encode($clean), 'CANARY'), 'Unknown content and textual credentials are excluded.');
+$GLOBALS['identity'] = ['id' => 'gm', 'effective_mode' => 'player', 'permanent_role' => 'gm'];
+checkDiagnostic(diagnosticCall($db, '/api/v1/diagnostics/errors')->status === 403, 'An MJ in player mode cannot inspect private logs.');
+checkDiagnostic(diagnosticCall($db, '/api/v1/diagnostics/share', 'POST')->status === 403, 'An MJ in player mode cannot grant diagnostic access.');
+$forged = diagnosticCall($db, '/api/v1/diagnostics/errors', 'POST', ['events' => [['id' => 'diagnostic-forged-0001', 'role' => 'gm', 'accountId' => 'someone-else', 'clientVersion' => '99.99.99']]]);
+checkDiagnostic($forged->status === 200, 'An authenticated player can still submit diagnostics.');
+$stored = json_decode($db->events['gm:diagnostic-forged-0001'][':payload'], true);
+checkDiagnostic($stored['role'] === 'player' && !isset($stored['accountId']) && $stored['clientVersion'] !== '99.99.99', 'Attribution and version are server-authoritative.');
+echo "Diagnostics renforcés PHP : $checks contrôles réussis.\n";

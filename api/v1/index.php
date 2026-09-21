@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.16.2';
-const XAR_BACKEND_BUILD = 'client-3-3-2-modular-boundaries-equivalence-candidate-20260921-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.2';
+const XAR_BACKEND_VERSION = '0.16.3';
+const XAR_BACKEND_BUILD = 'client-3-3-3-private-diagnostics-coverage-candidate-20260921-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.3';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.2'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.3'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 20;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -21,6 +21,9 @@ date_default_timezone_set('UTC');
 
 function sendJson(int $status, array $payload, bool $headOnly = false, array $extraHeaders = []): never
 {
+    if ($status >= 400 && function_exists('recordBackendDiagnostic') && !str_contains(requestRoute(), '/diagnostics')) {
+        recordBackendDiagnostic(['source' => 'php-http', 'status' => $status, 'code' => (string) ($payload['code'] ?? ''), 'message' => 'Réponse HTTP ' . $status]);
+    }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
@@ -1955,11 +1958,13 @@ function recoverAdministratorAccount(PDO $connection): never
     sendJson(200, ['ok' => true]);
 }
 
+require_once __DIR__ . '/diagnostics.php';
+require_once __DIR__ . '/runtime-diagnostics.php';
+installBackendDiagnostics();
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/image-studio.php';
 require_once __DIR__ . '/health-overlays.php';
-require_once __DIR__ . '/diagnostics.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $headOnly = $method === 'HEAD';
@@ -2186,6 +2191,7 @@ try {
     handleOnlineRoute($connection, $configuration, $route, $method, $headOnly);
 } catch (Throwable $error) {
     error_log('[xar-regie-api] authentication request failed: ' . get_class($error));
+    recordBackendDiagnostic(['source' => 'php-exception', 'errorName' => get_class($error), 'file' => basename($error->getFile()), 'line' => $error->getLine(), 'status' => 503]);
     sendError(503, 'Service momentanément indisponible.', 'service_unavailable');
 }
 

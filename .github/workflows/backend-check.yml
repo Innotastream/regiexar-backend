@@ -43,6 +43,8 @@ jobs:
         run: php tests/image-studio-idempotence-contract.php
       - name: Authenticated diagnostic logs and expiring shares
         run: php tests/diagnostics-contract.php
+      - name: Private PHP warning and failure journal
+        run: php tests/runtime-diagnostics-contract.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

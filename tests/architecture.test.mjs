@@ -10,6 +10,8 @@ function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
 }
 
+PHP_SOURCES.push("api/v1/diagnostics.php", "api/v1/runtime-diagnostics.php", "tests/diagnostics-contract.php", "tests/runtime-diagnostics-contract.php");
+
 function balancedPhpDelimiters(source) {
   const code = phpBlocks(source);
   const stack = [];
@@ -75,10 +77,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend 0.16.2 conserve la file Codex, porte le schéma de session 17 et le domaine chance", async () => {
+test("le backend 0.16.3 conserve la file Codex, porte le schéma de session 17 et le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.16\.2'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-2-modular-boundaries-equivalence-candidate-20260921-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.16\.3'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-3-private-diagnostics-coverage-candidate-20260921-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -108,8 +110,8 @@ test("le backend 0.16.2 conserve la file Codex, porte le schéma de session 17 e
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.16.2");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.2");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.16.3");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.3");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 20);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
 });
@@ -313,8 +315,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.3.2");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.2"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.3.3");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.3"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -327,7 +329,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /3\.2\.20 \/ 3\.3\.1 \/ 3\.3\.2 \/ 3\.3\.3 \/ absente \/ mal formée = 426 \/ 426 \/ 401 \/ 426 \/ 426 \/ 426/);
+  assert.match(readme, /ancienne production 3\.3\.1 \/ candidate 3\.3\.3 \/ future 3\.3\.4 \/ absente \/ malformée → 426 \/ 401 \/ 426 \/ 426 \/ 426/);
   assert.match(readme, /0\.15\.14 appliquait encore un comportement historique erroné/);
   assert.match(readme, /Depuis la 0\.15\.19,[\s\S]*?l’avantage conserve le plus petit d100 brut et le désavantage le plus grand/);
   assert.doesNotMatch(readme, /Le candidat 0\.15\.14 exécute toujours deux fois/);

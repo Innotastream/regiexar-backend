@@ -1,3 +1,11 @@
+# Backend OVH — Régie du Seuil 0.16.3
+
+Client exact 3.3.3, build `client-3-3-3-private-diagnostics-coverage-candidate-20260921-1`. Collecte privée renforcée : schéma fermé, quotas, attribution serveur et journal PHP indépendant de MySQL, dans la configuration privée sœur de `regie`. Aucun nouveau schéma, export SQL ou changement des règles de jeu. Voir [docs/diagnostics-prives.md](docs/diagnostics-prives.md).
+
+Activation OVH non acquise : cette source n’est pas une preuve de déploiement. Matrice après basculement : ancienne production 3.3.1 / candidate 3.3.3 / future 3.3.4 / absente / malformée → 426 / 401 / 426 / 426 / 426. 3.3.2 n’a pas été déployée.
+
+## Candidat antérieur conservé
+
 # Backend OVH — Régie du Seuil 0.16.2
 
 Client 3.3.2 uniquement, build `client-3-3-2-modular-boundaries-equivalence-candidate-20260921-1`. Schémas session 17, fiche 6 et base 20 inchangés. Activation OVH non acquise par ce dépôt : elle exige son contrôle distinct. Ce candidat fait avancer l’autorité de génération et la politique cliente exacte pour accompagner la séparation modulaire du client et ses contrôles d’équivalence 3.3.1 ; les règles serveur, les droits effectifs, les données et les migrations restent inchangés.
