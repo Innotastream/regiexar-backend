@@ -1157,6 +1157,15 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             ...($owned && !empty($timer['abilityId']) ? ['restRecharge' => $timer['restRecharge'] ?? 'none', 'reusableInTurn' => ($timer['reusableInTurn'] ?? false) === true, 'turnKey' => $timer['turnKey'] ?? '', 'useCount' => $timer['useCount'] ?? 0, 'cooldownActive' => $timer['cooldownActive'] ?? true, 'abilityId' => $timer['abilityId'], 'characterId' => $timer['characterId'] ?? '', 'tokenId' => $timer['tokenId'] ?? '', 'sceneId' => $timer['sceneId'] ?? ''] : []),
         ];
     }
+    $visibleAbilityExecutions = [];
+    foreach (normalizeApplicationComplexAbilityExecutions($fullState['abilityExecutions'] ?? []) as $execution) {
+        if (($execution['status'] ?? '') !== 'active'
+            || (string) ($execution['sceneId'] ?? '') !== $visibleSceneId
+            || (string) ($execution['layerId'] ?? 'ground') !== $visibleLayerId
+            || !isset($visibleIds[(string) ($execution['sourceTokenId'] ?? '')])) continue;
+        $projectedExecution = publicApplicationComplexAbilityExecution($execution, $accountId, false, $tokens);
+        if (is_array($projectedExecution)) $visibleAbilityExecutions[] = $projectedExecution;
+    }
     $nowMilliseconds = (int) floor(microtime(true) * 1000);
     $visibleMapPings = [];
     foreach (is_array($fullState['mapPings'] ?? null) ? $fullState['mapPings'] : [] as $ping) {
@@ -1257,6 +1266,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'rolls' => stripForbiddenPlayerData(array_slice(array_values(array_filter($rolls,
             static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
         'actionTimers' => $visibleActionTimers,
+        'abilityExecutions' => $visibleAbilityExecutions,
         'pendingOppositions' => array_slice($pendingOppositions, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'pendingMapAttacks' => array_slice($pendingMapAttacks, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'mapPings' => $visibleMapPings,
@@ -2200,7 +2210,7 @@ function migrateOnlineCombatCharacterPayload(array $character): array
     $physical = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
     $magical = normalizeOnlineMagicResistance($character['magicArmor'] ?? 0);
     $character['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $character['characterSchemaVersion'] = 6;
+    $character['characterSchemaVersion'] = 7;
     $character = applicationPublicCharacterResources($character);
     $character['armorCategory'] = $physical['category'];
     $character['armor'] = $physical['percent'];
@@ -2366,7 +2376,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
-    $current['characterSchemaVersion'] = 6;
+    $current['characterSchemaVersion'] = 7;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
@@ -3467,7 +3477,7 @@ function onlineLegacyAttackReceiptMatchesRequest(array $attack, string $sceneId,
 function onlineResourceRequestSignature(array $table, array $arguments, bool $isGm): string
 {
     $formula = strtolower((string) preg_replace('/\s+/', '', trim((string) ($arguments['formula'] ?? ''))));
-    return json_encode([
+    $signature = [
         'token.resource.adjust',
         $isGm ? trim((string) ($arguments['sceneId'] ?? '')) : onlineActiveSceneId($table),
         trim((string) ($arguments['tokenId'] ?? '')),
@@ -3476,7 +3486,16 @@ function onlineResourceRequestSignature(array $table, array $arguments, bool $is
         $formula !== ''
             ? (is_numeric($arguments['direction'] ?? null) ? (int) $arguments['direction'] : 0)
             : (is_numeric($arguments['delta'] ?? null) ? (int) $arguments['delta'] : 0),
-    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    ];
+    $fallbackCharacterId = $isGm ? trim((string) ($arguments['characterId'] ?? '')) : '';
+    $allowNoopAtLimit = $isGm && ($arguments['allowNoopAtLimit'] ?? false) === true;
+    // Preserve byte-for-byte signatures created by the 0.16.3 token-only route.
+    if ($fallbackCharacterId !== '' || $allowNoopAtLimit) {
+        $signature[] = 'gm-character-fallback-v1';
+        $signature[] = $fallbackCharacterId;
+        $signature[] = $allowNoopAtLimit;
+    }
+    return json_encode($signature, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
 function onlineLegacyResourceReceiptMatchesRequest(array $operation, array $table, array $arguments, bool $isGm): bool
@@ -3485,6 +3504,8 @@ function onlineLegacyResourceReceiptMatchesRequest(array $operation, array $tabl
     return (string) ($operation['kind'] ?? '') === 'resource-adjust'
         && (string) ($operation['sceneId'] ?? '') === $sceneId
         && (string) ($operation['tokenId'] ?? '') === trim((string) ($arguments['tokenId'] ?? ''))
+        && (!$isGm || trim((string) ($arguments['characterId'] ?? '')) === ''
+            || (string) ($operation['characterId'] ?? '') === trim((string) ($arguments['characterId'] ?? '')))
         && (string) ($operation['resource'] ?? '') === (string) ($arguments['resource'] ?? '');
 }
 
@@ -3729,7 +3750,8 @@ function applyOnlineTokenResourceAdjustment(
     ?string $characterIdFallback = null,
     bool $allowNoopAtLimit = false
 ): array {
-    if ($sceneId === '' || !validApplicationDomainKey('scene:' . $sceneId)) {
+    $characterOnlyAdjustment = $isGm && $characterIdFallback !== null && trim($characterIdFallback) !== '';
+    if (($sceneId === '' || !validApplicationDomainKey('scene:' . $sceneId)) && !$characterOnlyAdjustment) {
         rejectOnlineCommand($connection, 409, 'Aucune scène de combat active.', 'combat_required');
     }
     $deltaLimit = $allowNoopAtLimit ? 2000000000 : 1000000000;
@@ -4573,7 +4595,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'token.roll', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'token.roll', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5042,6 +5064,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             ];
         } elseif ($command === 'ability.use') {
             $result = onlineUseAbility($connection, $records, $pending, $table, $identity, $arguments, $isGm);
+        } elseif ($command === 'ability.complex') {
+            $result = onlineUseComplexAbility($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'token.resource.adjust') {
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'Les ressources sont verrouillées pendant la préparation du MJ.', 'table_locked');
@@ -5136,7 +5160,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $resource,
                     $requestedDelta,
                     $accountId,
-                    $isGm
+                    $isGm,
+                    $isGm ? (trim((string) ($arguments['characterId'] ?? '')) ?: null) : null,
+                    $isGm && ($arguments['allowNoopAtLimit'] ?? false) === true
                 );
                 onlineRecordCharacterLuckD100(
                     $connection,
@@ -6801,7 +6827,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
         $publicResultRolls = applicationPublicResultRolls($result);
-        if (in_array($command, ['roll', 'token.roll', 'ability.use'], true) && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
+        if (in_array($command, ['roll', 'token.roll', 'ability.use', 'ability.complex'], true) && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordResultRollContent($result));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];

@@ -19,7 +19,8 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex'], true)) return false;
+    if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null);
     if ($effect === 'movement') return true;
     if ($effect === 'summoning') return validApplicationDomainIdentifier($entry['summonLinkedTokenId'] ?? null, 180);
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);
@@ -31,6 +32,7 @@ function validApplicationAbilityEffects(array $entry): bool {
 function applicationAbilityEffectFields(array $entry): array {
     $casting = applicationAbilityCastingFields($entry);
     $effect = $entry['effect'] ?? 'damage';
+    if ($effect === 'complex') return [...$casting, 'effect' => 'complex', 'workflow' => normalizeApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)];
     if ($effect === 'movement') return [...$casting, 'effect' => 'movement'];
     if ($effect === 'summoning') return [...$casting, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
@@ -112,10 +114,10 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
-        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }
@@ -134,9 +136,19 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $now = (int) floor(microtime(true) * 1000);
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
-        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', ['ability-cast', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'], true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', ['ability-cast', 'ability-workflow', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'], true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         if (count($receipts) > XAR_RESOURCE_RECEIPT_MAXIMUM) sendError(409, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
         if (array_key_exists('resourceReceipts', $payload) || $receipts !== []) $payload['resourceReceipts'] = array_values($receipts);
+        // A stale client must never erase or rewind an authoritative workflow.
+        $executions = [];
+        foreach (normalizeApplicationComplexAbilityExecutions($previous['abilityExecutions'] ?? []) as $execution) $executions[$execution['id']] = $execution;
+        foreach (normalizeApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? []) as $execution) {
+            $old = $executions[$execution['id']] ?? null;
+            if (!is_array($old) || (int) $execution['revision'] >= (int) $old['revision']) $executions[$execution['id']] = $execution;
+        }
+        if (array_key_exists('abilityExecutions', $payload) || $executions !== []) {
+            $payload['abilityExecutions'] = trimApplicationComplexAbilityExecutions(array_values($executions));
+        }
         $timers = array_column($previous['actionTimers'] ?? [], null, 'id');
         foreach ($payload['actionTimers'] ?? [] as $index => $timer) {
             $old = $timers[$timer['id'] ?? ''] ?? [];

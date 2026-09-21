@@ -22,6 +22,11 @@ requireCasting(
         && applicationRoundCountLabel(3) === '3 rounds',
     'Le vocabulaire utilisateur des recharges doit refléter initiative.round sans parler de tours.'
 );
+requireCasting(
+    applicationAbilityRechargeActivityDetail(['success' => false, 'remainingRounds' => 1]) === ' · recharge 1 round'
+        && applicationAbilityRechargeActivityDetail(['success' => false, 'remainingRounds' => 0]) === ' · aucune recharge',
+    'Le journal doit distinguer un échec amoindri d’un échec sans recharge.'
+);
 
 $signatureBase = [
     'sourceTokenId' => 'token-one', 'characterId' => 'character-one', 'abilityId' => 'ability-one',
@@ -92,7 +97,7 @@ requireCasting(
 
 $ability = ['id' => 'ability-mixed', 'name' => 'Flamme tranchante', 'formula' => '10+20+7', 'damageType' => 'physical', 'description' => '', 'effect' => 'damage',
     'damageComponents' => [['type' => 'physical', 'formula' => '10'], ['type' => 'magical', 'formula' => '20'], ['type' => 'ignore', 'formula' => '7']],
-    'manaCost' => 8, 'cooldownRounds' => 3, 'castingStatId' => 'intelligence', 'image' => '/media/ability-test.png'];
+    'manaCost' => 8, 'cooldownRounds' => 3, 'castingStatId' => 'intelligence', 'reducedFailureCooldown' => true, 'image' => '/media/ability-test.png'];
 $source = ['id' => 'token-one', 'characterId' => 'character-one', 'followCharacter' => true, 'mana' => 20, 'maxMana' => 30,
     'stats' => [['id' => 'intelligence', 'label' => 'Intelligence', 'value' => 62], ['id' => 'agility', 'label' => 'Agilité', 'value' => 47]]];
 foreach ([['hp' => 0], ['hp' => -1], ['hp' => INF], [], ['hp' => 50, 'healthOverride' => 'dead'], ['hp' => 50, 'conditions' => ['Mort']]] as $defeated) {
@@ -104,6 +109,9 @@ $initiative = ['active' => true, 'round' => 4];
 $plan = applicationAbilityCastingPlan($ability, $source, 'scene-one', $initiative, []);
 requireCasting($plan['manaCost'] === 8 && $plan['cooldownRounds'] === 3 && $plan['usedRound'] === 4, 'Casting cost and round were lost');
 requireCasting($plan['statId'] === 'intelligence' && $plan['statLabel'] === 'Intelligence' && $plan['threshold'] === 62, 'Casting statistic must come from the authoritative source');
+requireCasting($plan['reducedFailureEnabled'] === true, 'The reduced-failure policy must come from the authoritative classic ability');
+requireCasting(applicationAbilityFailedCooldownRounds($plan, ['success' => false]) === 1, 'A failed checked classic ability must receive exactly one round');
+requireCasting(applicationAbilityFailedCooldownRounds($plan, ['success' => true]) === 0, 'A successful cast must keep its configured cooldown instead');
 requireCasting($plan['characterId'] === 'character-one' && $plan['tokenId'] === '', 'Placed occurrences must share the sheet cooldown');
 requireCasting(applicationAbilityCastingPlan(array_replace($ability, ['castingStatId' => 'character-stat-intelligence']), $source, 'scene-one', $initiative, [])['threshold'] === 62, 'Canonical sheet statistic must resolve on a creature short id');
 $oldStats = array_replace($source, ['stats' => [['id' => 'token-stat-old-random', 'label' => 'Intelligence', 'value' => '73']]]);
@@ -125,9 +133,9 @@ foreach ([['hidden' => true, 'controllerPlayerId' => 'player-test'], ['hidden' =
 }
 requireCasting(onlineAbilityRollVisibility($publicRoll, [], ['id' => 'player-test', 'effective_mode' => 'player', 'permanent_role' => 'gm']) === $publicRoll, 'A GM account playing in player mode must retain player roll handling');
 $normalized = normalizeOnlineAbilities([$ability])[0];
-foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'image', 'damageComponents'] as $key) requireCasting($normalized[$key] === $ability[$key], 'Normalization lost ' . $key);
+foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image', 'damageComponents'] as $key) requireCasting($normalized[$key] === $ability[$key], 'Normalization lost ' . $key);
 
-foreach ([['manaCost', -1], ['manaCost', 1000000001], ['manaCost', 1.5], ['manaCost', '8'], ['cooldownRounds', -1], ['cooldownRounds', 1000], ['cooldownRounds', 1.5], ['castingStatId', '../intelligence'], ['castingStatId', []], ['image', str_repeat('x', 4097)]] as [$key, $value]) {
+foreach ([['manaCost', -1], ['manaCost', 1000000001], ['manaCost', 1.5], ['manaCost', '8'], ['cooldownRounds', -1], ['cooldownRounds', 1000], ['cooldownRounds', 1.5], ['castingStatId', '../intelligence'], ['castingStatId', []], ['reducedFailureCooldown', 1], ['reducedFailureCooldown', 'true'], ['image', str_repeat('x', 4097)]] as [$key, $value]) {
     $invalid = array_replace($ability, [$key => $value]);
     requireCasting(!validApplicationAbilities([$invalid]), 'Invalid casting field was accepted: ' . $key);
     rejectsCasting(fn() => applicationAbilityCastingPlan($invalid, $source, 'scene-one', $initiative, []), 'ability_cast_invalid');
@@ -141,6 +149,9 @@ rejectsCasting(fn() => applicationAbilityCastingPlan($ability, array_replace($so
 $freeAbility = array_replace($ability, ['manaCost' => 0, 'cooldownRounds' => 0, 'castingStatId' => '']);
 $freePlan = applicationAbilityCastingPlan($freeAbility, array_replace($source, ['mana' => 0]), 'scene-one', $initiative, []);
 requireCasting($freePlan['manaCost'] === 0 && $freePlan['cooldownRounds'] === 0 && $freePlan['threshold'] === null, 'A free ability with no check must remain usable');
+requireCasting($freePlan['reducedFailureEnabled'] === false && applicationAbilityFailedCooldownRounds($freePlan, ['success' => false]) === 0, 'No statistic means the reduced-failure policy cannot activate');
+$complexReduced = applicationAbilityCastingPlan(array_replace($ability, ['effect' => 'complex']), $source, 'scene-one', $initiative, []);
+requireCasting($complexReduced['reducedFailureEnabled'] === false && applicationAbilityFailedCooldownRounds($complexReduced, ['success' => false]) === 0, 'Complex workflows must not inherit the classic reduced-failure shortcut');
 $noCheck = onlineAbilityCastingRoll($freePlan, [], []);
 requireCasting($noCheck['success'] === true && $noCheck['roll'] === null, 'An optional empty statistic must not launch a die');
 $automaticOutcome = ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'automatic' => true];
@@ -197,7 +208,7 @@ requireCasting(applicationAbilityCastingPlan($ability, $familiar, 'scene-one', $
 
 $oldRow = ['id' => $ability['id'], 'name' => 'Nom modifié', 'formula' => '1d6', 'damageType' => 'physical', 'description' => 'Description modifiée'];
 $preserved = preserveApplicationAbilityRows([$oldRow], [$ability])[0];
-foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'image', 'damageComponents'] as $key) requireCasting($preserved[$key] === $ability[$key], 'Old client write erased ' . $key);
+foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image', 'damageComponents'] as $key) requireCasting($preserved[$key] === $ability[$key], 'Old client write erased ' . $key);
 requireCasting($preserved['name'] === 'Nom modifié' && $preserved['description'] === 'Description modifiée', 'Old client edits must survive extension preservation');
 $cleared = preserveApplicationAbilityRows([array_replace($ability, ['manaCost' => 0, 'cooldownRounds' => 0, 'castingStatId' => '', 'image' => ''])], [$ability])[0];
 requireCasting($cleared['manaCost'] === 0 && $cleared['cooldownRounds'] === 0 && $cleared['castingStatId'] === '' && $cleared['image'] === '', 'Explicit resets must not restore previous metadata');

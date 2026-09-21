@@ -1,3 +1,11 @@
+# Backend OVH — Régie du Seuil 0.16.4
+
+Client exact 3.3.4, build `client-3-3-4-gameplay-tools-candidate-20260921-1`. Cette livraison ajoute l’autorité persistante des compétences complexes, les repos sélectifs et le contrat « Échec amoindri » des compétences classiques : un jet de lancement raté conserve les coûts, ne résout aucun effet et crée exactement un round de recharge sans contour par « réutilisable dans le tour ». Les ordres/masquages temporaires audio et les lumières restent bornés par les domaines existants. Schéma MySQL 20 inchangé ; aucune donnée ni configuration privée n’est exportée.
+
+Activation OVH non acquise par la seule source. Après basculement, la matrice attendue est production précédente 3.3.3 / candidate 3.3.4 / future 3.3.5 / absente / malformée → 426 / 401 / 426 / 426 / 426. Le 401 exact ne prouve que le franchissement de la politique sans authentification.
+
+## Candidat antérieur conservé
+
 # Backend OVH — Régie du Seuil 0.16.3
 
 Client exact 3.3.3, build `client-3-3-3-private-diagnostics-coverage-candidate-20260921-1`. Collecte privée renforcée : schéma fermé, quotas, attribution serveur et journal PHP indépendant de MySQL, dans la configuration privée sœur de `regie`. Aucun nouveau schéma, export SQL ou changement des règles de jeu. Voir [docs/diagnostics-prives.md](docs/diagnostics-prives.md).

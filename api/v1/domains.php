@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/token-groups.php';
 require_once __DIR__ . '/token-pathfinding.php';
+require_once __DIR__ . '/complex-abilities.php';
 require_once __DIR__ . '/ability-effects.php';
 require_once __DIR__ . '/ability-use.php';
 require_once __DIR__ . '/ability-casting.php';
+require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 17;
+const XAR_SESSION_SCHEMA_VERSION = 18;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -1607,7 +1609,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 6)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 7)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
@@ -1802,6 +1804,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], XAR_PENDING_ATTACK_MAXIMUM)
             || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], XAR_ATTACK_RECEIPT_MAXIMUM)
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
+            || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
@@ -2183,6 +2186,7 @@ function legacyStateToDomains(array $state): array
             'pendingAttacks' => is_array($state['pendingAttacks'] ?? null) ? $state['pendingAttacks'] : [],
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
+            'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
             'playerActions' => is_array($state['playerActions'] ?? null) ? $state['playerActions'] : [],
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
@@ -2367,6 +2371,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'pendingAttacks' => is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [],
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
+        'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],

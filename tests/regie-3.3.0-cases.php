@@ -76,6 +76,22 @@ onlineCommitAbilityCasting($db, $records, $pending, $plan, ['success' => false, 
 $timer = $pending['activity']['payload']['actionTimers'][0];
 requireTactical($timer['cooldownActive'] === true && $timer['readyRound'] === 4 && $timer['useCount'] === 2, 'Failure retains earlier cooldown while counting the reuse.');
 
+// A reduced classic failure pays its costs, resolves no effect here, and
+// creates a non-reusable one-round timer even when the normal rule is longer.
+$db = patchAbilityFixture(['castingStatId' => 'character-stat-intelligence', 'reducedFailureCooldown' => true,
+    'manaCost' => 1, 'hpCost' => 0, 'fatigueCost' => 0, 'cooldownRounds' => 9, 'restRecharge' => 'long']);
+$records = applicationDomainRecords($db); $pending = [];
+$character = $db->payload('character:character-player');
+$source = synchronizeOnlineCharacterToken($db->payload('token:scene-one:token-player'), $character);
+$initiative = $db->payload('initiative:scene-one');
+$plan = applicationAbilityCastingPlan($character['abilities'][0], $source, 'scene-one', $initiative, $db->payload('activity')['actionTimers']);
+$cast = onlineCommitAbilityCasting($db, $records, $pending, $plan, ['success' => false, 'roll' => null], $source, $GLOBALS['testIdentity']);
+$timer = $pending['activity']['payload']['actionTimers'][0];
+requireTactical($cast['remainingRounds'] === 1 && $cast['reducedFailureApplied'] === true, 'Reduced failure reports one round instead of the configured nine rounds or long rest.');
+requireTactical($timer['cooldownActive'] === true && $timer['cooldown'] === 1 && $timer['readyRound'] === $plan['usedRound'] + 1, 'Reduced failure creates exactly one round of cooldown.');
+requireTactical($timer['reusableInTurn'] === false && $timer['restRecharge'] === 'none', 'Reusable-in-turn and rest recharge cannot bypass or extend the reduced failure.');
+requireTactical($pending['character:character-player']['payload']['resources']['mana'] == 4, 'Reduced failure spends the authoritative mana cost exactly once.');
+
 // On-hit conditions are delayed with damage and committed exactly once.
 foreach ([true, false] as $combat) {
     $db = patchAbilityFixture(['effect' => 'damage', 'formula' => '2', 'onHitConditions' => ['Endormi'], 'cooldownRounds' => 0, 'manaCost' => 0, 'hpCost' => 0, 'fatigueCost' => 0]);

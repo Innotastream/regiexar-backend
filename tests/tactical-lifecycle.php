@@ -1407,6 +1407,28 @@ $db->rollBack();
 $response=runCommand($db,'token.resource.adjust',['tokenId'=>'token-player','resource'=>'hp','delta'=>2000000000,'requestId'=>'bounded-request-0001']);
 requireTactical($response->status===200 && $response->body['appliedDelta']===1000000000 && $response->body['current']===0, 'User adjustments remain bounded to one billion.');
 
+$db=fixture();
+$response=runCommand($db,'token.resource.adjust',[
+    'sceneId'=>'scene-one','tokenId'=>'','characterId'=>'character-player','resource'=>'hp',
+    'formula'=>'1d2+3','direction'=>1,'allowNoopAtLimit'=>true,'requestId'=>'gm-rest-character-0001'
+],true,'account-gm');
+requireTactical($response->status===200 && $response->body['appliedDelta']>=4 && $response->body['appliedDelta']<=5
+    && $db->payload('character:character-player')['resources']['hp']===$response->body['current'],
+    'A GM rest can regenerate an active character without requiring a map token.');
+$replayed=runCommand($db,'token.resource.adjust',[
+    'sceneId'=>'scene-one','tokenId'=>'','characterId'=>'character-player','resource'=>'hp',
+    'formula'=>'1d2+3','direction'=>1,'allowNoopAtLimit'=>true,'requestId'=>'gm-rest-character-0001'
+],true,'account-gm');
+requireTactical($replayed->status===200 && ($replayed->body['deduplicated']??false)===true
+    && $replayed->body['current']===$response->body['current'], 'A repeated GM rest reuses its resource receipt.');
+$character=$db->payload('character:character-player');$character['resources']['hp']=$character['resources']['maxHp'];$db->put('character:character-player',$character);
+$response=runCommand($db,'token.resource.adjust',[
+    'sceneId'=>'scene-one','tokenId'=>'','characterId'=>'character-player','resource'=>'hp','delta'=>1,
+    'allowNoopAtLimit'=>true,'requestId'=>'gm-rest-character-0002'
+],true,'account-gm');
+requireTactical($response->status===200 && $response->body['appliedDelta']===0,
+    'A GM rest at maximum is an explicit successful no-op.');
+
 $db=fixture();$character=$db->payload('character:character-player');$character['resources']['hp']=1000000000;$character['resources']['maxHp']=1000000000;$db->put('character:character-player',$character);
 $records=[];$pending=[];$db->beginTransaction();
 $damage=applyOnlineAttackDamage($db,$records,$pending,'token:scene-one:token-player',$db->payload('token:scene-one:token-player'),2000000000);
