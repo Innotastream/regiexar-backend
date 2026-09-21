@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.16.1';
-const XAR_BACKEND_BUILD = 'client-3-3-1-player-render-fog-active-character-candidate-20260920-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.1';
+const XAR_BACKEND_VERSION = '0.16.2';
+const XAR_BACKEND_BUILD = 'client-3-3-2-modular-boundaries-equivalence-candidate-20260921-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.2';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.1'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.2'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 20;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;

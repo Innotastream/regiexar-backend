@@ -1,8 +1,8 @@
-# Backend OVH — Régie du Seuil 0.16.1
+# Backend OVH — Régie du Seuil 0.16.2
 
-Client 3.3.1 uniquement, build `client-3-3-1-player-render-fog-active-character-candidate-20260920-1`. Schémas session 17, fiche 6 et base 20 inchangés. Ce candidat fait avancer l’autorité de génération et la politique cliente exacte pour accompagner les corrections de fluidité Joueur, de brume et de personnage actif du client ; les règles serveur, les droits effectifs, les données et les migrations restent inchangés.
+Client 3.3.2 uniquement, build `client-3-3-2-modular-boundaries-equivalence-candidate-20260921-1`. Schémas session 17, fiche 6 et base 20 inchangés. Activation OVH non acquise par ce dépôt : elle exige son contrôle distinct. Ce candidat fait avancer l’autorité de génération et la politique cliente exacte pour accompagner la séparation modulaire du client et ses contrôles d’équivalence 3.3.1 ; les règles serveur, les droits effectifs, les données et les migrations restent inchangés.
 
-Matrice attendue : 3.2.20 / 3.3.0 / 3.3.1 / 3.3.2 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426. Le 401 exact signifie seulement que la requête sans authentification a franchi la politique de version.
+Matrice attendue : 3.2.20 / 3.3.1 / 3.3.2 / 3.3.3 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426. Le 401 exact signifie seulement que la requête sans authentification a franchi la politique de version.
 
 ## Historique conservé
 
@@ -201,11 +201,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.1`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.1`, `latestVersion=3.3.1` et `allowedVersions=["3.3.1"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.2`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.2`, `latestVersion=3.3.2` et `allowedVersions=["3.3.2"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.1 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.2 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.20 / 3.3.0 / 3.3.1 / 3.3.2 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.20 / 3.3.1 / 3.3.2 / 3.3.3 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 
