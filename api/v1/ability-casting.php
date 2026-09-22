@@ -6,6 +6,7 @@ function validApplicationAbilityCastingFields(array $ability): bool {
         if (array_key_exists($key, $ability) && (!is_int($ability[$key]) || $ability[$key] < 0 || $ability[$key] > $limit)) return false;
     }
     if (array_key_exists('restRecharge', $ability) && !in_array($ability['restRecharge'], ['none', 'short', 'long'], true)) return false;
+    if (array_key_exists('usesPerRest', $ability) && (!is_int($ability['usesPerRest']) || $ability['usesPerRest'] < 1 || $ability['usesPerRest'] > 100)) return false;
     foreach (['reusableInTurn', 'reducedFailureCooldown'] as $key) if (array_key_exists($key, $ability) && !is_bool($ability[$key])) return false;
     if (array_key_exists('castingStatId', $ability) && $ability['castingStatId'] !== '' && !validApplicationDomainIdentifier($ability['castingStatId'], 120)) return false;
     return !array_key_exists('image', $ability) || $ability['image'] === null || validApplicationDomainText($ability['image'], 4096);
@@ -14,6 +15,7 @@ function validApplicationAbilityCastingFields(array $ability): bool {
 function applicationAbilityCastingFields(array $ability): array {
     $result = [];
     if (array_key_exists('restRecharge', $ability)) $result['restRecharge'] = in_array($ability['restRecharge'], ['short', 'long'], true) ? $ability['restRecharge'] : 'none';
+    if (array_key_exists('usesPerRest', $ability)) $result['usesPerRest'] = max(1, min(100, (int) $ability['usesPerRest']));
     if (array_key_exists('reusableInTurn', $ability)) $result['reusableInTurn'] = $ability['reusableInTurn'] === true;
     foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999] as $key => $limit) {
         if (array_key_exists($key, $ability)) $result[$key] = max(0, min($limit, is_numeric($ability[$key]) ? (int) $ability[$key] : 0));
@@ -62,11 +64,13 @@ function applicationRoundCountLabel(int $count): string {
 
 function applicationAbilityRechargeActivityDetail(array $cast): string {
     $remaining = max(0, (int) ($cast['remainingRounds'] ?? 0));
-    if ($remaining > 0) return ' · recharge ' . applicationRoundCountLabel($remaining);
+    $details = $remaining > 0 ? ' · recharge ' . applicationRoundCountLabel($remaining) : '';
     if (($cast['success'] ?? false) === true && in_array($cast['restRecharge'] ?? '', ['short', 'long'], true)) {
-        return ' · repos ' . (($cast['restRecharge'] ?? '') === 'short' ? 'court ou long' : 'long') . ' requis';
+        $left = max(0, (int) ($cast['restUseLimit'] ?? 1) - (int) ($cast['restUseCount'] ?? 1));
+        return $details . ($left > 0 ? ' · ' . $left . ' utilisation(s) restantes avant repos'
+            : ' · repos ' . (($cast['restRecharge'] ?? '') === 'short' ? 'court ou long' : 'long') . ' requis' . (($cast['reusableInTurn'] ?? false) ? ' après ce tour' : ''));
     }
-    return ' · aucune recharge';
+    return $details !== '' ? $details : ' · aucune recharge';
 }
 
 function applicationAbilityRequestSignature(string $route, string $sceneId, array $arguments, bool $hasCastingCheck): string {
@@ -118,7 +122,8 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     if (!validApplicationAbilityCastingFields($ability)) throw new RuntimeException('ability_cast_invalid');
     $owner = applicationAbilityCastingOwner($source);
     $round = max(1, (int) ($initiative['round'] ?? 1));
-    $remaining = 0; $useCount = 0; $turnKey = applicationAbilityTurnKey($initiative);
+    $remaining = 0; $useCount = 0; $restUseCount = 0; $turnKey = applicationAbilityTurnKey($initiative);
+    $restUseLimit = (int) ($ability['usesPerRest'] ?? 1);
     foreach ($timers as $timer) {
         if (!is_array($timer) || ($timer['sceneId'] ?? '') !== $sceneId || ($timer['abilityId'] ?? '') !== ($ability['id'] ?? '')) continue;
         if ($owner['characterId'] !== '' ? ($timer['characterId'] ?? '') !== $owner['characterId'] : (($timer['characterId'] ?? '') !== '' || ($timer['tokenId'] ?? '') !== $owner['tokenId'])) continue;
@@ -126,7 +131,10 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         if ($sameTurn) $useCount = (int) ($timer['useCount'] ?? 0);
         if (($timer['reusableInTurn'] ?? false) && $sameTurn) continue;
         if (($timer['cooldownActive'] ?? true) === false) continue;
-        $remaining = max($remaining, in_array($timer['restRecharge'] ?? '', ['short', 'long'], true) ? 9999 : max(0, (int) ($timer['readyRound'] ?? 1) - $round));
+        if (in_array($timer['restRecharge'] ?? '', ['short', 'long'], true)) {
+            $restUseCount = max($restUseCount, (int) ($timer['restUseCount'] ?? 1));
+        }
+        $remaining = max($remaining, $restUseCount >= $restUseLimit ? 9999 : max(0, (int) ($timer['readyRound'] ?? 1) - $round));
     }
     if ($remaining > 0) throw new RuntimeException('ability_on_cooldown');
     $manaCost = (int) ($ability['manaCost'] ?? 0);
@@ -134,7 +142,6 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     if ($availableMana < $manaCost) throw new RuntimeException('ability_mana_insufficient');
     $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = (int) ($ability['fatigueCost'] ?? 0);
     if ((float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
-    if ($fatigueCost > 0 && (float) ($source['fatigue']['current'] ?? 0) + $fatigueCost > (float) ($source['fatigue']['max'] ?? 100)) throw new RuntimeException('ability_fatigue_insufficient');
     // Absence preserves the old attack-dialogue statistic; an explicit empty
     // string means no casting check. Legacy simple rolls had no check.
     $statId = array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? '');
@@ -146,7 +153,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     }
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
-        'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost, 'restRecharge' => $ability['restRecharge'] ?? 'none', 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
+        'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost, 'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
         'usedRound' => $round, 'cooldownRounds' => (int) ($ability['cooldownRounds'] ?? 0), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => ($ability['effect'] ?? 'damage') !== 'complex' && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
@@ -162,7 +169,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     try { return applicationAbilityCastingPlan($ability, $source, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId); }
     catch (RuntimeException $error) {
         $messages = ['ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
-            'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.', 'ability_fatigue_insufficient' => 'Cette compétence dépasserait la fatigue maximale.',
+            'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.',
             'ability_cast_stat_missing' => 'La caractéristique de lancement n’existe plus sur cette fiche.', 'ability_cast_invalid' => 'Les règles de lancement sont invalides.'];
         rejectOnlineCommand($connection, 409, $messages[$error->getMessage()] ?? 'Cette compétence ne peut pas être lancée.', $error->getMessage());
     }
@@ -284,7 +291,6 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         if ($resource === 'fatigue') {
             $fatigue = $value['fatigue'] ?? ['current' => 0, 'max' => 100];
             $fatigue['current'] = (float) ($fatigue['current'] ?? 0) + $amount;
-            if ($fatigue['current'] > ($fatigue['max'] ?? 100)) rejectOnlineCommand($connection, 409, 'Fatigue maximale atteinte.', 'ability_fatigue_insufficient');
             $value['fatigue'] = $fatigue;
         } else {
             $hp = (float) ($characterKey !== '' ? ($value['resources']['hp'] ?? 0) : ($value['hp'] ?? 0));
@@ -321,7 +327,9 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $timer = ['id' => $index !== null ? $timers[$index]['id'] : 'timer-' . randomToken(9), 'sceneId' => $plan['sceneId'], 'abilityId' => $plan['abilityId'],
             'characterId' => $plan['characterId'], 'tokenId' => $plan['tokenId'], 'label' => $plan['label'], 'cooldown' => $retainCooldown ? $old['cooldown'] : $remaining,
             'turnKey' => $plan['turnKey'], 'useCount' => $plan['useCount'], 'reusableInTurn' => $failedCooldown > 0 && !$retainCooldown ? false : $plan['reusableInTurn'],
-            'restRecharge' => $retainCooldown ? $old['restRecharge'] : ($cast['success'] ? $plan['restRecharge'] : 'none'), 'cooldownActive' => $cast['success'] || $retainCooldown || $failedCooldown > 0,
+            'restRecharge' => $retainCooldown ? $old['restRecharge'] : ($cast['success'] ? $plan['restRecharge'] : 'none'),
+            'restUseCount' => $cast['success'] && in_array($plan['restRecharge'], ['short', 'long'], true) ? (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)) + 1 : (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)),
+            'restUseLimit' => $plan['restUseLimit'], 'cooldownActive' => $cast['success'] || $retainCooldown || $failedCooldown > 0,
             'usedRound' => $retainCooldown ? $old['usedRound'] : $plan['usedRound'], 'readyRound' => $retainCooldown ? $old['readyRound'] : $plan['usedRound'] + $remaining, 'ownerPlayerId' => $timerOwner,
             'ownerLabel' => $source['name'] ?? 'Personnage', 'visibility' => 'private', 'createdAt' => $index !== null ? ($timers[$index]['createdAt'] ?? gmdate('c')) : gmdate('c'), 'updatedAt' => gmdate('c')];
         if ($index !== null) $timers[$index] = $timer; else array_unshift($timers, $timer);
@@ -330,6 +338,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueCost'] ?? 0, 'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0,
         'restRecharge' => $failedCooldown > 0 && !$retainCooldown ? 'none' : ($retainCooldown ? ($old['restRecharge'] ?? 'none') : ($plan['restRecharge'] ?? 'none')),
+        'restUseCount' => $timer['restUseCount'] ?? 0, 'restUseLimit' => $plan['restUseLimit'], 'reusableInTurn' => $timer['reusableInTurn'] ?? false,
         'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => $remaining,
         'reducedFailureEnabled' => ($plan['reducedFailureEnabled'] ?? false) === true, 'reducedFailureApplied' => $failedCooldown > 0];
 }

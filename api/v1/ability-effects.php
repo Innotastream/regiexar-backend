@@ -121,7 +121,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
-        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (!array_key_exists('completionCue', $entry) && array_key_exists('completionCue', $old)
             && ($entry['effect'] ?? $old['effect'] ?? 'damage') === 'complex') $entry['completionCue'] = $old['completionCue'];
         if (array_key_exists('effect', $entry)) return $entry;
@@ -161,7 +161,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $timers = array_column($previous['actionTimers'] ?? [], null, 'id');
         foreach ($payload['actionTimers'] ?? [] as $index => $timer) {
             $old = $timers[$timer['id'] ?? ''] ?? [];
-            foreach (['abilityId', 'characterId', 'tokenId', 'restRecharge', 'reusableInTurn', 'turnKey', 'useCount', 'cooldownActive'] as $field) if (!array_key_exists($field, $timer) && array_key_exists($field, $old)) $payload['actionTimers'][$index][$field] = $old[$field];
+            foreach (['abilityId', 'characterId', 'tokenId', 'restRecharge', 'restUseCount', 'restUseLimit', 'reusableInTurn', 'turnKey', 'useCount', 'cooldownActive'] as $field) if (!array_key_exists($field, $timer) && array_key_exists($field, $old)) $payload['actionTimers'][$index][$field] = $old[$field];
         }
         $attacks = array_column($previous['pendingAttacks'] ?? [], null, 'id');
         foreach ($previous['attackReceipts'] ?? [] as $r) if (is_array($r['attack'] ?? null)) $attacks[$r['attack']['id'] ?? ''] = $r['attack'];

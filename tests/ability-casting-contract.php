@@ -135,7 +135,7 @@ requireCasting(onlineAbilityRollVisibility($publicRoll, [], ['id' => 'player-tes
 $normalized = normalizeOnlineAbilities([$ability])[0];
 foreach (['manaCost', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image', 'damageComponents'] as $key) requireCasting($normalized[$key] === $ability[$key], 'Normalization lost ' . $key);
 
-foreach ([['manaCost', -1], ['manaCost', 1000000001], ['manaCost', 1.5], ['manaCost', '8'], ['cooldownRounds', -1], ['cooldownRounds', 1000], ['cooldownRounds', 1.5], ['castingStatId', '../intelligence'], ['castingStatId', []], ['reducedFailureCooldown', 1], ['reducedFailureCooldown', 'true'], ['image', str_repeat('x', 4097)]] as [$key, $value]) {
+foreach ([['manaCost', -1], ['manaCost', 1000000001], ['manaCost', 1.5], ['manaCost', '8'], ['cooldownRounds', -1], ['cooldownRounds', 1000], ['cooldownRounds', 1.5], ['usesPerRest', 0], ['usesPerRest', 101], ['usesPerRest', 1.5], ['castingStatId', '../intelligence'], ['castingStatId', []], ['reducedFailureCooldown', 1], ['reducedFailureCooldown', 'true'], ['image', str_repeat('x', 4097)]] as [$key, $value]) {
     $invalid = array_replace($ability, [$key => $value]);
     requireCasting(!validApplicationAbilities([$invalid]), 'Invalid casting field was accepted: ' . $key);
     rejectsCasting(fn() => applicationAbilityCastingPlan($invalid, $source, 'scene-one', $initiative, []), 'ability_cast_invalid');
@@ -145,6 +145,25 @@ $lowMana = array_replace($source, ['mana' => 7]);
 rejectsCasting(fn() => applicationAbilityCastingPlan($ability, $lowMana, 'scene-one', $initiative, []), 'ability_mana_insufficient');
 $exactMana = applicationAbilityCastingPlan($ability, array_replace($source, ['mana' => 8]), 'scene-one', $initiative, []);
 requireCasting($exactMana['manaCost'] === 8, 'Exactly sufficient mana must permit a cast');
+$fatigueAboveMaximum = array_replace($source, ['fatigue' => ['current' => 104, 'max' => 100]]);
+$fatiguePlan = applicationAbilityCastingPlan(array_replace($ability, ['fatigueCost' => 7]), $fatigueAboveMaximum, 'scene-one', $initiative, []);
+requireCasting($fatiguePlan['fatigueCost'] === 7, 'Fatigue beyond the displayed maximum cannot block an otherwise valid cast');
+$restAbility = array_replace($ability, ['manaCost' => 0, 'cooldownRounds' => 0, 'restRecharge' => 'short', 'usesPerRest' => 3, 'reusableInTurn' => true]);
+requireCasting(normalizeOnlineAbilities([$restAbility])[0]['usesPerRest'] === 3, 'The configured per-rest count survives normalization');
+$restTimer = ['sceneId' => 'scene-one', 'abilityId' => $ability['id'], 'characterId' => 'character-one', 'tokenId' => '',
+    'restRecharge' => 'short', 'restUseCount' => 2, 'restUseLimit' => 3, 'readyRound' => 4, 'cooldownActive' => true];
+requireCasting(applicationAbilityCastingPlan($restAbility, $source, 'scene-one', $initiative, [$restTimer])['restUseCount'] === 2,
+    'A partial per-rest quota permits the next cast');
+$exhausted = array_replace($restTimer, ['restUseCount' => 3]);
+rejectsCasting(fn() => applicationAbilityCastingPlan($restAbility, $source, 'scene-one', $initiative, [$exhausted]), 'ability_on_cooldown');
+$reusable = array_replace($exhausted, ['turnKey' => '3:4:token-one', 'reusableInTurn' => true]);
+$turn = ['active' => true, 'round' => 4, 'turnSerial' => 3, 'order' => ['token-one', 'other'], 'currentIndex' => 0];
+requireCasting(applicationAbilityCastingPlan($restAbility, $source, 'scene-one', $turn, [$reusable])['restUseLimit'] === 3,
+    'A repeat within the active turn remains possible even when the rest quota is reached');
+$turn['turnSerial'] = 4;
+rejectsCasting(fn() => applicationAbilityCastingPlan($restAbility, $source, 'scene-one', $turn, [$reusable]), 'ability_on_cooldown');
+requireCasting(applicationAbilityCastingPlan($restAbility, $source, 'scene-one', $turn, [])['restUseCount'] === 0,
+    'A confirmed rest removing its timer restores the complete quota');
 rejectsCasting(fn() => applicationAbilityCastingPlan($ability, array_replace($source, ['mana' => 100, 'maxMana' => 7]), 'scene-one', $initiative, []), 'ability_mana_insufficient');
 $freeAbility = array_replace($ability, ['manaCost' => 0, 'cooldownRounds' => 0, 'castingStatId' => '']);
 $freePlan = applicationAbilityCastingPlan($freeAbility, array_replace($source, ['mana' => 0]), 'scene-one', $initiative, []);

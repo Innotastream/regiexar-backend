@@ -1156,7 +1156,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'ownerLabel' => $timer['ownerLabel'] ?? 'Personnage',
             'visibility' => ($timer['visibility'] ?? '') === 'public' ? 'public' : 'private',
             'ownedByYou' => $owned,
-            ...($owned && !empty($timer['abilityId']) ? ['restRecharge' => $timer['restRecharge'] ?? 'none', 'reusableInTurn' => ($timer['reusableInTurn'] ?? false) === true, 'turnKey' => $timer['turnKey'] ?? '', 'useCount' => $timer['useCount'] ?? 0, 'cooldownActive' => $timer['cooldownActive'] ?? true, 'abilityId' => $timer['abilityId'], 'characterId' => $timer['characterId'] ?? '', 'tokenId' => $timer['tokenId'] ?? '', 'sceneId' => $timer['sceneId'] ?? ''] : []),
+            ...($owned && !empty($timer['abilityId']) ? ['restRecharge' => $timer['restRecharge'] ?? 'none', 'restUseCount' => $timer['restUseCount'] ?? (in_array($timer['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0), 'restUseLimit' => $timer['restUseLimit'] ?? 1, 'reusableInTurn' => ($timer['reusableInTurn'] ?? false) === true, 'turnKey' => $timer['turnKey'] ?? '', 'useCount' => $timer['useCount'] ?? 0, 'cooldownActive' => $timer['cooldownActive'] ?? true, 'abilityId' => $timer['abilityId'], 'characterId' => $timer['characterId'] ?? '', 'tokenId' => $timer['tokenId'] ?? '', 'sceneId' => $timer['sceneId'] ?? ''] : []),
         ];
     }
     $visibleAbilityExecutions = [];
@@ -4402,6 +4402,8 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
+    $fatigueMaximum = (float) ($character['fatigue']['max'] ?? 100);
+    $fatiguePenalty = (float) ($character['fatigue']['current'] ?? 0) > ($fatigueMaximum > 0 ? $fatigueMaximum : 100) / 2 ? 1 : 0;
     if (is_array($character['stats'] ?? null)) {
         $labels = [
             'force' => 'Force', 'dexterity' => 'Dextérité', 'agility' => 'Agilité',
@@ -4413,11 +4415,11 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
             $token['stats'][] = [
                 'id' => 'character-stat-' . (string) $key,
                 'label' => $labels[(string) $key] ?? (string) $key,
-                'value' => (string) max(0, min(100, (float) ((isset($character['temporaryStats'][$key]) && $character['temporaryStats'][$key] !== '' && is_numeric($character['temporaryStats'][$key])) ? $character['temporaryStats'][$key] : $value) - (($character['fatigue']['current'] ?? 0) > 50 ? 1 : 0))),
+                'value' => (string) max(0, min(100, (float) ((isset($character['temporaryStats'][$key]) && $character['temporaryStats'][$key] !== '' && is_numeric($character['temporaryStats'][$key])) ? $character['temporaryStats'][$key] : $value) - $fatiguePenalty)),
             ];
         }
     }
-    $token['stats'][] = ['id' => 'character-stat-mentalResistance', 'label' => 'Résistance mentale', 'value' => (string) max(0, min(100, (float) ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0) - (($character['fatigue']['current'] ?? 0) > 50 ? 1 : 0)))];
+    $token['stats'][] = ['id' => 'character-stat-mentalResistance', 'label' => 'Résistance mentale', 'value' => (string) max(0, min(100, (float) ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0) - $fatiguePenalty))];
     $token['fatigue'] = $character['fatigue'] ?? ['current' => 0, 'max' => 100];
     $token['hitThreshold'] = normalizeOnlineD100Difficulty($character['hitThreshold'] ?? null);
     $token['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
