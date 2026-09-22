@@ -468,12 +468,13 @@ function applicationComplexAbilityTokenById(array $tokens, mixed $id): ?array
 
 function applicationComplexAbilityComparable(mixed $value): string
 {
-    return strtolower(preg_replace('/[^a-z0-9]/', '', strtr((string) $value, [
+    $normalized = strtolower(strtr((string) $value, [
         'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e', 'É' => 'e', 'È' => 'e', 'Ê' => 'e', 'Ë' => 'e',
         'à' => 'a', 'â' => 'a', 'ä' => 'a', 'À' => 'a', 'Â' => 'a', 'Ä' => 'a',
         'î' => 'i', 'ï' => 'i', 'Î' => 'i', 'Ï' => 'i', 'ô' => 'o', 'ö' => 'o', 'Ô' => 'o', 'Ö' => 'o',
         'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'Ù' => 'u', 'Û' => 'u', 'Ü' => 'u', 'ç' => 'c', 'Ç' => 'c',
-    ])) ?? '');
+    ]));
+    return preg_replace('/[^a-z0-9]/', '', $normalized) ?? '';
 }
 
 function applicationComplexAbilityTokenThreshold(array $token, array $step): int
