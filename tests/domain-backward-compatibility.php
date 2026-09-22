@@ -276,7 +276,7 @@ $migratedStandaloneToken = migrateOnlineCombatTokenPayload([
     'weaponAttacks' => [['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical']],
 ]);
 requireDomainCompatibility(
-    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 7
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 8
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
         && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'
         && !array_key_exists('speed', $migratedCombatCharacter)
