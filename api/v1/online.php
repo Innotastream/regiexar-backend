@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
+const XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_BYTES = 500 * 1024;
+const XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_DURATION_MILLISECONDS = 5000;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 750000;
@@ -2210,7 +2212,7 @@ function migrateOnlineCombatCharacterPayload(array $character): array
     $physical = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
     $magical = normalizeOnlineMagicResistance($character['magicArmor'] ?? 0);
     $character['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $character['characterSchemaVersion'] = 7;
+    $character['characterSchemaVersion'] = 8;
     $character = applicationPublicCharacterResources($character);
     $character['armorCategory'] = $physical['category'];
     $character['armor'] = $physical['percent'];
@@ -2376,7 +2378,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
-    $current['characterSchemaVersion'] = 7;
+    $current['characterSchemaVersion'] = 8;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
@@ -7190,6 +7192,130 @@ function storedMediaMatchesContentType(string $path, string $contentType): bool
         && $width * $height <= 120000000;
 }
 
+function canonicalAbilitySoundContentType(string $value): string
+{
+    $value = strtolower(trim(explode(';', $value)[0]));
+    if (in_array($value, ['audio/mpeg', 'audio/mp3'], true)) return 'audio/mpeg';
+    if (in_array($value, ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave'], true)) return 'audio/wav';
+    return '';
+}
+
+function abilitySoundLittleEndianUInt32(string $bytes, int $offset): ?int
+{
+    if ($offset < 0 || $offset + 4 > strlen($bytes)) return null;
+    $value = unpack('Vvalue', substr($bytes, $offset, 4));
+    return is_array($value) ? (int) $value['value'] : null;
+}
+
+function abilitySoundLittleEndianUInt16(string $bytes, int $offset): ?int
+{
+    if ($offset < 0 || $offset + 2 > strlen($bytes)) return null;
+    $value = unpack('vvalue', substr($bytes, $offset, 2));
+    return is_array($value) ? (int) $value['value'] : null;
+}
+
+function validWavAbilitySoundByteRate(string $bytes, int $dataOffset, int $chunkSize): int
+{
+    if ($chunkSize < 16) return 0;
+    $format = abilitySoundLittleEndianUInt16($bytes, $dataOffset) ?? 0;
+    $channels = abilitySoundLittleEndianUInt16($bytes, $dataOffset + 2) ?? 0;
+    $sampleRate = abilitySoundLittleEndianUInt32($bytes, $dataOffset + 4) ?? 0;
+    $byteRate = abilitySoundLittleEndianUInt32($bytes, $dataOffset + 8) ?? 0;
+    $blockAlign = abilitySoundLittleEndianUInt16($bytes, $dataOffset + 12) ?? 0;
+    $bitsPerSample = abilitySoundLittleEndianUInt16($bytes, $dataOffset + 14) ?? 0;
+    if ($format === 0xfffe) {
+        $extensionSize = abilitySoundLittleEndianUInt16($bytes, $dataOffset + 16) ?? 0;
+        if ($chunkSize < 40 || $extensionSize < 22) return 0;
+        $format = abilitySoundLittleEndianUInt32($bytes, $dataOffset + 24) ?? 0;
+    }
+    $supportedBits = $format === 1
+        ? in_array($bitsPerSample, [8, 16, 24, 32], true)
+        : ($format === 3 && in_array($bitsPerSample, [32, 64], true));
+    $expectedBlockAlign = $channels * $bitsPerSample;
+    if (!in_array($format, [1, 3], true) || !$supportedBits || $channels < 1 || $channels > 8
+        || $sampleRate < 8000 || $sampleRate > 192000 || $expectedBlockAlign % 8 !== 0
+        || $blockAlign !== intdiv($expectedBlockAlign, 8) || $byteRate !== $sampleRate * $blockAlign) return 0;
+    return $byteRate;
+}
+
+function wavAbilitySoundDurationMilliseconds(string $bytes): int
+{
+    $length = strlen($bytes);
+    if ($length < 44 || substr($bytes, 0, 4) !== 'RIFF' || substr($bytes, 8, 4) !== 'WAVE') return 0;
+    $byteRate = 0;
+    $dataBytes = 0;
+    for ($offset = 12; $offset + 8 <= $length;) {
+        $chunkSize = abilitySoundLittleEndianUInt32($bytes, $offset + 4);
+        if (!is_int($chunkSize)) return 0;
+        $dataOffset = $offset + 8;
+        if ($chunkSize > $length - $dataOffset) return 0;
+        $chunkId = substr($bytes, $offset, 4);
+        if ($chunkId === 'fmt ') $byteRate = validWavAbilitySoundByteRate($bytes, $dataOffset, $chunkSize);
+        if ($chunkId === 'data') $dataBytes += $chunkSize;
+        $offset = $dataOffset + $chunkSize + ($chunkSize % 2);
+    }
+    return $byteRate > 0 && $dataBytes > 0 ? (int) ceil($dataBytes * 1000 / $byteRate) : 0;
+}
+
+function mp3AbilitySoundFrame(string $bytes, int $offset): ?array
+{
+    if ($offset + 4 > strlen($bytes)) return null;
+    $b0 = ord($bytes[$offset]);
+    $b1 = ord($bytes[$offset + 1]);
+    $b2 = ord($bytes[$offset + 2]);
+    if ($b0 !== 0xff || ($b1 & 0xe0) !== 0xe0) return null;
+    $versionBits = ($b1 >> 3) & 0x03;
+    $layerBits = ($b1 >> 1) & 0x03;
+    $bitrateIndex = ($b2 >> 4) & 0x0f;
+    $sampleRateIndex = ($b2 >> 2) & 0x03;
+    if ($versionBits === 1 || $layerBits !== 1 || $bitrateIndex < 1 || $bitrateIndex > 14 || $sampleRateIndex > 2) return null;
+    $mpeg1 = $versionBits === 3;
+    $bitrates = $mpeg1
+        ? [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
+        : [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+    $sampleRates = [44100, 48000, 32000];
+    $bitrate = $bitrates[$bitrateIndex] * 1000;
+    $sampleRate = intdiv($sampleRates[$sampleRateIndex], $versionBits === 2 ? 2 : ($versionBits === 0 ? 4 : 1));
+    $padding = ($b2 >> 1) & 0x01;
+    $frameLength = (int) floor(($mpeg1 ? 144 : 72) * $bitrate / $sampleRate) + $padding;
+    if ($frameLength < 24 || $offset + $frameLength > strlen($bytes)) return null;
+    return ['length' => $frameLength, 'duration' => ($mpeg1 ? 1152 : 576) * 1000 / $sampleRate];
+}
+
+function mp3AbilitySoundDurationMilliseconds(string $bytes): int
+{
+    $length = strlen($bytes);
+    $offset = 0;
+    if ($length >= 10 && substr($bytes, 0, 3) === 'ID3') {
+        $size = 0;
+        for ($index = 6; $index < 10; $index += 1) {
+            $part = ord($bytes[$index]);
+            if ($part > 0x7f) return 0;
+            $size = ($size << 7) | $part;
+        }
+        $offset = 10 + $size + ((ord($bytes[5]) & 0x10) !== 0 ? 10 : 0);
+    }
+    $duration = 0.0;
+    $frames = 0;
+    while ($offset + 4 <= $length) {
+        $frame = mp3AbilitySoundFrame($bytes, $offset);
+        if (!is_array($frame)) break;
+        $duration += (float) $frame['duration'];
+        $frames += 1;
+        $offset += (int) $frame['length'];
+    }
+    return $frames > 0 ? (int) ceil($duration) : 0;
+}
+
+function storedAbilitySoundDurationMilliseconds(string $path, string $contentType): int
+{
+    $bytes = @file_get_contents($path);
+    if (!is_string($bytes) || $bytes === '' || strlen($bytes) > XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_BYTES) return 0;
+    return $contentType === 'audio/wav'
+        ? wavAbilitySoundDurationMilliseconds($bytes)
+        : ($contentType === 'audio/mpeg' ? mp3AbilitySoundDurationMilliseconds($bytes) : 0);
+}
+
 function mediaStorageLimits(array $configuration): array
 {
     $gibibyte = 1024 * 1024 * 1024;
@@ -7231,22 +7357,26 @@ function mediaQuotaViolation(array $usage, array $limits, int $additionalBytes):
     return null;
 }
 
-function uploadOnlineMedia(PDO $connection, array $configuration): never
+function uploadOnlineMedia(PDO $connection, array $configuration, bool $abilitySound = false): never
 {
     $identity = requireIdentity($connection);
     @set_time_limit(900);
-    $contentType = strtolower(trim(explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? 'application/octet-stream'))[0]));
+    $rawContentType = strtolower(trim(explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? 'application/octet-stream'))[0]));
+    $contentType = $abilitySound ? canonicalAbilitySoundContentType($rawContentType) : $rawContentType;
     $extension = mediaExtension($contentType);
-    if ($extension === '' || (!str_starts_with($contentType, 'audio/') && !str_starts_with($contentType, 'image/'))) {
-        sendError(415, 'Type de média refusé.', 'media_type_rejected');
+    if ($extension === '' || ($abilitySound
+        ? !in_array($contentType, ['audio/mpeg', 'audio/wav'], true)
+        : (!str_starts_with($contentType, 'audio/') && !str_starts_with($contentType, 'image/')))) {
+        sendError(415, $abilitySound ? 'Choisissez un fichier MP3 ou WAV.' : 'Type de média refusé.', $abilitySound ? 'ability_sound_type_rejected' : 'media_type_rejected');
     }
-    if (str_starts_with($contentType, 'audio/')
+    if (!$abilitySound && str_starts_with($contentType, 'audio/')
         && ((string) $identity['effective_mode'] !== 'gm' || (string) $identity['permanent_role'] !== 'gm')) {
         sendError(403, 'L’import audio est réservé à une session MJ.', 'gm_required');
     }
+    $maximumBytes = $abilitySound ? XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_BYTES : XAR_MEDIA_MAXIMUM_BYTES;
     $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
-    if ($declared <= 0 || $declared > XAR_MEDIA_MAXIMUM_BYTES) {
-        sendError(413, 'Le média est vide ou dépasse 300 Mo.', 'media_too_large');
+    if ($declared <= 0 || $declared > $maximumBytes) {
+        sendError(413, $abilitySound ? 'Le son doit peser au maximum 500 Ko.' : 'Le média est vide ou dépasse 300 Mo.', $abilitySound ? 'ability_sound_too_large' : 'media_too_large');
     }
     $limits = mediaStorageLimits($configuration);
     $violation = mediaQuotaViolation(mediaStorageUsage($connection), $limits, $declared);
@@ -7279,7 +7409,7 @@ function uploadOnlineMedia(PDO $connection, array $configuration): never
                 break;
             }
             $size += strlen($chunk);
-            if ($size > XAR_MEDIA_MAXIMUM_BYTES) {
+            if ($size > $maximumBytes) {
                 throw new LengthException('media_too_large');
             }
             hash_update($hash, $chunk);
@@ -7292,7 +7422,7 @@ function uploadOnlineMedia(PDO $connection, array $configuration): never
         fclose($output);
         @unlink($temporary);
         if ($error instanceof LengthException) {
-            sendError(413, 'Le média dépasse 300 Mo.', 'media_too_large');
+            sendError(413, $abilitySound ? 'Le son doit peser au maximum 500 Ko.' : 'Le média dépasse 300 Mo.', $abilitySound ? 'ability_sound_too_large' : 'media_too_large');
         }
         throw $error;
     }
@@ -7311,6 +7441,16 @@ function uploadOnlineMedia(PDO $connection, array $configuration): never
         @unlink($destination);
         sendError(415, 'Le contenu du média ne correspond pas au format annoncé.', 'media_signature_mismatch');
     }
+    $durationMs = $abilitySound ? storedAbilitySoundDurationMilliseconds($destination, $contentType) : 0;
+    if ($abilitySound && $durationMs <= 0) {
+        @unlink($destination);
+        sendError(415, 'Le contenu du son ne correspond pas à un fichier MP3 ou WAV lisible.', 'ability_sound_unreadable');
+    }
+    if ($abilitySound && $durationMs > XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_DURATION_MILLISECONDS) {
+        @unlink($destination);
+        sendError(413, 'Le son doit durer au maximum 5 secondes.', 'ability_sound_too_long');
+    }
+    $originalName = cleanMediaFilename((string) ($_SERVER['HTTP_X_XAR_FILENAME'] ?? ($abilitySound ? 'son-de-fin' : 'media') . $extension));
     $quotaLocked = false;
     $finalViolation = null;
     $uploadError = null;
@@ -7323,19 +7463,32 @@ function uploadOnlineMedia(PDO $connection, array $configuration): never
         }
         $finalViolation = mediaQuotaViolation(mediaStorageUsage($connection), $limits, $size);
         if ($finalViolation === null) {
-            $insert = $connection->prepare(
-                'INSERT INTO media_objects '
-                . '(id, stored_name, original_name, content_type, byte_size, sha256, uploaded_by_account_id) '
-                . 'VALUES (:id, :stored_name, :original_name, :content_type, :byte_size, :sha256, :uploaded_by)'
-            );
-            $insert->bindValue(':id', $id);
-            $insert->bindValue(':stored_name', $storedName);
-            $insert->bindValue(':original_name', cleanMediaFilename((string) ($_SERVER['HTTP_X_XAR_FILENAME'] ?? 'media' . $extension)));
-            $insert->bindValue(':content_type', $contentType);
-            $insert->bindValue(':byte_size', $size, PDO::PARAM_INT);
-            $insert->bindValue(':sha256', hash_final($hash, true), PDO::PARAM_LOB);
-            $insert->bindValue(':uploaded_by', (string) $identity['id']);
-            $insert->execute();
+            $connection->beginTransaction();
+            try {
+                $insert = $connection->prepare(
+                    'INSERT INTO media_objects '
+                    . '(id, stored_name, original_name, content_type, byte_size, sha256, uploaded_by_account_id) '
+                    . 'VALUES (:id, :stored_name, :original_name, :content_type, :byte_size, :sha256, :uploaded_by)'
+                );
+                $insert->bindValue(':id', $id);
+                $insert->bindValue(':stored_name', $storedName);
+                $insert->bindValue(':original_name', $originalName);
+                $insert->bindValue(':content_type', $contentType);
+                $insert->bindValue(':byte_size', $size, PDO::PARAM_INT);
+                $insert->bindValue(':sha256', hash_final($hash, true), PDO::PARAM_LOB);
+                $insert->bindValue(':uploaded_by', (string) $identity['id']);
+                $insert->execute();
+                if ($abilitySound) {
+                    $asset = $connection->prepare(
+                        'INSERT INTO ability_sound_assets (media_id, duration_ms) VALUES (:media_id, :duration_ms)'
+                    );
+                    $asset->execute([':media_id' => $id, ':duration_ms' => $durationMs]);
+                }
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
         }
     } catch (Throwable $error) {
         $uploadError = $error;
@@ -7355,7 +7508,11 @@ function uploadOnlineMedia(PDO $connection, array $configuration): never
         @unlink($destination);
         throw $uploadError;
     }
-    sendJson(201, ['ok' => true, 'mediaId' => $id, 'url' => '/media/' . $id, 'contentType' => $contentType, 'size' => $size]);
+    sendJson(201, [
+        'ok' => true, 'mediaId' => $id, 'url' => '/media/' . $id,
+        'name' => $originalName, 'contentType' => $contentType, 'size' => $size,
+        ...($abilitySound ? ['durationMs' => $durationMs] : []),
+    ]);
 }
 
 function mediaRecord(PDO $connection, string $id): ?array
@@ -7794,6 +7951,9 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
 
 function handleOnlineRoute(PDO $connection, array $configuration, string $route, string $method, bool $headOnly): bool
 {
+    if (handleAbilityAssistantRoute($connection, $route, $method, $headOnly)) {
+        return true;
+    }
     if (handleHealthOverlayManagementRoute($connection, $route, $method, $headOnly)) {
         return true;
     }
@@ -7867,6 +8027,12 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
     if ($route === '/api/v1/media') {
         if ($method === 'POST') {
             uploadOnlineMedia($connection, $configuration);
+        }
+        requireMethod($method, ['POST']);
+    }
+    if ($route === '/api/v1/ability-sounds') {
+        if ($method === 'POST') {
+            uploadOnlineMedia($connection, $configuration, true);
         }
         requireMethod($method, ['POST']);
     }

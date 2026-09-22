@@ -12,7 +12,7 @@ require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
-const XAR_SESSION_SCHEMA_VERSION = 18;
+const XAR_SESSION_SCHEMA_VERSION = 19;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -1609,7 +1609,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 7)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 8)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
@@ -1728,6 +1728,64 @@ function reactivateDomainMedia(PDO $connection, array $payload): void
             'UPDATE media_objects SET pending_delete_at = NULL WHERE id = :id AND pending_delete_at IS NOT NULL'
         );
         $statement->execute([':id' => $id]);
+    }
+}
+
+function applicationAbilitySoundReferences(string $key, array $payload): array
+{
+    $rows = [];
+    if (str_starts_with($key, 'character:') || str_starts_with($key, 'token:')) {
+        $rows = is_array($payload['abilities'] ?? null) ? $payload['abilities'] : [];
+    } elseif ($key === 'activity') {
+        $rows = is_array($payload['abilityExecutions'] ?? null) ? $payload['abilityExecutions'] : [];
+    }
+    $references = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) continue;
+        $cue = $row['completionCue'] ?? null;
+        if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue)) continue;
+        $sound = $cue['sound'] ?? null;
+        if (!is_array($sound) || preg_match('#^/media/([A-Za-z0-9_-]{24})$#D', (string) ($sound['url'] ?? ''), $match) !== 1) continue;
+        $references[] = [
+            'id' => $match[1],
+            'contentType' => (string) $sound['contentType'],
+            'byteSize' => (int) $sound['byteSize'],
+            'durationMs' => (int) $sound['durationMs'],
+        ];
+    }
+    return $references;
+}
+
+function assertApplicationAbilitySoundAssets(PDO $connection, array $pending): void
+{
+    $references = [];
+    foreach ($pending as $change) {
+        if (($change['operation'] ?? '') !== 'upsert' || !is_array($change['payload'] ?? null)) continue;
+        foreach (applicationAbilitySoundReferences((string) ($change['key'] ?? ''), $change['payload']) as $reference) {
+            $references[] = $reference;
+        }
+    }
+    if ($references === []) return;
+    $ids = array_values(array_unique(array_column($references, 'id')));
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $statement = $connection->prepare(
+        'SELECT mo.id, mo.content_type, mo.byte_size, mo.pending_delete_at, sound.duration_ms '
+        . 'FROM media_objects mo JOIN ability_sound_assets sound ON sound.media_id = mo.id '
+        . 'WHERE mo.id IN (' . $placeholders . ')'
+    );
+    $statement->execute($ids);
+    $assets = [];
+    foreach ($statement->fetchAll() as $asset) $assets[(string) $asset['id']] = $asset;
+    foreach ($references as $reference) {
+        $asset = $assets[$reference['id']] ?? null;
+        if (!is_array($asset) || $asset['pending_delete_at'] !== null) {
+            sendError(409, 'Le son de fin n’existe plus ou n’a pas été validé par la Régie.', 'ability_sound_missing');
+        }
+        if ((string) $asset['content_type'] !== $reference['contentType']
+            || (int) $asset['byte_size'] !== $reference['byteSize']
+            || (int) $asset['duration_ms'] !== $reference['durationMs']) {
+            sendError(409, 'Les caractéristiques du son de fin ne correspondent pas au fichier validé.', 'ability_sound_metadata_mismatch');
+        }
     }
 }
 
@@ -2556,6 +2614,10 @@ function playerApplicationStateRecord(PDO $connection): array
 
 function persistDomainChangesInTransaction(PDO $connection, array $identity, array $clock, array $pending): int
 {
+    // Les migrations historiques appellent cette fonction sans identité avant
+    // la création des actifs 3.3.5. Les écritures produit, elles, doivent
+    // toujours rattacher la référence à un son réellement contrôlé.
+    if ($identity !== []) assertApplicationAbilitySoundAssets($connection, $pending);
     $globalRevision = (int) $clock['globalRevision'] + 1;
     $accountId = (string) ($identity['id'] ?? '');
     foreach ($pending as $change) {

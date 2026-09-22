@@ -20,7 +20,9 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
     if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex'], true)) return false;
-    if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null);
+    if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)
+        && (!array_key_exists('completionCue', $entry) || validApplicationAbilityCompletionCue($entry['completionCue']));
+    if (array_key_exists('completionCue', $entry)) return false;
     if ($effect === 'movement') return true;
     if ($effect === 'summoning') return validApplicationDomainIdentifier($entry['summonLinkedTokenId'] ?? null, 180);
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);
@@ -32,7 +34,12 @@ function validApplicationAbilityEffects(array $entry): bool {
 function applicationAbilityEffectFields(array $entry): array {
     $casting = applicationAbilityCastingFields($entry);
     $effect = $entry['effect'] ?? 'damage';
-    if ($effect === 'complex') return [...$casting, 'effect' => 'complex', 'workflow' => normalizeApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)];
+    if ($effect === 'complex') return [
+        ...$casting,
+        'effect' => 'complex',
+        'workflow' => normalizeApplicationComplexAbilityWorkflow($entry['workflow'] ?? null),
+        'completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null),
+    ];
     if ($effect === 'movement') return [...$casting, 'effect' => 'movement'];
     if ($effect === 'summoning') return [...$casting, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
@@ -115,9 +122,11 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
         foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        if (!array_key_exists('completionCue', $entry) && array_key_exists('completionCue', $old)
+            && ($entry['effect'] ?? $old['effect'] ?? 'damage') === 'complex') $entry['completionCue'] = $old['completionCue'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }

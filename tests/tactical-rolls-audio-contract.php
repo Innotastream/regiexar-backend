@@ -142,4 +142,27 @@ $explicit = preserveApplicationAudioLoops(['playback' => ['music' => ['loop' => 
 requireTactical($explicit['playback']['music']['loop'] === false && $explicit['playback']['ambience']['loop'] === true, 'Explicit toggles override old loop values');
 requireTactical(applicationDomainPayloadForComparison('audio', ['tracks' => [], 'playback' => []]) === applicationDomainPayloadForComparison('audio', ['tracks' => [], 'playback' => ['music' => ['loop' => false], 'ambience' => ['loop' => true]]]), 'Default loop normalization does not cause false revisions');
 
+$wav = static function (int $dataBytes): string {
+    $padding = $dataBytes % 2;
+    $body = 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 8000, 1, 8)
+        . 'data' . pack('V', $dataBytes) . str_repeat("\0", $dataBytes + $padding);
+    return 'RIFF' . pack('V', strlen($body)) . $body;
+};
+requireTactical(wavAbilitySoundDurationMilliseconds($wav(40000)) === 5000,
+    'A WAV of exactly five seconds is accepted with an exact duration.');
+requireTactical(wavAbilitySoundDurationMilliseconds($wav(40001)) === 5001,
+    'A WAV over five seconds remains distinguishable for authoritative refusal.');
+$forgedWav = $wav(40000);
+$forgedWav = substr_replace($forgedWav, pack('V', 80000), 28, 4);
+requireTactical(wavAbilitySoundDurationMilliseconds($forgedWav) === 0,
+    'A forged WAV byte rate cannot shorten the authoritative duration.');
+$mp3Frame = "\xff\xfb\x90\x00" . str_repeat("\0", 413);
+requireTactical(mp3AbilitySoundDurationMilliseconds(str_repeat($mp3Frame, 191)) <= 5000
+    && mp3AbilitySoundDurationMilliseconds(str_repeat($mp3Frame, 192)) > 5000,
+    'MP3 duration is computed from consecutive MPEG Layer III frames on both sides of the five-second boundary.');
+requireTactical(canonicalAbilitySoundContentType('audio/x-wav; charset=binary') === 'audio/wav'
+    && canonicalAbilitySoundContentType('audio/mp3') === 'audio/mpeg'
+    && canonicalAbilitySoundContentType('audio/ogg') === '',
+    'Only canonical MP3 and WAV types are admitted for terminal ability sounds.');
+
 echo json_encode(['status' => 'ok', 'checks' => $checks, 'scope' => 'pure PHP contracts; no OVH, Windows or real-account acceptance'], JSON_THROW_ON_ERROR) . PHP_EOL;

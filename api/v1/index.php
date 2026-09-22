@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.16.4';
-const XAR_BACKEND_BUILD = 'client-3-3-4-gameplay-tools-candidate-20260921-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.4';
+const XAR_BACKEND_VERSION = '0.17.0';
+const XAR_BACKEND_BUILD = 'client-3-3-5-ability-assistant-conditions-sounds-candidate-20260922-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.5';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.4'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.5'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 20;
+const XAR_DATABASE_SCHEMA_VERSION = 21;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -958,6 +958,130 @@ function ensureCurrentSchema(PDO $connection): void
                 $connection->commit();
             } catch (Throwable $error) { if ($connection->inTransaction()) $connection->rollBack(); throw $error; }
             $version = 20;
+        }
+        if ($version < 21) {
+            if (!schemaColumnExists($connection, 'image_studio_regie_service', 'worker_image_ready')) {
+                $connection->exec(
+                    'ALTER TABLE image_studio_regie_service ADD COLUMN worker_image_ready '
+                    . 'TINYINT(1) NOT NULL DEFAULT 0 AFTER worker_ready'
+                );
+            }
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS ability_assistant_conversations ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'owner_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'character_id VARCHAR(180) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'title VARCHAR(180) NOT NULL, context_json JSON NOT NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), KEY idx_ability_assistant_conversations_owner (owner_account_id, updated_at), '
+                . 'KEY idx_ability_assistant_conversations_character (character_id, updated_at), '
+                . 'CONSTRAINT fk_ability_assistant_conversations_owner FOREIGN KEY (owner_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE RESTRICT'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS ability_assistant_messages ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'conversation_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'author_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'prompt MEDIUMTEXT NOT NULL, response_text MEDIUMTEXT NULL, draft_json JSON NULL, '
+                . "assistant_status ENUM('question', 'proposal', 'blocked', 'refused') NULL, "
+                . "status ENUM('queued', 'generating', 'succeeded', 'failed', 'rejected', 'cancelled') NOT NULL DEFAULT 'queued', "
+                . 'client_request_id VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'worker_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'worker_lease_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'worker_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0, worker_lease_expires_at DATETIME(3) NULL, '
+                . 'error_code VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, error_detail VARCHAR(500) NULL, '
+                . 'started_at DATETIME(3) NULL, completed_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), UNIQUE KEY uq_ability_assistant_messages_request (author_account_id, client_request_id), '
+                . 'KEY idx_ability_assistant_messages_conversation (conversation_id, created_at), '
+                . 'KEY idx_ability_assistant_messages_queue (status, created_at), '
+                . 'CONSTRAINT fk_ability_assistant_messages_conversation FOREIGN KEY (conversation_id) '
+                . 'REFERENCES ability_assistant_conversations (id) ON DELETE RESTRICT, '
+                . 'CONSTRAINT fk_ability_assistant_messages_author FOREIGN KEY (author_account_id) '
+                . 'REFERENCES accounts (id) ON DELETE RESTRICT'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS ability_assistant_reports ('
+                . 'id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'reporter_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'conversation_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'message_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'character_id VARCHAR(180) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . 'ability_id VARCHAR(120) CHARACTER SET ascii COLLATE ascii_bin NULL, '
+                . "origin ENUM('assistant', 'user', 'validation') NOT NULL, "
+                . 'code VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'summary VARCHAR(2000) NOT NULL, missing_capability VARCHAR(500) NOT NULL, context_json JSON NOT NULL, '
+                . "status ENUM('open', 'resolved', 'ignored') NOT NULL DEFAULT 'open', occurrences INT UNSIGNED NOT NULL DEFAULT 1, "
+                . 'resolved_by_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL, resolved_at DATETIME(3) NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'last_seen_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (id), UNIQUE KEY uq_ability_assistant_reports_fingerprint (fingerprint), '
+                . 'KEY idx_ability_assistant_reports_status (status, last_seen_at), '
+                . 'CONSTRAINT fk_ability_assistant_reports_reporter FOREIGN KEY (reporter_account_id) REFERENCES accounts (id) ON DELETE SET NULL, '
+                . 'CONSTRAINT fk_ability_assistant_reports_conversation FOREIGN KEY (conversation_id) REFERENCES ability_assistant_conversations (id) ON DELETE SET NULL, '
+                . 'CONSTRAINT fk_ability_assistant_reports_message FOREIGN KEY (message_id) REFERENCES ability_assistant_messages (id) ON DELETE SET NULL, '
+                . 'CONSTRAINT fk_ability_assistant_reports_resolver FOREIGN KEY (resolved_by_account_id) REFERENCES accounts (id) ON DELETE SET NULL'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'CREATE TABLE IF NOT EXISTS ability_sound_assets ('
+                . 'media_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, '
+                . 'duration_ms SMALLINT UNSIGNED NOT NULL, '
+                . 'created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), '
+                . 'PRIMARY KEY (media_id), '
+                . 'CONSTRAINT fk_ability_sound_assets_media FOREIGN KEY (media_id) '
+                . 'REFERENCES media_objects (id) ON DELETE CASCADE'
+                . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $connection->exec(
+                'ALTER TABLE application_domain_clock MODIFY COLUMN state_schema_version '
+                . 'SMALLINT UNSIGNED NOT NULL DEFAULT 19'
+            );
+            $connection->beginTransaction();
+            try {
+                $clock = domainClockRecord($connection, true);
+                $records = applicationDomainRecords($connection);
+                $pending = [];
+                $characters = [];
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'character:')) continue;
+                    $character = applicationDomainPayload($records, $key);
+                    $characterVersion = (int) ($character['characterSchemaVersion'] ?? 0);
+                    if ($characterVersion > 8) throw new RuntimeException('future_character_schema');
+                    $character['characterSchema'] = 'xar-tsaroth.character-sheet';
+                    $character['characterSchemaVersion'] = 8;
+                    $character['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
+                    $characters[(string) ($character['id'] ?? '')] = $character;
+                    $change = prepareApplicationDomainUpsert($key, $character, $record);
+                    if ($change !== null) $pending[$key] = $change;
+                }
+                foreach ($records as $key => $record) {
+                    if (!str_starts_with($key, 'token:')) continue;
+                    $token = applicationDomainPayload($records, $key);
+                    $character = $characters[(string) ($token['characterId'] ?? '')] ?? null;
+                    if (is_array($character) && ($token['followCharacter'] ?? true) !== false && empty($token['linkedTokenId'])) {
+                        $change = prepareApplicationDomainUpsert($key, synchronizeOnlineCharacterToken($token, $character), $record);
+                        if ($change !== null) $pending[$key] = $change;
+                    }
+                }
+                if ($pending !== []) persistDomainChangesInTransaction($connection, [], $clock, array_values($pending));
+                else $connection->exec('UPDATE application_domain_clock SET state_schema_version = 19 WHERE singleton_id = 1');
+                $connection->exec(
+                    "INSERT IGNORE INTO schema_migrations (version,name,checksum) VALUES "
+                    . "(21,'ability_assistant_conditions_and_completion_sounds','0ae6910742412787d103e27bdf73f8257813741834f05fbc0d45e11bf377b12f')"
+                );
+                $connection->commit();
+            } catch (Throwable $error) {
+                if ($connection->inTransaction()) $connection->rollBack();
+                throw $error;
+            }
+            $version = 21;
         }
     } finally {
         try {
@@ -1963,6 +2087,7 @@ require_once __DIR__ . '/runtime-diagnostics.php';
 installBackendDiagnostics();
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
+require_once __DIR__ . '/ability-assistant.php';
 require_once __DIR__ . '/image-studio.php';
 require_once __DIR__ . '/health-overlays.php';
 

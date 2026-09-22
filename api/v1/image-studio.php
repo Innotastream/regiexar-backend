@@ -737,7 +737,7 @@ function requireRegieCodexOwner(PDO $connection): array
 function imageStudioRegieServiceRecord(PDO $connection, bool $forUpdate = false): array
 {
     $statement = $connection->query(
-        'SELECT singleton_id, paused, worker_ready, worker_account_id, worker_lease_id, worker_last_seen_at, updated_at, '
+        'SELECT singleton_id, paused, worker_ready, worker_image_ready, worker_account_id, worker_lease_id, worker_last_seen_at, updated_at, '
         . '(worker_ready = 1 AND worker_last_seen_at >= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL '
         . XAR_IMAGE_STUDIO_WORKER_ONLINE_SECONDS . ' SECOND)) AS worker_online '
         . 'FROM image_studio_regie_service WHERE singleton_id = 1'
@@ -762,14 +762,25 @@ function imageStudioRegieServicePayload(PDO $connection, array $identity): array
     );
     $counts->execute([':account_id' => $accountId]);
     $queue = $counts->fetch();
+    $assistantCounts = $connection->prepare(
+        "SELECT SUM(status = 'queued') AS queued_count, SUM(status = 'generating') AS active_count, "
+        . "SUM(author_account_id = :account_id AND status IN ('queued', 'generating')) AS own_shared_active_count "
+        . 'FROM ability_assistant_messages'
+    );
+    $assistantCounts->execute([':account_id' => $accountId]);
+    $assistantQueue = $assistantCounts->fetch();
     $paused = (bool) $service['paused'];
     return [
         'paused' => $paused,
         'acceptingRequests' => !$paused,
         'workerOnline' => (bool) $service['worker_online'],
-        'queuedCount' => (int) ($queue['queued_count'] ?? 0),
-        'activeCount' => (int) ($queue['active_count'] ?? 0),
-        'ownSharedActiveCount' => (int) ($queue['own_shared_active_count'] ?? 0),
+        'workerTextOnline' => (bool) $service['worker_online'],
+        'workerImageOnline' => (bool) $service['worker_online'] && (bool) $service['worker_image_ready'],
+        'queuedCount' => (int) ($queue['queued_count'] ?? 0) + (int) ($assistantQueue['queued_count'] ?? 0),
+        'activeCount' => (int) ($queue['active_count'] ?? 0) + (int) ($assistantQueue['active_count'] ?? 0),
+        'ownSharedActiveCount' => (int) ($queue['own_shared_active_count'] ?? 0) + (int) ($assistantQueue['own_shared_active_count'] ?? 0),
+        'abilityAssistantQueuedCount' => (int) ($assistantQueue['queued_count'] ?? 0),
+        'abilityAssistantActiveCount' => (int) ($assistantQueue['active_count'] ?? 0),
         'canControl' => isRegieCodexOwner($identity),
         'workerLastSeenAt' => $service['worker_last_seen_at'] === null ? null : (string) $service['worker_last_seen_at'],
         'updatedAt' => (string) $service['updated_at'],
@@ -827,10 +838,14 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
     if (!array_key_exists('ready', $payload) || !is_bool($payload['ready'])) {
         sendError(400, 'État du worker invalide.', 'invalid_worker_state');
     }
+    if (!array_key_exists('imageGenerationAvailable', $payload) || !is_bool($payload['imageGenerationAvailable'])) {
+        sendError(400, 'Capacité d’image du worker invalide.', 'invalid_worker_capability');
+    }
     $activeMessageId = trim((string) ($payload['activeMessageId'] ?? ''));
     if ($activeMessageId !== '' && !validImageStudioMessageId($activeMessageId)) {
         sendError(400, 'Travail actif du worker invalide.', 'invalid_worker_job');
     }
+    $activeJobType = ($payload['activeJobType'] ?? '') === 'ability-assistant' ? 'ability-assistant' : 'image';
     if (array_key_exists('takeover', $payload) && !is_bool($payload['takeover'])) {
         sendError(400, 'Demande de relais du worker invalide.', 'invalid_worker_takeover');
     }
@@ -847,25 +862,33 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
             sendError(409, 'Un autre poste exécute déjà la file de la Régie.', 'worker_lease_replaced');
         }
         $statement = $connection->prepare(
-            'UPDATE image_studio_regie_service SET worker_ready = :ready, worker_account_id = :account_id, '
+            'UPDATE image_studio_regie_service SET worker_ready = :ready, worker_image_ready = :image_ready, worker_account_id = :account_id, '
             . 'worker_lease_id = :worker_lease_id, '
             . 'worker_last_seen_at = UTC_TIMESTAMP(3) WHERE singleton_id = 1'
         );
         $statement->execute([
             ':ready' => $payload['ready'] ? 1 : 0,
+            ':image_ready' => $payload['ready'] && $payload['imageGenerationAvailable'] ? 1 : 0,
             ':account_id' => (string) $identity['id'],
             ':worker_lease_id' => $workerLeaseId,
         ]);
         if ($takeover && $differentLiveWorker) {
             recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
+            recoverReplacedAbilityAssistantJobs($connection, $workerLeaseId);
         }
         if ($payload['ready'] && $activeMessageId !== '') {
-            $renew = $connection->prepare(
-                'UPDATE image_studio_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
-                . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
-                . "WHERE id = :id AND execution_mode = 'regie' AND status = 'generating' "
-                . 'AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id'
-            );
+            $renew = $activeJobType === 'ability-assistant'
+                ? $connection->prepare(
+                    'UPDATE ability_assistant_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+                    . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
+                    . "WHERE id = :id AND status = 'generating' AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id"
+                )
+                : $connection->prepare(
+                    'UPDATE image_studio_messages SET worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+                    . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) '
+                    . "WHERE id = :id AND execution_mode = 'regie' AND status = 'generating' "
+                    . 'AND worker_account_id = :account_id AND worker_lease_id = :worker_lease_id'
+                );
             $renew->execute([
                 ':id' => $activeMessageId,
                 ':account_id' => (string) $identity['id'],
@@ -937,26 +960,60 @@ function claimImageStudioRegieJob(PDO $connection): never
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(8192);
     $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
+    if (array_key_exists('imageGenerationAvailable', $payload) && !is_bool($payload['imageGenerationAvailable'])) {
+        sendError(400, 'Capacité de génération d’image invalide.', 'invalid_worker_capability');
+    }
+    $imageGenerationAvailable = ($payload['imageGenerationAvailable'] ?? false) === true;
     $messageId = null;
+    $jobType = null;
     $connection->beginTransaction();
     try {
         $service = imageStudioRegieServiceRecord($connection, true);
         recoverExpiredImageStudioRegieJobs($connection);
+        recoverExpiredAbilityAssistantJobs($connection);
         $ownsActiveLease = hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''));
         if (!(bool) $service['paused'] && (bool) $service['worker_online'] && $ownsActiveLease) {
             recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
+            recoverReplacedAbilityAssistantJobs($connection, $workerLeaseId);
             $active = $connection->query(
                 "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
                 . "AND status = 'generating' ORDER BY started_at, id LIMIT 1 FOR UPDATE"
             );
             $activeId = $active === false ? false : $active->fetchColumn();
-            if ($activeId === false) {
-                $next = $connection->query(
-                    "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
-                    . "AND status = 'queued' ORDER BY created_at, id LIMIT 1 FOR UPDATE"
+            $activeAssistant = $connection->query(
+                "SELECT id FROM ability_assistant_messages WHERE status = 'generating' "
+                . 'ORDER BY started_at, id LIMIT 1 FOR UPDATE'
+            );
+            $activeAssistantId = $activeAssistant === false ? false : $activeAssistant->fetchColumn();
+            if ($activeId === false && $activeAssistantId === false) {
+                $imageCandidate = false;
+                if ($imageGenerationAvailable) {
+                    $nextImage = $connection->query(
+                        "SELECT id, created_at FROM image_studio_messages WHERE execution_mode = 'regie' "
+                        . "AND status = 'queued' ORDER BY created_at, id LIMIT 1 FOR UPDATE"
+                    );
+                    $imageCandidate = $nextImage === false ? false : $nextImage->fetch();
+                }
+                $nextAssistant = $connection->query(
+                    "SELECT id, created_at FROM ability_assistant_messages WHERE status = 'queued' "
+                    . 'ORDER BY created_at, id LIMIT 1 FOR UPDATE'
                 );
-                $candidate = $next === false ? false : $next->fetchColumn();
-                if (is_string($candidate) && validImageStudioMessageId($candidate)) {
+                $assistantCandidate = $nextAssistant === false ? false : $nextAssistant->fetch();
+                $chooseAssistant = is_array($assistantCandidate) && (!is_array($imageCandidate)
+                    || strcmp((string) $assistantCandidate['created_at'] . (string) $assistantCandidate['id'],
+                        (string) $imageCandidate['created_at'] . (string) $imageCandidate['id']) < 0);
+                if ($chooseAssistant) {
+                    $candidate = (string) $assistantCandidate['id'];
+                    $claim = $connection->prepare(
+                        "UPDATE ability_assistant_messages SET status = 'generating', worker_account_id = :account_id, "
+                        . 'worker_lease_id = :worker_lease_id, worker_attempts = worker_attempts + 1, started_at = UTC_TIMESTAMP(3), '
+                        . 'worker_lease_expires_at = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL '
+                        . XAR_IMAGE_STUDIO_WORKER_LEASE_SECONDS . ' SECOND) WHERE id = :id AND status = \'queued\''
+                    );
+                    $claim->execute([':account_id' => (string) $identity['id'], ':worker_lease_id' => $workerLeaseId, ':id' => $candidate]);
+                    if ($claim->rowCount() === 1) { $messageId = $candidate; $jobType = 'ability-assistant'; }
+                } elseif (is_array($imageCandidate) && validImageStudioMessageId((string) $imageCandidate['id'])) {
+                    $candidate = (string) $imageCandidate['id'];
                     $claim = $connection->prepare(
                         "UPDATE image_studio_messages SET status = 'generating', worker_account_id = :account_id, "
                         . 'worker_lease_id = :worker_lease_id, '
@@ -972,6 +1029,7 @@ function claimImageStudioRegieJob(PDO $connection): never
                     ]);
                     if ($claim->rowCount() === 1) {
                         $messageId = $candidate;
+                        $jobType = 'image';
                     }
                 }
             }
@@ -983,10 +1041,14 @@ function claimImageStudioRegieJob(PDO $connection): never
         }
         throw $error;
     }
-    $message = $messageId === null ? null : imageStudioMessageRecord($connection, $messageId);
+    $message = $messageId === null ? null : ($jobType === 'ability-assistant'
+        ? abilityAssistantMessageRecord($connection, $messageId) : imageStudioMessageRecord($connection, $messageId));
+    $job = !is_array($message) ? null : ($jobType === 'ability-assistant'
+        ? abilityAssistantWorkerJobPayload($connection, $message)
+        : [...imageStudioMessagePayload($message, true), 'jobType' => 'image']);
     sendJson(200, [
         'ok' => true,
-        'job' => is_array($message) ? imageStudioMessagePayload($message, true) : null,
+        'job' => $job,
         'service' => imageStudioRegieServicePayload($connection, $identity),
     ]);
 }
@@ -1102,12 +1164,16 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         );
         $stale->execute([':account_id' => $accountId]);
         $active = $connection->prepare(
-            "SELECT COUNT(*) FROM image_studio_messages WHERE author_account_id = :account_id "
-            . "AND execution_mode = :execution_mode AND status IN ('queued', 'generating')"
+            "SELECT (SELECT COUNT(*) FROM image_studio_messages WHERE author_account_id = :image_account_id "
+            . "AND execution_mode = :image_execution_mode AND status IN ('queued', 'generating')) + "
+            . "(SELECT COUNT(*) FROM ability_assistant_messages WHERE :assistant_execution_mode = 'regie' AND author_account_id = :assistant_account_id "
+            . "AND status IN ('queued', 'generating'))"
         );
         $active->execute([
-            ':account_id' => $accountId,
-            ':execution_mode' => $executionMode,
+            ':image_account_id' => $accountId,
+            ':image_execution_mode' => $executionMode,
+            ':assistant_execution_mode' => $executionMode,
+            ':assistant_account_id' => $accountId,
         ]);
         if ((int) $active->fetchColumn() > 0) {
             sendError(

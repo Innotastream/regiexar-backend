@@ -13,7 +13,7 @@ function checkRuntimeDiagnostic(bool $value, string $message): void {
 try {
     $_SERVER['REQUEST_URI'] = '/api/v1/image-studio/messages/' . str_repeat('a', 24) . '?token=CANARY-QUERY';
     $_SERVER['REQUEST_METHOD'] = 'POST';
-    $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = '3.3.4';
+    $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = '3.3.5';
     recordBackendDiagnostic(['source' => 'php-http', 'status' => 503, 'code' => 'test_failure', 'password' => 'CANARY-PASSWORD', 'message' => 'password=CANARY-MESSAGE', 'stack' => '/home/private/CANARY-FILE.php']);
     $rows = backendDiagnosticRows();
     checkRuntimeDiagnostic(count($rows) === 1, 'The private fallback survives an unavailable database.');

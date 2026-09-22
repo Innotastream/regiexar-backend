@@ -1,10 +1,13 @@
 <?php
 declare(strict_types=1);
 
-const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 1;
+const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 2;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
 const XAR_COMPLEX_ABILITY_MAXIMUM_EXECUTIONS = 60;
 const XAR_COMPLEX_ABILITY_MAXIMUM_EVENTS = 40;
+const XAR_ABILITY_COMPLETION_CUE_VERSION = 1;
+const XAR_ABILITY_SOUND_MAXIMUM_BYTES = 500 * 1024;
+const XAR_ABILITY_SOUND_MAXIMUM_DURATION_MILLISECONDS = 5000;
 
 final class ApplicationComplexAbilityException extends RuntimeException
 {
@@ -57,6 +60,58 @@ function applicationComplexAbilityUniqueIdentifier(mixed $value, string $fallbac
     return $id;
 }
 
+function normalizeApplicationAbilityCompletionCue(mixed $value): array
+{
+    $source = is_array($value) && !array_is_list($value) ? $value : [];
+    $rawSound = is_array($source['sound'] ?? null) && !array_is_list($source['sound']) ? $source['sound'] : [];
+    $url = trim((string) ($rawSound['url'] ?? ''));
+    $contentType = strtolower(trim((string) ($rawSound['contentType'] ?? '')));
+    $byteSize = is_numeric($rawSound['byteSize'] ?? null) ? (int) $rawSound['byteSize'] : 0;
+    $durationMs = is_numeric($rawSound['durationMs'] ?? null) ? (int) $rawSound['durationMs'] : 0;
+    $sound = preg_match('#^/media/[A-Za-z0-9_-]{24}$#D', $url) === 1
+        && in_array($contentType, ['audio/mpeg', 'audio/wav'], true)
+        && $byteSize > 0 && $byteSize <= XAR_ABILITY_SOUND_MAXIMUM_BYTES
+        && $durationMs > 0 && $durationMs <= XAR_ABILITY_SOUND_MAXIMUM_DURATION_MILLISECONDS
+        ? [
+            'url' => $url,
+            'name' => applicationComplexAbilityText(
+                $rawSound['name'] ?? '',
+                180,
+                $contentType === 'audio/mpeg' ? 'son-de-fin.mp3' : 'son-de-fin.wav'
+            ),
+            'contentType' => $contentType,
+            'byteSize' => $byteSize,
+            'durationMs' => $durationMs,
+        ]
+        : null;
+    return [
+        'version' => XAR_ABILITY_COMPLETION_CUE_VERSION,
+        'trigger' => 'completed',
+        'sound' => $sound,
+        // Réservation de schéma uniquement : aucune animation n'est exécutée.
+        'visual' => ['version' => 1, 'kind' => 'none'],
+    ];
+}
+
+function validApplicationAbilityCompletionCue(mixed $value): bool
+{
+    if (!is_array($value) || array_is_list($value)
+        || (int) ($value['version'] ?? 0) !== XAR_ABILITY_COMPLETION_CUE_VERSION
+        || ($value['trigger'] ?? '') !== 'completed') return false;
+    $visual = $value['visual'] ?? null;
+    if (!is_array($visual) || array_is_list($visual)
+        || (int) ($visual['version'] ?? 0) !== 1 || ($visual['kind'] ?? '') !== 'none') return false;
+    if (($value['sound'] ?? null) === null) return true;
+    $sound = $value['sound'];
+    if (!is_array($sound) || array_is_list($sound)
+        || preg_match('#^/media/[A-Za-z0-9_-]{24}$#D', (string) ($sound['url'] ?? '')) !== 1
+        || !in_array($sound['contentType'] ?? '', ['audio/mpeg', 'audio/wav'], true)
+        || !is_int($sound['byteSize'] ?? null) || $sound['byteSize'] < 1 || $sound['byteSize'] > XAR_ABILITY_SOUND_MAXIMUM_BYTES
+        || !is_int($sound['durationMs'] ?? null) || $sound['durationMs'] < 1 || $sound['durationMs'] > XAR_ABILITY_SOUND_MAXIMUM_DURATION_MILLISECONDS) return false;
+    $name = $sound['name'] ?? null;
+    return is_string($name) && trim($name) !== '' && preg_match('/[\x00\r\n]/', $name) !== 1 && strlen($name) <= 180;
+}
+
 function normalizeApplicationComplexAbilityChoices(mixed $value, bool $fallback = true): array
 {
     $source = is_array($value) && array_is_list($value) ? array_slice($value, 0, 12) : [];
@@ -96,14 +151,22 @@ function normalizeApplicationComplexAbilitySpends(mixed $value): array
     return $spends;
 }
 
+function normalizeApplicationComplexAbilityBranch(mixed $value): string
+{
+    $branch = trim(is_scalar($value) ? (string) $value : 'next');
+    if (in_array($branch, ['next', 'finish'], true)) return $branch;
+    return applicationComplexAbilityIdentifier($branch, 'next');
+}
+
 function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
 {
     $source = is_array($value) ? $value : [];
     $rawSteps = is_array($source['steps'] ?? null) && array_is_list($source['steps'])
         ? array_slice($source['steps'], 0, XAR_COMPLEX_ABILITY_MAXIMUM_STEPS) : [];
-    $types = ['instruction', 'targets', 'rolls', 'defense-series', 'choice', 'counter'];
+    $types = ['instruction', 'targets', 'rolls', 'defense-series', 'choice', 'counter', 'condition'];
     $titles = ['instruction' => 'Consigne', 'targets' => 'Choisir les cibles', 'rolls' => 'Effectuer les jets',
-        'defense-series' => 'Défenses successives', 'choice' => 'Faire un choix', 'counter' => 'Suivre les charges'];
+        'defense-series' => 'Défenses successives', 'choice' => 'Faire un choix', 'counter' => 'Suivre les charges',
+        'condition' => 'Vérifier une condition'];
     $seen = []; $targetSteps = []; $steps = [];
     foreach ($rawSteps as $index => $raw) {
         $raw = is_array($raw) ? $raw : [];
@@ -147,6 +210,27 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
             $step['gainLabel'] = applicationComplexAbilityText($raw['gainLabel'] ?? '', 120, 'Gagner ' . $step['gainAmount']);
             $step['spendOptions'] = normalizeApplicationComplexAbilitySpends($raw['spendOptions'] ?? null);
             $step['completionLabel'] = applicationComplexAbilityText($raw['completionLabel'] ?? '', 120, 'Terminer cette étape');
+        } elseif ($type === 'condition') {
+            $step['subject'] = in_array($raw['subject'] ?? '', ['source', 'targets'], true) ? $raw['subject'] : 'source';
+            $facts = ['hp-percent', 'health-state', 'hp', 'mana-percent', 'mana', 'fatigue', 'condition', 'stat',
+                'target-count', 'roll-successes', 'last-roll-success', 'choice', 'counter'];
+            $step['fact'] = in_array($raw['fact'] ?? '', $facts, true) ? $raw['fact'] : 'hp-percent';
+            $requestedTarget = applicationComplexAbilityIdentifier($raw['sourceStepId'] ?? '');
+            $step['sourceStepId'] = $step['subject'] === 'targets' || $step['fact'] === 'target-count'
+                ? (in_array($requestedTarget, $targetSteps, true) ? $requestedTarget : ($targetSteps[count($targetSteps) - 1] ?? '')) : '';
+            $step['aggregation'] = in_array($raw['aggregation'] ?? '', ['any', 'all', 'none'], true) ? $raw['aggregation'] : 'any';
+            $operators = ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'between', 'contains', 'not-contains'];
+            $step['operator'] = in_array($raw['operator'] ?? '', $operators, true) ? $raw['operator'] : 'lte';
+            $step['value'] = is_numeric($raw['value'] ?? null)
+                ? max(-1000000000, min(1000000000, 0 + $raw['value'])) : applicationComplexAbilityText($raw['value'] ?? '', 240);
+            $step['secondValue'] = is_numeric($raw['secondValue'] ?? null)
+                ? max(-1000000000, min(1000000000, 0 + $raw['secondValue'])) : applicationComplexAbilityText($raw['secondValue'] ?? '', 240);
+            $requestedReference = applicationComplexAbilityIdentifier($raw['referenceStepId'] ?? '');
+            $step['referenceStepId'] = in_array($requestedReference, array_column($steps, 'id'), true) ? $requestedReference : '';
+            $step['statId'] = applicationComplexAbilityIdentifier($raw['statId'] ?? '', 'character-stat-instinct', 120);
+            $step['conditionLabel'] = applicationComplexAbilityText($raw['conditionLabel'] ?? '', 240);
+            $step['onTrueStepId'] = normalizeApplicationComplexAbilityBranch($raw['onTrueStepId'] ?? 'next');
+            $step['onFalseStepId'] = normalizeApplicationComplexAbilityBranch($raw['onFalseStepId'] ?? 'next');
         }
         $steps[] = $step;
     }
@@ -179,6 +263,43 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         }
         if ($step['type'] === 'choice' && count($step['options']) < 2) return 'Ajoutez au moins deux choix à l’étape ' . ($index + 1) . '.';
         if ($step['type'] === 'counter' && $step['spendOptions'] === []) return 'Ajoutez au moins une utilisation de charge à l’étape ' . ($index + 1) . '.';
+        if ($step['type'] === 'condition') {
+            if (($step['subject'] === 'targets' || $step['fact'] === 'target-count')
+                && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
+                return 'L’étape ' . ($index + 1) . ' doit utiliser une sélection de cibles précédente.';
+            }
+            if (in_array($step['fact'], ['roll-successes', 'last-roll-success', 'choice', 'counter'], true)
+                && ($step['referenceStepId'] === '' || !isset($seen[$step['referenceStepId']]))) {
+                return 'L’étape ' . ($index + 1) . ' doit référencer une étape précédente compatible.';
+            }
+            $reference = null;
+            foreach (array_slice($workflow['steps'], 0, $index) as $candidate) {
+                if ($candidate['id'] === $step['referenceStepId']) { $reference = $candidate; break; }
+            }
+            $expectedReferenceType = ['roll-successes' => 'rolls', 'last-roll-success' => 'rolls',
+                'choice' => 'choice', 'counter' => 'counter'][$step['fact']] ?? '';
+            if ($expectedReferenceType !== '' && (!is_array($reference) || $reference['type'] !== $expectedReferenceType)) {
+                return 'L’étape ' . ($index + 1) . ' doit référencer une étape « ' . $expectedReferenceType . ' ».';
+            }
+            if (in_array($step['fact'], ['roll-successes', 'last-roll-success'], true)
+                && is_array($reference) && $reference['threshold'] === null) {
+                return 'L’étape de jets référencée par l’étape ' . ($index + 1) . ' doit avoir un seuil de réussite.';
+            }
+            if ($step['fact'] === 'condition' && $step['conditionLabel'] === '') return 'Renseignez l’effet recherché à l’étape ' . ($index + 1) . '.';
+            if ($step['fact'] !== 'condition' && trim((string) $step['value']) === '') return 'Renseignez la valeur attendue à l’étape ' . ($index + 1) . '.';
+            if (in_array($step['fact'], ['condition', 'last-roll-success', 'health-state'], true)
+                && !in_array($step['operator'], ['eq', 'ne'], true)) {
+                return 'La comparaison de l’étape ' . ($index + 1) . ' doit être « égal » ou « différent ».';
+            }
+            if ($step['operator'] === 'between' && (trim((string) $step['secondValue']) === '' || !is_numeric($step['secondValue']))) {
+                return 'Renseignez la seconde valeur numérique de l’étape ' . ($index + 1) . '.';
+            }
+            foreach ([$step['onTrueStepId'], $step['onFalseStepId']] as $branch) {
+                if (in_array($branch, ['next', 'finish'], true)) continue;
+                $targetIndex = array_search($branch, array_column($workflow['steps'], 'id'), true);
+                if ($targetIndex === false || $targetIndex <= $index) return 'La branche de l’étape ' . ($index + 1) . ' doit aller vers une étape suivante ou terminer la compétence.';
+            }
+        }
     }
     return '';
 }
@@ -196,6 +317,7 @@ function applicationComplexAbilityInitialStepState(array $step): array
     elseif ($step['type'] === 'defense-series') $state['targets'] = [];
     elseif ($step['type'] === 'choice') $state['choice'] = null;
     elseif ($step['type'] === 'counter') $state += ['value' => $step['initial'], 'events' => []];
+    elseif ($step['type'] === 'condition') $state += ['outcome' => null, 'matchedCount' => 0, 'subjectCount' => 0, 'branch' => ''];
     return $state;
 }
 
@@ -235,6 +357,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         'controllerName' => applicationComplexAbilityText($context['controllerName'] ?? '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($ability['id'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
+        'completionCue' => normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null),
         'workflow' => $workflow,
         'status' => 'active', 'revision' => 1, 'currentStepIndex' => 0,
         'stepStates' => [], 'events' => [], 'createdAt' => $now, 'updatedAt' => $now,
@@ -267,6 +390,7 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'controllerName' => applicationComplexAbilityText($source['controllerName'] ?? '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($source['abilityId'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($source['abilityName'] ?? '', 120, 'Compétence complexe'),
+        'completionCue' => normalizeApplicationAbilityCompletionCue($source['completionCue'] ?? null),
         'workflow' => $workflow, 'status' => $status,
         'revision' => applicationComplexAbilityInteger($source['revision'] ?? null, 1, PHP_INT_MAX, 1),
         'currentStepIndex' => applicationComplexAbilityInteger($source['currentStepIndex'] ?? null, 0, count($workflow['steps']), 0),
@@ -317,6 +441,7 @@ function validApplicationComplexAbilityExecutions(mixed $value): bool
     if (!is_array($value) || !array_is_list($value) || count($value) > XAR_COMPLEX_ABILITY_MAXIMUM_EXECUTIONS) return false;
     foreach ($value as $entry) {
         if (!is_array($entry) || !validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)
+            || (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue']))
             || applicationComplexAbilityIdentifier($entry['id'] ?? '') === ''
             || applicationComplexAbilityIdentifier($entry['sceneId'] ?? '') === ''
             || applicationComplexAbilityIdentifier($entry['sourceTokenId'] ?? '') === ''
@@ -395,6 +520,183 @@ function applicationComplexAbilityCurrentDefenseIndex(array $state): ?int
     return null;
 }
 
+function applicationComplexAbilityHealthStateValue(mixed $value): string
+{
+    $text = applicationComplexAbilityComparable($value);
+    if (in_array($text, ['critique', 'critical'], true)) return 'critical';
+    if (in_array($text, ['ko', 'down', 'inconscient'], true)) return 'down';
+    if (in_array($text, ['mort', 'dead'], true)) return 'dead';
+    return 'normal';
+}
+
+function applicationComplexAbilityTokenConditionValue(array $token, array $step): mixed
+{
+    $hp = is_numeric($token['hp'] ?? null) ? (float) $token['hp'] : 0.0;
+    $maxHp = is_numeric($token['maxHp'] ?? null) ? (float) $token['maxHp'] : 0.0;
+    $mana = is_numeric($token['mana'] ?? null) ? (float) $token['mana'] : 0.0;
+    $maxMana = is_numeric($token['maxMana'] ?? null) ? (float) $token['maxMana'] : 0.0;
+    if ($step['fact'] === 'hp') return $hp;
+    if ($step['fact'] === 'hp-percent') return $maxHp > 0 ? max(0, min(100, $hp / $maxHp * 100)) : 0;
+    if ($step['fact'] === 'mana') return $mana;
+    if ($step['fact'] === 'mana-percent') return $maxMana > 0 ? max(0, min(100, $mana / $maxMana * 100)) : 0;
+    if ($step['fact'] === 'fatigue') {
+        $fatigue = is_array($token['fatigue'] ?? null) ? ($token['fatigue']['current'] ?? 0) : ($token['fatigue'] ?? 0);
+        return is_numeric($fatigue) ? 0 + $fatigue : 0;
+    }
+    if ($step['fact'] === 'health-state') {
+        $manualDeath = ($token['healthOverride'] ?? null) === 'dead';
+        $playerControlled = trim((string) ($token['controllerAccountId'] ?? $token['controllerPlayerId'] ?? '')) !== '';
+        if ($manualDeath || ($hp < 0 && (!$playerControlled || $hp < -$maxHp / 4))) return 'dead';
+        if ($hp <= 0) return 'down';
+        return $maxHp > 0 && ($hp / $maxHp * 100) < 10 ? 'critical' : 'normal';
+    }
+    if ($step['fact'] === 'condition') {
+        $wanted = applicationComplexAbilityComparable($step['conditionLabel'] !== '' ? $step['conditionLabel'] : $step['value']);
+        $conditions = is_array($token['conditions'] ?? null)
+            ? $token['conditions'] : explode(',', (string) ($token['condition'] ?? ''));
+        foreach ($conditions as $condition) if (applicationComplexAbilityComparable($condition) === $wanted) return true;
+        return false;
+    }
+    if ($step['fact'] === 'stat') {
+        $requested = preg_replace('/^character-stat-/', '', (string) $step['statId']) ?? '';
+        $aliases = ['dexterity' => 'dexterite', 'agility' => 'agilite', 'spiritSocial' => 'espritsocial', 'instinct' => 'instinctperception'];
+        $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
+        if (!array_is_list($stats)) {
+            $stats = array_map(static fn(string $id, mixed $value): array => ['id' => $id, 'value' => $value], array_keys($stats), array_values($stats));
+        }
+        foreach ($stats as $stat) {
+            if (!is_array($stat)) continue;
+            $id = preg_replace('/^character-stat-/', '', (string) ($stat['id'] ?? '')) ?? '';
+            $matches = $id === $requested || applicationComplexAbilityComparable($stat['label'] ?? '') === ($aliases[$requested] ?? applicationComplexAbilityComparable($requested));
+            if ($matches && is_numeric($stat['value'] ?? null)) return 0 + $stat['value'];
+        }
+        applicationComplexAbilityFail('La statistique demandée n’est plus disponible.', 'complex_ability_condition_data_missing');
+    }
+    applicationComplexAbilityFail('Cette donnée ne s’évalue pas sur un pion.', 'complex_ability_condition_invalid', 400);
+}
+
+function applicationComplexAbilityWorkflowConditionValue(array $execution, array $step): mixed
+{
+    if ($step['fact'] === 'target-count') {
+        $allocations = $execution['stepStates'][$step['sourceStepId']]['allocations'] ?? [];
+        return is_array($allocations) ? count($allocations) : 0;
+    }
+    $reference = $execution['stepStates'][$step['referenceStepId']] ?? null;
+    if (!is_array($reference)) applicationComplexAbilityFail('L’étape référencée n’a pas encore de résultat.', 'complex_ability_condition_data_missing');
+    if ($step['fact'] === 'roll-successes') {
+        return count(array_filter(is_array($reference['rolls'] ?? null) ? $reference['rolls'] : [], static fn(mixed $entry): bool => is_array($entry) && ($entry['success'] ?? false) === true));
+    }
+    if ($step['fact'] === 'last-roll-success') {
+        $rolls = is_array($reference['rolls'] ?? null) ? $reference['rolls'] : [];
+        $last = $rolls[count($rolls) - 1] ?? null;
+        if (!is_array($last) || !is_bool($last['success'] ?? null)) applicationComplexAbilityFail('Le dernier jet référencé n’a pas d’issue réussite/échec.', 'complex_ability_condition_data_missing');
+        return $last['success'];
+    }
+    if ($step['fact'] === 'choice') return is_array($reference['choice'] ?? null) ? $reference['choice'] : [];
+    if ($step['fact'] === 'counter') return is_numeric($reference['value'] ?? null) ? 0 + $reference['value'] : 0;
+    applicationComplexAbilityFail('Cette donnée d’étape n’est pas disponible.', 'complex_ability_condition_data_missing');
+}
+
+function applicationComplexAbilityCompareCondition(mixed $actual, array $step): bool
+{
+    if (is_bool($actual)) {
+        $expectedText = applicationComplexAbilityComparable($step['value']);
+        $expected = $step['fact'] === 'condition' && $expectedText === ''
+            ? true
+            : in_array($expectedText, ['true', 'vrai', 'oui', '1', 'reussite'], true);
+        return $step['operator'] === 'ne' ? $actual !== $expected : $actual === $expected;
+    }
+    if ($step['fact'] === 'choice' && is_array($actual)) {
+        $expected = applicationComplexAbilityComparable($step['value']);
+        $values = [applicationComplexAbilityComparable($actual['id'] ?? ''), applicationComplexAbilityComparable($actual['label'] ?? '')];
+        if (in_array($step['operator'], ['contains', 'not-contains'], true)) {
+            $contains = false;
+            foreach ($values as $value) if (str_contains($value, $expected)) { $contains = true; break; }
+            return $step['operator'] === 'not-contains' ? !$contains : $contains;
+        }
+        $equal = in_array($expected, $values, true);
+        return $step['operator'] === 'ne' ? !$equal : $equal;
+    }
+    if ($step['fact'] === 'health-state') {
+        $equal = applicationComplexAbilityHealthStateValue($actual) === applicationComplexAbilityHealthStateValue($step['value']);
+        return $step['operator'] === 'ne' ? !$equal : $equal;
+    }
+    if (is_numeric($actual) && is_numeric($step['value']) && !in_array($step['operator'], ['contains', 'not-contains'], true)) {
+        $left = (float) $actual; $right = (float) $step['value'];
+        return match ($step['operator']) {
+            'lt' => $left < $right, 'lte' => $left <= $right, 'gt' => $left > $right, 'gte' => $left >= $right,
+            'between' => is_numeric($step['secondValue']) && $left >= min($right, (float) $step['secondValue']) && $left <= max($right, (float) $step['secondValue']),
+            'ne' => $left !== $right, default => $left === $right,
+        };
+    }
+    $left = applicationComplexAbilityComparable($actual); $right = applicationComplexAbilityComparable($step['value']);
+    if ($step['operator'] === 'contains') return str_contains($left, $right);
+    if ($step['operator'] === 'not-contains') return !str_contains($left, $right);
+    return $step['operator'] === 'ne' ? $left !== $right : $left === $right;
+}
+
+function evaluateApplicationComplexAbilityCondition(array $execution, array $step, array $tokens, bool $isGm = false): array
+{
+    if (in_array($step['fact'], ['target-count', 'roll-successes', 'last-roll-success', 'choice', 'counter'], true)) {
+        $outcome = applicationComplexAbilityCompareCondition(applicationComplexAbilityWorkflowConditionValue($execution, $step), $step);
+        return ['outcome' => $outcome, 'matchedCount' => $outcome ? 1 : 0, 'subjectCount' => 1];
+    }
+    $subjects = [];
+    if ($step['subject'] === 'targets') {
+        foreach (is_array($execution['stepStates'][$step['sourceStepId']]['allocations'] ?? null) ? $execution['stepStates'][$step['sourceStepId']]['allocations'] : [] as $allocation) {
+            $token = applicationComplexAbilityTokenById($tokens, $allocation['tokenId'] ?? '');
+            if (is_array($token)) $subjects[] = $token;
+        }
+    } else {
+        $token = applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId'] ?? '');
+        if (is_array($token)) $subjects[] = $token;
+    }
+    if ($subjects === []) applicationComplexAbilityFail('Aucun sujet n’est disponible pour cette condition.', 'complex_ability_condition_subject_missing', 404);
+    $privateFacts = ['hp-percent', 'hp', 'mana-percent', 'mana', 'fatigue', 'stat'];
+    if (!$isGm && $step['subject'] === 'targets' && in_array($step['fact'], $privateFacts, true)) {
+        foreach ($subjects as $token) {
+            $detailsVisible = ($token['revealDetailsToPlayers'] ?? false) === true
+                || ($token['tacticalDetailsShared'] ?? false) === true
+                || ($token['playerControlled'] ?? false) === true
+                || trim((string) ($token['controllerAccountId'] ?? $token['controllerPlayerId'] ?? '')) !== '';
+            if (!$detailsVisible) {
+                applicationComplexAbilityFail(
+                    'Cette condition utilise une donnée tactique privée. Le MJ doit partager les détails de la cible ou évaluer l’étape.',
+                    'complex_ability_condition_private',
+                    403
+                );
+            }
+        }
+    }
+    $matched = 0;
+    foreach ($subjects as $token) if (applicationComplexAbilityCompareCondition(applicationComplexAbilityTokenConditionValue($token, $step), $step)) $matched += 1;
+    $outcome = $step['aggregation'] === 'all' ? $matched === count($subjects)
+        : ($step['aggregation'] === 'none' ? $matched === 0 : $matched > 0);
+    return ['outcome' => $outcome, 'matchedCount' => $matched, 'subjectCount' => count($subjects)];
+}
+
+function applicationComplexAbilityFinishCondition(array &$execution, array $step, array &$state, string $branch, int $now): void
+{
+    $state['status'] = 'completed'; $state['completedAt'] = $now; $state['branch'] = $branch;
+    if ($branch === 'finish') {
+        $execution['currentStepIndex'] = count($execution['workflow']['steps']);
+        $execution['status'] = 'completed'; $execution['completedAt'] = $now;
+        return;
+    }
+    $targetIndex = $branch === 'next' ? $execution['currentStepIndex'] + 1
+        : array_search($branch, array_column($execution['workflow']['steps'], 'id'), true);
+    if ($targetIndex === count($execution['workflow']['steps'])) {
+        $execution['currentStepIndex'] = $targetIndex; $execution['status'] = 'completed'; $execution['completedAt'] = $now;
+        return;
+    }
+    if (!is_int($targetIndex) || $targetIndex <= $execution['currentStepIndex'] || $targetIndex >= count($execution['workflow']['steps'])) {
+        applicationComplexAbilityFail('La branche de cette condition n’est plus valide.', 'complex_ability_condition_branch_invalid');
+    }
+    $execution['currentStepIndex'] = $targetIndex;
+    $next = $execution['workflow']['steps'][$targetIndex];
+    if (!isset($execution['stepStates'][$next['id']])) $execution['stepStates'][$next['id']] = applicationComplexAbilityInitialStepState($next);
+}
+
 function applicationComplexAbilityFinishStep(array &$execution, array &$state, int $now): void
 {
     $state['status'] = 'completed'; $state['completedAt'] = $now;
@@ -453,7 +755,19 @@ function applyApplicationComplexAbilityCommand(
         if (!$owner && !$isGm && !($defenseParticipant && $action === 'defense-roll')) {
             applicationComplexAbilityFail('Vous ne pouvez pas faire progresser cette compétence.', 'complex_ability_forbidden', 403);
         }
-        if ($step['type'] === 'instruction' && $action === 'acknowledge') {
+        if ($step['type'] === 'condition' && $action === 'evaluate-condition') {
+            $result = evaluateApplicationComplexAbilityCondition($execution, $step, $tokens, $isGm);
+            $state['outcome'] = $result['outcome'];
+            $state['matchedCount'] = $result['matchedCount'];
+            $state['subjectCount'] = $result['subjectCount'];
+            $branch = $result['outcome'] ? $step['onTrueStepId'] : $step['onFalseStepId'];
+            applicationComplexAbilityAppendEvent($execution, [
+                'type' => 'condition', 'actorId' => $actorId, 'actorName' => $actorName, 'stepId' => $step['id'],
+                'label' => $step['title'] . ' · ' . ($result['outcome'] ? 'vraie' : 'fausse'),
+                'detail' => $result['matchedCount'] . '/' . $result['subjectCount'] . ' sujet(s) correspondent.',
+            ], $now);
+            applicationComplexAbilityFinishCondition($execution, $step, $state, $branch, $now);
+        } elseif ($step['type'] === 'instruction' && $action === 'acknowledge') {
             applicationComplexAbilityAppendEvent($execution, ['type' => 'step', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' validée'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);

@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
-const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -77,10 +77,10 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
   }
 });
 
-test("le backend conserve la file Codex, porte le schéma de session 18 et le domaine chance", async () => {
+test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.16\.4'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-4-gameplay-tools-candidate-20260921-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.17\.0'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-5-ability-assistant-conditions-sounds-candidate-20260922-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -99,6 +99,11 @@ test("le backend conserve la file Codex, porte le schéma de session 18 et le do
   assert.match(index, /session_schema_16_undoable_resources_and_gm_creature_attacks/);
   assert.match(index, /VALUES \(18, :name, :checksum\)/);
   assert.match(index, /VALUES \(19, :name, :checksum\)/);
+  assert.match(index, /ability_assistant_conditions_and_completion_sounds/);
+  assert.match(index, /ability_assistant_conversations/);
+  assert.match(index, /ability_assistant_messages/);
+  assert.match(index, /ability_assistant_reports/);
+  assert.match(index, /ability_sound_assets/);
   assert.match(index, /readonly_character_luck_statistics_domain/);
   assert.match(index, /unset\(\$entry\['operation'\], \$entry\['undo'\]\)/);
   assert.match(index, /\$attack\['attackerRole'\] = 'player'/);
@@ -106,14 +111,16 @@ test("le backend conserve la file Codex, porte le schéma de session 18 et le do
   assert.match(index, /\$activity\['resourceReceipts'\] = \[\]/);
   assert.match(index, /SMALLINT UNSIGNED NOT NULL DEFAULT 16/);
   assert.match(index, /state_schema_version = :state_schema_version/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 18/);
+  assert.match(index, /SMALLINT UNSIGNED NOT NULL DEFAULT 19/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 19/);
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.16.4");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.4");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 20);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.17.0");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.5");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 21);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
+  assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
 
 test("les calques PV sont publics en lecture seule, stables et gérés uniquement par le MJ", async () => {
@@ -259,7 +266,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(online, /breaksOpposition'[\s\S]*?requiresGmValidation'/);
   assert.match(online, /'token\.attack\.resolve'/);
   assert.match(online, /'token\.attack\.oppose'/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 18/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 19/);
   assert.match(domains, /pendingAttacks/);
   assert.match(domains, /attackReceipts/);
   assert.match(domains, /XAR_PENDING_ATTACK_MAXIMUM = 100/);
@@ -315,8 +322,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.3.4");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.4"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.3.5");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.5"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -329,7 +336,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   assert.match(enforcement, /sendJson\(426/);
   assert.doesNotMatch(enforcement, /version_compare/);
   assert.match(workflow, /php tests\/client-policy\.php/);
-  assert.match(readme, /ancienne production 3\.3\.1 \/ candidate 3\.3\.3 \/ future 3\.3\.4 \/ absente \/ malformée → 426 \/ 401 \/ 426 \/ 426 \/ 426/);
+  assert.match(readme, /production précédente 3\.3\.4 \/ candidate 3\.3\.5 \/ future 3\.3\.6 \/ absente \/ malformée → 426 \/ 401 \/ 426 \/ 426 \/ 426/);
   assert.match(readme, /0\.15\.14 appliquait encore un comportement historique erroné/);
   assert.match(readme, /Depuis la 0\.15\.19,[\s\S]*?l’avantage conserve le plus petit d100 brut et le désavantage le plus grand/);
   assert.doesNotMatch(readme, /Le candidat 0\.15\.14 exécute toujours deux fois/);
@@ -476,11 +483,59 @@ test("le Compte de la Régie est une file sérialisée, pausable et sans identit
   assert.doesNotMatch(`${studio}\n${index}`, /OPENAI_API_KEY|auth\.json|machine[_-]?id|device[_-]?id|hardware[_-]?id/i);
 });
 
+test("l’assistant textuel reste lié au compte Régie, répare explicitement et remonte les lacunes", async () => {
+  const [assistant, studio, index, online, complex] = await Promise.all([
+    read("api/v1/ability-assistant.php"),
+    read("api/v1/image-studio.php"),
+    read("api/v1/index.php"),
+    read("api/v1/online.php"),
+    read("api/v1/complex-abilities.php")
+  ]);
+  assert.match(assistant, /resolveSession\(\$connection, requestSessionToken\(\)\)/);
+  assert.match(assistant, /\['gm', 'player'\]/);
+  assert.match(assistant, /ownerPlayerId[\s\S]*?character_forbidden/);
+  assert.match(assistant, /XAR_ABILITY_ASSISTANT_MAXIMUM_TURNS = 12/);
+  assert.match(assistant, /XAR_ABILITY_ASSISTANT_MAXIMUM_PROMPT_BYTES = 6000/);
+  assert.match(assistant, /SELECT GET_LOCK\(:lock_name, 12\)/);
+  assert.match(assistant, /\$lockName = 'xar-image-generation-'/);
+  assert.match(assistant, /GET_LOCK\('xar-regie-codex-access', 12\)/);
+  assert.match(assistant, /client_request_id = :client_request_id LIMIT 1/);
+  assert.match(assistant, /hash_equals\(\(string\) \$existing\['prompt'\], \$prompt\)/);
+  assert.match(assistant, /assistant_request_mismatch/);
+  assert.match(assistant, /'deduplicated' => true/);
+  assert.match(assistant, /Bearer\|Basic/);
+  assert.match(assistant, /api\[-_\]\?key/);
+  assert.ok(assistant.includes("~https?://"));
+  assert.match(assistant, /\[masqué\]/);
+  assert.match(assistant, /preserveApplicationAbilityRows\(\[\$value\], \[\$existing\]\)/);
+  assert.match(assistant, /\$value\['id'\] = \(string\) \$existing\['id'\]/);
+  assert.match(assistant, /\$value\['completionCue'\] = normalizeApplicationAbilityCompletionCue/);
+  assert.match(assistant, /applicationComplexAbilityWorkflowError/);
+  assert.match(assistant, /recordAbilityAssistantGap/);
+  assert.match(assistant, /assistant_draft_validation/);
+  assert.match(assistant, /\$assistantStatus === 'blocked'/);
+  assert.match(assistant, /requireRegieCodexOwner\(\$connection\)/);
+  assert.match(assistant, /origin ENUM|origin' => 'user'/);
+  assert.doesNotMatch(assistant, /privateNotes|OPENAI_API_KEY|auth\.json/i);
+  assert.match(index, /worker_image_ready/);
+  assert.match(index, /ability_assistant_conversations/);
+  assert.match(index, /ability_assistant_messages/);
+  assert.match(index, /ability_assistant_reports/);
+  assert.match(studio, /recoverExpiredAbilityAssistantJobs/);
+  assert.match(studio, /recoverReplacedAbilityAssistantJobs/);
+  assert.match(studio, /\$jobType = 'ability-assistant'/);
+  assert.match(studio, /imageGenerationAvailable/);
+  assert.match(online, /handleAbilityAssistantRoute\(\$connection/);
+  assert.match(complex, /complex_ability_condition_private/);
+  assert.match(complex, /\['hp-percent', 'hp', 'mana-percent', 'mana', 'fatigue', 'stat'\]/);
+});
+
 test("la pause du Compte de la Régie ne bloque jamais les générations personnelles", async () => {
   const studio = await read("api/v1/image-studio.php");
   const localBranch = studio.match(/if \(\$executionMode === 'regie'\) \{[\s\S]*?\$stale =/u)?.[0] ?? "";
   assert.match(localBranch, /regie_codex_paused/);
-  assert.match(studio, /AND execution_mode = :execution_mode AND status IN \('queued', 'generating'\)/);
+  assert.match(studio, /AND execution_mode = :image_execution_mode AND status IN \('queued', 'generating'\)/);
+  assert.match(studio, /WHERE :assistant_execution_mode = 'regie' AND author_account_id = :assistant_account_id/);
   assert.match(studio, /':execution_mode' => \$executionMode/);
   assert.match(studio, /\$executionMode === 'regie'[\s\S]*?Une demande utilise déjà le Compte de la Régie/);
   assert.match(studio, /Une génération personnelle est déjà en cours/);
@@ -845,6 +900,14 @@ test("les secrets ont une clé indépendante et les médias une rétention", asy
   assert.match(online, /storedMediaMatchesContentType/);
   assert.match(online, /media_signature_mismatch/);
   assert.match(online, /media_upload_incomplete/);
+  assert.match(online, /XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_BYTES = 500 \* 1024/);
+  assert.match(online, /XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_DURATION_MILLISECONDS = 5000/);
+  assert.match(online, /storedAbilitySoundDurationMilliseconds/);
+  assert.match(online, /ability_sound_too_long/);
+  assert.match(online, /\/api\/v1\/ability-sounds/);
+  assert.match(online, /INSERT INTO ability_sound_assets/);
+  assert.match(domains, /assertApplicationAbilitySoundAssets/);
+  assert.match(domains, /ability_sound_metadata_mismatch/);
   assert.match(online, /\$size !== \$declared/);
   assert.match(online, /getimagesize/);
   assert.match(online, /\$record\['pending_delete_at'\] !== null/);
@@ -873,7 +936,7 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 7/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 8/);
   assert.match(online, /normalizeOnlineAbilities/);
   assert.match(online, /'hitThreshold'/);
   assert.match(online, /\['stat', 'hit'\]/);

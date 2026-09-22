@@ -8,12 +8,17 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 2, 'steps' => [['type' => 'instruction']]]), 'format futur 2'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 3, 'steps' => [['type' => 'instruction']]]), 'format futur 3'),
     'A future workflow version is refused instead of being rewritten.'
 );
 
 $ability = [
     'id' => 'arvin-complex', 'name' => 'Enchaînement d’Arvin', 'effect' => 'complex', 'formula' => '0',
+    'completionCue' => [
+        'version' => 1, 'trigger' => 'completed',
+        'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'Impact.wav', 'contentType' => 'audio/wav', 'byteSize' => 40044, 'durationMs' => 5000],
+        'visual' => ['version' => 1, 'kind' => 'none'],
+    ],
     'workflow' => ['version' => 1, 'steps' => [
         ['id' => 'targets', 'type' => 'targets', 'title' => 'Répartir', 'description' => '', 'minTargets' => 1, 'maxTargets' => 3, 'allocationTotal' => 5],
         ['id' => 'defenses', 'type' => 'defense-series', 'title' => 'Défendre', 'description' => '', 'sourceStepId' => 'targets', 'thresholdMode' => 'fixed', 'fixedThreshold' => 50, 'stopOnSuccess' => true],
@@ -22,8 +27,10 @@ $ability = [
     ]],
 ];
 $tokens = [
-    ['id' => 'target-a', 'name' => 'Cible A', 'controllerAccountId' => 'player-a'],
-    ['id' => 'target-b', 'name' => 'Cible B', 'controllerAccountId' => 'player-b'],
+    ['id' => 'caster', 'name' => 'Arvin', 'controllerAccountId' => 'caster-player', 'hp' => 55, 'maxHp' => 100],
+    ['id' => 'target-a', 'name' => 'Cible A', 'controllerAccountId' => 'player-a', 'hp' => 50, 'maxHp' => 100],
+    ['id' => 'target-b', 'name' => 'Cible B', 'controllerAccountId' => 'player-b', 'hp' => 80, 'maxHp' => 100],
+    ['id' => 'target-private', 'name' => 'Cible privée', 'hp' => 18, 'maxHp' => 100],
 ];
 $execution = createApplicationComplexAbilityExecution([
     'id' => 'execution-contract', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
@@ -31,6 +38,27 @@ $execution = createApplicationComplexAbilityExecution([
     'ability' => $ability, 'now' => 1000,
 ]);
 requireComplexAbility($execution['revision'] === 1 && $execution['currentStepIndex'] === 0, 'A new workflow starts at revision one.');
+requireComplexAbility($execution['completionCue']['sound']['durationMs'] === 5000
+    && $execution['completionCue']['visual']['kind'] === 'none',
+    'A validated terminal sound and the dormant visual schema are snapshotted into the execution.');
+$ability['completionCue']['sound']['durationMs'] = 1;
+requireComplexAbility($execution['completionCue']['sound']['durationMs'] === 5000,
+    'Editing the ability later cannot mutate an active execution sound.');
+requireComplexAbility(!validApplicationAbilityCompletionCue([
+    'version' => 1, 'trigger' => 'completed',
+    'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'Trop long.wav', 'contentType' => 'audio/wav', 'byteSize' => 40045, 'durationMs' => 5001],
+    'visual' => ['version' => 1, 'kind' => 'none'],
+]), 'A terminal sound over five seconds is refused rather than rewritten.');
+$legacyAbilityWrite = $ability;
+unset($legacyAbilityWrite['completionCue']);
+$legacyAbilityWrite['completionCue'] = preserveApplicationAbilityRows([$legacyAbilityWrite], [[...$ability, 'completionCue' => $execution['completionCue']]])[0]['completionCue'] ?? null;
+requireComplexAbility(($legacyAbilityWrite['completionCue']['sound']['durationMs'] ?? 0) === 5000,
+    'A draining older client cannot erase the terminal sound by omitting the new field.');
+$explicitRemoval = preserveApplicationAbilityRows([[
+    ...$legacyAbilityWrite, 'completionCue' => normalizeApplicationAbilityCompletionCue(null),
+]], [[...$ability, 'completionCue' => $execution['completionCue']]])[0];
+requireComplexAbility($explicitRemoval['completionCue']['sound'] === null,
+    'The current client can explicitly remove a terminal sound.');
 
 $before = $execution;
 try {
@@ -114,6 +142,80 @@ try {
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_terminal', 'A cancelled workflow stays terminal.');
 }
+
+$conditionAbility = [
+    'id' => 'conditional', 'name' => 'Seuil de sang', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 2, 'steps' => [
+        ['id' => 'targets', 'type' => 'targets', 'title' => 'Cibles', 'minTargets' => 1, 'maxTargets' => 2],
+        ['id' => 'half-life', 'type' => 'condition', 'title' => 'À mi-vie', 'subject' => 'targets',
+            'sourceStepId' => 'targets', 'aggregation' => 'any', 'fact' => 'hp-percent', 'operator' => 'lte',
+            'value' => 50, 'onTrueStepId' => 'weakened', 'onFalseStepId' => 'finish'],
+        ['id' => 'weakened', 'type' => 'instruction', 'title' => 'Appliquer l’effet prévu'],
+    ]],
+];
+$conditional = createApplicationComplexAbilityExecution([
+    'id' => 'execution-condition', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
+    'sourceName' => 'Arvin', 'controllerAccountId' => 'caster-player', 'controllerName' => 'Arvin',
+    'ability' => $conditionAbility, 'now' => 3000,
+]);
+$conditional = applyApplicationComplexAbilityCommand($conditional, [
+    'action' => 'select-targets', 'expectedRevision' => 1,
+    'allocations' => [['tokenId' => 'target-a', 'count' => 1], ['tokenId' => 'target-b', 'count' => 1]],
+], ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3100]);
+$conditional = applyApplicationComplexAbilityCommand($conditional, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+    'actor' => ['id' => 'gm-owner', 'name' => 'MJ', 'role' => 'gm'], 'tokens' => $tokens, 'now' => 3200,
+]);
+requireComplexAbility($conditional['currentStepIndex'] === 2 && $conditional['stepStates']['half-life']['outcome'] === true,
+    'Exactly fifty percent satisfies an at-most-fifty-percent condition and follows its forward branch.');
+requireComplexAbility($conditional['stepStates']['half-life']['matchedCount'] === 1
+    && $conditional['stepStates']['half-life']['subjectCount'] === 2,
+    'A condition receipt exposes only the boolean aggregate and counts.');
+
+$criticalWorkflow = normalizeApplicationComplexAbilityWorkflow(['version' => 2, 'steps' => [[
+    'id' => 'critical', 'type' => 'condition', 'title' => 'Critique', 'fact' => 'health-state',
+    'operator' => 'eq', 'value' => 'Critique', 'onTrueStepId' => 'finish', 'onFalseStepId' => 'finish',
+]]]);
+$criticalExecution = createApplicationComplexAbilityExecution([
+    'id' => 'execution-critical', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
+    'sourceName' => 'Arvin', 'controllerAccountId' => 'caster-player', 'controllerName' => 'Arvin',
+    'ability' => ['id' => 'critical-check', 'name' => 'Critique', 'effect' => 'complex', 'formula' => '0', 'workflow' => $criticalWorkflow],
+    'now' => 3300,
+]);
+$criticalStep = $criticalWorkflow['steps'][0];
+requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 10]], true)['outcome'] === false,
+    'Ten percent is not critical.');
+requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 9]], true)['outcome'] === true,
+    'Below ten percent is critical.');
+
+$privateAbility = $conditionAbility;
+$privateAbility['workflow']['steps'][0]['maxTargets'] = 1;
+$privateAbility['workflow']['steps'][1]['fact'] = 'hp';
+$privateAbility['workflow']['steps'][1]['value'] = 20;
+$privateExecution = createApplicationComplexAbilityExecution([
+    'id' => 'execution-private', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
+    'sourceName' => 'Arvin', 'controllerAccountId' => 'caster-player', 'controllerName' => 'Arvin',
+    'ability' => $privateAbility, 'now' => 3400,
+]);
+$privateExecution = applyApplicationComplexAbilityCommand($privateExecution, [
+    'action' => 'select-targets', 'expectedRevision' => 1,
+    'allocations' => [['tokenId' => 'target-private', 'count' => 1]],
+], ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3500]);
+try {
+    applyApplicationComplexAbilityCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+        'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3600,
+    ]);
+    throw new RuntimeException('A player must not probe exact hostile health.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_condition_private' && $error->httpStatus === 403,
+        'Private tactical facts have an explicit refusal.');
+}
+$sharedTokens = array_map(static fn(array $token): array => ($token['id'] ?? '') === 'target-private'
+    ? [...$token, 'tacticalDetailsShared' => true] : $token, $tokens);
+$privateExecution = applyApplicationComplexAbilityCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+    'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $sharedTokens, 'now' => 3700,
+]);
+requireComplexAbility($privateExecution['stepStates']['half-life']['outcome'] === true,
+    'A player can evaluate the same condition after the MJ shares tactical details.');
 
 $terminalExecutions = [];
 for ($index = 0; $index < 70; $index += 1) {

@@ -1,4 +1,16 @@
-# Backend OVH — Régie du Seuil 0.16.4
+# Backend OVH — Régie du Seuil 0.17.0
+
+Client exact **3.3.5**, build `client-3-3-5-ability-assistant-conditions-sounds-candidate-20260922-1`. Cette livraison ajoute les conditions autoritaires des compétences complexes et l’assistant textuel de création ou de réparation. L’assistant utilise exclusivement la file du Compte de la Régie, produit une proposition que le joueur ou le MJ doit appliquer explicitement et ne reçoit aucun outil d’image, shell, réseau ou connecteur. Une fonction comprise mais absente du moteur crée automatiquement un rapport structuré, dédupliqué et visible seulement par le propriétaire Innota de la Régie ; un joueur peut aussi signaler manuellement une compétence défectueuse.
+
+Une compétence complexe peut référencer un son terminal privé MP3 ou WAV. L’application puis le backend contrôlent réellement sa signature, sa taille maximale de **500 Ko (512 000 octets)** et sa durée maximale de **5 secondes**. Le backend atteste l’actif en base et refuse toute référence ou métadonnée forgée ; le son est figé avec l’exécution et n’est émis qu’après la transition autoritaire vers `completed`, jamais après `cancelled`. Le schéma réserve `visual.kind = none` pour une future animation sans activer, générer ni accepter aucun effet visuel dans ce candidat.
+
+Les conditions couvrent PV et mana bruts ou en pourcentage, état de santé, fatigue, effets, statistique, nombre de cibles, réussites et dernier jet, choix et charges, avec agrégations et branchements uniquement vers l’avant. « Critique » reste strictement inférieur à 10 % de PV ; « 50 % ou moins » inclut exactement 50 %. Les valeurs tactiques exactes d’un adversaire non partagé ne peuvent pas être interrogées par un joueur. Les schémas passent à session **19**, fiche **8** et MySQL **21** ; domaines **1** reste inchangé. Les migrations historiques, données existantes, révisions et reçus sont conservés, et les schémas futurs restent refusés.
+
+Qualification locale du candidat 0.17.0 : tests Node **49/49**. La syntaxe et les contrats PHP natifs restent des barrières obligatoires du workflow avant tout déploiement.
+
+Activation OVH non acquise par la seule source. Après basculement, la matrice attendue est production précédente 3.3.4 / candidate 3.3.5 / future 3.3.6 / absente / malformée → 426 / 401 / 426 / 426 / 426. Le 401 exact ne prouve que le franchissement de la politique sans authentification.
+
+## Historique 0.16.4
 
 Client exact 3.3.4, build `client-3-3-4-gameplay-tools-candidate-20260921-1`. Cette livraison ajoute l’autorité persistante des compétences complexes, les repos sélectifs et le contrat « Échec amoindri » des compétences classiques : un jet de lancement raté conserve les coûts, ne résout aucun effet et crée exactement un round de recharge sans contour par « réutilisable dans le tour ». Les ordres/masquages temporaires audio et les lumières restent bornés par les domaines existants. Schéma MySQL 20 inchangé ; aucune donnée ni configuration privée n’est exportée.
 
@@ -217,11 +229,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.2`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.2`, `latestVersion=3.3.2` et `allowedVersions=["3.3.2"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.5`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.5`, `latestVersion=3.3.5` et `allowedVersions=["3.3.5"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.2 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.5 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.2.20 / 3.3.1 / 3.3.2 / 3.3.3 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.3.4 / 3.3.5 / 3.3.6 / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 
@@ -252,6 +264,8 @@ regie/
     ├── index.php
     ├── online.php
     ├── domains.php
+    ├── ability-assistant.php
+    ├── complex-abilities.php
     └── image-studio.php
 ```
 
