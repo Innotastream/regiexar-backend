@@ -78,7 +78,7 @@ requireTactical($timer['cooldownActive'] === true && $timer['readyRound'] === 4 
 
 // A reduced classic failure pays its costs, resolves no effect here, and
 // creates a non-reusable one-round timer even when the normal rule is longer.
-$db = patchAbilityFixture(['castingStatId' => 'character-stat-intelligence', 'reducedFailureCooldown' => true,
+$db = patchAbilityFixture(['castingStatId' => 'force', 'reducedFailureCooldown' => true,
     'manaCost' => 1, 'hpCost' => 0, 'fatigueCost' => 0, 'cooldownRounds' => 9, 'restRecharge' => 'long']);
 $records = applicationDomainRecords($db); $pending = [];
 $character = $db->payload('character:character-player');
