@@ -5305,10 +5305,11 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             }
             if ($isGm) {
-                $sceneId = trim((string) ($arguments['sceneId'] ?? ''));
-                if ($sceneId !== '' && !validApplicationDomainIdentifier($sceneId, 80)) {
+                $requestedSceneId = trim((string) ($arguments['sceneId'] ?? ''));
+                if ($requestedSceneId !== '' && !validApplicationDomainIdentifier($requestedSceneId, 80)) {
                     rejectOnlineCommand($connection, 400, 'La scène de l’attaque est invalide.', 'invalid_attack_scene');
                 }
+                if ($requestedSceneId !== '') $sceneId = $requestedSceneId;
             } elseif (trim((string) ($arguments['sceneId'] ?? '')) !== ''
                 && trim((string) $arguments['sceneId']) !== $sceneId) {
                 rejectOnlineCommand($connection, 409, 'La scène diffusée a changé. Actualisez la carte avant d’attaquer.', 'stale_scene');
