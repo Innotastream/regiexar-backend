@@ -1,4 +1,8 @@
-# Backend OVH — Régie du Seuil 0.17.5
+# Backend OVH — Régie du Seuil 0.17.6
+
+Client exact **3.3.11**, build `client-3-3-11-independent-revision-audit-candidate-20260924-1`. La politique accompagne le rattrapage indépendant des révisions dans les clients MJ et Joueur. Le backend métier, ses transactions, ses projections, ses droits et ses diagnostics restent inchangés. MySQL reste en version **21**, sans migration.
+
+## Livraison précédente conservée : 0.17.5
 
 Client exact **3.3.10**, build `client-3-3-10-ruler-mj-sync-candidate-20260923-1`. Politique alignée sur la règle Joueur masquée après glissement et le signalement de l'envoi MJ. Les règles métier et diagnostics privés restent acquis. MySQL reste en version **21**, sans migration.
 
@@ -241,11 +245,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.10`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.10`, `latestVersion=3.3.10` et `allowedVersions=["3.3.10"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.11`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.11`, `latestVersion=3.3.11` et `allowedVersions=["3.3.11"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.10 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.11 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `version effectivement en production avant déploiement / 3.3.10 / version future / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `version effectivement en production avant déploiement / 3.3.11 / version future / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 
