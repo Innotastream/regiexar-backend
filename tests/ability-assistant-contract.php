@@ -26,6 +26,20 @@ function rejectedAssistantDraft(array $conversation, array $draft): bool {
     return false;
 }
 
+// Corps effectivement relayé par l'application 3.4.0 pour l'aide depuis
+// l'accueil MJ et l'accueil Joueur (le champ mode est perdu par le relais).
+foreach (['gm', 'player'] as $effectiveMode) {
+    $accountHelp = ['characterId' => ''];
+    assertAssistantDraft(abilityAssistantRequestsHelp($accountHelp),
+        "L'aide générale $effectiveMode sans fiche doit créer une conversation.");
+    assertAssistantDraft(abilityAssistantRequestsHelp(['characterId' => '', 'mode' => 'help']),
+        "L'aide générale explicite $effectiveMode doit rester accessible.");
+    assertAssistantDraft(!abilityAssistantRequestsHelp(['characterId' => 'character-hero']),
+        "Une compétence $effectiveMode liée à une fiche doit conserver le contrôle d'accès.");
+    assertAssistantDraft(!abilityAssistantRequestsHelp(['characterId' => '', 'existingAbilityId' => 'ability-hero']),
+        "Une réparation $effectiveMode sans fiche ne doit pas être traitée en aide générale.");
+}
+
 $context = [
     'character' => ['id' => 'character-hero'],
     'existingAbility' => null,

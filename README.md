@@ -1,6 +1,10 @@
-# Backend OVH — Régie du Seuil 0.18.0 (candidat)
+# Backend OVH — Régie du Seuil 0.18.1
 
-Client exact **3.4.0**, build `client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1`. L'assistant répond aux demandes d'aide générale et peut valider un brouillon classique ou complexe lié à une fiche ; ses références d'invocation et de métamorphose restent bornées aux données autorisées de la fiche. Le son bref est préservé lors d'une réparation et accepté pour toutes les capacités lançables. Schéma MySQL **22** : ajout du statut `answer` aux messages d'assistance ; politiques de session strictes `[3.4.0]`. Contrat PHP dédié inclus dans la CI. Backend non encore déployé.
+Client exact **3.4.0**, build `client-3-4-0-assistant-help-hotfix-20260924-1`. L'aide générale sans personnage fonctionne avec le corps de requête déjà émis par les applications MJ et Joueur 3.4.0 ; les demandes liées à une fiche conservent le contrôle d'accès. Schéma MySQL **22** inchangé, sans migration ; politique de session exacte `[3.4.0]`. Le contrat PHP vérifie les deux cas et la réparation liée à une fiche.
+
+## Livraison précédente conservée : 0.18.0
+
+L'assistant répond aux demandes d'aide générale et peut valider un brouillon classique ou complexe lié à une fiche ; ses références d'invocation et de métamorphose restent bornées aux données autorisées de la fiche. Le son bref est préservé lors d'une réparation et accepté pour toutes les capacités lançables. Schéma MySQL **22** : ajout du statut `answer` aux messages d'assistance ; politiques de session strictes `[3.4.0]`.
 
 ## Livraison précédente conservée : 0.17.6
 

@@ -148,13 +148,23 @@ function abilityAssistantConversationPayload(array $row): array
     ];
 }
 
+function abilityAssistantRequestsHelp(array $payload): bool
+{
+    if (($payload['mode'] ?? null) === 'help') return true;
+    // Le client 3.4.0 omet « mode » dans son relais local : l'aide du compte
+    // arrive avec une référence de personnage vide et sans compétence liée.
+    return in_array($payload['mode'] ?? null, [null, ''], true)
+        && trim((string) ($payload['characterId'] ?? '')) === ''
+        && trim((string) ($payload['existingAbilityId'] ?? '')) === '';
+}
+
 function createAbilityAssistantConversation(PDO $connection): never
 {
     $identity = requireAbilityAssistantIdentity($connection);
     $payload = readJsonBody(32768);
     $characterId = trim((string) ($payload['characterId'] ?? ''));
     $existingAbilityId = trim((string) ($payload['existingAbilityId'] ?? ''));
-    $help = ($payload['mode'] ?? '') === 'help';
+    $help = abilityAssistantRequestsHelp($payload);
     if ($existingAbilityId !== '' && preg_match('/^[A-Za-z0-9_-]{1,120}$/D', $existingAbilityId) !== 1) {
         sendError(400, 'Référence de compétence invalide.', 'invalid_ability');
     }
