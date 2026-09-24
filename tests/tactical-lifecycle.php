@@ -1050,7 +1050,9 @@ requireTactical(
     ($gmPlayerAction['kind'] ?? '') === 'roll'
         && ($gmPlayerAction['characterName'] ?? '') === 'Personnage'
         && ($gmPlayerAction['summary'] ?? '') === 'Force (Avantage)'
-        && substr_count((string) ($gmPlayerAction['detail'] ?? ''), "\n") === 2
+        && substr_count((string) ($gmPlayerAction['detail'] ?? ''), "\n") === 3
+        && str_contains((string) ($gmPlayerAction['detail'] ?? ''), 'dé brut ')
+        && str_contains((string) ($gmPlayerAction['detail'] ?? ''), 'seuil ')
         && str_contains((string) ($gmPlayerAction['detail'] ?? ''), '(jet ignoré)')
         && !str_contains((string) ($gmPlayerAction['summary'] ?? ''), 'Lance ')
         && !str_contains((string) ($gmPlayerAction['detail'] ?? ''), 'Nom :'),
