@@ -1,4 +1,8 @@
-# Backend OVH — Régie du Seuil 0.18.1
+# Backend OVH — Régie du Seuil 0.18.2
+
+Client exact **3.4.1**, build `client-3-4-1-scenes-fatigue-lights-20260924-1`. Le MJ joue et lance des dés sur sa scène de travail sans la diffuser ; les jets de scène non publiée restent secrets. Le joueur périmé est invité à actualiser sa carte sans relancer son attaque. La fatigue au-delà de la moitié de sa jauge diminue le seuil d'une statistique de 1 ; le serveur inscrit le dé brut, le seuil et la jauge dans les résultats autorisés. Schéma MySQL **22** inchangé, sans migration ; politique de session exacte `[3.4.1]`.
+
+## Version précédente 0.18.1
 
 Client exact **3.4.0**, build `client-3-4-0-assistant-help-hotfix-20260924-1`. L'aide générale sans personnage fonctionne avec le corps de requête déjà émis par les applications MJ et Joueur 3.4.0 ; les demandes liées à une fiche conservent le contrôle d'accès. Schéma MySQL **22** inchangé, sans migration ; politique de session exacte `[3.4.0]`. Le contrat PHP vérifie les deux cas et la réparation liée à une fiche.
 

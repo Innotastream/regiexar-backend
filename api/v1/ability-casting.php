@@ -185,6 +185,10 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
     $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier);
+    if ($outcome !== null) {
+        $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId']);
+        if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
+    }
     if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
     $roll = onlineRollEntry($identity, $rolled, $plan['label'] . ' · Lancement · ' . $plan['statLabel'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $roll = onlineAbilityRollVisibility($roll, $source, $identity);

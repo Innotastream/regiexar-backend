@@ -118,6 +118,7 @@ function fixture(): MemoryConnection
 {
     return new MemoryConnection([
         'table' => ['activeSceneId' => 'scene-one', 'tacticalSync' => ['paused' => false]],
+        'scene:scene-one' => ['id' => 'scene-one', 'name' => 'Scène diffusée'],
         'map:scene-one' => ['gridSize' => 50],
         'token-index:scene-one' => ['order' => ['token-player', 'token-monster', 'token-monster-two']],
         'initiative:scene-one' => ['active' => true, 'order' => ['token-monster', 'token-player'], 'currentIndex' => 0],
@@ -160,6 +161,62 @@ function deletionFixture(): MemoryConnection
     $database->put('token-index:scene-two', ['order' => ['token-copy']]);
     $database->put('initiative:scene-two', ['active' => false, 'order' => ['token-copy'], 'currentIndex' => 0]);
     return $database;
+}
+
+// The GM can roll and attack on a prepared scene without publishing it to players.
+$prepared = fixture();
+$prepared->put('scene:scene-two', ['id' => 'scene-two', 'name' => 'Scène préparée']);
+$prepared->put('map:scene-two', ['activeLayerId' => 'ground', 'gridSize' => 50]);
+$prepared->put('initiative:scene-two', ['active' => false, 'order' => [], 'currentIndex' => 0]);
+$prepared->put('token:scene-two:token-monster', $prepared->payload('token:scene-one:token-monster'));
+$gmRoll = runCommand($prepared, 'token.roll', [
+    'sceneId' => 'scene-two', 'tokenId' => 'token-copy', 'layerId' => 'ground',
+    'kind' => 'stat', 'statId' => 'character-stat-force', 'requestId' => 'prepared-gm-roll-0001',
+], true, 'account-gm');
+requireTactical($gmRoll->status === 200 && ($gmRoll->body['roll']['outcome']['baseThreshold'] ?? null) === 50
+    && ($gmRoll->body['roll']['visibility'] ?? '') === 'gm' && !isset($gmRoll->body['discordPosted'])
+    && $prepared->payload('table')['activeSceneId'] === 'scene-one',
+    'A GM rolls on the actual open scene while the published scene remains unchanged');
+$gmAttack = runCommand($prepared, 'token.attack', [
+    'sceneId' => 'scene-two', 'layerId' => 'ground', 'sourceTokenId' => 'token-monster',
+    'targetTokenId' => 'token-copy', 'attackKind' => 'weapon', 'attackId' => 'monster-claw',
+    'statId' => 'monster-force', 'requestId' => 'prepared-gm-attack-0001',
+], true, 'account-gm');
+requireTactical($gmAttack->status === 200 && ($gmAttack->body['attack']['sceneId'] ?? '') === 'scene-two'
+    && ($gmAttack->body['attack']['sourceTokenId'] ?? '') === 'token-monster'
+    && ($gmAttack->body['hitRoll']['visibility'] ?? '') === 'gm' && !isset($gmAttack->body['discordPosted'])
+    && $prepared->payload('table')['activeSceneId'] === 'scene-one',
+    'An attack in a prepared scene uses its own tokens and does not publish that scene');
+$revision = $prepared->revision;
+$stalePlayerAttack = runCommand($prepared, 'token.attack', [
+    'sceneId' => 'scene-two', 'layerId' => 'ground', 'sourceTokenId' => 'token-copy',
+    'targetTokenId' => 'token-monster', 'attackKind' => 'weapon', 'attackId' => 'weapon-1',
+    'statId' => 'character-stat-force', 'requestId' => 'prepared-player-attack-0001',
+]);
+requireTactical($stalePlayerAttack->status === 409 && ($stalePlayerAttack->body['code'] ?? '') === 'stale_scene'
+    && $prepared->revision === $revision,
+    'A player whose local map is no longer published receives an explicit refresh error without rerolling');
+
+foreach ([50, 99] as $fatigueLevel) {
+    $fatigued = fixture();
+    $character = $fatigued->payload('character:character-player');
+    $character['stats']['force'] = 60;
+    $character['fatigue'] = ['current' => $fatigueLevel, 'max' => 100];
+    $fatigued->put('character:character-player', $character);
+    $response = runCommand($fatigued, 'token.roll', [
+        'sceneId' => 'scene-one', 'tokenId' => 'token-player', 'kind' => 'stat',
+        'statId' => 'character-stat-force', 'requestId' => 'fatigue-stat-roll-0001',
+    ]);
+    $roll = $response->body['roll'] ?? [];
+    $outcome = $roll['outcome'] ?? [];
+    $expected = $fatigueLevel === 99 ? 59 : 60;
+    requireTactical($response->status === 200 && ($outcome['baseThreshold'] ?? null) === $expected
+        && ($outcome['threshold'] ?? null) === $expected
+        && ($outcome['fatigue']['before'] ?? null) === ($fatigueLevel === 99 ? 60 : null)
+        && ($outcome['fatigue']['penalty'] ?? null) === ($fatigueLevel === 99 ? 1 : null)
+        && str_contains(applicationRollActivityFields($roll)['detail'], 'dé brut ' . $outcome['raw'])
+        && str_contains(onlineDiscordRollContent($roll), 'seuil ' . ($fatigueLevel === 99 ? '60 −1 (fatigue 99/100) = 59' : '60')),
+        'At fatigue ' . $fatigueLevel . ', one stored roll exposes its original die and actual server threshold');
 }
 
 // Exercise the player-account routes through the real command dispatcher. These

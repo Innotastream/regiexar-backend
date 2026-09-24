@@ -13,6 +13,51 @@ function applicationRollUppercase(string $value): string {
     ]);
 }
 
+function onlineStatFatigueDetails(array $source, string $statId, ?array $character = null): ?array {
+    if (!str_starts_with($statId, 'character-stat-') || trim((string) ($source['characterId'] ?? '')) === ''
+        || ($source['followCharacter'] ?? true) === false || trim((string) ($source['linkedTokenId'] ?? '')) !== '') return null;
+    $fatigue = is_array($source['fatigue'] ?? null) ? $source['fatigue'] : [];
+    $current = is_numeric($fatigue['current'] ?? null) ? (float) $fatigue['current'] : 0;
+    $maximum = is_numeric($fatigue['max'] ?? null) && (float) $fatigue['max'] > 0 ? (float) $fatigue['max'] : 100;
+    if ($current <= $maximum / 2) return null;
+    $index = findEntryIndex(is_array($source['stats'] ?? null) ? $source['stats'] : [], $statId);
+    if ($index < 0 || !is_numeric($source['stats'][$index]['value'] ?? null)) return null;
+    $effective = max(0, min(100, (int) $source['stats'][$index]['value']));
+    $before = $effective > 0 ? min(100, $effective + 1) : null;
+    $key = substr($statId, strlen('character-stat-'));
+    if (is_array($character) && $character !== []) {
+        $original = $key === 'mentalResistance'
+            ? ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? null)
+            : ($character['temporaryStats'][$key] ?? $character['stats'][$key] ?? null);
+        if (is_numeric($original)) $before = max(0, min(100, (int) $original));
+    }
+    return ['current' => $current, 'max' => $maximum, 'penalty' => 1, 'before' => $before];
+}
+
+function applicationD100Comparison(array $outcome): string {
+    if (!is_numeric($outcome['raw'] ?? null) || !is_numeric($outcome['threshold'] ?? null)) return '';
+    $raw = (int) $outcome['raw'];
+    $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
+    $modifier = (int) ($outcome['modifier'] ?? 0);
+    $threshold = (int) $outcome['threshold'];
+    $signed = static fn(int $value): string => ($value > 0 ? '+' : '−') . abs($value);
+    $parts = ['dé brut ' . $raw . ($resultModifier !== 0
+        ? ' ' . $signed($resultModifier) . ' = ' . (int) ($outcome['result'] ?? $raw + $resultModifier) : '')];
+    $fatigue = is_array($outcome['fatigue'] ?? null) ? $outcome['fatigue'] : [];
+    if (($fatigue['penalty'] ?? 0) === 1) {
+        $before = is_numeric($fatigue['before'] ?? null) ? (int) $fatigue['before'] : null;
+        $level = (0 + ($fatigue['current'] ?? 0)) . '/' . (0 + ($fatigue['max'] ?? 100));
+        $parts[] = ($before === null ? 'fatigue ' . $level . ' : −1 · seuil après fatigue ' . (int) ($outcome['baseThreshold'] ?? $threshold)
+            : 'seuil ' . $before . ' −1 (fatigue ' . $level . ')')
+            . ($modifier !== 0 ? ' ' . $signed($modifier) : '') . ' = ' . $threshold;
+    } else {
+        $parts[] = $modifier !== 0
+            ? 'seuil ' . (int) ($outcome['baseThreshold'] ?? 0) . ' ' . $signed($modifier) . ' = ' . $threshold
+            : 'seuil ' . $threshold;
+    }
+    return implode(' · ', $parts);
+}
+
 function applicationRollPresentation(array $roll): array {
     $mode = normalizeOnlineRollMode($roll['rollMode'] ?? 'normal');
     $formula = trim((string) ($roll['formula'] ?? 'Jet')) ?: 'Jet';
@@ -39,10 +84,12 @@ function applicationRollPresentation(array $roll): array {
     }
     $label = trim((string) ($roll['label'] ?? 'Jet')) ?: 'Jet';
     $outcome = trim((string) ($roll['outcome']['label'] ?? ''));
+    $comparison = applicationD100Comparison(is_array($roll['outcome'] ?? null) ? $roll['outcome'] : []);
     return [
         'character' => $character,
         'type' => $label . ($mode === 'normal' ? '' : ' (' . applicationRollModeLabel($mode) . ')'),
         'calculations' => $calculations,
+        'comparison' => $comparison,
         'outcome' => $outcome === '' ? '' : applicationRollUppercase($outcome),
     ];
 }
@@ -53,6 +100,7 @@ function applicationRollActivityFields(array $roll): array {
     foreach ($presentation['calculations'] as $calculation) {
         $lines[] = $calculation['formula'] . ' : ' . $calculation['total'] . ($calculation['ignored'] ? ' (jet ignoré)' : '');
     }
+    if ($presentation['comparison'] !== '') $lines[] = $presentation['comparison'];
     if ($presentation['outcome'] !== '') $lines[] = $presentation['outcome'];
     return [
         'characterName' => $presentation['character'],
@@ -203,7 +251,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm') rejectOnlineCommand($connection, 403, 'Ces jets tactiques sont réservés au MJ.', 'gm_required');
     $tokenId = (string) ($arguments['tokenId'] ?? ''); $characterId = (string) ($arguments['characterId'] ?? '');
     $sceneId = (string) ($arguments['sceneId'] ?? '');
-    if ($sceneId !== onlineActiveSceneId($table)) rejectOnlineCommand($connection, 409, 'La scène du jet a changé ; rouvrez la fiche.', 'stale_scene');
+    if ($tokenId !== '' && $sceneId === '') rejectOnlineCommand($connection, 409, 'La scène du jet est absente ; rouvrez la fiche.', 'tactical_roll_scene_required');
     if (($tokenId !== '' && !validApplicationDomainIdentifier($arguments['sceneId'] ?? null, 80)) || ($sceneId !== '' && !validApplicationDomainIdentifier($sceneId, 80))) rejectOnlineCommand($connection, 409, 'La scène du jet a changé ; rouvrez la fiche.', 'tactical_roll_scene_required');
     if ($tokenId !== '' && !in_array($arguments['layerId'] ?? null, ['basement', 'ground', 'upper'], true)) rejectOnlineCommand($connection, 409, 'Le niveau du jet est absent ou invalide ; rouvrez la fiche.', 'stale_token_layer');
     $sourceKey = $tokenId !== '' ? onlineTokenDomainKey($sceneId, $tokenId) : 'character:' . $characterId;
@@ -244,10 +292,18 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit')
         : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
+    if ($outcome !== null && $spec['kind'] === 'stat') {
+        $fatigue = onlineStatFatigueDetails($source, (string) ($arguments['statId'] ?? ''), $character ?? null);
+        if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
+    }
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $roll['diceAppearance'] = onlineDiceAppearance($source, !empty($source['controllerPlayerId']), $character ?? null);
     if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal', 'diceAppearance' => $roll['diceAppearance']];
     $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility']);
+    if ($sceneId !== '' && $sceneId !== onlineActiveSceneId($table)) {
+        $roll['visibility'] = 'gm';
+        $roll['revealed'] = false;
+    }
     $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);

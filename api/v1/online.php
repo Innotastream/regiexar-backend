@@ -3573,7 +3573,7 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
             'effect', 'immediate', 'automatic', 'breaksOpposition', 'requiresGmValidation',
         ]);
         if ($detailsVisible) {
-            $public['outcome'] += publicOnlineAttackProjectionFields($source['outcome'], ['baseThreshold', 'threshold']);
+            $public['outcome'] += publicOnlineAttackProjectionFields($source['outcome'], ['baseThreshold', 'threshold', 'fatigue']);
         }
     }
     if (is_array($source['diceAppearance'] ?? null)) {
@@ -4083,17 +4083,8 @@ function onlineD100CalculationDetail(mixed $value, string $label): string
         $parts[] = $calculation['formula'] . ' : ' . $calculation['total']
             . ($calculation['ignored'] ? ' (jet ignoré)' : '');
     }
-    $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
-    $thresholdModifier = (int) ($outcome['modifier'] ?? 0);
-    if ($resultModifier !== 0) {
-        $parts[] = 'dé brut ' . (int) ($outcome['raw'] ?? 0) . ' ' . onlineSignedCalculationNumber($resultModifier)
-            . ' = ' . (int) ($outcome['result'] ?? 0);
-    }
-    if (array_key_exists('threshold', $outcome) && $outcome['threshold'] !== null) {
-        $parts[] = $thresholdModifier !== 0
-            ? 'seuil ' . (int) ($outcome['baseThreshold'] ?? 0) . ' ' . onlineSignedCalculationNumber($thresholdModifier) . ' = ' . (int) $outcome['threshold']
-            : 'seuil ' . (int) $outcome['threshold'];
-    }
+    $comparison = applicationD100Comparison($outcome);
+    if ($comparison !== '') $parts[] = $comparison;
     if ($presentation['outcome'] !== '') $parts[] = $presentation['outcome'];
     if (($outcome['breaksOpposition'] ?? false) === true) $parts[] = 'résultat immédiat · opposition brisée · validation MJ requise';
     return implode(' · ', $parts);
@@ -4518,6 +4509,7 @@ function onlineDiscordRollContent(array $roll): string
         $lines[] = safeOnlineDiscordLabel($calculation['formula']) . ' : '
             . safeOnlineDiscordLabel($calculation['total']) . ($calculation['ignored'] ? ' (jet ignoré)' : '');
     }
+    if ($presentation['comparison'] !== '') $lines[] = safeOnlineDiscordLabel($presentation['comparison']);
     if ($presentation['outcome'] !== '') $lines[] = '**' . safeOnlineDiscordLabel($presentation['outcome']) . '**';
     $content = implode("\n", $lines);
     return substr($content, 0, 1900);
@@ -5312,6 +5304,15 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             }
+            if ($isGm) {
+                $sceneId = trim((string) ($arguments['sceneId'] ?? ''));
+                if ($sceneId !== '' && !validApplicationDomainIdentifier($sceneId, 80)) {
+                    rejectOnlineCommand($connection, 400, 'La scène de l’attaque est invalide.', 'invalid_attack_scene');
+                }
+            } elseif (trim((string) ($arguments['sceneId'] ?? '')) !== ''
+                && trim((string) $arguments['sceneId']) !== $sceneId) {
+                rejectOnlineCommand($connection, 409, 'La scène diffusée a changé. Actualisez la carte avant d’attaquer.', 'stale_scene');
+            }
             if ($sceneId === '') rejectOnlineCommand($connection, 409, 'Aucune scène active.', 'combat_scene_required');
             $requestId = trim((string) ($arguments['requestId'] ?? ''));
             if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
@@ -5325,7 +5326,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $initiativeKey = 'initiative:' . $sceneId;
             $mapKey = 'map:' . $sceneId;
-            $records = array_replace($records, applicationDomainRecords($connection, [$sourceKey, $targetKey, $initiativeKey, $mapKey, 'activity']));
+            $records = array_replace($records, applicationDomainRecords($connection, [$sourceKey, $targetKey, $initiativeKey, $mapKey, 'scene:' . $sceneId, 'activity']));
+            if (applicationDomainPayload($records, 'scene:' . $sceneId) === []) {
+                rejectOnlineCommand($connection, 409, 'Cette scène n’existe plus.', 'stale_scene');
+            }
             $activity = applicationDomainPayload($records, 'activity');
             $abilityRequestSignature = null; $abilityReceipt = null;
             if (($arguments['attackKind'] ?? '') === 'ability') {
@@ -5510,10 +5514,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                 $hitRolled = $hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement'];
                 $hitOutcome = $hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true];
+                if ($hasCastingCheck && $hitOutcome !== null) {
+                    $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
+                    if ($fatigue !== null) $hitOutcome['fatigue'] = $fatigue;
+                }
                 if ($castingPlan === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
                 if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
                 $statLabel = $hasCastingCheck ? substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120) : 'Sans jet';
                 $hitRoll = onlineRollEntry($identity, $hitRolled, $attackName . ' · ' . $statLabel, (string) ($source['name'] ?? 'Token'), $hitOutcome);
+                if ($isGm && $sceneId !== onlineActiveSceneId($table)) {
+                    $hitRoll['visibility'] = 'gm';
+                    $hitRoll['revealed'] = false;
+                }
                 $opposed = ($arguments['opposed'] ?? false) === true && (float) ($target['hp'] ?? 0) > 0;
                 $oppositionRequired = $opposed
                     && ($hitOutcome['success'] ?? false) === true
@@ -5695,6 +5707,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack, true, false);
                 $responseRolls = onlineAttackResponseRollFields($attack, $isGm, true, false);
                 $result = [...$result, ...$responseRolls];
+                if ($isGm && $sceneId !== onlineActiveSceneId($table)) unset($result['discordContent']);
                 if ($abilityRequestSignature !== null) onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $abilityRequestSignature, [
                     'attackId' => $attack['id'],
                     'cast' => $result['cast'],
@@ -5835,6 +5848,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                         $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
                         $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier);
+                        if ($outcome !== null) {
+                            $fatigue = onlineStatFatigueDetails($target, (string) ($stats[$statIndex]['id'] ?? ''), $targetCharacter ?? null);
+                            if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
+                        }
                         $statLabel = substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120);
                         if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
                         $defenseRoll = onlineRollEntry($identity, $rolled, 'Opposition · ' . $statLabel, (string) ($target['name'] ?? 'Défenseur'), $outcome);
@@ -6296,6 +6313,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
                 if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
                     $outcome['resultCustomized'] = $modifierMode === 'result';
+                }
+                if ($outcome !== null && $kind === 'stat') {
+                    $fatigue = onlineStatFatigueDetails($token, (string) ($arguments['statId'] ?? ''), $character ?? null);
+                    if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
                 }
                 onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $rollCharacterId, $rolled, in_array($kind, ['damage', 'ability'], true));
                 $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
