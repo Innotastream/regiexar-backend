@@ -1,4 +1,8 @@
-# Backend OVH — Régie du Seuil 0.17.6
+# Backend OVH — Régie du Seuil 0.18.0 (candidat)
+
+Client exact **3.4.0**, build `client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1`. L'assistant répond aux demandes d'aide générale et peut valider un brouillon classique ou complexe lié à une fiche ; ses références d'invocation et de métamorphose restent bornées aux données autorisées de la fiche. Le son bref est préservé lors d'une réparation et accepté pour toutes les capacités lançables. Schéma MySQL **22** : ajout du statut `answer` aux messages d'assistance ; politiques de session strictes `[3.4.0]`. Contrat PHP dédié inclus dans la CI. Backend non encore déployé.
+
+## Livraison précédente conservée : 0.17.6
 
 Client exact **3.3.11**, build `client-3-3-11-independent-revision-audit-candidate-20260924-1`. La politique accompagne le rattrapage indépendant des révisions dans les clients MJ et Joueur. Le backend métier, ses transactions, ses projections, ses droits et ses diagnostics restent inchangés. MySQL reste en version **21**, sans migration.
 
@@ -286,3 +290,8 @@ regie/
 ```
 
 Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, tests de contrat statiques, contrôle qu’aucun secret n’est présent, puis vérification publique récente de `/api/v1` et `/api/v1/health`. Une analyse statique réussie ne remplace pas une suite fonctionnelle PHP/MySQL.
+# Backend OVH — Régie du Seuil 0.18.0
+
+Client exact **3.4.0**, build `client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1`. Le schéma **22** ajoute le statut de réponse générale à l'assistant. Les conversations d'aide liées au compte fonctionnent sans personnage ; les propositions de compétences restent liées à une fiche autorisée. Les capacités classiques conservent et valident leur son, qui est renvoyé après le lancement réussi confirmé. Politique d'accès exacte `[3.4.0]`. Voir les notes [3.4.0](../../02-APPLICATION/regiexar/RELEASE-NOTES-v3.4.0.md).
+
+---

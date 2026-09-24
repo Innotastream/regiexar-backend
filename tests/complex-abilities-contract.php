@@ -60,6 +60,25 @@ $explicitRemoval = preserveApplicationAbilityRows([[
 requireComplexAbility($explicitRemoval['completionCue']['sound'] === null,
     'The current client can explicitly remove a terminal sound.');
 
+$classic = ['id' => 'arvin-classic', 'name' => 'Frappe', 'effect' => 'damage',
+    'formula' => '1d6', 'completionCue' => $execution['completionCue']];
+requireComplexAbility(validApplicationAbilities([$classic]), 'A classic ability accepts a validated sound.');
+$normalizedClassic = normalizeOnlineAbilities([$classic])[0];
+requireComplexAbility(($normalizedClassic['completionCue']['sound']['url'] ?? '') === '/media/abcdefghijklmnopqrstuvwx',
+    'The classic sound survives server normalization.');
+$legacyClassic = $classic;
+unset($legacyClassic['completionCue']);
+requireComplexAbility(isset(preserveApplicationAbilityRows([$legacyClassic], [$classic])[0]['completionCue']),
+    'An older client cannot erase a classic sound it does not know about.');
+requireComplexAbility(preserveApplicationAbilityRows([[
+    ...$classic, 'completionCue' => normalizeApplicationAbilityCompletionCue(null),
+]], [$classic])[0]['completionCue']['sound'] === null,
+    'The classic sound can be removed explicitly.');
+requireComplexAbility(!validApplicationAbilities([[
+    ...$classic, 'completionCue' => ['version' => 1, 'trigger' => 'completed',
+        'sound' => ['url' => 'https://example.com/untrusted.wav'], 'visual' => ['version' => 1, 'kind' => 'none']],
+]]), 'A classic ability cannot bypass sound reference validation.');
+
 $before = $execution;
 try {
     applyApplicationComplexAbilityCommand($execution, ['action' => 'select-targets', 'expectedRevision' => 0], [

@@ -72,8 +72,8 @@ function abilityAssistantSafeCharacterContext(array $character, string $existing
                 break;
             }
         }
-        if (!is_array($existing) || ($existing['effect'] ?? '') !== 'complex') {
-            sendError(404, 'La compétence complexe à réparer n’existe plus.', 'ability_missing');
+        if (!is_array($existing)) {
+            sendError(404, 'La compétence à examiner n’existe plus.', 'ability_missing');
         }
     }
     $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
@@ -98,6 +98,10 @@ function abilityAssistantSafeCharacterContext(array $character, string $existing
         ],
         'mode' => is_array($existing) ? 'repair' : 'create',
         'existingAbility' => $existing,
+        'linkedTokens' => array_values(array_slice(array_map(
+            static fn(array $token): array => ['id' => (string) ($token['id'] ?? ''), 'name' => substr((string) ($token['name'] ?? ''), 0, 120)],
+            array_filter(is_array($character['linkedTokens'] ?? null) ? $character['linkedTokens'] : [], 'is_array')
+        ), 0, 50)),
         'otherAbilityNames' => array_values(array_slice(array_map(
             static fn(array $ability): string => substr((string) ($ability['name'] ?? ''), 0, 120),
             array_filter($abilities, static fn(array $ability): bool => (string) ($ability['id'] ?? '') !== $existingAbilityId)
@@ -124,7 +128,9 @@ function requireOwnedAbilityAssistantConversation(PDO $connection, array $identi
     if ((string) $conversation['owner_account_id'] !== (string) $identity['id']) {
         sendError(403, 'Cette conversation ne vous appartient pas.', 'conversation_forbidden');
     }
-    abilityAssistantCharacter($connection, $identity, (string) $conversation['character_id']);
+    if ((string) $conversation['character_id'] !== '') {
+        abilityAssistantCharacter($connection, $identity, (string) $conversation['character_id']);
+    }
     return $conversation;
 }
 
@@ -135,7 +141,7 @@ function abilityAssistantConversationPayload(array $row): array
         'id' => (string) $row['id'],
         'characterId' => (string) $row['character_id'],
         'title' => (string) $row['title'],
-        'mode' => (string) (($context['mode'] ?? '') === 'repair' ? 'repair' : 'create'),
+        'mode' => in_array($context['mode'] ?? '', ['repair', 'help'], true) ? (string) $context['mode'] : 'create',
         'existingAbilityId' => (string) ($context['existingAbility']['id'] ?? ''),
         'createdAt' => (string) $row['created_at'],
         'updatedAt' => (string) $row['updated_at'],
@@ -148,15 +154,33 @@ function createAbilityAssistantConversation(PDO $connection): never
     $payload = readJsonBody(32768);
     $characterId = trim((string) ($payload['characterId'] ?? ''));
     $existingAbilityId = trim((string) ($payload['existingAbilityId'] ?? ''));
+    $help = ($payload['mode'] ?? '') === 'help';
     if ($existingAbilityId !== '' && preg_match('/^[A-Za-z0-9_-]{1,120}$/D', $existingAbilityId) !== 1) {
         sendError(400, 'Référence de compétence invalide.', 'invalid_ability');
     }
-    $character = abilityAssistantCharacter($connection, $identity, $characterId);
-    $context = abilityAssistantSafeCharacterContext($character, $existingAbilityId);
+    if ($help && $existingAbilityId !== '') sendError(400, 'Une aide générale ne répare pas une compétence.', 'invalid_ability');
+    $character = $help && $characterId === '' ? null : abilityAssistantCharacter($connection, $identity, $characterId);
+    $context = is_array($character) ? abilityAssistantSafeCharacterContext($character, $existingAbilityId) : [
+        'mode' => 'help', 'role' => (string) $identity['effective_mode'], 'character' => null,
+        'existingAbility' => null, 'otherAbilityNames' => [],
+    ];
+    if (is_array($character)) {
+        $forms = [];
+        foreach (applicationDomainRecordsByPrefix($connection, 'character:') as $key => $record) {
+            $candidate = applicationDomainPayload([$key => $record], $key);
+            if ((string) ($candidate['ownerPlayerId'] ?? '') !== (string) ($character['ownerPlayerId'] ?? '')
+                || (string) ($candidate['id'] ?? '') === $characterId) continue;
+            $forms[] = ['id' => (string) $candidate['id'], 'name' => substr((string) ($candidate['name'] ?? 'Forme'), 0, 120)];
+            if (count($forms) >= 50) break;
+        }
+        $context['availableForms'] = $forms;
+    }
+    if ($help) $context['mode'] = 'help';
+    $context['role'] = (string) $identity['effective_mode'];
     $id = randomToken(16);
-    $title = $context['mode'] === 'repair'
+    $title = $help ? 'Aide sur la Régie' : ($context['mode'] === 'repair'
         ? 'Réparer ' . (string) ($context['existingAbility']['name'] ?? 'une compétence')
-        : 'Créer une compétence pour ' . (string) ($context['character']['name'] ?? 'un personnage');
+        : 'Créer une compétence pour ' . (string) ($context['character']['name'] ?? 'un personnage'));
     $statement = $connection->prepare(
         'INSERT INTO ability_assistant_conversations (id, owner_account_id, character_id, title, context_json) '
         . 'VALUES (:id, :owner_account_id, :character_id, :title, :context_json)'
@@ -317,24 +341,51 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
     if (is_array($existing)) {
         $value = preserveApplicationAbilityRows([$value], [$existing])[0] ?? $value;
         $value['id'] = (string) $existing['id'];
-        if (!array_key_exists('image', $value) && array_key_exists('image', $existing)) $value['image'] = $existing['image'];
+        if (array_key_exists('image', $existing)) $value['image'] = $existing['image'];
+        else unset($value['image']);
         // L'assistant textuel ne crée ni ne remplace un média. Le son validé
         // reste attaché à la compétence réparée, quel que soit son brouillon.
         $value['completionCue'] = normalizeApplicationAbilityCompletionCue($existing['completionCue'] ?? null);
     } else {
         $value['id'] = 'ability-' . randomToken(12);
         $value['completionCue'] = normalizeApplicationAbilityCompletionCue(null);
+        unset($value['image']);
     }
-    $value['effect'] = 'complex';
-    $value['formula'] = '0';
+    $effect = (string) ($value['effect'] ?? '');
+    if (!in_array($effect, ['damage', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex'], true)) {
+        throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
+    }
+    $stats = ['', 'character-stat-force', 'character-stat-dexterity', 'character-stat-agility',
+        'character-stat-spiritSocial', 'character-stat-intelligence', 'character-stat-instinct'];
+    if (!in_array((string) ($value['castingStatId'] ?? ''), $stats, true)) {
+        throw new InvalidArgumentException('La statistique de lancement n’est pas disponible.');
+    }
+    if (trim((string) ($value['name'] ?? '')) === '' || !validApplicationAbilityEffects($value)) {
+        throw new InvalidArgumentException('La compétence ne respecte pas les coûts, formules ou champs de son effet.');
+    }
+    if ($effect === 'damage') {
+        $parts = applicationDamageComponents($value['damageComponents'] ?? []);
+        if ($parts === []) throw new InvalidArgumentException('Ajoutez au moins une formule de dégâts typés.');
+        $value['formula'] = applicationCombinedDamageFormula($parts);
+        $value['damageType'] = $parts[0]['type'];
+    } else {
+        $value['formula'] = '0';
+    }
+    if ($effect === 'summoning' && !in_array((string) ($value['summonLinkedTokenId'] ?? ''), array_column($context['linkedTokens'] ?? [], 'id'), true)) {
+        throw new InvalidArgumentException('Créez et choisissez un pion mémorisé de cette fiche pour l’invocation.');
+    }
+    if ($effect === 'metamorphosis' && !in_array((string) ($value['formCharacterId'] ?? ''), array_column($context['availableForms'] ?? [], 'id'), true)) {
+        throw new InvalidArgumentException('Créez et choisissez une seconde fiche du même propriétaire pour cette forme.');
+    }
     $normalized = normalizeOnlineAbilities([$value])[0] ?? null;
-    $workflowError = is_array($normalized)
+    $workflowError = $effect === 'complex' && is_array($normalized)
         ? applicationComplexAbilityWorkflowError($normalized['workflow'] ?? null)
         : 'Compétence absente après normalisation.';
-    if (!is_array($normalized) || ($normalized['effect'] ?? '') !== 'complex' || $workflowError !== '') {
+    if ($effect !== 'complex') $workflowError = '';
+    if (!is_array($normalized) || ($normalized['effect'] ?? '') !== $effect || $workflowError !== '') {
         throw new InvalidArgumentException($workflowError !== ''
             ? $workflowError
-            : 'La proposition ne respecte pas le contrat des compétences complexes.');
+            : 'La proposition ne respecte pas le contrat de compétence.');
     }
     return $normalized;
 }
@@ -517,7 +568,7 @@ function completeAbilityAssistantRegieJob(PDO $connection, string $id): never
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(131072);
     $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
-    $assistantStatus = in_array($payload['status'] ?? '', ['question', 'proposal', 'blocked', 'refused'], true)
+    $assistantStatus = in_array($payload['status'] ?? '', ['answer', 'question', 'proposal', 'blocked', 'refused'], true)
         ? (string) $payload['status'] : '';
     if ($assistantStatus === '') sendError(400, 'Statut de réponse IA invalide.', 'invalid_assistant_result');
     $response = cleanAbilityAssistantText($payload['message'] ?? '', XAR_ABILITY_ASSISTANT_MAXIMUM_RESPONSE_BYTES, 'Réponse IA');
@@ -546,6 +597,13 @@ function completeAbilityAssistantRegieJob(PDO $connection, string $id): never
         $draft = null;
         $validationGap = null;
         if ($assistantStatus === 'proposal') {
+            $proposalContext = json_decode((string) $conversation['context_json'], true);
+            if ((string) $conversation['character_id'] === '' || !is_array($proposalContext['character'] ?? null)) {
+                $assistantStatus = 'answer';
+                $response = 'Pour créer une compétence applicable, ouvrez « Fiches de personnages » (joueur) ou « Personnages » (MJ), sélectionnez une fiche, puis utilisez l’assistant dans « Capacités lançables ». Je peux vous aider à préparer les réglages ici.';
+            }
+        }
+        if ($assistantStatus === 'proposal') {
             try {
                 $draft = normalizeAbilityAssistantDraft($conversation, $payload['ability'] ?? null);
                 if (!is_array($draft)) throw new InvalidArgumentException('La proposition de compétence est absente.');
@@ -555,7 +613,7 @@ function completeAbilityAssistantRegieJob(PDO $connection, string $id): never
                     . 'Un rapport technique limité aux informations utiles a été transmis automatiquement à la Régie.';
                 $validationGap = [
                     'code' => 'assistant_draft_validation',
-                    'summary' => 'Une proposition comprise par l’assistant a été refusée par le contrat de compétence complexe.',
+                    'summary' => 'Une proposition comprise par l’assistant a été refusée par le contrat de compétence.',
                     'missingCapability' => substr($validationError->getMessage(), 0, 500),
                 ];
             }

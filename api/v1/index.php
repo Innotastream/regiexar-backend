@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.17.6';
-const XAR_BACKEND_BUILD = 'client-3-3-11-independent-revision-audit-candidate-20260924-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.3.11';
+const XAR_BACKEND_VERSION = '0.18.0';
+const XAR_BACKEND_BUILD = 'client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.4.0';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.3.11'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.4.0'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 21;
+const XAR_DATABASE_SCHEMA_VERSION = 22;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -1082,6 +1082,18 @@ function ensureCurrentSchema(PDO $connection): void
                 throw $error;
             }
             $version = 21;
+        }
+        if ($version < 22) {
+            $connection->exec(
+                "ALTER TABLE ability_assistant_messages MODIFY COLUMN assistant_status "
+                . "ENUM('question','proposal','blocked','refused','answer') NULL"
+            );
+            $connection->prepare('INSERT IGNORE INTO schema_migrations (version,name,checksum) VALUES (22,:name,:checksum)')
+                ->execute([
+                    ':name' => 'regie_assistant_general_answers',
+                    ':checksum' => hash('sha256', 'ability_assistant_messages.answer|help_conversations|3.4.0'),
+                ]);
+            $version = 22;
         }
     } finally {
         try {

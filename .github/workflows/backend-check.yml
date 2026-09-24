@@ -39,6 +39,8 @@ jobs:
         run: php tests/ability-casting-contract.php
       - name: Complex multi-step ability lifecycle
         run: php tests/complex-abilities-contract.php
+      - name: Assistant classic abilities and repair
+        run: php tests/ability-assistant-contract.php
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence

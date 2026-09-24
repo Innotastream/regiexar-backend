@@ -154,6 +154,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
         'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost, 'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
+        'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
         'usedRound' => $round, 'cooldownRounds' => (int) ($ability['cooldownRounds'] ?? 0), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => ($ability['effect'] ?? 'damage') !== 'complex' && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
@@ -340,6 +341,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         'restRecharge' => $failedCooldown > 0 && !$retainCooldown ? 'none' : ($retainCooldown ? ($old['restRecharge'] ?? 'none') : ($plan['restRecharge'] ?? 'none')),
         'restUseCount' => $timer['restUseCount'] ?? 0, 'restUseLimit' => $plan['restUseLimit'], 'reusableInTurn' => $timer['reusableInTurn'] ?? false,
         'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => $remaining,
+        ...(($cast['success'] ?? false) && is_array($plan['completionCue']['sound'] ?? null) ? ['completionCue' => $plan['completionCue']] : []),
         'reducedFailureEnabled' => ($plan['reducedFailureEnabled'] ?? false) === true, 'reducedFailureApplied' => $failedCooldown > 0];
 }
 

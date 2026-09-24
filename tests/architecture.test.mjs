@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
-const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -79,8 +79,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.17\.6'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-3-11-independent-revision-audit-candidate-20260924-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.0'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -116,9 +116,9 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.17.6");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.3.11");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 21);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.0");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.0");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
@@ -322,8 +322,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.3.11");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.3.11"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.4.0");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.0"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -512,6 +512,8 @@ test("l’assistant textuel reste lié au compte Régie, répare explicitement e
   assert.match(assistant, /\$value\['completionCue'\] = normalizeApplicationAbilityCompletionCue/);
   assert.match(assistant, /applicationComplexAbilityWorkflowError/);
   assert.match(assistant, /recordAbilityAssistantGap/);
+  assert.match(assistant, /\$help && \$characterId === ''/);
+  assert.match(assistant, /\['answer', 'question', 'proposal', 'blocked', 'refused'\]/);
   assert.match(assistant, /assistant_draft_validation/);
   assert.match(assistant, /\$assistantStatus === 'blocked'/);
   assert.match(assistant, /requireRegieCodexOwner\(\$connection\)/);
