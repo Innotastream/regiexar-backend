@@ -980,7 +980,9 @@ $gmPayload = [
     'kind' => 'stat', 'statId' => 'monster-force', 'rollMode' => 'advantage',
     'modifier' => 0, 'modifierMode' => 'result', 'requestId' => 'gm-role-parity-roll-0001',
 ];
-$missingSceneResponse = runCommand(fixture(), 'token.roll', $gmPayload, true, 'account-gm');
+$missingSceneDatabase = fixture();
+unset($missingSceneDatabase->domains['scene:scene-one']);
+$missingSceneResponse = runCommand($missingSceneDatabase, 'token.roll', $gmPayload, true, 'account-gm');
 requireTactical(
     $missingSceneResponse->status === 409 && ($missingSceneResponse->body['code'] ?? '') === 'stale_scene',
     'The GM tactical route must reject a table pointer whose scene domain no longer exists'
