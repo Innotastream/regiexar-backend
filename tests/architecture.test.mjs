@@ -79,8 +79,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.2'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-1-scenes-fatigue-lights-20260924-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.3'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-2-reliability-audit-20260924-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -116,8 +116,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.2");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.1");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.3");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -301,7 +301,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(command, /\$result\['tokenDomain'\]/);
   assert.match(command, /'revision' => \(int\) \(\$records\[\$tokenKey\]\['revision'\] \?\? 0\) \+ \(\$positionChanged \? 1 : 0\)/);
   assert.match(command, /if \(\$positionChanged\)[\s\S]*?queueOnlineDomainUpsert/);
-  const projection = online.slice(online.indexOf("if ($command === 'token.move' && !$isGm)"), online.indexOf("if (in_array($command, ['roll', 'token.roll', 'ability.use', 'ability.complex']", online.indexOf("if ($command === 'token.move' && !$isGm)")));
+  const projection = online.slice(online.indexOf("if ($command === 'token.move' && !$isGm)"), online.indexOf("if (in_array($command, ['roll', 'token.roll', 'ability.use', 'ability.complex', 'ability.resolve']", online.indexOf("if ($command === 'token.move' && !$isGm)")));
   assert.match(projection, /playerApplicationStateRecord\(\$connection\)/);
   assert.match(projection, /publicPlayerState\(\$projectionState, \$identity, \[\]\)/);
   assert.match(projection, /\$result\['mapProjection'\]/);
@@ -309,7 +309,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(projection, /'lights'/);
   assert.ok(online.indexOf("$connection->commit();") < online.indexOf("$result['mapProjection']"),
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => [^\n]*\$owned && !\$paused && \(!\$active \|\|[\s\S]*?\$temporaryMovementAllowed\)/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -322,8 +322,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.4.1");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.1"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.4.2");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.2"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -365,7 +365,8 @@ test("schéma et génération utilisent un chemin stable sans verrou ni nettoyag
     schema.indexOf("SELECT COALESCE(MAX(version), 0)") < schema.indexOf("GET_LOCK('xar-regie-schema-v11'"),
     "la version du schéma doit être lue avant tout verrou"
   );
-  assert.match(schema, /if \(\$version >= XAR_DATABASE_SCHEMA_VERSION\) \{\s+return;/);
+  assert.match(schema, /if \(\$version === XAR_DATABASE_SCHEMA_VERSION\) \{\s+return;/);
+  assert.match(schema, /\$version > XAR_DATABASE_SCHEMA_VERSION[\s\S]*?future_database_schema/);
   assert.match(schema, /ALTER TABLE backend_release_state ADD COLUMN drain_completed_at/);
   assert.match(schema, /idx_auth_sessions_backend_version/);
   assert.match(schema, /WHEN backend_version = :backend_version THEN NULL/);
@@ -565,7 +566,7 @@ test("le worker Régie change de poste avec un bail éphémère et clôture l’
 
 test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
-  assert.match(online, /'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
+  assert.match(online, /'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
   assert.match(online, /'author' => \$isGm \? 'MJ'/);
   assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
   assert.match(online, /\$requestId = trim/);
@@ -607,7 +608,8 @@ test("le studio sépare les secrets Codex, les propriétaires et l’audit admin
   assert.doesNotMatch(studio, /OPENAI_API_KEY|auth\.json|ChatGPT.*token|codex.*token/i);
   assert.match(online, /imageStudioMediaOwner/);
   assert.match(online, /assertImageStudioMediaAccess/);
-  assert.match(index, /!str_starts_with\(\$route, '\/api\/v1\/image-studio'\)/);
+  assert.match(index, /routeRequiresSupportedClient\(\$route\)/);
+  assert.match(index, /function routeRequiresSupportedClient[\s\S]*?str_starts_with\(\$route, '\/api\/v1\/image-studio'\)[\s\S]*?return false/);
 });
 
 test("effacer une génération reste réversible et protège son média masqué", async () => {
@@ -662,7 +664,7 @@ test("la galerie web reste MJ, privée et explicite sur la conservation", async 
 });
 
 test("l’administrateur peut effacer définitivement une discussion inactive", async () => {
-  const studio = await read("api/v1/image-studio.php");
+  const [studio, online] = await Promise.all([read("api/v1/image-studio.php"), read("api/v1/online.php")]);
   const administrativeIdentity = studio.slice(
     studio.indexOf("function requireImageStudioAdministratorIdentity"),
     studio.indexOf("function imageStudioPublicIdentity")
@@ -680,8 +682,12 @@ test("l’administrateur peut effacer définitivement une discussion inactive", 
   assert.match(deletion, /DELETE FROM image_studio_messages/);
   assert.match(deletion, /DELETE FROM image_studio_conversations/);
   assert.match(deletion, /historyRetainedForAdministrator' => false/);
-  assert.match(deletion, /mediaDomainReferenceCount/);
-  assert.match(deletion, /imageStudioMediaUsedByCatalog/);
+  assert.match(deletion, /scheduleUnusedOnlineMediaDeletion/);
+  const retirement = online.slice(online.indexOf("function scheduleUnusedOnlineMediaDeletion"), online.indexOf("function onlineMediaVisibleInPlayerState"));
+  assert.match(retirement, /domainClockRecord\(\$connection, true\)/);
+  assert.match(retirement, /mediaRecord\(\$connection, \$id, true\)/);
+  assert.match(retirement, /mediaDomainReferenceCount/);
+  assert.match(online, /SELECT COUNT\(\*\) FROM image_reference_catalog WHERE media_id = :media_id AND active = 1/);
   assert.match(studio, /requireMethod\(\$method, \['PATCH', 'DELETE'\]\)/);
 });
 
@@ -698,11 +704,11 @@ test("le site de la Régie centralise les suppressions définitives unitaires", 
   assert.match(messageDeletion, /requireImageStudioAdministratorIdentity/);
   assert.match(messageDeletion, /status NOT IN \('queued', 'generating'\)/);
   assert.match(messageDeletion, /DELETE FROM image_studio_messages WHERE id = :id/);
-  assert.match(messageDeletion, /public_slug = NULL, published_at = NULL/);
+  assert.match(messageDeletion, /scheduleUnusedOnlineMediaDeletion\(\$connection, \$mediaId, true\)/);
   assert.match(messageDeletion, /historyRetainedForAdministrator' => false/);
   assert.match(publishedDeletion, /requireImageStudioAdministratorIdentity/);
-  assert.match(publishedDeletion, /mediaDomainReferenceCount\(\$connection, \$id\) > 0/);
-  assert.match(publishedDeletion, /public_slug = NULL, published_at = NULL/);
+  assert.match(publishedDeletion, /scheduleUnusedOnlineMediaDeletion\(\$connection, \$id, true\)/);
+  assert.match(publishedDeletion, /\$result === 'referenced'/);
   assert.match(studio, /messages\/\(\[A-Za-z0-9_-\]\{24\}\)\/permanent/);
   assert.match(studio, /published-media\/\(\[A-Za-z0-9_-\]\{24\}\)/);
   assert.match(page, /\/messages\/\$\{encodeURIComponent\(item\.id\)\}\/permanent/);
@@ -730,7 +736,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);

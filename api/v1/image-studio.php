@@ -487,22 +487,8 @@ function permanentlyDeleteImageStudioConversation(PDO $connection, string $id): 
     $mediaScheduled = 0;
     foreach ($mediaRows as $row) {
         $mediaId = (string) ($row['media_id'] ?? '');
-        if ($mediaId === '' || $row['public_slug'] !== null
-            || mediaDomainReferenceCount($connection, $mediaId) > 0
-            || imageStudioMediaUsedByCatalog($connection, $mediaId)) {
-            continue;
-        }
-        $stillUsed = $connection->prepare('SELECT COUNT(*) FROM image_studio_messages WHERE media_id = :media_id');
-        $stillUsed->execute([':media_id' => $mediaId]);
-        if ((int) $stillUsed->fetchColumn() > 0) {
-            continue;
-        }
-        $mark = $connection->prepare(
-            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3) '
-            . 'WHERE id = :id AND public_slug IS NULL AND pending_delete_at IS NULL'
-        );
-        $mark->execute([':id' => $mediaId]);
-        $mediaScheduled += $mark->rowCount();
+        if ($mediaId === '') continue;
+        if (scheduleUnusedOnlineMediaDeletion($connection, $mediaId) === 'scheduled') $mediaScheduled++;
     }
     sendJson(200, [
         'ok' => true,
@@ -549,16 +535,7 @@ function permanentlyDeleteImageStudioMessage(PDO $connection, string $id): never
         throw $error;
     }
     $mediaScheduled = false;
-    if ($mediaId !== ''
-        && mediaDomainReferenceCount($connection, $mediaId) === 0
-        && !imageStudioMediaUsedByCatalog($connection, $mediaId)) {
-        $mark = $connection->prepare(
-            'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3), public_slug = NULL, published_at = NULL '
-            . 'WHERE id = :id AND pending_delete_at IS NULL'
-        );
-        $mark->execute([':id' => $mediaId]);
-        $mediaScheduled = $mark->rowCount() === 1;
-    }
+    if ($mediaId !== '') $mediaScheduled = scheduleUnusedOnlineMediaDeletion($connection, $mediaId, true) === 'scheduled';
     sendJson(200, [
         'ok' => true,
         'permanentlyDeleted' => true,
@@ -1053,6 +1030,27 @@ function claimImageStudioRegieJob(PDO $connection): never
     ]);
 }
 
+function replayImageStudioMessage(PDO $connection, string $id, array $request): never
+{
+    $message = imageStudioMessageRecord($connection, $id);
+    if (!is_array($message)) {
+        sendError(409, 'La génération liée à cette demande n’existe plus.', 'generation_request_stale');
+    }
+    $stored = [
+        'conversationId' => (string) $message['conversation_id'],
+        'prompt' => (string) $message['prompt'],
+        'operation' => (string) $message['operation'],
+        'aspect' => (string) $message['aspect'],
+        'executionMode' => (string) ($message['execution_mode'] ?? 'local'),
+        'references' => jsonColumn($message['references_json'] ?? '[]'),
+        'parentMessageId' => (string) ($message['parent_message_id'] ?? ''),
+    ];
+    if (onlineCanonicalRequestValue($stored) !== onlineCanonicalRequestValue($request)) {
+        sendError(409, 'Cet identifiant de demande correspond déjà à une autre génération.', 'generation_request_mismatch');
+    }
+    sendJson(200, ['ok' => true, 'deduplicated' => true, 'message' => imageStudioMessagePayload($message)]);
+}
+
 function createImageStudioMessage(PDO $connection, string $conversationId): never
 {
     $identity = requireImageStudioIdentity($connection);
@@ -1101,6 +1099,7 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
     }
 
     $accountId = (string) $identity['id'];
+    $request = compact('conversationId', 'prompt', 'operation', 'aspect', 'executionMode', 'references', 'parentMessageId');
     if ($clientRequestId !== '') {
         $duplicate = $connection->prepare(
             'SELECT id FROM image_studio_messages WHERE author_account_id = :account_id '
@@ -1112,11 +1111,7 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         ]);
         $duplicateId = $duplicate->fetchColumn();
         if (is_string($duplicateId) && validImageStudioMessageId($duplicateId)) {
-            sendJson(200, [
-                'ok' => true,
-                'deduplicated' => true,
-                'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $duplicateId)),
-            ]);
+            replayImageStudioMessage($connection, $duplicateId, $request);
         }
     }
     $lockName = 'xar-image-generation-' . substr(hash('sha256', $accountId), 0, 38);
@@ -1148,11 +1143,7 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
             ]);
             $duplicateId = $duplicate->fetchColumn();
             if (is_string($duplicateId) && validImageStudioMessageId($duplicateId)) {
-                sendJson(200, [
-                    'ok' => true,
-                    'deduplicated' => true,
-                    'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $duplicateId)),
-                ]);
+                replayImageStudioMessage($connection, $duplicateId, $request);
             }
         }
         $stale = $connection->prepare(
@@ -1185,6 +1176,12 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
             );
         }
         $id = randomToken(18);
+        $connection->beginTransaction();
+        $referenceMediaIds = array_values(array_unique(array_filter(array_column($references, 'mediaId'), 'is_string')));
+        sort($referenceMediaIds, SORT_STRING);
+        foreach ($referenceMediaIds as $referenceMediaId) {
+            assertImageStudioReferenceMediaAccess($connection, $identity, $referenceMediaId, true);
+        }
         $insert = $connection->prepare(
             'INSERT INTO image_studio_messages '
             . '(id, conversation_id, author_account_id, operation, prompt, quality, aspect, execution_mode, '
@@ -1206,6 +1203,10 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         ]);
         $touch = $connection->prepare('UPDATE image_studio_conversations SET updated_at = UTC_TIMESTAMP(3) WHERE id = :id');
         $touch->execute([':id' => $conversationId]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
     } finally {
         if ($regieAccessLockHeld) {
             try {
@@ -1284,18 +1285,39 @@ function completeImageStudioMessage(PDO $connection, string $id): never
     }
     $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
     $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
-    $statement = $connection->prepare(
-        "UPDATE image_studio_messages SET status = 'succeeded', media_id = :media_id, revised_prompt = :revised_prompt, "
-        . 'width = :width, height = :height, error_code = NULL, error_detail = NULL, completed_at = UTC_TIMESTAMP(3) '
-        . "WHERE id = :id AND status IN ('queued', 'generating')"
-    );
-    $statement->execute([
-        ':media_id' => $mediaId,
-        ':revised_prompt' => $revisedPrompt !== '' ? $revisedPrompt : null,
-        ':width' => $width,
-        ':height' => $height,
-        ':id' => $id,
-    ]);
+    $connection->beginTransaction();
+    try {
+        $lockedMedia = $connection->prepare('SELECT id, uploaded_by_account_id, pending_delete_at FROM media_objects WHERE id = :id LIMIT 1 FOR UPDATE');
+        $lockedMedia->execute([':id' => $mediaId]);
+        $currentMedia = $lockedMedia->fetch();
+        if (!is_array($currentMedia) || $currentMedia['pending_delete_at'] !== null
+            || (string) $currentMedia['uploaded_by_account_id'] !== (string) $identity['id']) {
+            $connection->rollBack();
+            sendError(409, 'Le média a été retiré pendant la génération.', 'media_missing');
+        }
+        $statement = $connection->prepare(
+            "UPDATE image_studio_messages SET status = 'succeeded', media_id = :media_id, revised_prompt = :revised_prompt, "
+            . 'width = :width, height = :height, error_code = NULL, error_detail = NULL, completed_at = UTC_TIMESTAMP(3) '
+            . "WHERE id = :id AND status IN ('queued', 'generating')"
+        );
+        $statement->execute([
+            ':media_id' => $mediaId,
+            ':revised_prompt' => $revisedPrompt !== '' ? $revisedPrompt : null,
+            ':width' => $width,
+            ':height' => $height,
+            ':id' => $id,
+        ]);
+        $currentMessage = imageStudioMessageRecord($connection, $id);
+        if (!is_array($currentMessage) || (string) $currentMessage['status'] !== 'succeeded'
+            || (string) $currentMessage['media_id'] !== $mediaId) {
+            $connection->rollBack();
+            sendError(409, 'Cette génération a changé pendant la réception du résultat.', 'invalid_generation_state');
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
+    }
     sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
 }
 
@@ -1582,22 +1604,17 @@ function permanentlyDeleteImageStudioPublishedMedia(PDO $connection, string $id)
     if (!is_array($record) || $record['public_slug'] === null) {
         sendJson(200, ['ok' => true, 'alreadyRemoved' => true]);
     }
-    ensureDomainStoreInitialized($connection);
-    if (mediaDomainReferenceCount($connection, $id) > 0) {
+    $result = scheduleUnusedOnlineMediaDeletion($connection, $id, true);
+    if ($result === 'referenced') {
         sendError(
             409,
             'Ce média est encore référencé. Retirez ses usages actifs ou supprimez définitivement sa génération depuis le journal.',
             'media_still_referenced'
         );
     }
-    $statement = $connection->prepare(
-        'UPDATE media_objects SET pending_delete_at = UTC_TIMESTAMP(3), public_slug = NULL, published_at = NULL '
-        . 'WHERE id = :id AND public_slug IS NOT NULL AND pending_delete_at IS NULL'
-    );
-    $statement->execute([':id' => $id]);
     sendJson(200, [
         'ok' => true,
-        'permanentlyDeleted' => $statement->rowCount() === 1,
+        'permanentlyDeleted' => $result === 'scheduled',
         'mediaId' => $id,
         'retainedUntil' => gmdate('c', time() + 30 * 86400),
     ]);
@@ -1642,14 +1659,14 @@ function imageStudioMediaUsedByCatalog(PDO $connection, string $mediaId): bool
     return (int) $statement->fetchColumn() > 0;
 }
 
-function assertImageStudioReferenceMediaAccess(PDO $connection, array $identity, string $mediaId): void
+function assertImageStudioReferenceMediaAccess(PDO $connection, array $identity, string $mediaId, bool $forUpdate = false): void
 {
     if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
         sendError(400, 'Média de référence invalide.', 'invalid_media');
     }
     $statement = $connection->prepare(
         'SELECT id, content_type, uploaded_by_account_id, pending_delete_at '
-        . 'FROM media_objects WHERE id = :id LIMIT 1'
+        . 'FROM media_objects WHERE id = :id LIMIT 1' . ($forUpdate ? ' FOR UPDATE' : '')
     );
     $statement->execute([':id' => $mediaId]);
     $media = $statement->fetch();
@@ -1673,6 +1690,10 @@ function assertImageStudioReferenceMediaAccess(PDO $connection, array $identity,
 
 function assertImageStudioMediaAccess(PDO $connection, array $identity, string $mediaId): void
 {
+    if (!onlineIdentityIsGm($identity)) {
+        requireOnlinePlayerMediaAccess($connection, $identity, $mediaId);
+        return;
+    }
     $owner = imageStudioMediaOwner($connection, $mediaId);
     $catalogued = imageStudioMediaUsedByCatalog($connection, $mediaId);
     if (!is_array($owner)) {
@@ -1946,49 +1967,57 @@ function writeImageReferenceCatalog(PDO $connection, ?string $id = null): never
     if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
         sendError(400, 'Média de référence invalide.', 'invalid_media');
     }
-    $media = $connection->prepare(
-        "SELECT id FROM media_objects WHERE id = :id AND content_type LIKE 'image/%' AND pending_delete_at IS NULL LIMIT 1"
-    );
-    $media->execute([':id' => $mediaId]);
-    if ($media->fetchColumn() === false) {
-        sendError(404, 'Image de référence introuvable.', 'media_missing');
-    }
-    $active = array_key_exists('active', $payload) ? $payload['active'] === true : (bool) ($existing['active'] ?? true);
-    $priority = array_key_exists('priority', $payload)
-        ? max(0, min(65535, (int) $payload['priority']))
-        : (int) ($existing['priority'] ?? 100);
-    $encodedAliases = json_encode($aliases, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    if ($id === null) {
-        $id = randomToken(18);
-        $statement = $connection->prepare(
-            'INSERT INTO image_reference_catalog '
-            . '(id, label, aliases_json, media_id, active, priority, created_by_account_id) '
-            . 'VALUES (:id, :label, :aliases_json, :media_id, :active, :priority, :account_id)'
+    $connection->beginTransaction();
+    try {
+        $media = $connection->prepare(
+            "SELECT id FROM media_objects WHERE id = :id AND content_type LIKE 'image/%' AND pending_delete_at IS NULL LIMIT 1 FOR UPDATE"
         );
-        $statement->execute([
-            ':id' => $id,
-            ':label' => $label,
-            ':aliases_json' => $encodedAliases,
-            ':media_id' => $mediaId,
-            ':active' => $active ? 1 : 0,
-            ':priority' => $priority,
-            ':account_id' => (string) $identity['id'],
-        ]);
-        $status = 201;
-    } else {
-        $statement = $connection->prepare(
-            'UPDATE image_reference_catalog SET label = :label, aliases_json = :aliases_json, '
-            . 'media_id = :media_id, active = :active, priority = :priority WHERE id = :id'
-        );
-        $statement->execute([
-            ':id' => $id,
-            ':label' => $label,
-            ':aliases_json' => $encodedAliases,
-            ':media_id' => $mediaId,
-            ':active' => $active ? 1 : 0,
-            ':priority' => $priority,
-        ]);
-        $status = 200;
+        $media->execute([':id' => $mediaId]);
+        if ($media->fetchColumn() === false) {
+            $connection->rollBack();
+            sendError(404, 'Image de référence introuvable.', 'media_missing');
+        }
+        $active = array_key_exists('active', $payload) ? $payload['active'] === true : (bool) ($existing['active'] ?? true);
+        $priority = array_key_exists('priority', $payload)
+            ? max(0, min(65535, (int) $payload['priority']))
+            : (int) ($existing['priority'] ?? 100);
+        $encodedAliases = json_encode($aliases, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        if ($id === null) {
+            $id = randomToken(18);
+            $statement = $connection->prepare(
+                'INSERT INTO image_reference_catalog '
+                . '(id, label, aliases_json, media_id, active, priority, created_by_account_id) '
+                . 'VALUES (:id, :label, :aliases_json, :media_id, :active, :priority, :account_id)'
+            );
+            $statement->execute([
+                ':id' => $id,
+                ':label' => $label,
+                ':aliases_json' => $encodedAliases,
+                ':media_id' => $mediaId,
+                ':active' => $active ? 1 : 0,
+                ':priority' => $priority,
+                ':account_id' => (string) $identity['id'],
+            ]);
+            $status = 201;
+        } else {
+            $statement = $connection->prepare(
+                'UPDATE image_reference_catalog SET label = :label, aliases_json = :aliases_json, '
+                . 'media_id = :media_id, active = :active, priority = :priority WHERE id = :id'
+            );
+            $statement->execute([
+                ':id' => $id,
+                ':label' => $label,
+                ':aliases_json' => $encodedAliases,
+                ':media_id' => $mediaId,
+                ':active' => $active ? 1 : 0,
+                ':priority' => $priority,
+            ]);
+            $status = 200;
+        }
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
     }
     $select = $connection->prepare(
         'SELECT id, label, aliases_json, media_id, active, priority, updated_at '

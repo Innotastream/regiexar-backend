@@ -79,9 +79,9 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     if (!is_finite($naturalWidth) || !is_finite($naturalHeight) || $naturalWidth <= 0 || $naturalHeight <= 0) return $failed('invalid-position');
     $width = (int) $walls['width']; $height = (int) $walls['height'];
     $diameter = max(10.0, min(220.0, $tokenSize > 0 ? $tokenSize : 40.0)); $radius = $diameter / 2;
-    // One natural pixel at the portrait edge; never shrink the wall raster or
-    // the visible disk. This only removes decorative edge snagging.
-    $wallFree = applicationPathPositionValidator($walls, $diameter - 2.0, $naturalWidth, $naturalHeight);
+    // Every destination and travelled segment keeps the complete footprint.
+    // A one-pixel tolerance is only for escaping an existing edge contact.
+    $wallFree = applicationPathPositionValidator($walls, $diameter, $naturalWidth, $naturalHeight);
     $visibleDisk = static fn (array $point): bool => $visible($point['x'], $point['y'], $radius, $naturalWidth, $naturalHeight);
     $inBounds = static fn (array $point): bool => $point['x'] * $naturalWidth / 100 >= $radius && $point['x'] * $naturalWidth / 100 <= $naturalWidth - $radius
         && $point['y'] * $naturalHeight / 100 >= $radius && $point['y'] * $naturalHeight / 100 <= $naturalHeight - $radius;
@@ -93,6 +93,8 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     $distance = static fn (array $a, array $b): float => hypot(($a['x'] - $b['x']) * $naturalWidth / 100, ($a['y'] - $b['y']) * $naturalHeight / 100);
     $recoveryOrigin = $origin;
     if (!$free($origin)) {
+        $contactFree = applicationPathPositionValidator($walls, $diameter - 2.0, $naturalWidth, $naturalHeight);
+        if (!$inBounds($origin) || !$visibleDisk($origin) || !$contactFree($origin)) return $failed('start-overlaps-wall');
         $recoveryDistance = $distance($origin, $goal);
         $limit = min($recoveryDistance, $radius + max($naturalWidth / $width, $naturalHeight / $height));
         $steps = max(1, (int) ceil($limit / max(0.25, min($naturalWidth / $width, $naturalHeight / $height) / 2)));

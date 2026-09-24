@@ -12,6 +12,7 @@ require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
+const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
 const XAR_SESSION_SCHEMA_VERSION = 19;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
@@ -1722,8 +1723,15 @@ function domainReferencedMediaIds(mixed $value, int $depth = 0): array
 
 function reactivateDomainMedia(PDO $connection, array $payload): void
 {
-    $statement = null;
-    foreach (domainReferencedMediaIds($payload) as $id) {
+    $statement = null; $select = null;
+    $ids = domainReferencedMediaIds($payload);
+    sort($ids, SORT_STRING);
+    foreach ($ids as $id) {
+        // A domain write can have waited behind permanent retention cleanup.
+        // Never commit its stale URL once the media row has disappeared.
+        $select ??= $connection->prepare('SELECT id FROM media_objects WHERE id = :id FOR UPDATE');
+        $select->execute([':id' => $id]);
+        if ($select->fetchColumn() === false) sendError(409, 'Un média du document n’est plus disponible.', 'media_missing');
         $statement ??= $connection->prepare(
             'UPDATE media_objects SET pending_delete_at = NULL WHERE id = :id AND pending_delete_at IS NOT NULL'
         );
@@ -1817,6 +1825,70 @@ function preserveApplicationAudioLoops(array $payload, array $previous = []): ar
     return $payload;
 }
 
+function validApplicationPendingAbilityCasts(mixed $entries): bool
+{
+    if (!validApplicationDomainObjectList($entries, XAR_PENDING_ABILITY_CAST_MAXIMUM)) return false;
+    $seen = [];
+    foreach ($entries as $entry) {
+        $id = $entry['id'] ?? null;
+        if (!validApplicationDomainIdentifier($id, 80) || isset($seen[$id])
+            || ($entry['status'] ?? '') !== 'pending'
+            || !in_array($entry['route'] ?? '', ['ability.use', 'token.roll', 'ability.complex'], true)
+            || !is_array($entry['cast'] ?? null) || !is_array($entry['_private'] ?? null)) return false;
+        $private = $entry['_private'];
+        foreach (['identity', 'body', 'ability', 'plan'] as $field) if (!is_array($private[$field] ?? null)) return false;
+        if (!is_bool($private['isGm'] ?? null)) return false;
+        $seen[$id] = true;
+    }
+    return true;
+}
+
+function preserveApplicationPendingAbilityValidation(array $payload, array $previous): array
+{
+    // A normal client snapshot has no authority to create, resolve or discard
+    // a validation, even when it happens to contain the new fields.
+    if (array_key_exists('pendingAbilityCasts', $previous)) $payload['pendingAbilityCasts'] = $previous['pendingAbilityCasts'];
+    else unset($payload['pendingAbilityCasts']);
+    $attacks = [];
+    foreach ($previous['attackReceipts'] ?? [] as $receipt) {
+        if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
+    }
+    foreach ($previous['pendingAttacks'] ?? [] as $attack) if (is_array($attack)) $attacks[$attack['id'] ?? ''] = $attack;
+    $preserve = static function (mixed $attack) use ($attacks): mixed {
+        if (!is_array($attack)) return $attack;
+        if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
+        $old = $attacks[$attack['id'] ?? ''] ?? [];
+        if (is_array($old['deferredAbilityCast'] ?? null)) return $old;
+        if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
+        else unset($attack['deferredAbilityCast']);
+        return $attack;
+    };
+    if (is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = array_map($preserve, $payload['pendingAttacks']);
+    foreach ($payload['attackReceipts'] ?? [] as $index => $receipt) {
+        if (is_array($receipt) && array_key_exists('attack', $receipt)) $payload['attackReceipts'][$index]['attack'] = $preserve($receipt['attack']);
+    }
+    $receipts = [];
+    foreach ($payload['attackReceipts'] ?? [] as $receipt) {
+        if (is_array($receipt)) {
+            if (isset($receipt['requestId']) && !is_string($receipt['requestId'])) sendError(400, 'Identifiant de reçu invalide.', 'invalid_activity_domain');
+            $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        }
+    }
+    foreach ($previous['attackReceipts'] ?? [] as $receipt) {
+        if (is_array($receipt['attack']['deferredAbilityCast'] ?? null)) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+    }
+    if (array_key_exists('attackReceipts', $payload) || $receipts !== []) $payload['attackReceipts'] = array_values($receipts);
+    // Erasing an entire pending attack must not bypass the protection above.
+    $presentIds = array_fill_keys(array_column(is_array($payload['pendingAttacks'] ?? null) ? $payload['pendingAttacks'] : [], 'id'), true);
+    foreach ($previous['pendingAttacks'] ?? [] as $attack) {
+        if (is_array($attack) && is_array($attack['deferredAbilityCast'] ?? null) && !isset($presentIds[$attack['id'] ?? ''])) {
+            if (!is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = [];
+            $payload['pendingAttacks'][] = $attack;
+        }
+    }
+    return $payload;
+}
+
 function validatedDomainPayload(string $key, mixed $payload): array
 {
     if (!validApplicationDomainKey($key) || !is_array($payload)) {
@@ -1860,8 +1932,10 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['mapPings'] ?? null, 20)
             || !validApplicationDomainObjectList($payload['pingReceipts'] ?? [], 256)
             || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], XAR_PENDING_ATTACK_MAXIMUM)
+            || !validApplicationPendingAbilityCasts($payload['pendingAbilityCasts'] ?? [])
             || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], XAR_ATTACK_RECEIPT_MAXIMUM)
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
+            || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
@@ -1941,6 +2015,10 @@ function domainClockRecord(PDO $connection, bool $forUpdate = false): array
     $record = $statement === false ? false : $statement->fetch();
     if (!is_array($record)) {
         throw new RuntimeException('domain_clock_missing');
+    }
+    if ((int) $record['state_schema_version'] > XAR_SESSION_SCHEMA_VERSION
+        || (int) $record['domain_schema_version'] > XAR_DOMAIN_SCHEMA_VERSION) {
+        throw new RuntimeException('future_domain_schema');
     }
     return [
         'globalRevision' => (int) $record['global_revision'],
@@ -2140,6 +2218,9 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
+    if ($key === 'activity' && $protectAgainstStaleEntityWrite && is_array($payload)) {
+        $payload = preserveApplicationPendingAbilityValidation($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
+    }
     $payload = validatedDomainPayload($key, $payload);
     if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     if ($protectAgainstStaleEntityWrite) {
@@ -2165,6 +2246,9 @@ function prepareApplicationDomainDelete(string $key, ?array $current): ?array
 {
     if (!validApplicationDomainKey($key) || !is_array($current)) {
         return null;
+    }
+    if ($key === 'activity') {
+        sendError(403, 'Le journal de validation ne peut pas être supprimé.', 'readonly_activity_domain');
     }
     return ['key' => $key, 'operation' => 'delete', 'current' => $current];
 }
@@ -2242,6 +2326,7 @@ function legacyStateToDomains(array $state): array
             'mapPings' => is_array($state['mapPings'] ?? null) ? $state['mapPings'] : [],
             'pingReceipts' => is_array($state['pingReceipts'] ?? null) ? $state['pingReceipts'] : [],
             'pendingAttacks' => is_array($state['pendingAttacks'] ?? null) ? $state['pendingAttacks'] : [],
+            'pendingAbilityCasts' => is_array($state['pendingAbilityCasts'] ?? null) ? $state['pendingAbilityCasts'] : [],
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
@@ -2427,6 +2512,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
         'pingReceipts' => is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
         'pendingAttacks' => is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [],
+        'pendingAbilityCasts' => is_array($activity['pendingAbilityCasts'] ?? null) ? $activity['pendingAbilityCasts'] : [],
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
@@ -2930,7 +3016,12 @@ function restoreApplicationDomainHistory(PDO $connection): never
             $connection->rollBack();
             sendError(404, 'Cette révision historique n’existe plus.', 'domain_history_missing');
         }
-        $payload = validatedDomainPayload($key, jsonColumn($record['payload'] ?? null));
+        $payload = jsonColumn($record['payload'] ?? null);
+        if ($key === 'activity') {
+            $payload = preserveApplicationPendingAbilityValidation($payload, $current['payload'] ?? []);
+            $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);
+        }
+        $payload = validatedDomainPayload($key, $payload);
         $pending = [['key' => $key, 'operation' => 'upsert', 'payload' => $payload, 'current' => $current]];
         $revision = persistDomainChangesInTransaction($connection, $identity, $clock, $pending);
         $domainRevision = $currentRevision + 1;

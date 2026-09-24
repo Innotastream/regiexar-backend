@@ -35,6 +35,9 @@ function onlineComplexAbilitySceneTokens(
         if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
         $token = applicationDomainPayload($records, $key);
         if ($token === [] || !onlineTokenOnActiveLayer($token, $map)) continue;
+        $characterId = (string) ($token['characterId'] ?? '');
+        $character = $characterId !== '' ? applicationDomainPayload($records, 'character:' . $characterId) : [];
+        if ($character !== []) $token = synchronizeOnlineCharacterToken($token, $character);
         if (!$isGm && ($token['hidden'] ?? false) === true
             && onlineTokenControllerIdFromRecords($connection, $records, $token) !== $accountId) continue;
         if (!$isGm && onlineTokenControllerIdFromRecords($connection, $records, $token) !== $accountId
@@ -105,7 +108,8 @@ function onlineUseComplexAbility(
     array $table,
     array $identity,
     array $arguments,
-    bool $isGm
+    bool $isGm,
+    ?array $continuation = null
 ): array {
     $accountId = (string) ($identity['id'] ?? '');
     $requestId = trim((string) ($arguments['requestId'] ?? ''));
@@ -113,10 +117,11 @@ function onlineUseComplexAbility(
         rejectOnlineCommand($connection, 400, 'Actualisez le client pour sécuriser cette compétence complexe.', 'invalid_complex_ability_request');
     }
     $signature = onlineComplexAbilityRequestSignature($arguments);
-    $receiptContext = onlinePersistentCommandReceipt(
+    $receiptContext = $continuation === null ? onlinePersistentCommandReceipt(
         $connection, $records, 'ability-workflow', $requestId, $accountId, $signature, 'complex_ability'
-    );
+    ) : [];
     if (is_array($receiptContext['receipt'] ?? null)) {
+        onlineAssertAbilityReceiptVisibility($connection, $receiptContext['receipt']['result'], $isGm);
         return [...$receiptContext['receipt']['result'], 'deduplicated' => true];
     }
     $records = array_replace($records, applicationDomainRecords($connection));
@@ -152,7 +157,7 @@ function onlineUseComplexAbility(
         if (!is_array($ability) || ($ability['effect'] ?? '') !== 'complex') {
             rejectOnlineCommand($connection, 404, 'Cette compétence complexe n’existe plus.', 'complex_ability_missing');
         }
-        if (applicationAbilitySourceDefeated($rules)) {
+        if ($continuation === null && applicationAbilitySourceDefeated($rules)) {
             rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
         }
         foreach ($activity['abilityExecutions'] as $execution) {
@@ -165,12 +170,16 @@ function onlineUseComplexAbility(
         if (count(array_filter($activity['abilityExecutions'], static fn(array $entry): bool => ($entry['status'] ?? '') === 'active')) >= 30) {
             rejectOnlineCommand($connection, 429, 'La table contient déjà trop de compétences complexes actives.', 'complex_ability_active_capacity');
         }
-        $plan = onlinePrepareAbilityCasting(
+        if ($continuation === null) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
+        $plan = $continuation['plan'] ?? onlinePrepareAbilityCasting(
             $connection, $ability, $rules, $sceneId,
             applicationDomainPayload($records, 'initiative:' . $sceneId), $activity
         );
-        $cast = onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map));
-        $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity);
+        $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character);
+        if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
+            return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.complex', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, [], $receiptContext);
+        }
+        $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity, true, $continuation === null);
         $execution = null;
         if (($cast['success'] ?? false) === true) {
             try {
@@ -200,7 +209,7 @@ function onlineUseComplexAbility(
         onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
         $result = ['effect' => 'complex', 'castSucceeded' => ($cast['success'] ?? false) === true, 'cast' => $cast,
             ...$bundle, 'execution' => $execution];
-        onlineStorePersistentCommandReceipt($records, $pending, $receiptContext, 'ability-workflow', $requestId,
+        if ($continuation === null) onlineStorePersistentCommandReceipt($records, $pending, $receiptContext, 'ability-workflow', $requestId,
             $accountId, $actionEntry['id'], $sourceKey, $signature, $result);
         return [...$result, 'deduplicated' => false];
     }

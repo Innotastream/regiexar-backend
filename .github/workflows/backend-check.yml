@@ -13,6 +13,19 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.11.14@sha256:dbe56e20372fc6d6b8e0e396866ba89c4c7f128c38c4f59aaa54d957db95790c
+        env:
+          MARIADB_ROOT_PASSWORD: regie-audit-local-only
+          MARIADB_ROOT_HOST: '%'
+        ports:
+          - '127.0.0.1:33307:3306'
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - name: Signaler le démarrage des contrôles backend
         env:
@@ -49,6 +62,29 @@ jobs:
         run: php tests/diagnostics-contract.php
       - name: Private PHP warning and failure journal
         run: php tests/runtime-diagnostics-contract.php
+      - name: Reliability audit regressions
+        run: |
+          php tests/backend-future-schema.php
+          php tests/connection-heartbeat.php
+          php tests/path-footprint.php
+          php tests/media-access-lifecycle.php
+          php tests/combat-audit-contract.php
+          php tests/ability-validation-contract.php
+          php tests/pending-ability-domain-contract.php
+      - name: Real SQL media concurrency and heartbeat
+        env:
+          XAR_TEST_MYSQL_ALLOW_LOCAL: '1'
+          XAR_TEST_MYSQL_DSN: 'mysql:host=127.0.0.1;port=33307;charset=utf8mb4'
+          XAR_TEST_MYSQL_USER: root
+          XAR_TEST_MYSQL_PASSWORD: regie-audit-local-only
+          XAR_TEST_MYSQL_ROOT: ${{ runner.temp }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y php-mysql
+          php -r 'exit(extension_loaded("pdo_mysql") ? 0 : 1);'
+          set -o pipefail
+          php tests/mysql-media-concurrency.php | tee mysql-concurrency.log
+          grep -Fq 'Local MySQL concurrency integration passed.' mysql-concurrency.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

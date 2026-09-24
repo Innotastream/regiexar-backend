@@ -143,10 +143,11 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
+        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'];
         $receipts = [];
-        foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
-        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', ['ability-cast', 'ability-workflow', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'], true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
-        if (count($receipts) > XAR_RESOURCE_RECEIPT_MAXIMUM) sendError(409, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
+        foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        if (count($receipts) + count($payload['pendingAbilityCasts'] ?? $previous['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM) sendError(409, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
         if (array_key_exists('resourceReceipts', $payload) || $receipts !== []) $payload['resourceReceipts'] = array_values($receipts);
         // A stale client must never erase or rewind an authoritative workflow.
         $executions = [];
@@ -168,6 +169,10 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $preserve = static function ($attack) use ($attacks) {
             if (!is_array($attack)) return $attack;
             $old = $attacks[$attack['id'] ?? ''] ?? [];
+            if (($old['visibility'] ?? '') === 'gm') $attack['visibility'] = 'gm';
+            if (is_array($attack['opposition'] ?? null) && isset($old['opposition']['accountId'])) {
+                $attack['opposition']['accountId'] = $old['opposition']['accountId'];
+            }
             foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }

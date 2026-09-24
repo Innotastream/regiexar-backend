@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/ability-validation.php';
+
 function validApplicationAbilityCastingFields(array $ability): bool {
     foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999] as $key => $limit) {
         if (array_key_exists($key, $ability) && (!is_int($ability[$key]) || $ability[$key] < 0 || $ability[$key] > $limit)) return false;
@@ -176,7 +178,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     }
 }
 
-function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null): array {
+function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null, ?array $character = null): array {
     if ($plan['statId'] === '') return ['success' => true, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null];
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
@@ -186,7 +188,7 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
     $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier);
     if ($outcome !== null) {
-        $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId']);
+        $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
     }
     if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
@@ -244,10 +246,11 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
     }
 }
 
-// Queue costs after effect preparation, in the same locked transaction. Read
-// pending payloads first so healing oneself never restores the mana just spent.
-function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true): array {
+// Apply attempt costs and/or recharge in the same locked transaction. Read
+// pending payloads first so healing oneself never restores resources just spent.
+function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true, bool $payCosts = true, bool $applyRecharge = true): array {
     $now = (int) floor(microtime(true) * 1000);
+    if ($payCosts) {
     onlineRecordCharacterLuckD100(
         $connection,
         $records,
@@ -314,8 +317,16 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             }
         }
     }
+    }
+    $cost = (int) $plan['manaCost'];
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     if ($recordRoll && is_array($cast['roll'] ?? null)) $activity['rolls'] = array_slice([$cast['roll'], ...($activity['rolls'] ?? [])], 0, 100);
+    if (!$applyRecharge) {
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueCost'] ?? 0,
+            'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0, 'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => 0, 'pendingValidation' => true];
+    }
+    unset($cast['pendingValidation']);
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $cast['success'] ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];
@@ -328,14 +339,14 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         if ($index === null && count($timers) >= 300) rejectOnlineCommand($connection, 409, 'La table a atteint sa limite de recharges.', 'timer_limit');
         $old = $index !== null ? $timers[$index] : [];
         $retainCooldown = !$cast['success'] && ($old['cooldownActive'] ?? false) && (($old['readyRound'] ?? 0) > $plan['usedRound'] || in_array($old['restRecharge'] ?? '', ['short', 'long'], true));
-        if ($retainCooldown) $remaining = max(0, ($old['readyRound'] ?? $plan['usedRound']) - $plan['usedRound']);
+        if ($retainCooldown) $remaining = max($failedCooldown, ($old['readyRound'] ?? $plan['usedRound']) - $plan['usedRound']);
         $timer = ['id' => $index !== null ? $timers[$index]['id'] : 'timer-' . randomToken(9), 'sceneId' => $plan['sceneId'], 'abilityId' => $plan['abilityId'],
-            'characterId' => $plan['characterId'], 'tokenId' => $plan['tokenId'], 'label' => $plan['label'], 'cooldown' => $retainCooldown ? $old['cooldown'] : $remaining,
-            'turnKey' => $plan['turnKey'], 'useCount' => $plan['useCount'], 'reusableInTurn' => $failedCooldown > 0 && !$retainCooldown ? false : $plan['reusableInTurn'],
+            'characterId' => $plan['characterId'], 'tokenId' => $plan['tokenId'], 'label' => $plan['label'], 'cooldown' => $retainCooldown ? max($old['cooldown'], $failedCooldown) : $remaining,
+            'turnKey' => $plan['turnKey'], 'useCount' => $plan['useCount'], 'reusableInTurn' => $failedCooldown > 0 ? false : $plan['reusableInTurn'],
             'restRecharge' => $retainCooldown ? $old['restRecharge'] : ($cast['success'] ? $plan['restRecharge'] : 'none'),
             'restUseCount' => $cast['success'] && in_array($plan['restRecharge'], ['short', 'long'], true) ? (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)) + 1 : (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)),
             'restUseLimit' => $plan['restUseLimit'], 'cooldownActive' => $cast['success'] || $retainCooldown || $failedCooldown > 0,
-            'usedRound' => $retainCooldown ? $old['usedRound'] : $plan['usedRound'], 'readyRound' => $retainCooldown ? $old['readyRound'] : $plan['usedRound'] + $remaining, 'ownerPlayerId' => $timerOwner,
+            'usedRound' => $retainCooldown ? $old['usedRound'] : $plan['usedRound'], 'readyRound' => $retainCooldown ? max($old['readyRound'], $plan['usedRound'] + $failedCooldown) : $plan['usedRound'] + $remaining, 'ownerPlayerId' => $timerOwner,
             'ownerLabel' => $source['name'] ?? 'Personnage', 'visibility' => 'private', 'createdAt' => $index !== null ? ($timers[$index]['createdAt'] ?? gmdate('c')) : gmdate('c'), 'updatedAt' => gmdate('c')];
         if ($index !== null) $timers[$index] = $timer; else array_unshift($timers, $timer);
         $activity['actionTimers'] = $timers;
@@ -349,7 +360,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         'reducedFailureEnabled' => ($plan['reducedFailureEnabled'] ?? false) === true, 'reducedFailureApplied' => $failedCooldown > 0];
 }
 
-function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, mixed $signature): ?array {
+function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, mixed $signature, bool $isGm = false): ?array {
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Actualisez le client pour sécuriser le lancement de cette compétence.', 'invalid_ability_request');
     $now = (int) floor(microtime(true) * 1000); $count = 0;
     foreach ($activity['resourceReceipts'] ?? [] as $receipt) {
@@ -359,9 +370,10 @@ function onlineAbilityReceipt(PDO $connection, array $activity, string $requestI
         if (($receipt['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
         $expectedSignature = is_callable($signature) ? $signature($receipt) : (string) $signature;
         if (($receipt['requestSignature'] ?? '') !== $expectedSignature || ($receipt['kind'] ?? '') !== 'ability-cast' || !is_array($receipt['result'] ?? null)) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre lancement.', 'ability_request_mismatch');
+        onlineAssertAbilityReceiptVisibility($connection, $receipt['result'], $isGm);
         return [...$receipt['result'], 'deduplicated' => true];
     }
-    if ($count >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
+    if ($count + count($activity['pendingAbilityCasts'] ?? []) >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
     return null;
 }
 
@@ -378,17 +390,17 @@ function onlineStoreAbilityReceipt(array &$records, array &$pending, string $req
     return [...$result, 'deduplicated' => false];
 }
 
-function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $isGm): array {
-    if (($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
+function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $isGm, ?array $continuation = null): array {
     $sceneId = (string) ($arguments['sceneId'] ?? onlineActiveSceneId($table)); $accountId = (string) $identity['id'];
-    if (!$isGm && $sceneId !== onlineActiveSceneId($table)) rejectOnlineCommand($connection, 409, 'La scène a changé.', 'stale_scene');
     $records = applicationDomainRecords($connection);
     $activity = applicationDomainPayload($records, 'activity');
     $receiptSignature = static fn(array $receipt): string => applicationAbilityRequestSignature(
         'token.roll', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
     );
     $requestId = (string) ($arguments['requestId'] ?? '');
-    if ($requestId !== '') { $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature); if ($receipt !== null) return $receipt; }
+    if ($continuation === null && $requestId !== '') { $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature, $isGm); if ($receipt !== null) return $receipt; }
+    if (($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
+    if (!$isGm && $sceneId !== onlineActiveSceneId($table)) rejectOnlineCommand($connection, 409, 'La scène a changé.', 'stale_scene');
     $tokenId = (string) ($arguments['tokenId'] ?? '');
     $sourceLayerId = null;
     if ($tokenId !== '') {
@@ -416,13 +428,20 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);
     if ($requestId === '') {
-        if ($extended) onlineAbilityReceipt($connection, $activity, '', $accountId, $signature);
+        if ($extended) onlineAbilityReceipt($connection, $activity, '', $accountId, $signature, $isGm);
         $requestId = 'legacy-ability-' . randomToken(12);
-        onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $signature);
+        onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $signature, $isGm);
     }
-    if (applicationAbilitySourceDefeated($source)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
-    $plan = onlinePrepareAbilityCasting($connection, $ability, $source, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
-    $cast = onlineAbilityCastingRoll($plan, $source, $identity, $arguments, $sourceLayerId);
+    if ($continuation === null && applicationAbilitySourceDefeated($source)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
+    if ($continuation === null) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $source);
+    $plan = $continuation['plan'] ?? onlinePrepareAbilityCasting($connection, $ability, $source, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
+    $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $source, $identity, $arguments, $sourceLayerId, $character);
+    if ($isGm && $sceneId !== '' && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {
+        $cast['roll']['visibility'] = 'gm'; $cast['roll']['revealed'] = false;
+    }
+    if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
+        return onlineDeferAbilityCasting($connection, $records, $pending, 'token.roll', $identity, $arguments, $isGm, $ability, $source, $plan, $cast, $signature);
+    }
     $effectRoll = null;
     if ($cast['success']) {
         $parts = applicationDamageComponents($ability['damageComponents'] ?? []);
@@ -432,12 +451,16 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
         if (!validOnlineRollFormula($formula) || strlen($formula) > 100) rejectOnlineCommand($connection, 400, 'Formule de compétence invalide.', 'invalid_roll');
         $rolled = onlineRollFormulaWithMode($formula, 'normal');
         $effectRoll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity);
+        if (($isGm && $sceneId !== '' && $sceneId !== onlineActiveSceneId($table)) || ($continuation !== null && ($cast['roll']['visibility'] ?? '') === 'gm')) {
+            $effectRoll['visibility'] = 'gm'; $effectRoll['revealed'] = false;
+        }
         onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
     }
-    $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity);
+    $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity, true, $continuation === null);
     onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . applicationAbilityRechargeActivityDetail($cast)]);
     $bundle = onlineAbilityRollBundle($cast, $effectRoll);
-    $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false]);
+    $result = [...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success'], 'initiativeUpdated' => false];
+    if ($continuation === null) $result = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, $result);
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
     return $result;
 }

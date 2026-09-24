@@ -1,3 +1,7 @@
+# Candidat backend 0.18.3 — audit de fiabilité
+
+Client exact **3.4.2**, build `client-3-4-2-reliability-audit-20260924-1`. Correctifs de combat, confidentialité, médias, idempotence et refus des schémas futurs. Schéma MySQL **22** conservé. **Non déployé** : la distribution du client reste suspendue, la dernière production confirmée était 0.18.1/client3.4.0.
+
 # Backend OVH — Régie du Seuil 0.18.2
 
 Client exact **3.4.1**, build `client-3-4-1-scenes-fatigue-lights-20260924-1`. Le MJ joue et lance des dés sur sa scène de travail sans la diffuser ; les jets de scène non publiée restent secrets. Le joueur périmé est invité à actualiser sa carte sans relancer son attaque. La fatigue au-delà de la moitié de sa jauge diminue le seuil d'une statistique de 1 ; le serveur inscrit le dé brut, le seuil et la jauge dans les résultats autorisés. Schéma MySQL **22** inchangé, sans migration ; politique de session exacte `[3.4.1]`.

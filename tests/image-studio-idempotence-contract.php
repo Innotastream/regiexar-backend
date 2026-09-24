@@ -105,6 +105,9 @@ final class ImageStudioMemoryStatement extends PDOStatement
 final class ImageStudioMemoryConnection extends PDO
 {
     public array $conversations = [];
+    public array $messages = [];
+    public bool $duplicateAfterLock = false;
+    public int $duplicateReads = 0;
     public array $domains = [];
     public int $revision = 1;
     public bool $failNextDomainPersist = false;
@@ -191,6 +194,19 @@ final class ImageStudioMemoryConnection extends PDO
 
     public function executeSql(string $sql, array $params): array
     {
+        if (str_contains($sql, 'GET_LOCK') || str_contains($sql, 'RELEASE_LOCK')) return [['locked' => 1]];
+        if (str_starts_with($sql, 'SELECT id FROM image_studio_messages WHERE author_account_id')) {
+            if ($this->duplicateAfterLock && ++$this->duplicateReads === 1) return [];
+            foreach ($this->messages as $message) {
+                if (($message['author_account_id'] ?? '') === $params[':account_id']
+                    && ($message['client_request_id'] ?? '') === $params[':client_request_id']) return [['id' => $message['id']]];
+            }
+            return [];
+        }
+        if (str_contains($sql, 'FROM image_studio_messages m') && str_contains($sql, 'WHERE m.id = :id')) {
+            $message = $this->messages[$params[':id']] ?? null;
+            return is_array($message) ? [$message] : [];
+        }
         if (str_starts_with($sql, 'SELECT global_revision, state_schema_version')) {
             return [[
                 'global_revision' => $this->revision,
@@ -435,6 +451,47 @@ requireImageStudioIdempotence(assertImageStudioConversationAccess(['id' => 'acco
 foreach ([['permanent_role' => 'player', 'effective_mode' => 'player'], ['permanent_role' => 'gm', 'effective_mode' => 'player']] as $identity) {
     try { assertImageStudioConversationAccess($identity, $conversation); throw new RuntimeException('Player access accepted'); }
     catch (ImageStudioTestResponse $response) { requireImageStudioIdempotence($response->status === 403, 'Le partage entre MJ ne divulgue aucune discussion en mode joueur.'); }
+}
+
+$messageDb = new ImageStudioMemoryConnection();
+$messageId = str_repeat('g', 24);
+$messageDb->messages[$messageId] = [
+    'id' => $messageId, 'conversation_id' => 'conversation-one', 'prompt' => 'Une forêt',
+    'operation' => 'generate', 'aspect' => 'landscape', 'execution_mode' => 'local',
+    'references_json' => '[{"mediaId":"abcdefghijklmnopqrstuvwx","label":"Forêt","kind":"image"}]',
+    'parent_message_id' => null, 'revised_prompt' => null, 'status' => 'succeeded',
+    'media_id' => null, 'media_content_type' => null, 'width' => null, 'height' => null,
+    'error_code' => null, 'owner_hidden_at' => null, 'created_at' => '2026-09-24', 'started_at' => null, 'completed_at' => null,
+];
+$messageRequest = ['conversationId' => 'conversation-one', 'prompt' => 'Une forêt',
+    'operation' => 'generate', 'aspect' => 'landscape', 'executionMode' => 'local',
+    'references' => [['kind' => 'image', 'label' => 'Forêt', 'mediaId' => 'abcdefghijklmnopqrstuvwx']], 'parentMessageId' => ''];
+try { replayImageStudioMessage($messageDb, $messageId, $messageRequest); }
+catch (ImageStudioTestResponse $response) {
+    requireImageStudioIdempotence($response->status === 200 && ($response->body['deduplicated'] ?? false), 'Le même message normalisé rejoue son résultat sans mutation.');
+}
+foreach (['conversationId' => 'conversation-other', 'prompt' => 'Autre description', 'operation' => 'edit',
+    'aspect' => 'square', 'executionMode' => 'regie', 'references' => [], 'parentMessageId' => 'parent-other'] as $field => $value) {
+    try { replayImageStudioMessage($messageDb, $messageId, [...$messageRequest, $field => $value]); }
+    catch (ImageStudioTestResponse $response) {
+        requireImageStudioIdempotence($response->status === 409 && ($response->body['code'] ?? '') === 'generation_request_mismatch', 'Une reprise de génération modifiée est refusée: ' . $field);
+    }
+}
+
+$messageDb->messages[$messageId]['references_json'] = '[]';
+$messageDb->messages[$messageId]['author_account_id'] = 'account-gm';
+$messageDb->messages[$messageId]['client_request_id'] = 'generation-retry-0001';
+$messageConversationId = str_repeat('c', 22);
+$messageDb->messages[$messageId]['conversation_id'] = $messageConversationId;
+$messageDb->conversations[$messageConversationId] = ['id' => $messageConversationId, 'owner_account_id' => 'account-gm', 'title' => 'Essai'];
+$GLOBALS['imageStudioTestIdentity'] = ['id' => 'account-gm', 'permanent_role' => 'gm', 'effective_mode' => 'gm'];
+foreach ([false, true] as $afterLock) foreach (['Une forêt', 'Une autre forêt'] as $prompt) {
+    $messageDb->duplicateAfterLock = $afterLock; $messageDb->duplicateReads = 0;
+    $GLOBALS['imageStudioTestBody'] = ['clientRequestId' => 'generation-retry-0001', 'prompt' => $prompt];
+    try { createImageStudioMessage($messageDb, $messageConversationId); }
+    catch (ImageStudioTestResponse $response) {
+        requireImageStudioIdempotence($response->status === ($prompt === 'Une forêt' ? 200 : 409), 'La route de génération vérifie la reprise avant et après verrou sans exécuter une seconde demande: ' . $response->getMessage());
+    }
 }
 
 $checks = (int) ($GLOBALS['imageStudioChecks'] ?? 0);

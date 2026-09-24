@@ -756,6 +756,9 @@ function applyApplicationComplexAbilityCommand(
         if (!$owner && !$isGm && !($defenseParticipant && $action === 'defense-roll')) {
             applicationComplexAbilityFail('Vous ne pouvez pas faire progresser cette compétence.', 'complex_ability_forbidden', 403);
         }
+        if ($action === 'defense-roll' && !$isGm && !$defenseParticipant) {
+            applicationComplexAbilityFail('Seul le défenseur courant ou le MJ peut lancer cette défense.', 'complex_ability_forbidden', 403);
+        }
         if ($step['type'] === 'condition' && $action === 'evaluate-condition') {
             $result = evaluateApplicationComplexAbilityCondition($execution, $step, $tokens, $isGm);
             $state['outcome'] = $result['outcome'];
@@ -773,14 +776,20 @@ function applyApplicationComplexAbilityCommand(
                 'stepId' => $step['id'], 'label' => $step['title'] . ' validée'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
         } elseif ($step['type'] === 'targets' && $action === 'select-targets') {
+            if (!is_array($command['allocations'] ?? null) || !array_is_list($command['allocations'])
+                || count($command['allocations']) < $step['minTargets'] || count($command['allocations']) > $step['maxTargets']) {
+                applicationComplexAbilityFail('Choisissez entre ' . $step['minTargets'] . ' et ' . $step['maxTargets'] . ' cibles distinctes.', 'complex_ability_target_count', 400);
+            }
             $allocations = []; $ids = [];
-            foreach (array_slice(is_array($command['allocations'] ?? null) ? $command['allocations'] : [], 0, $step['maxTargets']) as $entry) {
-                if (!is_array($entry)) continue;
+            foreach ($command['allocations'] as $entry) {
+                if (!is_array($entry) || !is_int($entry['count'] ?? null) || $entry['count'] < 1 || $entry['count'] > 100) {
+                    applicationComplexAbilityFail('Chaque cible doit avoir un nombre entier de 1 à 100 actions.', 'complex_ability_allocation_invalid', 400);
+                }
                 $tokenId = applicationComplexAbilityIdentifier($entry['tokenId'] ?? '', '', 80);
                 $token = applicationComplexAbilityTokenById($tokens, $tokenId);
-                if ($tokenId === '' || !is_array($token)) continue;
+                if ($tokenId === '' || !is_array($token)) applicationComplexAbilityFail('Une cible n’est plus disponible.', 'complex_ability_target_missing', 404);
                 $allocations[] = ['tokenId' => $tokenId, 'targetName' => applicationComplexAbilityText($token['name'] ?? '', 120, 'Cible'),
-                    'count' => applicationComplexAbilityInteger($entry['count'] ?? null, 1, 100, 1)];
+                    'count' => $entry['count']];
                 $ids[$tokenId] = true;
             }
             if (count($ids) !== count($allocations) || count($allocations) < $step['minTargets'] || count($allocations) > $step['maxTargets']) {

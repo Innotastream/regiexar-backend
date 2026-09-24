@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.2';
-const XAR_BACKEND_BUILD = 'client-3-4-1-scenes-fatigue-lights-20260924-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.4.1';
+const XAR_BACKEND_VERSION = '0.18.3';
+const XAR_BACKEND_BUILD = 'client-3-4-2-reliability-audit-20260924-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.4.2';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.4.1'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.4.2'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 22;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -195,6 +195,18 @@ function requireSupportedClient(PDO $connection, array $configuration): void
     ]);
 }
 
+function routeRequiresSupportedClient(string $route): bool
+{
+    if (in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)
+        || str_starts_with($route, '/api/v1/image-studio')) {
+        return false;
+    }
+    // A deliberately published image is opened by ordinary browsers and link
+    // previews, which have no application version header. Keep this exception
+    // limited to the two exact capability routes; private media remain gated.
+    return preg_match('#^/share/[A-Za-z0-9_-]{22}(?:/image)?$#D', $route) !== 1;
+}
+
 function databaseConnection(array $configuration): PDO
 {
     $database = $configuration['database'] ?? null;
@@ -260,7 +272,10 @@ function releaseMaintenanceLock(PDO $connection, string $name): void
 function ensureCurrentSchema(PDO $connection): void
 {
     $version = (int) $connection->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
-    if ($version >= XAR_DATABASE_SCHEMA_VERSION) {
+    if ($version > XAR_DATABASE_SCHEMA_VERSION) {
+        throw new RuntimeException('future_database_schema');
+    }
+    if ($version === XAR_DATABASE_SCHEMA_VERSION) {
         return;
     }
     if ($version < 3) {
@@ -275,7 +290,10 @@ function ensureCurrentSchema(PDO $connection): void
 
     try {
         $version = (int) $connection->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
-        if ($version >= XAR_DATABASE_SCHEMA_VERSION) {
+        if ($version > XAR_DATABASE_SCHEMA_VERSION) {
+            throw new RuntimeException('future_database_schema');
+        }
+        if ($version === XAR_DATABASE_SCHEMA_VERSION) {
             return;
         }
         if ($version < 3) {
@@ -2148,6 +2166,7 @@ try {
         'configuration_required' => 'configuration_required',
         'stale_backend_instance' => 'stale_backend_instance',
         'backend_release_version_invalid' => 'backend_release_version_invalid',
+        'future_database_schema' => 'future_database_schema',
         default => 'database_unreachable',
     };
     sendJson(503, ['ok' => false, 'status' => 'unavailable', 'code' => $code], $headOnly);
@@ -2187,8 +2206,7 @@ try {
     if (handlePublicHealthOverlayRoute($connection, $route, $method, $headOnly)) {
         exit;
     }
-    if (!in_array($route, ['/api/v1/auth/logout', '/api/v1/auth/bootstrap', '/api/v1/auth/recover'], true)
-        && !str_starts_with($route, '/api/v1/image-studio')) {
+    if (routeRequiresSupportedClient($route)) {
         requireSupportedClient($connection, $configuration);
     }
     cleanupAuthentication($connection);

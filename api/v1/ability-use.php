@@ -24,10 +24,8 @@ function planApplicationMetamorphosis(array $source, array $characters, array $t
     return ['activeCharacterId' => $activeCharacterId, 'deduplicated' => false, 'changes' => array_map(static fn(array $token): array => ['token' => $token, 'characterId' => $activeCharacterId, 'transformation' => $transformation], $affected)];
 }
 
-function onlineUseAbility(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $isGm): array {
+function onlineUseAbility(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $isGm, ?array $continuation = null): array {
     $accountId = (string) $identity['id']; $sceneId = (string) ($arguments['sceneId'] ?? '');
-    if ($sceneId === '' || (!$isGm && $sceneId !== onlineActiveSceneId($table))) rejectOnlineCommand($connection, 409, 'La scène a changé. Rouvrez la capacité.', 'stale_scene');
-    if (($table['tacticalSync']['paused'] ?? false)) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
     $requestId = (string) ($arguments['requestId'] ?? '');
     $records = applicationDomainRecords($connection);
     $activity = applicationDomainPayload($records, 'activity');
@@ -35,13 +33,15 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         'ability.use', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
     );
     // Preserve a healing receipt created by the preceding 3.2.3 candidate.
-    foreach ($activity['resourceReceipts'] ?? [] as $old) if (($old['requestId'] ?? '') === $requestId && ($old['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000) && ($old['operation']['kind'] ?? '') === 'resource-adjust') {
+    foreach ($continuation === null ? ($activity['resourceReceipts'] ?? []) : [] as $old) if (($old['requestId'] ?? '') === $requestId && ($old['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000) && ($old['operation']['kind'] ?? '') === 'resource-adjust') {
         if (($old['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
         if (($old['operation']['sceneId'] ?? '') !== $sceneId || ($old['operation']['tokenId'] ?? '') !== ($arguments['targetTokenId'] ?? '')) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre soin.', 'ability_request_mismatch');
         return ['effect' => 'healing', 'appliedDelta' => $old['operation']['appliedDelta'] ?? 0, 'deduplicated' => true];
     }
-    $receipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature);
+    $receipt = $continuation === null ? onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature, $isGm) : null;
     if ($receipt !== null) return $receipt;
+    if ($sceneId === '' || (!$isGm && $sceneId !== onlineActiveSceneId($table))) rejectOnlineCommand($connection, 409, 'La scène a changé. Rouvrez la capacité.', 'stale_scene');
+    if (($table['tacticalSync']['paused'] ?? false)) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
     $map = applicationDomainPayload($records, 'map:' . $sceneId);
     $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? ''));
     if ($source === [] || (!empty($arguments['layerId']) && $arguments['layerId'] !== onlineTokenLayerId($source, $map)) || !onlineTokenOnActiveLayer($source, $map) || (!$isGm && (($source['hidden'] ?? false) || onlineTokenControllerIdFromRecords($connection, $records, $source) !== $accountId))) rejectOnlineCommand($connection, 403, 'Ce pion ne vous appartient pas ou a changé de niveau.', 'ability_source_forbidden');
@@ -68,9 +68,20 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
         if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403, 'La cible du soin n’est pas visible.', 'healing_target_hidden');
     }
-    if (!$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
-    $plan = $returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
-    $cast = $returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map));
+    if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
+    if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
+    $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    $cast = $continuation['cast'] ?? ($returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character));
+    if ($isGm && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {
+        $cast['roll']['visibility'] = 'gm'; $cast['roll']['revealed'] = false;
+    }
+    $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
+    if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
+        return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.use', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, $target);
+    }
+    // Pay at the attempted cast before effects: a self-heal must be capped
+    // against HP after payment, and a transformation must debit its base form.
+    if ($plan !== null) $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity, false, $continuation === null);
     $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
     $effectRoll = null;
     $result = ['effect' => $metamorphosis ? 'metamorphosis' : ($ability['effect'] ?? 'healing'), 'appliedDelta' => 0];
@@ -112,6 +123,9 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $rules,
             $identity
         );
+        if (($isGm && $sceneId !== onlineActiveSceneId($table)) || ($continuation !== null && ($cast['roll']['visibility'] ?? '') === 'gm')) {
+            $effectRoll['visibility'] = 'gm'; $effectRoll['revealed'] = false;
+        }
         onlineAppendAbilityEffectRoll($records, $pending, $effectRoll);
         $amount = max(0, min(1000000000, $rolled['total']));
         if ($amount > 0) {
@@ -123,11 +137,13 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         }
     }
     if ($plan !== null) {
-        $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity);
+        // Keep cast then effect in history even though costs preceded effects.
+        if (is_array($cast['roll'] ?? null)) onlineAppendAbilityEffectRoll($records, $pending, $cast['roll']);
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . applicationAbilityRechargeActivityDetail($cast)]);
     }
     $bundle = onlineAbilityRollBundle($cast, $effectRoll);
-    $stored = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, [...$result, ...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success']]);
+    $stored = [...$result, ...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success']];
+    if ($continuation === null) $stored = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, $stored);
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
     return $stored;
 }
