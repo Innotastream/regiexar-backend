@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../api/v1/domains.php';
+require_once __DIR__ . '/../api/v1/online.php';
 
 function requireComplexAbility(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
