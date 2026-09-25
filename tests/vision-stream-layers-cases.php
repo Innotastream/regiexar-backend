@@ -121,7 +121,14 @@ $state=['activeSceneId'=>'scene-one','map'=>$map,'initiative'=>[],'characters'=>
     ['id'=>'roll-floor','visibility'=>'public','mapEvent'=>['kind'=>'roll','sceneId'=>'scene-one','tokenId'=>'other-floor']],
 ]];
 $view=publicPlayerState($state,['id'=>'account-player','display_name'=>'Player'],[]);
-requireTactical(array_column($view['map']['tokens'],'id') === ['observer','inside'] && $view['map']['tokens'][0]['visionDistance'] === 8, 'The sheet radius overrides an old global/token distance; neither halo tokens nor other levels are projected.');
+requireTactical(array_column(array_values(array_filter($view['map']['tokens'],
+    static fn (array $token): bool => ($token['dimSilhouette'] ?? false) !== true)), 'id') === ['observer','inside']
+    && ($view['map']['tokens'][0]['visionDistance'] ?? null) === 8
+    && !in_array('other-floor', array_column($view['map']['tokens'], 'id'), true)
+    && (($view['map']['tokens'][2]['id'] ?? '') === 'halo')
+    && (($view['map']['tokens'][2]['dimSilhouette'] ?? false) === true)
+    && (($view['map']['tokens'][2]['name'] ?? '') === '?'),
+    'The sheet radius overrides old distances; the halo is anonymous and other levels are absent.');
 requireTactical(array_column($view['rolls'],'id') === ['roll-inside'], 'Ordinary dice without attack ids cannot disclose names in the halo or another floor.');
 
 $db=fixture();$map=['activeLayerId'=>'ground','viewLocked'=>false,'naturalWidth'=>1000,'naturalHeight'=>1000,'layers'=>['upper'=>['naturalWidth'=>1000,'naturalHeight'=>1000,'walls'=>['version'=>1,'width'=>32,'height'=>32,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",128)),'+/','-_'),'=')]]]];
