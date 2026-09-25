@@ -216,7 +216,7 @@ function onlineHealthState(mixed $current, mixed $maximum, bool $playerControlle
         return ['code' => 'dead', 'effect' => 'Mort', 'percentage' => $percentage];
     }
     if ($hp <= 0) return ['code' => 'down', 'effect' => 'KO', 'percentage' => $percentage];
-    return $maxHp > 0 && $percentage < 10
+    return $maxHp > 0 && $percentage <= 10
         ? ['code' => 'critical', 'effect' => 'Critique', 'percentage' => $percentage]
         : ['code' => 'normal', 'effect' => '', 'percentage' => $percentage];
 }
@@ -2313,6 +2313,14 @@ function normalizeOnlineD100Difficulty(mixed $value): ?int
     return is_numeric($value) ? max(0, min(100, (int) $value)) : null;
 }
 
+function normalizeOnlineMoraleExtremes(mixed $value): array
+{
+    $source = is_array($value) ? $value : [];
+    $label = static fn (mixed $candidate): string => is_string($candidate) && trim($candidate) !== ''
+        ? substr(trim($candidate), 0, 120) : 'À personnaliser';
+    return ['low' => $label($source['low'] ?? null), 'high' => $label($source['high'] ?? null)];
+}
+
 function playerCharacterPatch(array $current, array $patch): array
 {
     // A player may edit ordinary effects, but cannot create or remove the MJ's health override.
@@ -2357,6 +2365,13 @@ function playerCharacterPatch(array $current, array $patch): array
                 $current[$key] = $profile['percent'];
             } elseif ($key === 'hitThreshold') {
                 $current[$key] = normalizeOnlineD100Difficulty($patch[$key]);
+            } elseif ($key === 'morale') {
+                $nextMorale = is_string($patch[$key]) ? trim($patch[$key]) : '';
+                $currentMorale = (string) ($current[$key] ?? 'Normal');
+                if (!in_array($currentMorale, ['extreme-low', 'extreme-high'], true)
+                    && in_array($nextMorale, ['Angoissé', 'Stressé', 'Normal', 'Détendu', 'Confiant'], true)) {
+                    $current[$key] = $nextMorale;
+                }
             } elseif ($key === 'linkedTokens') {
                 $current[$key] = normalizeOnlineLinkedTokens($patch[$key]);
             } elseif (in_array($key, ['resources', 'stats', 'temporaryStats', 'fatigue'], true)) {
@@ -2392,6 +2407,8 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
+    $current['morale'] = trim((string) ($current['morale'] ?? '')) ?: 'Normal';
+    $current['moraleExtremes'] = normalizeOnlineMoraleExtremes($current['moraleExtremes'] ?? []);
     $current['characterSchemaVersion'] = 8;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
@@ -2690,7 +2707,7 @@ function onlineLightWithinTokenReach(array $light, array $token, array $map): bo
     $grid = max(12.0, min(240.0, is_numeric($map['gridSize'] ?? null) ? (float) $map['gridSize'] : 50.0));
     $deltaX = abs(((float) $light['x'] - (float) ($token['x'] ?? 0)) / 100 * $width);
     $deltaY = abs(((float) $light['y'] - (float) ($token['y'] ?? 0)) / 100 * $height);
-    return $deltaX <= $grid + 1.0e-6 && $deltaY <= $grid + 1.0e-6;
+    return $deltaX <= 2 * $grid + 1.0e-6 && $deltaY <= 2 * $grid + 1.0e-6;
 }
 
 function onlineStoredMapLight(array $map, string $lightId): ?array
@@ -3099,7 +3116,7 @@ function applyOnlineLightCarryCommand(
                 }
             }
             if (!onlineLightWithinTokenReach($effective, $token, $map)) {
-                rejectOnlineCommand($connection, 409, 'Approchez le pion à une case de la lumière pour la prendre.', 'light_out_of_reach');
+                rejectOnlineCommand($connection, 409, 'Approchez le pion à deux cases de la lumière pour la prendre.', 'light_out_of_reach');
             }
             if (!$isGm) {
                 $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId);
@@ -3470,6 +3487,7 @@ function onlineAttackRequestSignature(string $sceneId, array $arguments, ?bool $
         $kind,
         $attackId,
         (string) ($arguments['statId'] ?? ''),
+        ($arguments['statId'] ?? '') === 'weapon-skill' ? ($arguments['weaponSkill'] ?? null) : null,
         $usesHitOptions ? normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0) : 0,
         $usesHitOptions && ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
         normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0),
@@ -4414,8 +4432,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
-    $fatigueMaximum = (float) ($character['fatigue']['max'] ?? 100);
-    $fatiguePenalty = (float) ($character['fatigue']['current'] ?? 0) > ($fatigueMaximum > 0 ? $fatigueMaximum : 100) / 2 ? 1 : 0;
+    $fatiguePenalty = max(0, (int) floor((float) ($character['fatigue']['current'] ?? 0) - 50));
     if (is_array($character['stats'] ?? null)) {
         $labels = [
             'force' => 'Force', 'dexterity' => 'Dextérité', 'agility' => 'Agilité',
@@ -5529,7 +5546,27 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);
                 }
                 if ($attackKind === 'ability') onlineAssertAbilityValidationAvailable($connection, $activity, $abilities[$abilityIndex], $source, true);
-                $castingPlan = $attackKind === 'ability' ? onlinePrepareAbilityCasting($connection, $abilities[$abilityIndex], $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, (string) ($arguments['statId'] ?? '')) : null;
+                $selectedStatId = (string) (($arguments['statId'] ?? '') ?: ($attackKind === 'ability' ? ($abilities[$abilityIndex]['castingStatId'] ?? '') : ''));
+                $abilityForAttack = $attackKind === 'ability' ? $abilities[$abilityIndex] : null;
+                $noCastingRoll = $abilityForAttack !== null && array_key_exists('castingStatId', $abilityForAttack)
+                    && $abilityForAttack['castingStatId'] === '';
+                if (!$noCastingRoll && $selectedStatId === 'weapon-skill') {
+                    $rawSkill = $arguments['weaponSkill'] ?? null;
+                    if (!is_numeric($rawSkill) || (float) $rawSkill != (int) $rawSkill
+                        || (int) $rawSkill < 0 || (int) $rawSkill > 100) {
+                        rejectOnlineCommand($connection, 400, 'La compétence d’arme doit être un entier de 0 à 100.', 'attack_weapon_skill_invalid');
+                    }
+                    $fatiguePenalty = $sourceCharacter !== []
+                        ? max(0, (int) floor((float) ($source['fatigue']['current'] ?? 0) - 50)) : 0;
+                    $source['weaponSkillBefore'] = (int) $rawSkill;
+                    $source['stats'][] = ['id' => 'weapon-skill', 'label' => 'Compétence d’arme',
+                        'value' => max(0, (int) $rawSkill - $fatiguePenalty)];
+                }
+                if ($abilityForAttack !== null && !$noCastingRoll) {
+                    if ($selectedStatId === '') rejectOnlineCommand($connection, 400, 'Choisissez une statistique d’attaque.', 'attack_stat_required');
+                    $abilityForAttack['castingStatId'] = $selectedStatId;
+                }
+                $castingPlan = $abilityForAttack !== null ? onlinePrepareAbilityCasting($connection, $abilityForAttack, $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, $selectedStatId) : null;
                 $hasCastingCheck = $castingPlan === null || $castingPlan['statId'] !== '';
                 $attackRequestSignature = onlineAttackRequestSignature($sceneId, $arguments, $hasCastingCheck);
                 if ($castingPlan !== null) {

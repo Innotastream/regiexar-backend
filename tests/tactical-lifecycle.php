@@ -197,10 +197,22 @@ requireTactical($stalePlayerAttack->status === 409 && ($stalePlayerAttack->body[
     && $prepared->revision === $revision,
     'A player whose local map is no longer published receives an explicit refresh error without rerolling');
 
-foreach ([50, 99] as $fatigueLevel) {
+$moraleBase = ['id' => 'moral-hero', 'morale' => 'Normal',
+    'moraleExtremes' => ['low' => 'Effroi', 'high' => 'Euphorie'], 'resources' => []];
+$forgedMorale = playerCharacterPatch($moraleBase, ['morale' => 'extreme-low',
+    'moraleExtremes' => ['low' => 'Faux', 'high' => 'Faux']]);
+requireTactical($forgedMorale['morale'] === 'Normal'
+    && $forgedMorale['moraleExtremes'] === $moraleBase['moraleExtremes'],
+    'Only the GM may set or rename the two extreme morale levels.');
+$lockedMorale = playerCharacterPatch([...$moraleBase, 'morale' => 'extreme-high'], ['morale' => 'Normal']);
+requireTactical($lockedMorale['morale'] === 'extreme-high', 'A player cannot leave an extreme level selected by the GM.');
+requireTactical(playerCharacterPatch($moraleBase, ['morale' => 'Stressé'])['morale'] === 'Stressé',
+    'A player may choose a standard morale level.');
+
+foreach ([50, 98] as $fatigueLevel) {
     $fatigued = fixture();
     $character = $fatigued->payload('character:character-player');
-    $character['stats']['force'] = 60;
+    $character['stats']['force'] = 80;
     $character['fatigue'] = ['current' => $fatigueLevel, 'max' => 100];
     $fatigued->put('character:character-player', $character);
     $response = runCommand($fatigued, 'token.roll', [
@@ -209,15 +221,43 @@ foreach ([50, 99] as $fatigueLevel) {
     ]);
     $roll = $response->body['roll'] ?? [];
     $outcome = $roll['outcome'] ?? [];
-    $expected = $fatigueLevel === 99 ? 59 : 60;
+    $expected = $fatigueLevel === 98 ? 32 : 80;
     requireTactical($response->status === 200 && ($outcome['baseThreshold'] ?? null) === $expected
         && ($outcome['threshold'] ?? null) === $expected
-        && ($outcome['fatigue']['before'] ?? null) === ($fatigueLevel === 99 ? 60 : null)
-        && ($outcome['fatigue']['penalty'] ?? null) === ($fatigueLevel === 99 ? 1 : null)
+        && ($outcome['fatigue']['before'] ?? null) === ($fatigueLevel === 98 ? 80 : null)
+        && ($outcome['fatigue']['penalty'] ?? null) === ($fatigueLevel === 98 ? 48 : null)
         && str_contains(applicationRollActivityFields($roll)['detail'], 'dé brut ' . $outcome['raw'])
-        && str_contains(onlineDiscordRollContent($roll), 'seuil ' . ($fatigueLevel === 99 ? '60 −1 (fatigue 99/100) = 59' : '60')),
+        && str_contains(onlineDiscordRollContent($roll), 'seuil ' . ($fatigueLevel === 98 ? '80 −48 (fatigue 98/100) = 32' : '80')),
         'At fatigue ' . $fatigueLevel . ', one stored roll exposes its original die and actual server threshold');
 }
+
+$skillFixture = fixture();
+$skillCharacter = $skillFixture->payload('character:character-player');
+$skillCharacter['stats']['force'] = 80;
+$skillCharacter['fatigue'] = ['current' => 98, 'max' => 100];
+$skillCharacter['abilities'] = [[
+    'id' => 'weapon-skill-proof', 'name' => 'Lame', 'effect' => 'damage', 'formula' => '1',
+    'damageType' => 'physical', 'manaCost' => 0, 'cooldownRounds' => 0,
+    'castingStatId' => 'character-stat-force',
+]];
+$skillFixture->put('character:character-player', $skillCharacter);
+$skillRequest = [
+    'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster',
+    'requestId' => 'weapon-skill-proof-0001', 'attackKind' => 'ability',
+    'attackId' => 'weapon-skill-proof', 'statId' => 'weapon-skill', 'weaponSkill' => 80,
+    'opposed' => false,
+];
+$skillResponse = runCommand($skillFixture, 'token.attack', $skillRequest);
+requireTactical($skillResponse->status === 200
+    && ($skillResponse->body['cast']['outcome']['threshold'] ?? null) === 32
+    && ($skillResponse->body['cast']['outcome']['fatigue']['before'] ?? null) === 80
+    && ($skillResponse->body['cast']['outcome']['fatigue']['penalty'] ?? null) === 48,
+    'Weapon skill 80 at fatigue 98 uses the authoritative threshold 32 and exposes before/after.');
+requireTactical(runCommand($skillFixture, 'token.attack', [...$skillRequest, 'weaponSkill' => 81])->status === 409,
+    'The same attack receipt cannot replay with a changed weapon skill.');
+requireTactical(runCommand($skillFixture, 'token.attack', [...$skillRequest,
+    'requestId' => 'weapon-skill-proof-0002', 'weaponSkill' => 101])->status === 400,
+    'A forged weapon skill outside 0..100 is rejected.');
 
 // Exercise the player-account routes through the real command dispatcher. These
 // commands used to be covered only by source-pattern assertions in the Node suite.
@@ -616,7 +656,7 @@ requireTactical(
     'An authorized administrator can delete the selected owner\'s sheet with the same tombstone cascade.'
 );
 
-foreach ([[0,100,true,'down'],[-25,100,true,'down'],[-25.01,100,true,'dead'],[-26,100,true,'dead'],[0,100,false,'down'],[-1,100,false,'dead'],[9,100,true,'critical'],[10,100,true,'normal'],[0,0,true,'down'],[-1,0,true,'dead']] as [$hp,$max,$player,$code]) {
+foreach ([[0,100,true,'down'],[-25,100,true,'down'],[-25.01,100,true,'dead'],[-26,100,true,'dead'],[0,100,false,'down'],[-1,100,false,'dead'],[9,100,true,'critical'],[10,100,true,'critical'],[11,100,true,'normal'],[0,0,true,'down'],[-1,0,true,'dead']] as [$hp,$max,$player,$code]) {
     requireTactical(onlineHealthState($hp,$max,$player)['code'] === $code, "Health boundary $hp/$max");
 }
 requireTactical(healthOverlayState(-26,100)['effect'] === 'Mort', 'The stream HP overlay must agree on player death.');

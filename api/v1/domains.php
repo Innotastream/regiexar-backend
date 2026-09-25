@@ -1604,6 +1604,13 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if (array_key_exists('morale', $payload) && !validApplicationDomainText($payload['morale'], 1000)) return false;
+    if (array_key_exists('moraleExtremes', $payload)) {
+        $extremes = $payload['moraleExtremes'];
+        if (!is_array($extremes) || array_keys($extremes) !== ['low', 'high']
+            || !validApplicationDomainText($extremes['low'], 120, false)
+            || !validApplicationDomainText($extremes['high'], 120, false)) return false;
+    }
     if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
     if (array_key_exists('darkVision', $payload) && !validApplicationDarkVision($payload['darkVision'])) return false;
     if (isset($payload['characterSchema']) && (string) $payload['characterSchema'] !== 'xar-tsaroth.character-sheet') {

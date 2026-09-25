@@ -99,6 +99,8 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $sourceId,
         (string) ($arguments['characterId'] ?? ''),
         $abilityId,
+        $attack ? (string) ($arguments['statId'] ?? '') : '',
+        $attack && ($arguments['statId'] ?? '') === 'weapon-skill' ? ($arguments['weaponSkill'] ?? null) : null,
         (string) ($arguments['targetTokenId'] ?? ''),
         ($arguments['returnForm'] ?? false) === true,
         $hasCastingCheck ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal') : 'normal',

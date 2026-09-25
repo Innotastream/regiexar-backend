@@ -1,6 +1,10 @@
+# Candidat backend 0.18.4 — corrections de jeu et compatibilité 3.4.2
+
+Build `client-3-4-3-combat-fixes-20260925-1`. Les clients **3.4.2 et 3.4.3** sont les deux seules versions autorisées, 3.4.3 étant annoncée. Fatigue calculée à partir de 50 points absolus, critique à 10 % de PV inclus, niveaux de moral protégés pour le Joueur, attaque par compétence d'arme choisie au lancement, prise de lumière jusqu'à deux cases. Schéma MySQL **22** conservé. Candidat non attesté en production : l'observation publique du 24 septembre à 23:22 UTC portait sur backend **0.18.3**, build 3.4.2 et politique exacte `[3.4.2]`.
+
 # Candidat backend 0.18.3 — audit de fiabilité
 
-Client exact **3.4.2**, build `client-3-4-2-reliability-audit-20260924-1`. Correctifs de combat, confidentialité, médias, idempotence et refus des schémas futurs. Schéma MySQL **22** conservé. **Non déployé** : la distribution du client reste suspendue, la dernière production confirmée était 0.18.1/client3.4.0.
+Client exact **3.4.2**, build `client-3-4-2-reliability-audit-20260924-1`. Correctifs de combat, confidentialité, médias, idempotence et refus des schémas futurs. Schéma MySQL **22** conservé. Déployé seul sur OVH le 24 septembre ; le contrôle public à 23:22 UTC a confirmé version et build, sans prouver le SHA Git exact. La distribution du client est restée suspendue.
 
 # Backend OVH — Régie du Seuil 0.18.2
 

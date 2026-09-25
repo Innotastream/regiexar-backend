@@ -27,15 +27,15 @@ requireTactical($visible['resources']['mentalResistance'] === 55.0 && !isset($vi
 $rules = synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c);
 $values = array_column($rules['stats'], 'value', 'id');
 requireTactical($values['character-stat-force'] === '0' && $values['character-stat-agility'] === '59' && $values['character-stat-mentalResistance'] === '54', 'Temporary zero overrides base; fatigue beyond 50 affects statistic thresholds.');
-$c['fatigue'] = ['current' => 100, 'max' => 200];
+$c['fatigue'] = ['current' => 50, 'max' => 200];
 $half = array_column(synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c)['stats'], 'value', 'id');
-requireTactical($half['character-stat-agility'] === '60', 'Exactly half of fatigue maximum leaves casting stats unchanged.');
-$c['fatigue']['current'] = 101;
+requireTactical($half['character-stat-agility'] === '60', 'Exactly 50 fatigue leaves casting stats unchanged regardless of maximum.');
+$c['fatigue']['current'] = 98;
 $fatigued = synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c);
 $overHalf = array_column($fatigued['stats'], 'value', 'id');
-requireTactical($overHalf['character-stat-agility'] === '59', 'Fatigue strictly above half of a custom maximum lowers casting stats.');
+requireTactical($overHalf['character-stat-agility'] === '12', '98 fatigue subtracts 48 from the casting stat.');
 $fatigueCheck = applicationAbilityCastingPlan(['id' => 'fatigue-check', 'castingStatId' => 'character-stat-agility'], $fatigued, 'scene-one', [], []);
-requireTactical($fatigueCheck['threshold'] === 59, 'The reduced statistic is authoritative for a skill casting check.');
+requireTactical($fatigueCheck['threshold'] === 12, 'The reduced statistic is authoritative for a skill casting check.');
 requireTactical(applicationTacticalRollSpecification($rules, ['kind' => 'luck'])['formula'] === '1d100', 'Fatigue never modifies Chance.');
 
 function patchAbilityFixture(array $ability): MemoryConnection {

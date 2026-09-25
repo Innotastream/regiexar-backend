@@ -14,24 +14,28 @@ function applicationRollUppercase(string $value): string {
 }
 
 function onlineStatFatigueDetails(array $source, string $statId, ?array $character = null): ?array {
-    if (!str_starts_with($statId, 'character-stat-') || trim((string) ($source['characterId'] ?? '')) === ''
+    if (!(str_starts_with($statId, 'character-stat-') || $statId === 'weapon-skill') || trim((string) ($source['characterId'] ?? '')) === ''
         || ($source['followCharacter'] ?? true) === false || trim((string) ($source['linkedTokenId'] ?? '')) !== '') return null;
     $fatigue = is_array($source['fatigue'] ?? null) ? $source['fatigue'] : [];
     $current = is_numeric($fatigue['current'] ?? null) ? (float) $fatigue['current'] : 0;
     $maximum = is_numeric($fatigue['max'] ?? null) && (float) $fatigue['max'] > 0 ? (float) $fatigue['max'] : 100;
-    if ($current <= $maximum / 2) return null;
+    $penalty = max(0, (int) floor($current - 50));
+    if ($penalty === 0) return null;
     $index = findEntryIndex(is_array($source['stats'] ?? null) ? $source['stats'] : [], $statId);
     if ($index < 0 || !is_numeric($source['stats'][$index]['value'] ?? null)) return null;
     $effective = max(0, min(100, (int) $source['stats'][$index]['value']));
-    $before = $effective > 0 ? min(100, $effective + 1) : null;
+    $before = $effective > 0 ? min(100, $effective + $penalty) : null;
     $key = substr($statId, strlen('character-stat-'));
-    if (is_array($character) && $character !== []) {
+    if ($statId === 'weapon-skill' && is_numeric($source['weaponSkillBefore'] ?? null)) {
+        $before = max(0, min(100, (int) $source['weaponSkillBefore']));
+    }
+    if ($statId !== 'weapon-skill' && is_array($character) && $character !== []) {
         $original = $key === 'mentalResistance'
             ? ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? null)
             : ($character['temporaryStats'][$key] ?? $character['stats'][$key] ?? null);
         if (is_numeric($original)) $before = max(0, min(100, (int) $original));
     }
-    return ['current' => $current, 'max' => $maximum, 'penalty' => 1, 'before' => $before];
+    return ['current' => $current, 'max' => $maximum, 'penalty' => $penalty, 'before' => $before];
 }
 
 function applicationD100Comparison(array $outcome): string {
@@ -44,11 +48,12 @@ function applicationD100Comparison(array $outcome): string {
     $parts = ['dé brut ' . $raw . ($resultModifier !== 0
         ? ' ' . $signed($resultModifier) . ' = ' . (int) ($outcome['result'] ?? $raw + $resultModifier) : '')];
     $fatigue = is_array($outcome['fatigue'] ?? null) ? $outcome['fatigue'] : [];
-    if (($fatigue['penalty'] ?? 0) === 1) {
+    if (is_numeric($fatigue['penalty'] ?? null) && (int) $fatigue['penalty'] > 0) {
+        $penalty = (int) $fatigue['penalty'];
         $before = is_numeric($fatigue['before'] ?? null) ? (int) $fatigue['before'] : null;
         $level = (0 + ($fatigue['current'] ?? 0)) . '/' . (0 + ($fatigue['max'] ?? 100));
-        $parts[] = ($before === null ? 'fatigue ' . $level . ' : −1 · seuil après fatigue ' . (int) ($outcome['baseThreshold'] ?? $threshold)
-            : 'seuil ' . $before . ' −1 (fatigue ' . $level . ')')
+        $parts[] = ($before === null ? 'fatigue ' . $level . ' : −' . $penalty . ' · seuil après fatigue ' . (int) ($outcome['baseThreshold'] ?? $threshold)
+            : 'seuil ' . $before . ' −' . $penalty . ' (fatigue ' . $level . ')')
             . ($modifier !== 0 ? ' ' . $signed($modifier) : '') . ' = ' . $threshold;
     } else {
         $parts[] = $modifier !== 0

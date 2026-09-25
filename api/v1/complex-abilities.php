@@ -549,7 +549,7 @@ function applicationComplexAbilityTokenConditionValue(array $token, array $step)
         $playerControlled = trim((string) ($token['controllerAccountId'] ?? $token['controllerPlayerId'] ?? '')) !== '';
         if ($manualDeath || ($hp < 0 && (!$playerControlled || $hp < -$maxHp / 4))) return 'dead';
         if ($hp <= 0) return 'down';
-        return $maxHp > 0 && ($hp / $maxHp * 100) < 10 ? 'critical' : 'normal';
+        return $maxHp > 0 && ($hp / $maxHp * 100) <= 10 ? 'critical' : 'normal';
     }
     if ($step['fact'] === 'condition') {
         $wanted = applicationComplexAbilityComparable($step['conditionLabel'] !== '' ? $step['conditionLabel'] : $step['value']);

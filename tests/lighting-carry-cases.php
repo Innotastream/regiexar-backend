@@ -64,6 +64,10 @@ requireTactical(!validApplicationMapLights([[
     'id' => 'forged-light', 'name' => 'Fausse', 'x' => 10, 'y' => 20,
     'portable' => false, 'carrierTokenId' => 'token-player',
 ]]), 'A non-portable light can never forge a carrier.');
+requireTactical(onlineLightWithinTokenReach(['x' => 50, 'y' => 50], ['x' => 60, 'y' => 60], lightingCarryMap([])),
+    'A portable light is reachable at exactly two cells on both axes.');
+requireTactical(!onlineLightWithinTokenReach(['x' => 50, 'y' => 50], ['x' => 60.01, 'y' => 60], lightingCarryMap([])),
+    'A light beyond two cells remains out of reach.');
 
 $db = lightingFixture();
 $take = [
