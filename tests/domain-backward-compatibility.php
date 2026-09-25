@@ -584,8 +584,13 @@ $sharedVisionState = [
 $sharedProjection = publicPlayerState($sharedVisionState, ['id' => 'account-a', 'display_name' => 'A'], []);
 $isolatedProjection = publicPlayerState($sharedVisionState, ['id' => 'account-c', 'display_name' => 'C'], []);
 requireDomainCompatibility(
-    array_column($sharedProjection['map']['tokens'] ?? [], 'id') === ['token-a', 'token-b']
-        && array_column($isolatedProjection['map']['tokens'] ?? [], 'id') === ['token-c']
+    array_column(array_values(array_filter($sharedProjection['map']['tokens'] ?? [],
+        static fn (array $token): bool => ($token['dimSilhouette'] ?? false) !== true)), 'id') === ['token-a', 'token-b']
+        && array_column(array_values(array_filter($isolatedProjection['map']['tokens'] ?? [],
+            static fn (array $token): bool => ($token['dimSilhouette'] ?? false) !== true)), 'id') === ['token-c']
+        && array_reduce(array_merge($sharedProjection['map']['tokens'] ?? [], $isolatedProjection['map']['tokens'] ?? []),
+            static fn (bool $safe, array $token): bool => $safe && (($token['dimSilhouette'] ?? false) !== true
+                || (($token['name'] ?? '') === '?' && ($token['detailsVisible'] ?? true) === false)), true)
         && ($sharedProjection['map']['vision']['shared'] ?? false) === true
         && ($isolatedProjection['map']['vision']['shared'] ?? true) === false
         && !array_key_exists('isolatedPlayerIds', $sharedProjection['map']['vision'] ?? []),
