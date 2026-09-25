@@ -179,7 +179,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     }
 }
 
-function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null, ?array $character = null): array {
+function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null, ?array $character = null, bool $sourceVisibleToPlayers = false, string $sourceTokenId = ''): array {
     if ($plan['statId'] === '') return ['success' => true, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null];
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
@@ -194,21 +194,29 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     }
     if ($outcome !== null) $outcome['resultCustomized'] = $modifierMode === 'result';
     $roll = onlineRollEntry($identity, $rolled, $plan['label'] . ' · Lancement · ' . $plan['statLabel'], (string) ($source['name'] ?? 'Personnage'), $outcome);
-    $roll = onlineAbilityRollVisibility($roll, $source, $identity);
-    if (!empty($source['id'])) $roll['mapEvent'] = [
+    $sourceTokenId = $sourceTokenId !== '' ? $sourceTokenId : (string) ($source['id'] ?? '');
+    $roll = onlineAbilityRollVisibility($roll, $source, $identity, $sourceVisibleToPlayers, (string) $plan['sceneId'], $sourceTokenId);
+    if ($sourceTokenId !== '') $roll['mapEvent'] = [
         'kind' => 'roll', 'sceneId' => $plan['sceneId'],
         'layerId' => onlineTokenLayerId($source, ['activeLayerId' => $layerId]),
-        'anchorTokenId' => $source['id'], 'tokenId' => $source['id'],
+        'anchorTokenId' => $sourceTokenId, 'tokenId' => $sourceTokenId,
         'value' => $outcome['result'] ?? $rolled['rawD100'] ?? $rolled['total'],
         'label' => 'Lancement', 'tone' => $outcome['code'] ?? 'normal'
     ];
     return ['success' => ($outcome['success'] ?? false) === true, 'statId' => $plan['statId'], 'statLabel' => $plan['statLabel'], 'outcome' => $outcome, 'roll' => $roll];
 }
 
-function onlineAbilityRollVisibility(array $roll, array $source, array $identity): array {
+function onlineAbilityRollVisibility(array $roll, array $source, array $identity, bool $sourceVisibleToPlayers = false, string $sceneId = '', string $sourceTokenId = ''): array {
     $isGm = ($identity['effective_mode'] ?? '') === 'gm' && ($identity['permanent_role'] ?? '') === 'gm';
-    if ($isGm) $roll['rollerRole'] = 'gm';
-    if ($isGm && (($source['hidden'] ?? false) === true || (empty($source['controllerPlayerId']) && ($source['revealDetailsToPlayers'] ?? false) !== true))) {
+    if ($isGm) {
+        $roll['rollerRole'] = 'gm';
+        $sourceTokenId = $sourceTokenId !== '' ? $sourceTokenId : (string) ($source['id'] ?? '');
+        if ($sourceTokenId !== '') {
+            $roll['sourceTokenId'] = $sourceTokenId;
+            if ($sceneId !== '') $roll['sourceSceneId'] = $sceneId;
+        }
+    }
+    if ($isGm && (($source['hidden'] ?? false) === true || !$sourceVisibleToPlayers)) {
         $roll['visibility'] = 'gm'; $roll['revealed'] = false;
     }
     return $roll;
@@ -453,7 +461,8 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if ($continuation === null && applicationAbilitySourceDefeated($source)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $source);
     $plan = $continuation['plan'] ?? onlinePrepareAbilityCasting($connection, $ability, $source, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity);
-    $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $source, $identity, $arguments, $sourceLayerId, $character);
+    $sourceVisibleToPlayers = $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
+    $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $source, $identity, $arguments, $sourceLayerId, $character, $sourceVisibleToPlayers);
     if ($isGm && $sceneId !== '' && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {
         $cast['roll']['visibility'] = 'gm'; $cast['roll']['revealed'] = false;
     }
@@ -468,7 +477,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
         $formula .= $modifier !== 0 ? ($modifier > 0 ? '+' : '') . $modifier : '';
         if (!validOnlineRollFormula($formula) || strlen($formula) > 100) rejectOnlineCommand($connection, 400, 'Formule de compétence invalide.', 'invalid_roll');
         $rolled = onlineRollFormulaWithMode($formula, 'normal');
-        $effectRoll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity);
+        $effectRoll = onlineAbilityRollVisibility(onlineRollEntry($identity, $rolled, $ability['name'], $source['name'] ?? 'Personnage'), $source, $identity, $sourceVisibleToPlayers, $sceneId);
         if (($isGm && $sceneId !== '' && $sceneId !== onlineActiveSceneId($table)) || ($continuation !== null && ($cast['roll']['visibility'] ?? '') === 'gm')) {
             $effectRoll['visibility'] = 'gm'; $effectRoll['revealed'] = false;
         }

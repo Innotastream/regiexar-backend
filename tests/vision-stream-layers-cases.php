@@ -2,6 +2,35 @@
 
 declare(strict_types=1);
 
+$dimState = [
+    'activeSceneId' => 'scene-dim', 'characters' => [], 'initiative' => [],
+    'map' => [
+        'activeLayerId' => 'ground', 'naturalWidth' => 1000, 'naturalHeight' => 1000, 'gridSize' => 25,
+        'walls' => emptyApplicationWallState(1000, 1000),
+        'vision' => ['enabled' => true, 'shared' => true, 'distance' => 8],
+        'tokens' => [
+            ['id' => 'observer', 'controllerPlayerId' => 'account-player', 'name' => 'Joueur', 'x' => 50, 'y' => 50, 'visionDistance' => 8],
+            ['id' => 'unknown', 'name' => 'Identité privée', 'image' => '/media/private-image', 'color' => '#ff00ff',
+                'x' => 72, 'y' => 50, 'size' => 73, 'hp' => 6, 'maxHp' => 60, 'conditions' => ['Empoisonné'],
+                'revealDetailsToPlayers' => true],
+        ],
+    ],
+];
+foreach ([false, true] as $streamPov) {
+    $view = publicPlayerState($dimState, ['id' => 'account-player', 'display_name' => 'Joueur'], [], $streamPov);
+    $unknown = array_values(array_filter($view['map']['tokens'], static fn (array $token): bool => $token['id'] === 'unknown'))[0] ?? [];
+    requireTactical(($unknown['dimSilhouette'] ?? false) === true && ($unknown['size'] ?? null) === 73.0
+        && ($unknown['name'] ?? '') === '?' && ($unknown['detailsVisible'] ?? true) === false,
+        'Player and Stream detect the same anonymous presence at the real token size in the faded perimeter.');
+    requireTactical(!str_contains(json_encode($unknown), 'Identité privée') && !str_contains(json_encode($unknown), 'private-image')
+        && !array_key_exists('hp', $unknown) && !array_key_exists('characterId', $unknown),
+        'No private sheet, portrait or identity enters the faded projection.');
+}
+$dimState['map']['tokens'][1]['x'] = 65;
+$clear = publicPlayerState($dimState, ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+requireTactical(($clear['map']['tokens'][1]['name'] ?? '') === 'Identité privée'
+    && !isset($clear['map']['tokens'][1]['dimSilhouette']), 'The full token returns in strict vision.');
+
 foreach ([[null,8],['',8],[false,8],[0,1],[-2,1],[7.6,8],[40.9,40],[12,12]] as [$raw,$expected]) {
     requireTactical(normalizeApplicationVisionDistance($raw) === $expected, 'Individual vision normalizes to a bounded finite stat.');
 }
@@ -105,3 +134,48 @@ $state=['activeSceneId'=>'scene-one','map'=>['activeLayerId'=>'ground','tokens'=
 ]],'initiative'=>[],'pendingAttacks'=>[['id'=>'pending-hidden-source','sceneId'=>'scene-one','sourceTokenId'=>'source','sourceName'=>'Secret','targetTokenId'=>'target','status'=>'awaiting-opposition','attackerRole'=>'gm','accountId'=>'gm','hit'=>['raw'=>1]]]];
 $view=publicPlayerState($state,['id'=>'account-player','display_name'=>'Player'],[]);
 requireTactical($view['pendingOppositions'] === [] && $view['pendingMapAttacks'] === [], 'A pending opposition cannot leak the name or dice of an attacker moved to another floor.');
+
+// Mounting uses the real online command, including movement ownership and domain reconciliation.
+$mountDb = fixture();
+$initiative = $mountDb->payload('initiative:scene-one'); $initiative['active'] = false;
+$mountDb->put('initiative:scene-one', $initiative);
+$mount = $mountDb->payload('token:scene-one:token-monster');
+$mount['x'] = 21.5; $mount['mountable'] = true; $mount['mountControllable'] = true; $mount['maxRiders'] = 1;
+$mountDb->put('token:scene-one:token-monster', $mount);
+$boarding = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'riderTokenId' => 'token-player',
+    'mountTokenId' => 'token-monster', 'mount' => true];
+requireTactical(runCommand($mountDb, 'token.mount', $boarding)->status === 200
+    && $mountDb->payload('token:scene-one:token-player')['mountedOnTokenId'] === 'token-monster',
+    'The owner boards a visible mount within two cells.');
+requireTactical(runCommand($mountDb, 'token.mount', [...$boarding, 'riderTokenId' => 'token-monster-two'], true)->status === 409,
+    'One available seat cannot accept another rider.');
+requireTactical(runCommand($mountDb, 'token.mount', [...$boarding, 'mount' => false], false, 'another-player')->status === 403,
+    'Another account cannot dismount the owner’s rider.');
+$moved = runCommand($mountDb, 'token.move', ['sceneId' => 'scene-one', 'layerId' => 'ground',
+    'tokenId' => 'token-monster', 'x' => 25, 'y' => 50, 'assisted' => true]);
+requireTactical($moved->status === 200 && $mountDb->payload('token:scene-one:token-player')['x'] === $mountDb->payload('token:scene-one:token-monster')['x'],
+    'The first rider temporarily pilots the unowned mount and follows its authoritative movement.');
+requireTactical(runCommand($mountDb, 'token.mount', [...$boarding, 'mount' => false])->status === 200
+    && $mountDb->payload('token:scene-one:token-player')['x'] !== $mountDb->payload('token:scene-one:token-monster')['x'],
+    'Dismounting puts the rider on an accessible adjacent cell.');
+$mount = $mountDb->payload('token:scene-one:token-monster'); $mount['mountControllable'] = false;
+$mountDb->put('token:scene-one:token-monster', $mount);
+requireTactical(runCommand($mountDb, 'token.move', ['sceneId' => 'scene-one', 'layerId' => 'ground',
+    'tokenId' => 'token-monster', 'x' => 27, 'y' => 50])->status === 403,
+    'A noncontrollable mount retains its original controller.');
+
+$ownedMountDb = fixture();
+$initiative = $ownedMountDb->payload('initiative:scene-one'); $initiative['active'] = false;
+$ownedMountDb->put('initiative:scene-one', $initiative);
+$owned = $ownedMountDb->payload('token:scene-one:token-player');
+$owned['mountable'] = true; $owned['mountControllable'] = true;
+$ownedMountDb->put('token:scene-one:token-player', $owned);
+$guest = $ownedMountDb->payload('token:scene-one:token-monster-two');
+$guest['x'] = 20; $guest['y'] = 50; $guest['controllerPlayerId'] = 'another-player';
+$ownedMountDb->put('token:scene-one:token-monster-two', $guest);
+requireTactical(runCommand($ownedMountDb, 'token.mount', ['sceneId' => 'scene-one', 'layerId' => 'ground',
+    'riderTokenId' => 'token-monster-two', 'mountTokenId' => 'token-player', 'mount' => true], false, 'another-player')->status === 200,
+    'A player may ride another player’s mount.');
+requireTactical(runCommand($ownedMountDb, 'token.move', ['sceneId' => 'scene-one', 'layerId' => 'ground',
+    'tokenId' => 'token-player', 'x' => 23, 'y' => 50], false, 'another-player')->status === 403,
+    'Even a stale controllable flag never transfers control of a player-owned mount.');

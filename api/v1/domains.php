@@ -1100,13 +1100,9 @@ function applicationResolveVisionRelays(array $occlusion, array $origins, mixed 
 {
     $origins = applicationPreparedVisionOrigins($occlusion, $origins);
     $mask = applicationComputeBaseVisionMask($occlusion, $origins, $gridSize);
-    $viewerSeesFade = false;
-    foreach ($origins as $origin) {
-        if (normalizeApplicationDarkVision($origin['darkVision'] ?? null) !== 'none') {
-            $viewerSeesFade = true;
-            break;
-        }
-    }
+    // The halo detects an anonymous presence for every observer; only the
+    // strict mask permits the full token and its sheet to be projected.
+    $viewerSeesFade = $origins !== [];
     $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => [], 'viewerSeesFade' => $viewerSeesFade];
     if (!$mask['enabled'] || $origins === []) return $result;
     $bytes = applicationWallMaskBytes($mask);
@@ -1390,11 +1386,15 @@ function validApplicationTokenDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('layerId', $payload) && !in_array($payload['layerId'], ['basement', 'ground', 'upper'], true)) return false;
-    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable'] as $key) {
+    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable', 'mountable', 'mountControllable'] as $key) {
         if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
             return false;
         }
     }
+    if (array_key_exists('maxRiders', $payload) && (!is_int($payload['maxRiders']) || $payload['maxRiders'] < 1 || $payload['maxRiders'] > 20)) return false;
+    if (array_key_exists('mountedOnTokenId', $payload) && $payload['mountedOnTokenId'] !== null
+        && !validApplicationDomainIdentifier($payload['mountedOnTokenId'], 80)) return false;
+    if (array_key_exists('mountedAt', $payload) && !validApplicationDomainNumber($payload['mountedAt'], 0, 9007199254740991)) return false;
     if (array_key_exists('resourcePulse', $payload) && $payload['resourcePulse'] !== null) {
         $pulse = $payload['resourcePulse'];
         if (!is_array($pulse)
@@ -1486,6 +1486,8 @@ function validApplicationRollDomain(array $payload): bool
     if (array_key_exists('rollerRole', $payload) && !in_array($payload['rollerRole'], ['gm', 'player'], true)) {
         return false;
     }
+    if (array_key_exists('sourceTokenId', $payload) && !validApplicationDomainIdentifier($payload['sourceTokenId'], 180)) return false;
+    if (array_key_exists('sourceSceneId', $payload) && !validApplicationDomainIdentifier($payload['sourceSceneId'], 80)) return false;
     if (array_key_exists('revealed', $payload) && !is_bool($payload['revealed'])) {
         return false;
     }
@@ -1863,6 +1865,9 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
     $payload['abilityCueEvents'] = is_array($previous['abilityCueEvents'] ?? null)
         ? array_values(array_filter($previous['abilityCueEvents'],
             static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000))) : [];
+    $payload['restEvents'] = is_array($previous['restEvents'] ?? null)
+        ? array_values(array_filter($previous['restEvents'],
+            static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000))) : [];
     $attacks = [];
     foreach ($previous['attackReceipts'] ?? [] as $receipt) {
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
@@ -1972,6 +1977,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
+            || !validApplicationDomainObjectList($payload['restEvents'] ?? [], 10)
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
@@ -2366,6 +2372,7 @@ function legacyStateToDomains(array $state): array
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
             'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
+            'restEvents' => is_array($state['restEvents'] ?? null) ? $state['restEvents'] : [],
             'playerActions' => is_array($state['playerActions'] ?? null) ? $state['playerActions'] : [],
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
@@ -2553,6 +2560,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
         'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
+        'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],
@@ -2936,6 +2944,17 @@ function patchApplicationDomains(PDO $connection): never
                 if ($preparedLuck !== null) $pending[] = $preparedLuck;
             }
         }
+        $pendingByKey = [];
+        $mountedScenes = [];
+        foreach ($pending as $entry) {
+            $pendingByKey[$entry['key']] = $entry;
+            if (str_starts_with((string) $entry['key'], 'token:')) {
+                $segments = explode(':', (string) $entry['key'], 3);
+                if (count($segments) === 3) $mountedScenes[$segments[1]] = true;
+            }
+        }
+        reconcileApplicationMountedTokenDomains($connection, $records, $pendingByKey, array_keys($mountedScenes));
+        $pending = array_values($pendingByKey);
         if ($pending === []) {
             $connection->commit();
             sendJson(200, ['ok' => true, 'revision' => $clock['globalRevision'], 'domains' => []]);
@@ -2954,6 +2973,45 @@ function patchApplicationDomains(PDO $connection): never
             $connection->rollBack();
         }
         throw $error;
+    }
+}
+
+function reconcileApplicationMountedTokenDomains(PDO $connection, array &$records, array &$pending, array $sceneIds): void
+{
+    foreach ($sceneIds as $sceneId) {
+        $prefix = 'token:' . (string) $sceneId . ':';
+        if (!validApplicationDomainKey('scene:' . (string) $sceneId)) continue;
+        $records = array_replace($records, applicationDomainRecordsByPrefix($connection, $prefix));
+        $tokens = [];
+        foreach ($records as $key => $record) {
+            if (str_starts_with((string) $key, $prefix)) $tokens[$key] = applicationDomainPayload($records, $key);
+        }
+        foreach ($pending as $key => $entry) {
+            if (!str_starts_with((string) $key, $prefix)) continue;
+            if (($entry['operation'] ?? '') === 'delete') unset($tokens[$key]);
+            elseif (is_array($entry['payload'] ?? null)) $tokens[$key] = $entry['payload'];
+        }
+        foreach ($tokens as $key => $rider) {
+            if (!is_array($rider) || empty($rider['mountedOnTokenId'])) continue;
+            $mountKey = $prefix . (string) $rider['mountedOnTokenId'];
+            $mount = $tokens[$mountKey] ?? null;
+            $next = $rider;
+            if (!is_array($mount) || $mountKey === $key) {
+                $next['mountedOnTokenId'] = null;
+                $next['mountedAt'] = 0;
+            } elseif ((float) ($rider['x'] ?? 50) !== (float) ($mount['x'] ?? 50)
+                || (float) ($rider['y'] ?? 50) !== (float) ($mount['y'] ?? 50)
+                || (string) ($rider['layerId'] ?? 'ground') !== (string) ($mount['layerId'] ?? 'ground')) {
+                $next['x'] = $mount['x'] ?? 50;
+                $next['y'] = $mount['y'] ?? 50;
+                $next['layerId'] = $mount['layerId'] ?? 'ground';
+                $next['_movedAt'] = (int) floor(microtime(true) * 1000);
+            }
+            if ($next === $rider) continue;
+            $next = preserveApplicationAbilityExtensions($key, $next, applicationDomainPayload($records, $key));
+            $prepared = prepareApplicationDomainUpsert($key, $next, $records[$key] ?? null);
+            if ($prepared !== null) $pending[$key] = $prepared;
+        }
     }
 }
 

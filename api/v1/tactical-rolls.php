@@ -228,9 +228,8 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
         'rollMode' => $mode, 'd100RollUnder' => in_array($kind, ['stat', 'luck', 'custom-stat'], true), 'visibility' => $arguments['visibility'] ?? 'public'];
 }
 
-function applicationTacticalRollVisibility(array $roll, array $source, string $kind, string $requestedVisibility = 'public'): array {
-    $private = ($source['hidden'] ?? false) === true || in_array($kind, ['damage', 'custom-damage'], true)
-        || ($kind !== 'initiative' && empty($source['controllerPlayerId']) && ($source['revealDetailsToPlayers'] ?? false) !== true);
+function applicationTacticalRollVisibility(array $roll, array $source, string $kind, string $requestedVisibility = 'public', bool $sourceVisibleToPlayers = false): array {
+    $private = ($source['hidden'] ?? false) === true || !$sourceVisibleToPlayers || in_array($kind, ['damage', 'custom-damage'], true);
     $canonicalVisibility = in_array($requestedVisibility, ['public', 'gm', 'queued'], true) ? $requestedVisibility : 'gm';
     $roll['rollerRole'] = 'gm'; $roll['visibility'] = $private ? 'gm' : $canonicalVisibility; $roll['revealed'] = $roll['visibility'] === 'public';
     if (in_array($kind, ['damage', 'custom-damage'], true)) unset($roll['mapEvent']);
@@ -304,7 +303,8 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $roll['diceAppearance'] = onlineDiceAppearance($source, !empty($source['controllerPlayerId']), $character ?? null);
     if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal', 'diceAppearance' => $roll['diceAppearance']];
-    $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility']);
+    $sourceVisibleToPlayers = $tokenId !== '' && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
+    $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility'], $sourceVisibleToPlayers);
     if ($sceneId !== '' && $sceneId !== onlineActiveSceneId($table)) {
         $roll['visibility'] = 'gm';
         $roll['revealed'] = false;

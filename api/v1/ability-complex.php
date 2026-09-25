@@ -175,7 +175,8 @@ function onlineUseComplexAbility(
             $connection, $ability, $rules, $sceneId,
             applicationDomainPayload($records, 'initiative:' . $sceneId), $activity
         );
-        $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character);
+        $sourceVisibleToPlayers = $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
+        $cast = $continuation['cast'] ?? onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character, $sourceVisibleToPlayers, (string) ($source['id'] ?? ''));
         if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
             return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.complex', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, [], $receiptContext);
         }
@@ -277,7 +278,8 @@ function onlineUseComplexAbility(
     $stepTitle = (string) ($current['workflow']['steps'][$current['currentStepIndex'] ?? -1]['title'] ?? 'Étape');
     foreach ($generatedRolls as $rolled) {
         $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . $stepTitle, $next['sourceName']);
-        $responseRolls[] = $source === [] ? $roll : onlineAbilityRollVisibility($roll, $source, $identity);
+        $responseRolls[] = $source === [] ? $roll : onlineAbilityRollVisibility($roll, $source, $identity,
+            $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId), $sceneId);
         onlineAppendAbilityEffectRoll($records, $pending, $responseRolls[count($responseRolls) - 1]);
     }
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);

@@ -53,14 +53,14 @@ foreach (['damage', 'custom-damage'] as $kind) {
     $private = applicationTacticalRollVisibility($roll, ['controllerPlayerId' => 'player-one', 'revealDetailsToPlayers' => true], $kind);
     requireTactical($private['visibility'] === 'gm' && !$private['revealed'] && !isset($private['mapEvent']), 'Presumed damage never becomes a public damage event');
 }
-requireTactical(applicationTacticalRollVisibility($roll, $creature, 'stat')['visibility'] === 'gm', 'Unrevealed monster stats stay private');
-requireTactical(applicationTacticalRollVisibility($roll, ['revealDetailsToPlayers' => true], 'custom')['visibility'] === 'public', 'Explicit revelation permits a public general roll');
+requireTactical(applicationTacticalRollVisibility($roll, $creature, 'stat')['visibility'] === 'gm', 'A creature outside every player vision stays private');
+requireTactical(applicationTacticalRollVisibility($roll, $creature, 'stat', 'public', true)['visibility'] === 'public', 'A visible creature rolls publicly even if its sheet is private');
 foreach (['gm', 'queued'] as $visibility) {
     $spec = applicationTacticalRollSpecification($creature, ['kind' => 'custom', 'formula' => '1d20', 'visibility' => $visibility]);
-    $visible = applicationTacticalRollVisibility($roll, ['revealDetailsToPlayers' => true], 'custom', $spec['visibility']);
+    $visible = applicationTacticalRollVisibility($roll, $creature, 'custom', $spec['visibility'], true);
     requireTactical($visible['visibility'] === $visibility && $visible['revealed'] === false, 'Explicit private or queued visibility must survive on a public source');
 }
-requireTactical(applicationTacticalRollVisibility($roll, ['controllerPlayerId' => 'player-one', 'hidden' => true], 'luck')['visibility'] === 'gm', 'A hidden token never emits a public roll');
+requireTactical(applicationTacticalRollVisibility($roll, ['controllerPlayerId' => 'player-one', 'hidden' => true], 'luck', 'public', true)['visibility'] === 'gm', 'A hidden token never emits a public roll');
 
 $presentedRoll = [
     'rollerName' => 'Innota', 'characterName' => 'Inho', 'label' => 'Force', 'formula' => '1d100+15',

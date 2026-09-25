@@ -1,3 +1,7 @@
+# Candidat backend 0.18.7 — montures, repos et visibilité des jets
+
+Build `client-3-4-6-mounts-rest-fog-combat-20260925-1`. Politique candidate `[3.4.2, 3.4.3, 3.4.4, 3.4.5, 3.4.6]` ; 3.4.6 annoncée. Montures à plusieurs cavaliers avec droits côté serveur, repos annoncé aux clients, jets de PV consignés et confidentialité des jets de créature selon leur visibilité. Schéma MySQL **22** inchangé. Qualification et déploiement de ce nouvel arbre à vérifier.
+
 # Candidat backend 0.18.6 — sons partagés et attaques de base
 
 Build `client-3-4-5-shared-ability-audio-weapon-effects-20260925-1`. Politique candidate `[3.4.2, 3.4.3, 3.4.4, 3.4.5]` ; 3.4.5 annoncée. Une compétence réussie publie un événement sonore éphémère aux clients de la scène, et une compétence complexe émet cet événement à sa dernière étape. Un lancer secret du MJ reste privé. Les attaques de base conservent leurs états (par exemple Empoisonné) et les appliquent seulement sur touche confirmée. Schéma MySQL **22** inchangé. Candidat non déployé ; la dernière production observée reste 0.18.4.

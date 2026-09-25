@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.6';
-const XAR_BACKEND_BUILD = 'client-3-4-5-shared-ability-audio-weapon-effects-20260925-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.4.5';
+const XAR_BACKEND_VERSION = '0.18.7';
+const XAR_BACKEND_BUILD = 'client-3-4-6-mounts-rest-fog-combat-20260925-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.4.6';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.4.2', '3.4.3', '3.4.4', '3.4.5'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.6'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 22;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -132,7 +132,7 @@ function clientPolicy(array $configuration): array
     $announcedVersion = XAR_RELEASE_ANNOUNCEMENT_VERSION;
     $allowedVersions = XAR_RELEASE_ALLOWED_CLIENT_VERSIONS;
     if (preg_match('/^\d+\.\d+\.\d+$/D', $announcedVersion) !== 1
-        || !is_array($allowedVersions) || $allowedVersions === [] || count($allowedVersions) > 4
+        || !is_array($allowedVersions) || $allowedVersions === [] || count($allowedVersions) > 5
         || count(array_unique($allowedVersions, SORT_STRING)) !== count($allowedVersions)
         || !in_array($announcedVersion, $allowedVersions, true)) {
         sendError(503, 'La politique de version cliente est invalide.', 'client_policy_invalid');

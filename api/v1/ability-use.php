@@ -71,7 +71,8 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
-    $cast = $continuation['cast'] ?? ($returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character));
+    $sourceVisibleToPlayers = $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
+    $cast = $continuation['cast'] ?? ($returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character, $sourceVisibleToPlayers, (string) ($source['id'] ?? '')));
     if ($isGm && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {
         $cast['roll']['visibility'] = 'gm'; $cast['roll']['revealed'] = false;
     }
@@ -127,7 +128,10 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $effectRoll = onlineAbilityRollVisibility(
             onlineRollEntry($identity, $rolled, (string) $ability['name'] . ' · Soin', (string) ($rules['name'] ?? 'Personnage')),
             $rules,
-            $identity
+            $identity,
+            $sourceVisibleToPlayers,
+            $sceneId,
+            (string) ($source['id'] ?? '')
         );
         if (($isGm && $sceneId !== onlineActiveSceneId($table)) || ($continuation !== null && ($cast['roll']['visibility'] ?? '') === 'gm')) {
             $effectRoll['visibility'] = 'gm'; $effectRoll['revealed'] = false;

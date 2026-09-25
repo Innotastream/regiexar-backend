@@ -124,9 +124,9 @@ requireCasting(normalizeOnlineAbilities([$withoutImage])[0]['image'] === null, '
 $publicRoll = ['visibility' => 'public', 'revealed' => true];
 $gm = ['id' => 'gm-test', 'effective_mode' => 'gm', 'permanent_role' => 'gm'];
 $privateMonsterRoll = onlineAbilityRollVisibility($publicRoll, [], $gm);
-requireCasting($privateMonsterRoll['visibility'] === 'gm' && $privateMonsterRoll['revealed'] === false && $privateMonsterRoll['rollerRole'] === 'gm', 'A private monster ability must not expose its formula or statistic');
-$revealedMonsterRoll = onlineAbilityRollVisibility($publicRoll, ['revealDetailsToPlayers' => true], $gm);
-requireCasting($revealedMonsterRoll['visibility'] === 'public' && $revealedMonsterRoll['revealed'] === true, 'An explicitly revealed monster can expose the requested roll');
+requireCasting($privateMonsterRoll['visibility'] === 'gm' && $privateMonsterRoll['revealed'] === false && $privateMonsterRoll['rollerRole'] === 'gm', 'An unseen monster ability stays private');
+$visibleMonsterRoll = onlineAbilityRollVisibility($publicRoll, ['revealDetailsToPlayers' => false], $gm, true);
+requireCasting($visibleMonsterRoll['visibility'] === 'public' && $visibleMonsterRoll['revealed'] === true, 'A visible monster roll is public even with a private sheet');
 foreach ([['hidden' => true, 'controllerPlayerId' => 'player-test'], ['hidden' => true, 'revealDetailsToPlayers' => true]] as $hiddenSource) {
     $hiddenRoll = onlineAbilityRollVisibility($publicRoll, $hiddenSource, $gm);
     requireCasting($hiddenRoll['visibility'] === 'gm' && $hiddenRoll['revealed'] === false, 'A hidden source ability must stay private even if owned or its statistics were previously revealed');

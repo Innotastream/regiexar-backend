@@ -68,9 +68,14 @@ $state = ['activeSceneId' => 'scene-one', 'map' => $map, 'initiative' => [], 'ch
     ['id' => 'halo-roll', 'visibility' => 'public', 'mapEvent' => ['kind' => 'roll', 'sceneId' => 'scene-one', 'tokenId' => 'halo']],
 ]];
 $view = publicPlayerState($state, ['id' => 'account-player', 'display_name' => 'Player'], []);
-requireTactical(array_column($view['map']['lights'], 'id') === ['a', 'b'], 'Only enabled visible lights from the published level reach the player.');
+requireTactical(array_column($view['map']['lights'], 'id') === ['a', 'b', 'off']
+    && ($view['map']['lights'][2]['enabled'] ?? true) === false,
+    'Visible torches remain on the map when extinguished, without relaying vision.');
 requireTactical(array_keys($view['map']['lights'][1]) === ['id', 'name', 'x', 'y', 'visionDistance', 'enabled', 'portable', 'carrierTokenId', 'color', 'icon'], 'Light projection has exactly ten safe public fields.');
-requireTactical(array_column($view['map']['tokens'], 'id') === ['observer', 'relay-visible'] && array_column($view['rolls'], 'id') === ['visible-roll'], 'Relay vision reveals targets and their events while the halo cannot.');
+requireTactical(array_column(array_values(array_filter($view['map']['tokens'],
+    static fn (array $token): bool => ($token['dimSilhouette'] ?? false) !== true)), 'id') === ['observer', 'relay-visible']
+    && array_column($view['rolls'], 'id') === ['visible-roll'],
+    'Relay vision reveals full targets and their events while the halo reveals only anonymous presence.');
 $view = publicPlayerState($state, ['id' => 'other-account', 'display_name' => 'Other'], []);
 requireTactical($view['map']['lights'] === [] && $view['map']['tokens'] === [], 'Another player cannot borrow a private relay chain without an origin.');
 $shared = $state;
