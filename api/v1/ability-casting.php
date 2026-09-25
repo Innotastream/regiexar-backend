@@ -252,7 +252,7 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
 function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public'): string {
     if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)) return '';
     $now = (int) floor(microtime(true) * 1000);
-    $id = 'cue-' . randomToken(12);
+    $id = 'cue-' . bin2hex(random_bytes(12));
     $events = array_values(array_filter(is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > $now));
     $events[] = ['id' => $id, 'sceneId' => $sceneId, 'layerId' => $layerId, 'sourceTokenId' => $sourceTokenId,
