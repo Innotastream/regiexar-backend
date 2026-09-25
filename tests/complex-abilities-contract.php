@@ -15,6 +15,7 @@ requireComplexAbility(
 
 $ability = [
     'id' => 'arvin-complex', 'name' => 'Enchaînement d’Arvin', 'effect' => 'complex', 'formula' => '0',
+    'onHitConditions' => ['Empoisonné'],
     'completionCue' => [
         'version' => 1, 'trigger' => 'completed',
         'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'Impact.wav', 'contentType' => 'audio/wav', 'byteSize' => 40044, 'durationMs' => 5000],
@@ -39,6 +40,9 @@ $execution = createApplicationComplexAbilityExecution([
     'ability' => $ability, 'now' => 1000,
 ]);
 requireComplexAbility($execution['revision'] === 1 && $execution['currentStepIndex'] === 0, 'A new workflow starts at revision one.');
+requireComplexAbility($execution['onHitConditions'] === ['Empoisonné'], 'Complex conditions are snapshotted at launch.');
+$ability['onHitConditions'] = ['Entravé'];
+requireComplexAbility(normalizeApplicationComplexAbilityExecution($execution)['onHitConditions'] === ['Empoisonné'], 'Later edits do not change an active complex execution.');
 requireComplexAbility($execution['completionCue']['sound']['durationMs'] === 5000
     && $execution['completionCue']['visual']['kind'] === 'none',
     'A validated terminal sound and the dormant visual schema are snapshotted into the execution.');

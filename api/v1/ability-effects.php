@@ -35,18 +35,20 @@ function applicationAbilityEffectFields(array $entry): array {
     $effect = $entry['effect'] ?? 'damage';
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
+    $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
     if ($effect === 'complex') return [
         ...$casting,
+        ...$conditions,
         'effect' => 'complex',
         'workflow' => normalizeApplicationComplexAbilityWorkflow($entry['workflow'] ?? null),
         ...$cue,
     ];
-    if ($effect === 'movement') return [...$casting, ...$cue, 'effect' => 'movement'];
-    if ($effect === 'summoning') return [...$casting, ...$cue, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
-    if ($effect === 'healing') return [...$casting, ...$cue, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
-    if ($effect === 'metamorphosis') return [...$casting, ...$cue, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
+    if ($effect === 'movement') return [...$casting, ...$cue, ...$conditions, 'effect' => 'movement'];
+    if ($effect === 'summoning') return [...$casting, ...$cue, ...$conditions, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
+    if ($effect === 'healing') return [...$casting, ...$cue, ...$conditions, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
+    if ($effect === 'metamorphosis') return [...$casting, ...$cue, ...$conditions, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
-    return [...$casting, ...$cue, ...(array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : []), ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : [])];
+    return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : [])];
 }
 function applicationCustomAttack(mixed $value): array {
     if (!is_array($value)) throw new InvalidArgumentException('Attaque personnalisée invalide.');

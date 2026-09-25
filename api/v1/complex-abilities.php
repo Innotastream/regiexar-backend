@@ -357,6 +357,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         'controllerName' => applicationComplexAbilityText($context['controllerName'] ?? '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($ability['id'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
+        'onHitConditions' => normalizeOnlineConditions($ability['onHitConditions'] ?? []),
         'completionCue' => normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null),
         'workflow' => $workflow,
         'status' => 'active', 'revision' => 1, 'currentStepIndex' => 0,
@@ -390,6 +391,7 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'controllerName' => applicationComplexAbilityText($source['controllerName'] ?? '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($source['abilityId'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($source['abilityName'] ?? '', 120, 'Compétence complexe'),
+        'onHitConditions' => normalizeOnlineConditions($source['onHitConditions'] ?? []),
         'completionCue' => normalizeApplicationAbilityCompletionCue($source['completionCue'] ?? null),
         'workflow' => $workflow, 'status' => $status,
         'revision' => applicationComplexAbilityInteger($source['revision'] ?? null, 1, PHP_INT_MAX, 1),
@@ -442,6 +444,7 @@ function validApplicationComplexAbilityExecutions(mixed $value): bool
     foreach ($value as $entry) {
         if (!is_array($entry) || !validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)
             || (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue']))
+            || (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions']))
             || applicationComplexAbilityIdentifier($entry['id'] ?? '') === ''
             || applicationComplexAbilityIdentifier($entry['sceneId'] ?? '') === ''
             || applicationComplexAbilityIdentifier($entry['sourceTokenId'] ?? '') === ''

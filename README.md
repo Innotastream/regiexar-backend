@@ -1,3 +1,7 @@
+# Candidat backend 0.18.5 — compétences complexes et états
+
+Build `client-3-4-4-complex-ability-conditions-20260925-1`. Politique candidate explicite `[3.4.2, 3.4.3, 3.4.4]` avec 3.4.4 annoncée. Échec amoindri sur jet de lancement complexe, et états appliqués aux effets non offensifs selon leur cible. Schéma MySQL **22** conservé, aucune migration. Au contrôle public du 25 septembre, la production servait 0.18.4 et acceptait 3.4.2/3.4.3 ; ce candidat 0.18.5 n’a pas été déployé. Aucun MSIX 3.4.4 n’a été publié.
+
 # Candidat backend 0.18.4 — corrections de jeu et compatibilité 3.4.2
 
 Build `client-3-4-3-combat-fixes-20260925-1`. Les clients **3.4.2 et 3.4.3** sont les deux seules versions autorisées, 3.4.3 étant annoncée. Fatigue calculée à partir de 50 points absolus, critique à 10 % de PV inclus, niveaux de moral protégés pour le Joueur, attaque par compétence d'arme choisie au lancement, prise de lumière jusqu'à deux cases. Schéma MySQL **22** conservé. Candidat non attesté en production : l'observation publique du 24 septembre à 23:22 UTC portait sur backend **0.18.3**, build 3.4.2 et politique exacte `[3.4.2]`.

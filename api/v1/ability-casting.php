@@ -25,7 +25,6 @@ function applicationAbilityCastingFields(array $ability): array {
     if (array_key_exists('castingStatId', $ability) && ($ability['castingStatId'] === '' || validApplicationDomainIdentifier($ability['castingStatId'], 120))) $result['castingStatId'] = $ability['castingStatId'];
     if (array_key_exists('reducedFailureCooldown', $ability)) {
         $result['reducedFailureCooldown'] = $ability['reducedFailureCooldown'] === true
-            && ($ability['effect'] ?? 'damage') !== 'complex'
             && is_string($ability['castingStatId'] ?? null)
             && $ability['castingStatId'] !== ''
             && validApplicationDomainIdentifier($ability['castingStatId'], 120);
@@ -160,7 +159,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost, 'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
         'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
         'usedRound' => $round, 'cooldownRounds' => (int) ($ability['cooldownRounds'] ?? 0), 'manaCost' => $manaCost,
-        'reducedFailureEnabled' => ($ability['effect'] ?? 'damage') !== 'complex' && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
+        'reducedFailureEnabled' => $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
 }
 

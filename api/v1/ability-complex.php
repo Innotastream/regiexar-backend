@@ -261,6 +261,11 @@ function onlineUseComplexAbility(
     } catch (ApplicationComplexAbilityException $error) {
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
     }
+    if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') === 'completed') {
+        applyOnlineAttackConditions($connection, $records, $pending, [
+            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $next['sourceTokenId'], 'onHitConditions' => $next['onHitConditions'] ?? [],
+        ]);
+    }
     $activity['abilityExecutions'][$executionIndex] = $next;
     $activity['abilityExecutions'] = trimApplicationComplexAbilityExecutions($activity['abilityExecutions']);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);

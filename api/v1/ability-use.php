@@ -91,6 +91,9 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $token = $change['token']; $token['characterId'] = $change['characterId']; $token['transformation'] = $change['transformation'];
             queueOnlineDomainUpsert($pending, $records, $key, synchronizeOnlineCharacterToken($token, $form));
         }
+        if (!$returning) applyOnlineAttackConditions($connection, $records, $pending, [
+            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $source['id'], 'onHitConditions' => $ability['onHitConditions'] ?? [],
+        ]);
         $result['activeCharacterId'] = $formPlan['activeCharacterId'];
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'character', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $returning ? 'Reprend sa forme initiale' : 'Change de forme']);
     } elseif ($cast['success'] && in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
@@ -114,6 +117,9 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $index['order'][] = $token['id']; queueOnlineDomainUpsert($pending, $records, $indexKey, $index);
             $result['summonedTokenId'] = $token['id'];
         }
+        applyOnlineAttackConditions($connection, $records, $pending, [
+            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $result['summonedTokenId'] ?? $source['id'], 'onHitConditions' => $ability['onHitConditions'] ?? [],
+        ]);
     } elseif ($cast['success']) {
         $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
         onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);
@@ -133,6 +139,9 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $adjustment = applyOnlineTokenResourceAdjustment($connection, $records, $pending, $sceneId, $target['id'], 'hp', $amount, $accountId, true, null, true);
             $operation = ['kind' => 'resource-adjust', 'requestId' => $requestId, 'sceneId' => $sceneId, 'tokenId' => $target['id'], 'characterId' => $adjustment['characterId'] ?? '', 'resource' => 'hp', 'appliedDelta' => $adjustment['appliedDelta'], 'previous' => $adjustment['previous'], 'current' => $adjustment['current'], 'maximum' => $adjustment['maximum'], 'formula' => $rolled['formula'], 'rollTotal' => $rolled['total'], 'rollBreakdown' => $rolled['breakdown']];
             $result['appliedDelta'] = $adjustment['appliedDelta'];
+            applyOnlineAttackConditions($connection, $records, $pending, [
+                'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $target['id'], 'onHitConditions' => $ability['onHitConditions'] ?? [],
+            ]);
             onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'resource', 'characterName' => $source['name'] ?? 'Personnage', 'targetName' => $target['name'] ?? 'Cible', 'summary' => $ability['name'] . ' : ' . $adjustment['appliedDelta'] . ' PV rendus', 'operation' => $operation]);
         }
     }

@@ -170,7 +170,12 @@ $freePlan = applicationAbilityCastingPlan($freeAbility, array_replace($source, [
 requireCasting($freePlan['manaCost'] === 0 && $freePlan['cooldownRounds'] === 0 && $freePlan['threshold'] === null, 'A free ability with no check must remain usable');
 requireCasting($freePlan['reducedFailureEnabled'] === false && applicationAbilityFailedCooldownRounds($freePlan, ['success' => false]) === 0, 'No statistic means the reduced-failure policy cannot activate');
 $complexReduced = applicationAbilityCastingPlan(array_replace($ability, ['effect' => 'complex']), $source, 'scene-one', $initiative, []);
-requireCasting($complexReduced['reducedFailureEnabled'] === false && applicationAbilityFailedCooldownRounds($complexReduced, ['success' => false]) === 0, 'Complex workflows must not inherit the classic reduced-failure shortcut');
+requireCasting($complexReduced['reducedFailureEnabled'] === true && applicationAbilityFailedCooldownRounds($complexReduced, ['success' => false]) === 1, 'A checked complex launch must use the reduced-failure cooldown');
+requireCasting(applicationAbilityCastingFields(array_replace($ability, ['effect' => 'complex']))['reducedFailureCooldown'] === true, 'Normalization must preserve a complex ability reduced-failure option');
+foreach (['healing', 'movement', 'summoning', 'metamorphosis', 'complex'] as $effect) {
+    $fields = applicationAbilityEffectFields(array_replace($ability, ['effect' => $effect, 'onHitConditions' => ['Empoisonné']]));
+    requireCasting($fields['onHitConditions'] === ['Empoisonné'], 'Normalization lost a condition on ' . $effect);
+}
 $noCheck = onlineAbilityCastingRoll($freePlan, [], []);
 requireCasting($noCheck['success'] === true && $noCheck['roll'] === null, 'An optional empty statistic must not launch a die');
 $automaticOutcome = ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'automatic' => true];

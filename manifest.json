@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.18.4",
-  "announcedApplicationVersion": "3.4.3",
+  "backendVersion": "0.18.5",
+  "announcedApplicationVersion": "3.4.4",
   "allowedApplicationVersions": [
     "3.4.2",
-    "3.4.3"
+    "3.4.3",
+    "3.4.4"
   ],
   "apiVersion": "v1",
   "publicOrigin": "https://regie-xar-tsaroth.fr",
