@@ -202,10 +202,12 @@ $criticalExecution = createApplicationComplexAbilityExecution([
     'now' => 3300,
 ]);
 $criticalStep = $criticalWorkflow['steps'][0];
-requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 10]], true)['outcome'] === false,
-    'Ten percent is not critical.');
+requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 10]], true)['outcome'] === true,
+    'Ten percent is critical, inclusively.');
 requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 9]], true)['outcome'] === true,
     'Below ten percent is critical.');
+requireComplexAbility(evaluateApplicationComplexAbilityCondition($criticalExecution, $criticalStep, [[...$tokens[0], 'hp' => 11]], true)['outcome'] === false,
+    'Above ten percent is not critical.');
 
 $privateAbility = $conditionAbility;
 $privateAbility['workflow']['steps'][0]['maxTargets'] = 1;
