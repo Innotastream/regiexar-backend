@@ -247,6 +247,9 @@ $skillRequest = [
     'attackId' => 'weapon-skill-proof', 'statId' => 'weapon-skill', 'weaponSkill' => 80,
     'opposed' => false,
 ];
+requireTactical(runCommand($skillFixture, 'token.attack', [...$skillRequest,
+    'requestId' => 'weapon-skill-proof-0002', 'weaponSkill' => 101])->status === 400,
+    'A forged weapon skill outside 0..100 is rejected.');
 $skillResponse = runCommand($skillFixture, 'token.attack', $skillRequest);
 requireTactical($skillResponse->status === 200
     && ($skillResponse->body['cast']['outcome']['threshold'] ?? null) === 32
@@ -255,9 +258,6 @@ requireTactical($skillResponse->status === 200
     'Weapon skill 80 at fatigue 98 uses the authoritative threshold 32 and exposes before/after.');
 requireTactical(runCommand($skillFixture, 'token.attack', [...$skillRequest, 'weaponSkill' => 81])->status === 409,
     'The same attack receipt cannot replay with a changed weapon skill.');
-requireTactical(runCommand($skillFixture, 'token.attack', [...$skillRequest,
-    'requestId' => 'weapon-skill-proof-0002', 'weaponSkill' => 101])->status === 400,
-    'A forged weapon skill outside 0..100 is rejected.');
 
 // Exercise the player-account routes through the real command dispatcher. These
 // commands used to be covered only by source-pattern assertions in the Node suite.
