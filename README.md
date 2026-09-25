@@ -1,3 +1,7 @@
+# Candidat backend 0.18.6 — sons partagés et attaques de base
+
+Build `client-3-4-5-shared-ability-audio-weapon-effects-20260925-1`. Politique candidate `[3.4.2, 3.4.3, 3.4.4, 3.4.5]` ; 3.4.5 annoncée. Une compétence réussie publie un événement sonore éphémère aux clients de la scène, et une compétence complexe émet cet événement à sa dernière étape. Un lancer secret du MJ reste privé. Les attaques de base conservent leurs états (par exemple Empoisonné) et les appliquent seulement sur touche confirmée. Schéma MySQL **22** inchangé. Candidat non déployé ; la dernière production observée reste 0.18.4.
+
 # Candidat backend 0.18.5 — compétences complexes et états
 
 Build `client-3-4-4-complex-ability-conditions-20260925-1`. Politique candidate explicite `[3.4.2, 3.4.3, 3.4.4]` avec 3.4.4 annoncée. Échec amoindri sur jet de lancement complexe, et états appliqués aux effets non offensifs selon leur cible. Schéma MySQL **22** conservé, aucune migration. Au contrôle public du 25 septembre, la production servait 0.18.4 et acceptait 3.4.2/3.4.3 ; ce candidat 0.18.5 n’a pas été déployé. Aucun MSIX 3.4.4 n’a été publié.

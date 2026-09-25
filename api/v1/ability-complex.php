@@ -265,6 +265,9 @@ function onlineUseComplexAbility(
         applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $next['sourceTokenId'], 'onHitConditions' => $next['onHitConditions'] ?? [],
         ]);
+        appendApplicationAbilityCueEvent($activity, $next['completionCue'] ?? null, $sceneId,
+            (string) ($next['layerId'] ?? 'ground'), (string) ($next['sourceTokenId'] ?? ''),
+            (applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''))['hidden'] ?? false) ? 'gm' : 'public');
     }
     $activity['abilityExecutions'][$executionIndex] = $next;
     $activity['abilityExecutions'] = trimApplicationComplexAbilityExecutions($activity['abilityExecutions']);

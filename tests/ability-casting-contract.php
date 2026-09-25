@@ -176,6 +176,21 @@ foreach (['healing', 'movement', 'summoning', 'metamorphosis', 'complex'] as $ef
     $fields = applicationAbilityEffectFields(array_replace($ability, ['effect' => $effect, 'onHitConditions' => ['Empoisonné']]));
     requireCasting($fields['onHitConditions'] === ['Empoisonné'], 'Normalization lost a condition on ' . $effect);
 }
+$soundCue = ['version' => 1, 'trigger' => 'completed', 'visual' => ['version' => 1, 'kind' => 'none'],
+    'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'signal.mp3',
+        'contentType' => 'audio/mpeg', 'byteSize' => 79000, 'durationMs' => 3000]];
+$activityWithSound = ['abilityCueEvents' => []];
+$cueId = appendApplicationAbilityCueEvent($activityWithSound, $soundCue, 'scene-one', 'ground', 'token-one');
+requireCasting($cueId !== '' && count($activityWithSound['abilityCueEvents']) === 1
+    && validApplicationAbilityCueEvents($activityWithSound['abilityCueEvents']), 'A successful cue is a valid shared event');
+requireCasting(appendApplicationAbilityCueEvent($activityWithSound, ['sound' => null], 'scene-one', 'ground', 'token-one') === ''
+    && count($activityWithSound['abilityCueEvents']) === 1, 'An absent sound creates no event');
+requireCasting(!validApplicationAbilityCueEvents([array_replace($activityWithSound['abilityCueEvents'][0], ['visibility' => 'invalid'])]),
+    'The cue event visibility is bounded');
+$weaponWithPoison = normalizeOnlineWeaponAttacks([['id' => 'weapon-1', 'formula' => '1d6', 'damageType' => 'physical',
+    'onHitConditions' => ['Empoisonné']]], ['1d6']);
+requireCasting($weaponWithPoison[0]['onHitConditions'] === ['Empoisonné']
+    && validApplicationWeaponAttacks($weaponWithPoison), 'The base attack keeps its conditions');
 $noCheck = onlineAbilityCastingRoll($freePlan, [], []);
 requireCasting($noCheck['success'] === true && $noCheck['roll'] === null, 'An optional empty statistic must not launch a die');
 $automaticOutcome = ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'automatic' => true];

@@ -249,6 +249,19 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
 
 // Apply attempt costs and/or recharge in the same locked transaction. Read
 // pending payloads first so healing oneself never restores resources just spent.
+function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public'): string {
+    if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)) return '';
+    $now = (int) floor(microtime(true) * 1000);
+    $id = 'cue-' . randomToken(12);
+    $events = array_values(array_filter(is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
+        static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > $now));
+    $events[] = ['id' => $id, 'sceneId' => $sceneId, 'layerId' => $layerId, 'sourceTokenId' => $sourceTokenId,
+        'visibility' => $visibility === 'gm' ? 'gm' : 'public',
+        'createdAt' => $now, 'expiresAt' => $now + 30000, 'completionCue' => $cue];
+    $activity['abilityCueEvents'] = array_slice($events, -40);
+    return $id;
+}
+
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true, bool $payCosts = true, bool $applyRecharge = true): array {
     $now = (int) floor(microtime(true) * 1000);
     if ($payCosts) {
@@ -352,12 +365,16 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         if ($index !== null) $timers[$index] = $timer; else array_unshift($timers, $timer);
         $activity['actionTimers'] = $timers;
     }
+    $cueEventId = ($cast['success'] ?? false) && is_array($plan['completionCue']['sound'] ?? null)
+        ? appendApplicationAbilityCueEvent($activity, $plan['completionCue'], (string) $plan['sceneId'],
+            (string) ($cast['roll']['mapEvent']['layerId'] ?? $source['layerId'] ?? 'ground'), (string) ($source['id'] ?? ''),
+            ($source['hidden'] ?? false) || ($cast['roll']['visibility'] ?? '') === 'gm' ? 'gm' : 'public') : '';
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueCost'] ?? 0, 'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0,
         'restRecharge' => $failedCooldown > 0 && !$retainCooldown ? 'none' : ($retainCooldown ? ($old['restRecharge'] ?? 'none') : ($plan['restRecharge'] ?? 'none')),
         'restUseCount' => $timer['restUseCount'] ?? 0, 'restUseLimit' => $plan['restUseLimit'], 'reusableInTurn' => $timer['reusableInTurn'] ?? false,
         'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => $remaining,
-        ...(($cast['success'] ?? false) && is_array($plan['completionCue']['sound'] ?? null) ? ['completionCue' => $plan['completionCue']] : []),
+        ...($cueEventId !== '' ? ['completionCue' => $plan['completionCue'], 'completionCueEventId' => $cueEventId] : []),
         'reducedFailureEnabled' => ($plan['reducedFailureEnabled'] ?? false) === true, 'reducedFailureApplied' => $failedCooldown > 0];
 }
 

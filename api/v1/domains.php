@@ -1313,7 +1313,8 @@ function validApplicationWeaponAttacks(mixed $value): bool
         if (!validApplicationDomainIdentifier($entry['id'] ?? null, 120)
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
-            || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)) {
+            || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
+            || (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions']))) {
             return false;
         }
     }
@@ -1752,7 +1753,8 @@ function applicationAbilitySoundReferences(string $key, array $payload): array
     if (str_starts_with($key, 'character:') || str_starts_with($key, 'token:')) {
         $rows = is_array($payload['abilities'] ?? null) ? $payload['abilities'] : [];
     } elseif ($key === 'activity') {
-        $rows = is_array($payload['abilityExecutions'] ?? null) ? $payload['abilityExecutions'] : [];
+        $rows = [...(is_array($payload['abilityExecutions'] ?? null) ? $payload['abilityExecutions'] : []),
+            ...(is_array($payload['abilityCueEvents'] ?? null) ? $payload['abilityCueEvents'] : [])];
     }
     $references = [];
     foreach ($rows as $row) {
@@ -1856,6 +1858,11 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
     // a validation, even when it happens to contain the new fields.
     if (array_key_exists('pendingAbilityCasts', $previous)) $payload['pendingAbilityCasts'] = $previous['pendingAbilityCasts'];
     else unset($payload['pendingAbilityCasts']);
+    // Seules les commandes autoritaires émettent ces sons. Une sauvegarde MJ
+    // ancienne ne doit ni effacer ni fabriquer un événement de diffusion.
+    $payload['abilityCueEvents'] = is_array($previous['abilityCueEvents'] ?? null)
+        ? array_values(array_filter($previous['abilityCueEvents'],
+            static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000))) : [];
     $attacks = [];
     foreach ($previous['attackReceipts'] ?? [] as $receipt) {
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
@@ -1894,6 +1901,26 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         }
     }
     return $payload;
+}
+
+function validApplicationAbilityCueEvents(mixed $events): bool
+{
+    if (!validApplicationDomainObjectList($events, 40)) return false;
+    $seen = [];
+    foreach ($events as $event) {
+        $id = $event['id'] ?? null;
+        if (!validApplicationDomainIdentifier($id, 80) || isset($seen[$id])
+            || !validApplicationDomainIdentifier($event['sceneId'] ?? null, 80)
+            || !in_array($event['layerId'] ?? null, ['basement', 'ground', 'upper'], true)
+            || (($event['sourceTokenId'] ?? null) !== '' && !validApplicationDomainIdentifier($event['sourceTokenId'] ?? null, 180))
+            || !in_array($event['visibility'] ?? null, ['public', 'gm'], true)
+            || !is_int($event['createdAt'] ?? null) || !is_int($event['expiresAt'] ?? null)
+            || $event['expiresAt'] <= $event['createdAt'] || $event['expiresAt'] - $event['createdAt'] > 30000
+            || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
+            || !is_array($event['completionCue']['sound'] ?? null)) return false;
+        $seen[$id] = true;
+    }
+    return true;
 }
 
 function validatedDomainPayload(string $key, mixed $payload): array
@@ -1944,6 +1971,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
+            || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
@@ -2337,6 +2365,7 @@ function legacyStateToDomains(array $state): array
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
+            'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
             'playerActions' => is_array($state['playerActions'] ?? null) ? $state['playerActions'] : [],
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
@@ -2523,6 +2552,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
+        'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],

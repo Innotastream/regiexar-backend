@@ -1181,6 +1181,17 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         if (is_array($projectedExecution)) $visibleAbilityExecutions[] = $projectedExecution;
     }
     $nowMilliseconds = (int) floor(microtime(true) * 1000);
+    $visibleAbilityCueEvents = [];
+    foreach (is_array($fullState['abilityCueEvents'] ?? null) ? $fullState['abilityCueEvents'] : [] as $event) {
+        if (!is_array($event) || ($event['sceneId'] ?? '') !== $visibleSceneId
+            || ($event['layerId'] ?? '') !== $visibleLayerId
+            || (int) ($event['expiresAt'] ?? 0) <= $nowMilliseconds
+            || ($event['visibility'] ?? 'gm') !== 'public'
+            || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
+            || !is_array($event['completionCue']['sound'] ?? null)) continue;
+        $visibleAbilityCueEvents[] = array_intersect_key($event,
+            array_flip(['id', 'sceneId', 'layerId', 'sourceTokenId', 'visibility', 'createdAt', 'expiresAt', 'completionCue']));
+    }
     $visibleMapPings = [];
     foreach (is_array($fullState['mapPings'] ?? null) ? $fullState['mapPings'] : [] as $ping) {
         if (!is_array($ping)
@@ -1282,6 +1293,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
+        'abilityCueEvents' => $visibleAbilityCueEvents,
         'pendingAbilityCasts' => $visibleAbilityValidations,
         'pendingOppositions' => array_slice($pendingOppositions, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'pendingMapAttacks' => array_slice($pendingMapAttacks, 0, XAR_PENDING_ATTACK_MAXIMUM),
@@ -2187,7 +2199,8 @@ function normalizeOnlineWeaponAttacks(mixed $value, array $formulas): array
             $id = substr($baseId, 0, 120 - strlen($suffixText)) . $suffixText;
         }
         $seen[$id] = true;
-        $normalized[] = ['id' => $id, 'formula' => $formula, 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null)];
+        $normalized[] = ['id' => $id, 'formula' => $formula, 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null),
+            'onHitConditions' => normalizeOnlineConditions($source['onHitConditions'] ?? [])];
     }
     return $normalized;
 }
@@ -5516,6 +5529,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $attackName = 'Attaque de base';
                 $damageFormula = '';
                 $damageType = 'physical';
+                $weaponConditions = [];
                 if ($custom !== null) {
                     $attackName = $custom['name']; $attackId = 'custom'; $damageComponents = $custom['damageComponents'];
                     $damageFormula = applicationCombinedDamageFormula($damageComponents); $damageType = $damageComponents[0]['type'];
@@ -5546,6 +5560,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $attackName = count($weapons) > 1 ? 'Attaque de base ' . ($weaponIndex + 1) : 'Attaque de base';
                     $damageFormula = (string) $weapons[$weaponIndex]['formula'];
                     $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);
+                    $weaponConditions = $weapons[$weaponIndex]['onHitConditions'] ?? [];
                 }
                 if ($attackKind === 'ability') onlineAssertAbilityValidationAvailable($connection, $activity, $abilities[$abilityIndex], $source, true);
                 $selectedStatId = (string) (($arguments['statId'] ?? '') ?: ($attackKind === 'ability' ? ($abilities[$abilityIndex]['castingStatId'] ?? '') : ''));
@@ -5623,7 +5638,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 400, 'Le modificateur rend la formule de dégâts invalide.', 'invalid_attack_damage');
                 }
                 if ($damageComponents !== [] && $damageModifier !== 0) $damageComponents[0]['formula'] .= ($damageModifier > 0 ? '+' : '') . $damageModifier;
-                $damageSpecification = ['onHitConditions' => $attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : [], 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : [])];
+                $damageSpecification = ['onHitConditions' => $attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : $weaponConditions, 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : [])];
                 $damageRoll = null;
                 $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
                 if (($hitOutcome['success'] ?? false) === true && !$oppositionRequired) {
