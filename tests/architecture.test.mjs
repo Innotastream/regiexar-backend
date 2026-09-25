@@ -79,8 +79,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.7'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-6-mounts-rest-fog-combat-20260925-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.8'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-6-exact-policy-20260926-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -116,7 +116,7 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.7");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.8");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.6");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
@@ -323,7 +323,7 @@ test("la santé reste publique mais seule la version courante peut se connecter"
   ]);
   const manifest = JSON.parse(manifestSource);
   assert.equal(manifest.announcedApplicationVersion, "3.4.6");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.2", "3.4.3", "3.4.4", "3.4.5", "3.4.6"]);
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.6"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);

@@ -30,9 +30,9 @@ function checkPolicy(bool $condition, string $message): void
 }
 
 $policy = clientPolicy(['client' => ['enforce' => false, 'minimumVersion' => '1.0.0', 'latestVersion' => '99.0.0']]);
-checkPolicy($policy['enforce'] === true && $policy['exactVersion'] === false, 'La connexion admet les cinq versions exactes de l’exception.');
-checkPolicy($policy['allowedVersions'] === ['3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.6'], 'Seules les versions 3.4.2, 3.4.3, 3.4.4, 3.4.5 et 3.4.6 sont admises.');
-checkPolicy($policy['minimumVersion'] === '3.4.2' && $policy['latestVersion'] === '3.4.6', 'La politique annonce la version récente et garde l’ancienne utilisable.');
+checkPolicy($policy['enforce'] === true && $policy['exactVersion'] === true, 'La connexion impose la version courante exacte.');
+checkPolicy($policy['allowedVersions'] === ['3.4.6'], 'Seule la version 3.4.6 est admise.');
+checkPolicy($policy['minimumVersion'] === '3.4.6' && $policy['latestVersion'] === '3.4.6', 'La politique annonce exclusivement 3.4.6.');
 checkPolicy($policy['storeId'] === '9N5N5M67N704', 'Le Store reste inchangé.');
 $manifest = json_decode(file_get_contents(__DIR__ . '/../manifest.json'), true, 512, JSON_THROW_ON_ERROR);
 checkPolicy($manifest['allowedApplicationVersions'] === $policy['allowedVersions'], 'Le manifeste et la politique concordent.');
@@ -48,19 +48,19 @@ foreach (['/api/v1/media/' . str_repeat('a', 24), '/api/v1/shared-media', '/api/
 foreach (['gm', 'player'] as $mode) {
     $_SERVER['REQUEST_URI'] = '/api/v1/auth/login';
     $_SERVER['REQUEST_METHOD'] = 'POST';
-    foreach (['3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.6'] as $version) {
+    foreach (['3.4.6'] as $version) {
         $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
         requireSupportedClient($connection, []);
         checkPolicy(true, "$mode $version atteint la vérification des identifiants.");
     }
-    foreach (['', '3.1.13', '3.2.9', '3.2.10', '3.2.11', '3.2.12', '3.2.13', '3.2.14', '3.2.15', '3.2.16', '3.2.17', '3.2.18', '3.2.19', '3.2.20', '3.3.0', '3.3.1', '3.3.2', '3.3.3', '3.3.4', '3.3.5', '3.3.6', '3.3.7', '3.3.8', '3.3.9', '3.3.10', '3.3.11', '3.3.12', '3.4.0', '3.4.1', '3.4.7', '99.0.0', '3.4.0-beta', '3.4.0+local', '03.4.0', '3.3.11,3.4.0'] as $version) {
+    foreach (['', '3.1.13', '3.2.9', '3.2.10', '3.2.11', '3.2.12', '3.2.13', '3.2.14', '3.2.15', '3.2.16', '3.2.17', '3.2.18', '3.2.19', '3.3.0', '3.3.1', '3.3.2', '3.3.3', '3.3.4', '3.3.5', '3.3.6', '3.3.7', '3.3.8', '3.3.9', '3.3.10', '3.3.11', '3.3.12', '3.4.0', '3.4.1', '3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.7', '99.0.0', '3.4.0-beta', '3.4.0+local', '03.4.0', '3.3.11,3.4.0'] as $version) {
         $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
         try { requireSupportedClient($connection, []); throw new RuntimeException("Version admise à tort : $version"); }
         catch (PolicyResponse $response) {
             checkPolicy($response->status === 426, "$mode $version doit être refusé.");
-            checkPolicy($response->body['allowedVersions'] === ['3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.6']
+            checkPolicy($response->body['allowedVersions'] === ['3.4.6']
                 && $response->body['latestVersion'] === '3.4.6'
-                && $response->body['exactVersion'] === false
+                && $response->body['exactVersion'] === true
                 && $response->body['code'] === 'client_update_required', 'Le refus décrit la mise à jour requise sans bloquer la santé publique.');
         }
     }

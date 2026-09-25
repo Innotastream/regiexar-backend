@@ -1,6 +1,10 @@
-# Candidat backend 0.18.7 — montures, repos et visibilité des jets
+# Candidat backend 0.18.8 — verrou client 3.4.6
 
-Build `client-3-4-6-mounts-rest-fog-combat-20260925-1`. Politique candidate `[3.4.2, 3.4.3, 3.4.4, 3.4.5, 3.4.6]` ; 3.4.6 annoncée. Montures à plusieurs cavaliers avec droits côté serveur, repos annoncé aux clients, jets de PV consignés et confidentialité des jets de créature selon leur visibilité. Schéma MySQL **22** inchangé. Qualification et déploiement de ce nouvel arbre à vérifier.
+Build `client-3-4-6-exact-policy-20260926-1`. À la demande du propriétaire, seule la version 3.4.6 franchit le verrou (`exactVersion=true`) ; 3.4.2 à 3.4.5 reçoivent `426`. Le code de jeu et le schéma MySQL **22** restent identiques à 0.18.7. La publication Store et l'installation Windows demandent leurs preuves distinctes.
+
+# Backend 0.18.7 — montures, repos et visibilité des jets
+
+Build `client-3-4-6-mounts-rest-fog-combat-20260925-1`. Politique `[3.4.2, 3.4.3, 3.4.4, 3.4.5, 3.4.6]` ; 3.4.6 annoncée. Montures à plusieurs cavaliers avec droits côté serveur, repos annoncé aux clients, jets de PV consignés et confidentialité des jets de créature selon leur visibilité. Schéma MySQL **22** inchangé. Ce backend a été observé en production avant le verrou exact.
 
 # Candidat backend 0.18.6 — sons partagés et attaques de base
 
@@ -277,11 +281,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.3.11`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.3.11`, `latestVersion=3.3.11` et `allowedVersions=["3.3.11"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.4.6`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.4.6`, `latestVersion=3.4.6` et `allowedVersions=["3.4.6"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.3.11 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.4.6 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `version effectivement en production avant déploiement / 3.3.11 / version future / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.4.2 / 3.4.5 / 3.4.6 / 3.4.7 / absente / mal formée = 426 / 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 
