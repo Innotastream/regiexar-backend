@@ -81,7 +81,9 @@ requireTactical($view['map']['lights'] === [] && $view['map']['tokens'] === [], 
 $shared = $state;
 $shared['map']['vision']['shared'] = true;
 $view = publicPlayerState($shared, ['id' => 'other-account', 'display_name' => 'Other'], []);
-requireTactical(array_column($view['map']['lights'], 'id') === ['a', 'b'], 'Shared vision can activate the common relay chain.');
+requireTactical(array_column($view['map']['lights'], 'id') === ['a', 'b', 'off']
+    && ($view['map']['lights'][2]['enabled'] ?? true) === false,
+    'Shared vision can activate the common relay chain and show its extinguished torch.');
 $shared['map']['vision']['isolatedPlayerIds'] = ['other-account'];
 $view = publicPlayerState($shared, ['id' => 'other-account', 'display_name' => 'Other'], []);
 requireTactical($view['map']['lights'] === [] && $view['map']['tokens'] === [], 'An isolated player cannot borrow shared light relays.');
