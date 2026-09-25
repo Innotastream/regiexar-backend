@@ -2407,7 +2407,9 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
-    $current['morale'] = trim((string) ($current['morale'] ?? '')) ?: 'Normal';
+    // A historical full-sheet copy with an empty morale must remain a no-op.
+    // New sheets default to Normal; an existing label changes only when the
+    // player explicitly selects one of the ordinary levels above.
     $current['moraleExtremes'] = normalizeOnlineMoraleExtremes($current['moraleExtremes'] ?? []);
     $current['characterSchemaVersion'] = 8;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
