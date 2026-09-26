@@ -294,7 +294,7 @@ $allocatedAbility = ['id' => 'generic-allocated', 'name' => 'Cinq frappes', 'eff
     ]]];
 requireComplexAbility(applicationComplexAbilityWorkflowError($allocatedAbility['workflow']) === '', 'Allocated attacks are a generic editable step.');
 requireComplexAbility(preserveApplicationAbilityRows([['id' => 'generic-allocated', 'effect' => 'complex',
-    'workflow' => ['version' => 3, 'steps' => [['id' => 'strikes', 'type' => 'instruction']]]]], [$allocatedAbility])[0]['workflow'] === $allocatedAbility['workflow'],
+    'workflow' => ['version' => 2, 'steps' => [['id' => 'strikes', 'type' => 'instruction']]]]], [$allocatedAbility])[0]['workflow'] === $allocatedAbility['workflow'],
     'An older client cannot downgrade an unknown complex workflow.');
 $allocated = createApplicationComplexAbilityExecution(['id' => 'execution-allocated', 'sceneId' => 'scene-one',
     'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $allocatedAbility, 'now' => 5000]);
