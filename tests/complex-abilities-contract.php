@@ -167,6 +167,68 @@ try {
     requireComplexAbility($error->errorCode === 'complex_ability_terminal', 'A cancelled workflow stays terminal.');
 }
 
+$markerAbility = ['id' => 'configurable-marker', 'name' => 'Balises', 'effect' => 'complex',
+    'workflow' => ['version' => 4, 'steps' => [['id' => 'orbs', 'type' => 'counter', 'title' => 'Balises',
+        'initial' => 3, 'maximum' => 3, 'combatPersistent' => true, 'resetOnEnd' => true,
+        'gainTrigger' => 'hp-loss', 'gainCondition' => 'Brûlure', 'radiusCells' => 2,
+        'spendOptions' => [
+            ['id' => 'mine', 'label' => 'Mine fixe', 'cost' => 1, 'effect' => ['kind' => 'marker', 'movable' => false]],
+            ['id' => 'mobile', 'label' => 'Balise mobile', 'cost' => 1, 'effect' => ['kind' => 'marker', 'movable' => true]],
+        ],
+    ]]],
+];
+$markerTokens = [[...$tokens[0], 'x' => 20, 'y' => 35, 'layerId' => 'ground'],
+    [...$tokens[1], 'x' => 30, 'y' => 35, 'layerId' => 'ground']];
+$markerExecution = createApplicationComplexAbilityExecution([
+    'id' => 'marker-contract', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
+    'controllerAccountId' => 'caster-player', 'ability' => $markerAbility, 'combatId' => 'combat-one', 'now' => 1000,
+]);
+$markerContext = ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'],
+    'tokens' => $markerTokens, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 1001];
+$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+    ['action' => 'counter-spend', 'expectedRevision' => 1, 'optionId' => 'mine'], $markerContext);
+$placed = applicationComplexAbilityPlacedMarkers([$markerExecution], 'scene-one', 'ground');
+requireComplexAbility(count($placed) === 1 && $placed[0]['x'] === 20.0 && $placed[0]['movable'] === false,
+    'A fixed marker is a projected execution effect at the caster position.');
+requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 3 && count($markerExecution['stepStates']['orbs']['deployments']) === 1,
+    'A placed marker occupies one of the maximum slots without consuming the total.');
+try {
+    applyApplicationComplexAbilityCommand($markerExecution, ['action' => 'marker-move', 'expectedRevision' => 2,
+        'markerId' => $placed[0]['id'], 'x' => 40, 'y' => 40], $markerContext);
+    throw new RuntimeException('A fixed marker cannot move.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_marker_fixed', 'Immobility is configured per marker option.');
+}
+$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+    ['action' => 'marker-remove', 'expectedRevision' => 2, 'markerId' => $placed[0]['id']], $markerContext);
+requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 2
+    && applicationComplexAbilityPlacedMarkers([$markerExecution]) === [], 'Owner deletion frees a slot.');
+$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+    ['action' => 'counter-spend', 'expectedRevision' => 3, 'optionId' => 'mobile'], $markerContext);
+$mobile = applicationComplexAbilityPlacedMarkers([$markerExecution])[0];
+$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+    ['action' => 'marker-move', 'expectedRevision' => 4, 'markerId' => $mobile['id'], 'x' => 45, 'y' => 60], $markerContext);
+requireComplexAbility(applicationComplexAbilityPlacedMarkers([$markerExecution])[0]['x'] === 45.0,
+    'Another skill can configure a movable marker.');
+$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+    ['action' => 'cancel', 'expectedRevision' => 5], $markerContext);
+requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 0
+    && applicationComplexAbilityPlacedMarkers([$markerExecution]) === [], 'Stopping the skill clears markers and its counter.');
+$hpContext = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'tokens' => $markerTokens,
+    'map' => ['naturalWidth' => 1000, 'naturalHeight' => 1000, 'gridSize' => 100], 'hpLost' => 2,
+    'combatId' => 'combat-one', 'target' => $markerTokens[1]];
+$gainAbility = $markerAbility;
+$gainAbility['workflow']['steps'][0]['initial'] = 0;
+$fresh = createApplicationComplexAbilityExecution([
+    'id' => 'gain-contract', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
+    'controllerAccountId' => 'caster-player', 'ability' => $gainAbility, 'combatId' => 'combat-one', 'now' => 1000,
+]);
+requireComplexAbility(applicationComplexAbilityGainBleedingCharges([$fresh], $hpContext)[0]['stepStates']['orbs']['value'] === 0,
+    'The chosen condition is required for this HP loss trigger.');
+$hpContext['target']['conditions'] = ['Brûlure'];
+requireComplexAbility(applicationComplexAbilityGainBleedingCharges([$fresh], $hpContext)[0]['stepStates']['orbs']['value'] === 1,
+    'A configured condition on the injured target produces exactly one charge.');
+
 $conditionAbility = [
     'id' => 'conditional', 'name' => 'Seuil de sang', 'effect' => 'complex', 'formula' => '0',
     'workflow' => ['version' => 2, 'steps' => [

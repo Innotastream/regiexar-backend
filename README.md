@@ -1,4 +1,8 @@
-# Candidat backend 0.18.14 — ciblage, pings et fatigue, client exact 3.4.12
+# Candidat backend 0.18.15 — marqueurs et compteur configurable, client exact 3.4.13
+
+Build `client-3-4-13-modular-ability-markers-20260926-1`. Les marqueurs posés sont projetés depuis les compétences actives sans entrer dans les unités ni dans l’initiative. Le compteur peut gagner sur perte de PV avec un état facultatif. Les protections en attente s’arrêtent avec la compétence. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 : ne pas déployer la politique exacte 3.4.13 sans accord explicite pour le refus des clients antérieurs. Le push du code ne constitue pas un déploiement.
+
+## Candidat historique backend 0.18.14 — ciblage, pings et fatigue, client exact 3.4.12
 
 Build `client-3-4-12-targeted-complex-fatigue-20260926-4`. Les sélections peuvent imposer une portée en cases vérifiée par le serveur et préparent les cibles de la prochaine étape. Les usages configurés des compteurs persistants appliquent des dégâts ou une réduction sur la prochaine attaque, sans rejouer l’activation. L’assistant détaille la raison des refus de brouillon. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 ; ne pas déployer le verrou 3.4.12 avant l’accord explicite pour ce refus. Le push ne constitue ni déploiement OVH ni distribution Windows.
 

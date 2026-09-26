@@ -1317,6 +1317,16 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         $projectedExecution = publicApplicationComplexAbilityExecution($execution, $accountId, false, $tokens);
         if (is_array($projectedExecution)) $visibleAbilityExecutions[] = $projectedExecution;
     }
+    $visibleAbilityMarkers = [];
+    foreach (applicationComplexAbilityPlacedMarkers($fullState['abilityExecutions'] ?? [], $visibleSceneId, $visibleLayerId) as $marker) {
+        $owned = $accountId !== '' && ($marker['controllerAccountId'] ?? '') === $accountId;
+        if (!$owned && $strictPointIsHidden($marker['x'], $marker['y'])) continue;
+        $visibleAbilityMarkers[] = [
+            'id' => $marker['id'], 'x' => $marker['x'], 'y' => $marker['y'], 'label' => $marker['label'],
+            'executionId' => $marker['executionId'], 'sceneId' => $marker['sceneId'], 'layerId' => $marker['layerId'],
+            'ownedByYou' => $owned, 'movable' => $marker['movable'],
+        ];
+    }
     $nowMilliseconds = (int) floor(microtime(true) * 1000);
     $visibleAbilityCueEvents = [];
     $visibleRestEvents = array_values(array_filter(is_array($fullState['restEvents'] ?? null) ? $fullState['restEvents'] : [],
@@ -1432,6 +1442,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
+        'abilityMarkers' => $visibleAbilityMarkers,
         'abilityCueEvents' => $visibleAbilityCueEvents,
         'restEvents' => $visibleRestEvents,
         'pendingAbilityCasts' => $visibleAbilityValidations,
@@ -4179,7 +4190,7 @@ function onlineGainBleedingCharges(PDO $connection, array &$records, array &$pen
     foreach ($activity['abilityExecutions'] as $execution) {
         $step = $execution['workflow']['steps'][$execution['currentStepIndex'] ?? -1] ?? null;
         if (($execution['status'] ?? '') === 'active' && ($execution['sceneId'] ?? '') === $sceneId
-            && ($step['type'] ?? '') === 'counter' && ($step['gainTrigger'] ?? '') === 'bleeding-hp-loss') { $eligible = true; break; }
+            && ($step['type'] ?? '') === 'counter' && in_array($step['gainTrigger'] ?? '', ['hp-loss', 'bleeding-hp-loss'], true)) { $eligible = true; break; }
     }
     if (!$eligible) return;
     $initiative = $pending['initiative:' . $sceneId]['payload'] ?? applicationDomainPayload($records, 'initiative:' . $sceneId);

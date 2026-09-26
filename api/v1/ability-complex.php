@@ -363,6 +363,12 @@ function onlineUseComplexAbility(
             (applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''))['hidden'] ?? false) ? 'gm' : 'public');
     }
     $activity = $pending['activity']['payload'] ?? $activity;
+    if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') !== 'active') {
+        $activity['nextAttackGuards'] = array_values(array_filter(
+            is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
+            static fn(mixed $guard): bool => is_array($guard) && ($guard['sourceExecutionId'] ?? '') !== $next['id']
+        ));
+    }
     $activity['abilityExecutions'][$executionIndex] = $next;
     $activity['abilityExecutions'] = trimApplicationComplexAbilityExecutions($activity['abilityExecutions']);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
