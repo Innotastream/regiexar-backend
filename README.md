@@ -1,6 +1,6 @@
 # Candidat backend 0.18.14 — ciblage, pings et fatigue, client exact 3.4.12
 
-Build `client-3-4-12-targeted-complex-fatigue-20260926-2`. Les sélections peuvent imposer une portée en cases vérifiée par le serveur et préparent les cibles de la prochaine étape. Les charges configurées appliquent des dégâts ou une réduction sur la prochaine attaque. L’assistant détaille la raison des refus de brouillon. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 ; ne pas déployer le verrou 3.4.12 avant l’accord explicite pour ce refus. Le push ne constitue ni déploiement OVH ni distribution Windows.
+Build `client-3-4-12-targeted-complex-fatigue-20260926-4`. Les sélections peuvent imposer une portée en cases vérifiée par le serveur et préparent les cibles de la prochaine étape. Les usages configurés des compteurs persistants appliquent des dégâts ou une réduction sur la prochaine attaque, sans rejouer l’activation. L’assistant détaille la raison des refus de brouillon. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 ; ne pas déployer le verrou 3.4.12 avant l’accord explicite pour ce refus. Le push ne constitue ni déploiement OVH ni distribution Windows.
 
 # Candidat backend 0.18.13 — perception facultative, client exact 3.4.11
 

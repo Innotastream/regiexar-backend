@@ -239,6 +239,8 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
             $step['radiusCells'] = applicationComplexAbilityInteger($raw['radiusCells'] ?? null, 0, 100, 2);
             $step['spendOncePerTurn'] = ($raw['spendOncePerTurn'] ?? false) === true;
             $step['combatPersistent'] = ($raw['combatPersistent'] ?? false) === true;
+            $step['resetOnEnd'] = ($raw['resetOnEnd'] ?? null) === true
+                || ($step['combatPersistent'] && ($raw['resetOnEnd'] ?? null) !== false);
         } elseif ($type === 'condition') {
             $step['subject'] = in_array($raw['subject'] ?? '', ['source', 'targets'], true) ? $raw['subject'] : 'source';
             $facts = ['hp-percent', 'health-state', 'hp', 'mana-percent', 'mana', 'fatigue', 'condition', 'stat',
@@ -841,6 +843,24 @@ function applicationComplexAbilityFinishStep(array &$execution, array &$state, i
     if (!isset($execution['stepStates'][$next['id']])) $execution['stepStates'][$next['id']] = applicationComplexAbilityInitialStepState($next);
 }
 
+function applicationComplexAbilityResetCountersOnEnd(array &$execution, int $now): void
+{
+    foreach ($execution['workflow']['steps'] as $step) {
+        if ($step['type'] !== 'counter' || !$step['resetOnEnd'] || !isset($execution['stepStates'][$step['id']])) continue;
+        $state =& $execution['stepStates'][$step['id']];
+        $previous = applicationComplexAbilityInteger($state['value'] ?? null, 0, $step['maximum'], $step['initial']);
+        $state['value'] = 0;
+        if ($previous > 0) {
+            $state['events'][] = ['at' => $now, 'type' => 'reset', 'value' => 0, 'amount' => -$previous, 'actorId' => 'system'];
+            $state['events'] = array_slice($state['events'], -XAR_COMPLEX_ABILITY_MAXIMUM_EVENTS);
+            applicationComplexAbilityAppendEvent($execution, ['type' => 'counter', 'actorId' => 'system', 'actorName' => 'Combat',
+                'stepId' => $step['id'], 'label' => $step['counterLabel'] . ' : ' . $previous . ' → 0',
+                'detail' => 'Compteur remis à zéro à la fin de l’effet'], $now);
+        }
+        unset($state);
+    }
+}
+
 function applyApplicationComplexAbilityCommand(
     mixed $value,
     mixed $commandValue,
@@ -873,6 +893,7 @@ function applyApplicationComplexAbilityCommand(
     if ($action === 'cancel') {
         if (!$owner && !$isGm) applicationComplexAbilityFail('Seul le lanceur ou le MJ peut arrêter cette compétence.', 'complex_ability_forbidden', 403);
         $execution['status'] = 'cancelled'; $execution['cancelledAt'] = $now; $execution['cancelledBy'] = $actorId;
+        applicationComplexAbilityResetCountersOnEnd($execution, $now);
         applicationComplexAbilityAppendEvent($execution, ['type' => 'cancelled', 'actorId' => $actorId, 'actorName' => $actorName,
             'stepId' => $step['id'], 'label' => 'Compétence arrêtée', 'detail' => 'Les étapes déjà validées et les coûts restent acquis.'], $now);
     } else {
@@ -1117,7 +1138,7 @@ function applyApplicationComplexAbilityCommand(
                 'stepId' => $step['id'], 'label' => $option['label'], 'detail' => $option['description']], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
         } elseif ($step['type'] === 'counter' && $action === 'counter-gain') {
-            if ($step['gainTrigger'] !== 'manual') applicationComplexAbilityFail('Les charges de cette étape proviennent des blessures confirmées.', 'complex_ability_gain_automatic');
+            if ($step['gainTrigger'] !== 'manual') applicationComplexAbilityFail('Le gain de ce compteur suit son déclencheur configuré ; il ne peut pas être ajouté manuellement.', 'complex_ability_gain_automatic');
             $previous = applicationComplexAbilityInteger($state['value'] ?? null, 0, $step['maximum'], $step['initial']);
             $next = min($step['maximum'], $previous + $step['gainAmount']);
             if ($next === $previous) applicationComplexAbilityFail($step['counterLabel'] . ' est déjà au maximum (' . $step['maximum'] . ').', 'complex_ability_counter_maximum');
@@ -1128,7 +1149,7 @@ function applyApplicationComplexAbilityCommand(
         } elseif ($step['type'] === 'counter' && $action === 'counter-spend') {
             if ($step['combatPersistent'] && ($context['combatActive'] ?? false) !== true) applicationComplexAbilityFail('Ce sort prend fin avec le combat.', 'complex_ability_combat_ended');
             $turnKey = applicationComplexAbilityIdentifier($context['turnKey'] ?? '', '', 180);
-            if ($step['spendOncePerTurn'] && ($turnKey === '' || ($state['lastSpendTurnKey'] ?? '') === $turnKey)) applicationComplexAbilityFail('Une seule orbe peut être utilisée comme action gratuite durant ce tour.', 'complex_ability_turn_spend_limit');
+            if ($step['spendOncePerTurn'] && ($turnKey === '' || ($state['lastSpendTurnKey'] ?? '') === $turnKey)) applicationComplexAbilityFail('Une seule utilisation de ce compteur est autorisée durant ce tour.', 'complex_ability_turn_spend_limit');
             $option = null; $optionId = applicationComplexAbilityIdentifier($command['optionId'] ?? '');
             foreach ($step['spendOptions'] as $candidate) if ($candidate['id'] === $optionId) { $option = $candidate; break; }
             if (!is_array($option)) applicationComplexAbilityFail('Cette utilisation de charge n’existe plus.', 'complex_ability_spend_missing', 400);
