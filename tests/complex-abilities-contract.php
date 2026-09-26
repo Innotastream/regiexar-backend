@@ -455,7 +455,19 @@ try {
 }
 $manuallyEnded = applyApplicationComplexAbilityCommand($persistent, ['action' => 'cancel', 'expectedRevision' => 5],
     ['actor' => $owner, 'now' => 6300]);
-requireComplexAbility($manuallyEnded['status'] === 'cancelled' && $gain($manuallyEnded, $bleeding, 1)['revision'] === 6,
-    'An interrupted persistent spell cannot gain a charge afterward.');
+requireComplexAbility($manuallyEnded['status'] === 'cancelled' && $manuallyEnded['stepStates']['charges']['value'] === 0
+    && $gain($manuallyEnded, $bleeding, 1)['revision'] === 6,
+    'An interrupted persistent spell immediately loses its remaining orbs and cannot gain another.');
+$retainedWorkflow = $persistentAbility['workflow'];
+$retainedWorkflow['steps'][0]['resetOnEnd'] = false;
+$retainedAbility = [...$persistentAbility, 'id' => 'retained-counter', 'workflow' => $retainedWorkflow];
+$retained = createApplicationComplexAbilityExecution(['id' => 'execution-retained', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $retainedAbility,
+    'combatId' => 'combat-one', 'now' => 6400]);
+$retained = $gain($retained, $bleeding, 1);
+$retained = applyApplicationComplexAbilityCommand($retained, ['action' => 'cancel', 'expectedRevision' => 2],
+    ['actor' => $owner, 'now' => 6500]);
+requireComplexAbility($retained['stepStates']['charges']['value'] === 1,
+    'Another persistent counter can explicitly retain its value on termination.');
 
 echo "complex-abilities-contract: ok\n";
