@@ -101,7 +101,7 @@ auditCombat('Complex defenses refresh the linked authoritative statistics', func
     $records = applicationDomainRecords($db);
     $tokens = onlineComplexAbilitySceneTokens($db, $records, 'scene-one', $db->payload('map:scene-one'), 'account-player', false);
     $target = applicationComplexAbilityTokenById($tokens, 'token-player');
-    requireTactical(applicationComplexAbilityTokenThreshold($target, ['thresholdMode' => 'stat', 'targetStatId' => 'force']) === 0, 'Defense must clamp temporary 41 minus fatigue 49, not use stale token 73');
+    requireTactical(applicationComplexAbilityTokenThreshold($target, ['thresholdMode' => 'stat', 'targetStatId' => 'force']) === 1, 'Defense must clamp temporary 41 minus fatigue 49 to one, not use stale token 73');
 });
 
 auditCombat('Self-healing pays HP and mana before the bounded effect', function (): void {
