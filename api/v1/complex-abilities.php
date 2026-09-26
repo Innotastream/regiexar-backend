@@ -164,7 +164,7 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
     $rawSteps = is_array($source['steps'] ?? null) && array_is_list($source['steps'])
         ? array_slice($source['steps'], 0, XAR_COMPLEX_ABILITY_MAXIMUM_STEPS) : [];
     $types = ['instruction', 'targets', 'rolls', 'attack-chain', 'allocated-attacks', 'defense-series', 'choice', 'counter', 'condition'];
-    $titles = ['instruction' => 'Consigne', 'targets' => 'Choisir les cibles', 'rolls' => 'Effectuer les jets', 'attack-chain' => 'Attaques conditionnelles', 'allocated-attacks' => 'Attaques réparties et vigilance',
+    $titles = ['instruction' => 'Consigne', 'targets' => 'Choisir les cibles', 'rolls' => 'Effectuer les jets', 'attack-chain' => 'Attaques conditionnelles', 'allocated-attacks' => 'Attaques réparties',
         'defense-series' => 'Défenses successives', 'choice' => 'Faire un choix', 'counter' => 'Suivre les charges',
         'condition' => 'Vérifier une condition'];
     $seen = []; $targetSteps = []; $steps = [];
@@ -198,6 +198,8 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
         } elseif ($type === 'allocated-attacks') {
             $requested = applicationComplexAbilityIdentifier($raw['sourceStepId'] ?? '');
             $step['sourceStepId'] = in_array($requested, $targetSteps, true) ? $requested : ($targetSteps[count($targetSteps) - 1] ?? '');
+            // Absence du réglage : préserver la vigilance des étapes déjà enregistrées.
+            $step['awarenessMode'] = ($raw['awarenessMode'] ?? '') === 'none' ? 'none' : 'required';
             $step['awarenessStatId'] = applicationComplexAbilityIdentifier($raw['awarenessStatId'] ?? '', 'character-stat-instinct', 120);
             $step['damagePercent'] = applicationComplexAbilityInteger($raw['damagePercent'] ?? null, 1, 100, 100);
         } elseif ($type === 'defense-series') {
@@ -278,7 +280,7 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         if ($step['type'] === 'allocated-attacks') {
             $sources = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $candidate): bool => $candidate['id'] === $step['sourceStepId'] && $candidate['type'] === 'targets' && $candidate['allocationTotal'] > 0);
             if ($sources === []) return 'L’étape ' . ($index + 1) . ' requiert une répartition précédente avec un total d’attaques fixé.';
-            if (preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['awarenessStatId']) !== 1) return 'Choisissez une statistique de vigilance valide à l’étape ' . ($index + 1) . '.';
+            if ($step['awarenessMode'] === 'required' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['awarenessStatId']) !== 1) return 'Choisissez une statistique de vigilance valide à l’étape ' . ($index + 1) . '.';
         }
         if ($step['type'] === 'defense-series' && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
             return 'L’étape ' . ($index + 1) . ' doit suivre une étape de ciblage.';
@@ -598,7 +600,7 @@ function applicationComplexAbilityInitializeAllocatedTargets(array &$execution, 
             'tokenId' => (string) ($allocation['tokenId'] ?? ''),
             'targetName' => applicationComplexAbilityText($token['name'] ?? ($allocation['targetName'] ?? ''), 120, 'Cible'),
             'attackCount' => applicationComplexAbilityInteger($allocation['count'] ?? null, 1, 100, 1),
-            'awarenessRolls' => [], 'aware' => false, 'attacks' => [],
+            'awarenessRolls' => [], 'aware' => $step['awarenessMode'] === 'none', 'attacks' => [],
         ];
     }
 }
@@ -978,13 +980,14 @@ function applyApplicationComplexAbilityCommand(
             if ($targetIndex === null || !is_array(applicationComplexAbilityTokenById($tokens, $targetId))) applicationComplexAbilityFail('Cette cible n’a plus d’attaque attribuée ou n’est plus disponible.', 'complex_ability_target_missing', 404);
             $target = $state['targets'][$targetIndex];
             $state['pendingTargetTokenId'] = $targetId;
-            $state['awaitingAwareness'] = !$target['aware'];
-            $state['awaitingAttack'] = $target['aware'];
+            $canOppose = $step['awarenessMode'] === 'none' || $target['aware'];
+            $state['awaitingAwareness'] = !$canOppose;
+            $state['awaitingAttack'] = $canOppose;
             $state['attackRequestId'] = '';
             $state['gateAt'] = $now;
             applicationComplexAbilityAppendEvent($execution, ['type' => 'target', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' · ' . $target['targetName'],
-                'detail' => $target['aware'] ? 'Opposition autorisée' : 'Jet de vigilance attendu'], $now);
+                'detail' => $step['awarenessMode'] === 'none' ? 'Attaque prête · opposition au choix' : ($target['aware'] ? 'Opposition autorisée' : 'Jet de vigilance attendu')], $now);
         } elseif ($step['type'] === 'allocated-attacks' && $action === 'awareness-roll') {
             if (($state['awaitingAwareness'] ?? false) !== true || ($state['pendingTargetTokenId'] ?? '') === '') applicationComplexAbilityFail('Aucun jet de vigilance n’est attendu.', 'complex_ability_awareness_not_ready');
             $targetIndex = array_search($state['pendingTargetTokenId'], array_column($state['targets'], 'tokenId'), true);
@@ -1013,7 +1016,7 @@ function applyApplicationComplexAbilityCommand(
             if (!is_array($target) || ($state['awaitingAttack'] ?? false) !== true || ($attack['attackKind'] ?? '') !== 'weapon'
                 || ($attack['complexExecutionId'] ?? '') !== $execution['id'] || ($attack['sceneId'] ?? '') !== $execution['sceneId']
                 || ($attack['sourceTokenId'] ?? '') !== $execution['sourceTokenId'] || ($attack['accountId'] ?? '') !== $actorId
-                || ($attack['targetTokenId'] ?? '') !== $target['tokenId'] || (($attack['opposed'] ?? false) === true && !$target['aware'])
+                || ($attack['targetTokenId'] ?? '') !== $target['tokenId'] || (($attack['opposed'] ?? false) === true && $step['awarenessMode'] === 'required' && !$target['aware'])
                 || ($attack['damagePercent'] ?? null) !== $step['damagePercent']
                 || ($attack['requestId'] ?? '') !== ($command['attackRequestId'] ?? '') || ($state['attackRequestId'] ?? '') !== ($attack['requestId'] ?? '')
                 || !is_numeric($attack['createdAt'] ?? null) || (int) $attack['createdAt'] < (int) ($state['gateAt'] ?? 0)

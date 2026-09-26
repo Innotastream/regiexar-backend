@@ -293,6 +293,8 @@ $allocatedAbility = ['id' => 'generic-allocated', 'name' => 'Cinq frappes', 'eff
             'awarenessStatId' => 'character-stat-instinct', 'damagePercent' => 50],
     ]]];
 requireComplexAbility(applicationComplexAbilityWorkflowError($allocatedAbility['workflow']) === '', 'Allocated attacks are a generic editable step.');
+requireComplexAbility(normalizeApplicationComplexAbilityWorkflow($allocatedAbility['workflow'])['steps'][1]['awarenessMode'] === 'required',
+    'An existing allocated attack preserves its awareness gate when the setting is absent.');
 requireComplexAbility(preserveApplicationAbilityRows([['id' => 'generic-allocated', 'effect' => 'complex',
     'workflow' => ['version' => 2, 'steps' => [['id' => 'strikes', 'type' => 'instruction']]]]], [$allocatedAbility])[0]['workflow'] === $allocatedAbility['workflow'],
     'An older client cannot downgrade an unknown complex workflow.');
@@ -355,6 +357,40 @@ $damage = onlineRollAttackDamage(['damageComponents' => [['formula' => '20', 'ty
     static fn(string $formula): array => ['total' => 20, 'breakdown' => '20']);
 requireComplexAbility(($damage['damage']['rawDamage'] ?? null) === 10 && ($damage['damage']['finalDamage'] ?? null) === 8,
     'One-weapon fifty percent damage is applied before armor.');
+
+$noGateAbility = ['id' => 'generic-strikes', 'name' => 'Répartition libre', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 4, 'steps' => [
+        ['id' => 'targets', 'type' => 'targets', 'minTargets' => 1, 'maxTargets' => 2, 'allocationTotal' => 2],
+        ['id' => 'strikes', 'type' => 'allocated-attacks', 'sourceStepId' => 'targets',
+            'awarenessMode' => 'none', 'awarenessStatId' => 'character-stat-invalid', 'damagePercent' => 100],
+    ]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($noGateAbility['workflow']) === '',
+    'A multi-target ability without awareness does not need an awareness statistic.');
+$noGate = createApplicationComplexAbilityExecution(['id' => 'execution-no-gate', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $noGateAbility, 'now' => 8000]);
+$noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'select-targets', 'expectedRevision' => $noGate['revision'],
+    'allocations' => [['tokenId' => 'target-a', 'count' => 1], ['tokenId' => 'target-b', 'count' => 1]]],
+    ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8100]);
+foreach (['target-a', 'target-b'] as $index => $targetId) {
+    $noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'prepare-target', 'expectedRevision' => $noGate['revision'],
+        'targetTokenId' => $targetId], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8200 + $index * 200]);
+    requireComplexAbility($noGate['stepStates']['strikes']['awaitingAwareness'] === false
+        && $noGate['stepStates']['strikes']['awaitingAttack'] === true,
+        'A multi-target strike without awareness goes directly to the attack.');
+    $requestId = 'request-no-gate-' . ($index + 1) . '-123456';
+    $noGate['stepStates']['strikes']['attackRequestId'] = $requestId;
+    $attack = ['id' => 'attack-no-gate-' . ($index + 1), 'requestId' => $requestId, 'attackKind' => 'weapon',
+        'attackId' => 'sabre-glace', 'complexExecutionId' => $noGate['id'], 'sceneId' => 'scene-one',
+        'sourceTokenId' => 'caster', 'targetTokenId' => $targetId, 'accountId' => 'caster-player',
+        'opposed' => $index === 0, 'damagePercent' => 100, 'status' => 'applied', 'createdAt' => 8300 + $index * 200];
+    $noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'confirm-attack',
+        'expectedRevision' => $noGate['revision'], 'attackRequestId' => $requestId],
+        ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $attack, 'now' => 8300 + $index * 200]);
+}
+requireComplexAbility($noGate['status'] === 'completed'
+    && ($noGate['stepStates']['strikes']['targets'][0]['attacks'][0]['opposed'] ?? null) === true
+    && ($noGate['stepStates']['strikes']['targets'][1]['attacks'][0]['opposed'] ?? null) === false,
+    'Opposition remains selectable for each target without an awareness roll.');
 
 $persistentAbility = ['id' => 'persistent-orbs', 'name' => 'Orbes configurables', 'effect' => 'complex', 'formula' => '0',
     'workflow' => ['version' => 4, 'steps' => [[

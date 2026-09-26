@@ -1,3 +1,7 @@
+# Candidat backend 0.18.13 — perception facultative, client exact 3.4.11
+
+Build `client-3-4-11-configurable-complex-rules-20260926-1`. Les frappes réparties proposent désormais une vigilance facultative ; les étapes sans ce réglage gardent leur comportement antérieur. Le saignement n'alimente un compteur que si ce déclencheur a été choisi ; le gain manuel reste la valeur par défaut. Schéma MySQL **22** inchangé. La production observée avant ce candidat demeure sur 0.18.12 avec client exact 3.4.10 : ne pas déployer le verrou 3.4.11 sans accord explicite pour le refus des clients 3.4.10 encore utilisés. Le push de ce candidat ne constitue ni déploiement OVH ni distribution Windows.
+
 # Candidat backend 0.18.12 — compétences complexes et effets persistants, client exact 3.4.10
 
 Build `client-3-4-10-complex-attacks-20260926-1`. Attaques en chaîne et frappes réparties confirmées par les reçus du combat, opposition vérifiée par cible, charges de saignement gagnées sur perte effective de PV à portée, une utilisation par tour et arrêt manuel du sort persistant. Schéma MySQL **22** inchangé. Politique candidate exacte 3.4.10 : ne pas déployer sur la production 3.4.8 sans basculement vérifié de la distribution Windows et de la politique.
