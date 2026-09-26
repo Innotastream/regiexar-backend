@@ -1,3 +1,7 @@
+# Candidat backend 0.18.10 — verrou client 3.4.8
+
+Build `client-3-4-8-translucent-fog-vision-20260926-1`. Seule la version 3.4.8 franchit le verrou (`exactVersion=true`) ; 3.4.7 reçoit `426`. Le code de jeu et le schéma MySQL **22** restent inchangés. Le nouveau MSIX porte le brouillard translucide avec vision dynamique ; qualification CI, déploiement OVH et distribution Windows exigent leurs preuves propres.
+
 # Candidat backend 0.18.9 — verrou client 3.4.7
 
 Build `client-3-4-7-stream-fog-mounts-20260926-1`. Seule la version 3.4.7 franchit le verrou (`exactVersion=true`) ; 3.4.6 reçoit `426`. Le code de jeu et le schéma MySQL **22** restent inchangés. Le nouveau MSIX contient les correctifs du rendu Stream et du brouillard ; son build, le déploiement et la publication Store demandent des preuves distinctes.
