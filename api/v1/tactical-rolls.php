@@ -51,7 +51,7 @@ function applicationD100Comparison(array $outcome): string {
     if (is_numeric($fatigue['penalty'] ?? null) && (int) $fatigue['penalty'] > 0) {
         $penalty = (int) $fatigue['penalty'];
         $before = is_numeric($fatigue['before'] ?? null) ? (int) $fatigue['before'] : null;
-        $level = (0 + ($fatigue['current'] ?? 0)) . '/' . (0 + ($fatigue['max'] ?? 100));
+        $level = (0 + ($fatigue['current'] ?? 0)) . '/' . (0 + ($fatigue['max'] ?? 150));
         $parts[] = ($before === null ? 'fatigue ' . $level . ' : −' . $penalty . ' · seuil après fatigue ' . (int) ($outcome['baseThreshold'] ?? $threshold)
             : 'seuil ' . $before . ' −' . $penalty . ' (fatigue ' . $level . ')')
             . ($modifier !== 0 ? ' ' . $signed($modifier) : '') . ' = ' . $threshold

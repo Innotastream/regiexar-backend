@@ -88,7 +88,7 @@ function abilityAssistantSafeCharacterContext(array $character, string $existing
             'maximums' => [
                 'hp' => is_numeric($resources['maxHp'] ?? null) ? 0 + $resources['maxHp'] : 0,
                 'mana' => is_numeric($resources['maxMana'] ?? null) ? 0 + $resources['maxMana'] : 0,
-                'fatigue' => is_numeric($fatigue['max'] ?? null) ? 0 + $fatigue['max'] : 100,
+                'fatigue' => 150,
             ],
             'stats' => is_array($character['stats'] ?? null) ? $character['stats'] : [],
             'hitThreshold' => $character['hitThreshold'] ?? null,
