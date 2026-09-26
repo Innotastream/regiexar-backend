@@ -1,3 +1,7 @@
+# Candidat backend 0.18.12 — compétences complexes et effets persistants, client exact 3.4.10
+
+Build `client-3-4-10-complex-attacks-20260926-1`. Attaques en chaîne et frappes réparties confirmées par les reçus du combat, opposition vérifiée par cible, charges de saignement gagnées sur perte effective de PV à portée, une utilisation par tour et arrêt manuel du sort persistant. Schéma MySQL **22** inchangé. Politique candidate exacte 3.4.10 : ne pas déployer sur la production 3.4.8 sans basculement vérifié de la distribution Windows et de la politique.
+
 # Candidat backend 0.18.11 — ombre des murs, client exact 3.4.9
 
 Build `client-3-4-9-wall-shadow-vision-edge-20260926-1`. La projection Joueur et Stream distingue le mur de la brume décorative pour garder le noir derrière l'obstacle ; les mouvements tolèrent seulement une très légère bordure du pion hors vision, sans tolérance pour les murs ou le brouillard peint. Schéma MySQL **22** inchangé. Politique candidate exacte 3.4.9 : la production précédemment contrôlée sert encore 0.18.10 et le verrou 3.4.8. Qualification, déploiement et distribution Windows exigent leurs preuves propres.

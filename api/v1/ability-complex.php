@@ -60,6 +60,29 @@ function publicApplicationComplexAbilityExecution(
         return [...$execution, 'ownedByYou' => (string) ($execution['controllerAccountId'] ?? '') === $accountId, 'participantOnly' => false];
     }
     $step = $execution['workflow']['steps'][$execution['currentStepIndex'] ?? -1] ?? null;
+    if (($step['type'] ?? '') === 'allocated-attacks' || $participantTokenId !== '') {
+        $allocatedStep = ($step['type'] ?? '') === 'allocated-attacks' ? $step : null;
+        if (!is_array($allocatedStep) && $participantTokenId !== '') foreach (array_reverse($execution['workflow']['steps'] ?? []) as $candidateStep) {
+            if (($candidateStep['type'] ?? '') !== 'allocated-attacks') continue;
+            $candidateState = $execution['stepStates'][$candidateStep['id']] ?? null;
+            if (in_array($participantTokenId, array_column(is_array($candidateState['targets'] ?? null) ? $candidateState['targets'] : [], 'tokenId'), true)) { $allocatedStep = $candidateStep; break; }
+        }
+        if (is_array($allocatedStep)) {
+            $allocatedState = $execution['stepStates'][$allocatedStep['id']] ?? [];
+            $targetId = $participantTokenId !== '' ? $participantTokenId : (($allocatedState['awaitingAwareness'] ?? false) ? ($allocatedState['pendingTargetTokenId'] ?? '') : '');
+            foreach (is_array($allocatedState['targets'] ?? null) ? $allocatedState['targets'] : [] as $candidate) {
+                if (($candidate['tokenId'] ?? '') !== $targetId || $targetId === '') continue;
+                $token = applicationComplexAbilityTokenById($tokens, $targetId);
+                if (!is_array($token) || (string) ($token['controllerAccountId'] ?? $token['controllerPlayerId'] ?? '') !== $accountId) return null;
+                return [...$execution, 'controllerAccountId' => '', 'controllerName' => '', 'ownedByYou' => false, 'participantOnly' => true,
+                    'events' => [], 'stepStates' => [$allocatedStep['id'] => [
+                        'status' => $allocatedState['status'] ?? 'pending', 'targets' => [$candidate],
+                        'pendingTargetTokenId' => $targetId, 'awaitingAwareness' => ($allocatedState['awaitingAwareness'] ?? false) === true,
+                        'awaitingAttack' => ($allocatedState['awaitingAttack'] ?? false) === true,
+                    ]]];
+            }
+        }
+    }
     if ((!is_array($step) || ($step['type'] ?? '') !== 'defense-series') && $participantTokenId !== '') {
         foreach (array_reverse($execution['workflow']['steps'] ?? []) as $candidateStep) {
             if (($candidateStep['type'] ?? '') !== 'defense-series') continue;
@@ -157,6 +180,19 @@ function onlineUseComplexAbility(
         if (!is_array($ability) || ($ability['effect'] ?? '') !== 'complex') {
             rejectOnlineCommand($connection, 404, 'Cette compétence complexe n’existe plus.', 'complex_ability_missing');
         }
+        $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
+        $persistent = count(array_filter($ability['workflow']['steps'] ?? [], static fn(mixed $step): bool => is_array($step)
+            && ($step['type'] ?? '') === 'counter' && ($step['combatPersistent'] ?? false) === true)) > 0;
+        $combatId = trim((string) ($initiative['combatId'] ?? ''));
+        if ($persistent && (($initiative['active'] ?? false) !== true || $combatId === '')) {
+            rejectOnlineCommand($connection, 409, 'Ce sort persistant exige un combat actif.', 'complex_ability_combat_required');
+        }
+        if ($persistent) foreach ($activity['abilityExecutions'] as $execution) {
+            if (($execution['sceneId'] ?? '') === $sceneId && ($execution['sourceTokenId'] ?? '') === ($source['id'] ?? '')
+                && ($execution['abilityId'] ?? '') === ($ability['id'] ?? '') && ($execution['combatId'] ?? '') === $combatId) {
+                rejectOnlineCommand($connection, 409, 'Ce sort a déjà été activé pendant ce combat.', 'complex_ability_combat_once');
+            }
+        }
         if ($continuation === null && applicationAbilitySourceDefeated($rules)) {
             rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
         }
@@ -191,6 +227,7 @@ function onlineUseComplexAbility(
                     'characterId' => $owner['characterId'] ?? '',
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
                     'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'now' => $now,
+                    'combatId' => $persistent ? $combatId : '',
                 ]);
             } catch (ApplicationComplexAbilityException $error) {
                 rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
@@ -231,6 +268,9 @@ function onlineUseComplexAbility(
             if (($candidateTarget['status'] ?? '') === 'pending') { $participantTokenId = (string) ($candidateTarget['tokenId'] ?? ''); break; }
         }
     }
+    if (($currentStep['type'] ?? '') === 'allocated-attacks' && ($currentStepState['awaitingAwareness'] ?? false) === true) {
+        $participantTokenId = (string) ($currentStepState['pendingTargetTokenId'] ?? '');
+    }
     $sceneId = (string) ($current['sceneId'] ?? '');
     $map = applicationDomainPayload($records, 'map:' . $sceneId);
     if ($workflowAction !== 'cancel') {
@@ -244,6 +284,17 @@ function onlineUseComplexAbility(
     }
     $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, $isGm);
     $generatedRolls = [];
+    $confirmedAttack = null;
+    if ($workflowAction === 'confirm-attack') {
+        $attackRequestId = trim((string) ($arguments['command']['attackRequestId'] ?? ''));
+        foreach (is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [] as $receipt) {
+            if (($receipt['requestId'] ?? '') === $attackRequestId && ($receipt['accountId'] ?? '') === $accountId) {
+                $confirmedAttack = $receipt['attack'] ?? null;
+                break;
+            }
+        }
+    }
+    $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
     try {
         $next = applyApplicationComplexAbilityCommand(
             $current,
@@ -251,7 +302,10 @@ function onlineUseComplexAbility(
                 'expectedRevision' => $arguments['expectedRevision'] ?? null],
             [
                 'actor' => ['id' => $accountId, 'name' => $identity['display_name'] ?? '', 'role' => $isGm ? 'gm' : 'player'],
-                'tokens' => $tokens, 'now' => $now,
+                'tokens' => $tokens, 'now' => $now, 'attack' => $confirmedAttack,
+                'combatActive' => ($initiative['active'] ?? false) === true
+                    && (($current['combatId'] ?? '') === '' || ($current['combatId'] ?? '') === ($initiative['combatId'] ?? '')),
+                'turnKey' => $sceneId . ':' . (string) ($initiative['combatId'] ?? '') . ':' . (string) ($initiative['turnSerial'] ?? 0),
                 'roll' => static function (string $formula) use (&$generatedRolls): array {
                     $rolled = onlineRollFormulaWithMode($formula, 'normal');
                     $generatedRolls[] = $rolled;
@@ -262,7 +316,7 @@ function onlineUseComplexAbility(
     } catch (ApplicationComplexAbilityException $error) {
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
     }
-    if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') === 'completed') {
+    if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') === 'completed' && ($next['endedByFailure'] ?? false) !== true) {
         applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $next['sourceTokenId'], 'onHitConditions' => $next['onHitConditions'] ?? [],
         ]);
@@ -276,10 +330,14 @@ function onlineUseComplexAbility(
     $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''));
     $responseRolls = [];
     $stepTitle = (string) ($current['workflow']['steps'][$current['currentStepIndex'] ?? -1]['title'] ?? 'Étape');
+    $rollSubject = $workflowAction === 'awareness-roll' && $participantTokenId !== ''
+        ? applicationComplexAbilityTokenById($tokens, $participantTokenId) : $source;
+    $rollSubjectName = $workflowAction === 'awareness-roll' && is_array($rollSubject)
+        ? (string) ($rollSubject['name'] ?? 'Cible') : $next['sourceName'];
     foreach ($generatedRolls as $rolled) {
-        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . $stepTitle, $next['sourceName']);
-        $responseRolls[] = $source === [] ? $roll : onlineAbilityRollVisibility($roll, $source, $identity,
-            $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId), $sceneId);
+        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . $stepTitle, $rollSubjectName);
+        $responseRolls[] = !is_array($rollSubject) || $rollSubject === [] ? $roll : onlineAbilityRollVisibility($roll, $rollSubject, $identity,
+            $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $rollSubject, $sceneId), $sceneId);
         onlineAppendAbilityEffectRoll($records, $pending, $responseRolls[count($responseRolls) - 1]);
     }
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);

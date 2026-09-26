@@ -9,7 +9,7 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 3, 'steps' => [['type' => 'instruction']]]), 'format futur 3'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 5, 'steps' => [['type' => 'instruction']]]), 'format futur 5'),
     'A future workflow version is refused instead of being rewritten.'
 );
 
@@ -253,5 +253,148 @@ for ($index = 0; $index < 70; $index += 1) {
 $retained = trimApplicationComplexAbilityExecutions([$resumed, ...$terminalExecutions]);
 requireComplexAbility(count($retained) === XAR_COMPLEX_ABILITY_MAXIMUM_EXECUTIONS && $retained[0]['id'] === $resumed['id'],
     'An old active execution is retained ahead of newer terminal history.');
+
+$chainAbility = ['id' => 'generic-chain', 'name' => 'Série configurable', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 3, 'steps' => [['id' => 'chain', 'type' => 'attack-chain', 'title' => 'Série',
+        'statId' => 'character-stat-agility', 'count' => 4, 'penaltyPerSuccess' => 10, 'stopOnFailure' => true]]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($chainAbility['workflow']) === '', 'A generic attack chain is editable.');
+$chain = createApplicationComplexAbilityExecution(['id' => 'execution-generic-chain', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $chainAbility, 'now' => 4000]);
+$chainTokens = [[...$tokens[0], 'stats' => [['id' => 'character-stat-agility', 'label' => 'Agilité', 'value' => 70]]], ...array_slice($tokens, 1)];
+$chainContext = ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $chainTokens, 'now' => 4100,
+    'roll' => static fn(string $formula): array => ['formula' => $formula, 'rawD100' => 65, 'total' => 65, 'breakdown' => '65']];
+$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 1], $chainContext);
+requireComplexAbility($chain['stepStates']['chain']['awaitingAttack'] === true
+    && $chain['stepStates']['chain']['rolls'][0]['threshold'] === 70, 'The first check uses current Agility.');
+try {
+    applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 2], $chainContext);
+    throw new RuntimeException('A second gate must wait for the actual attack.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_attack_pending', 'The pending attack blocks a new gate.');
+}
+$chain['stepStates']['chain']['attackRequestId'] = 'request-attack-123456';
+$attack = ['id' => 'attack-real', 'requestId' => 'request-attack-123456', 'attackKind' => 'weapon',
+    'complexExecutionId' => $chain['id'], 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster', 'accountId' => 'caster-player',
+    'targetTokenId' => 'target-a', 'targetName' => 'Cible A', 'status' => 'applied', 'createdAt' => 4101];
+$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+    'attackRequestId' => $attack['requestId']], [...$chainContext, 'attack' => $attack, 'now' => 4200]);
+requireComplexAbility(count($chain['stepStates']['chain']['attacks']) === 1, 'The authoritative weapon attack is counted once.');
+$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 3],
+    [...$chainContext, 'now' => 4300, 'roll' => static fn(string $formula): array => ['formula' => $formula,
+        'rawD100' => 61, 'total' => 61, 'breakdown' => '61']]);
+requireComplexAbility($chain['stepStates']['chain']['rolls'][1]['threshold'] === 60
+    && $chain['status'] === 'completed' && $chain['endedByFailure'] === true
+    && count($chain['stepStates']['chain']['attacks']) === 1, 'The progressive penalty and first failure stop the series.');
+
+$allocatedAbility = ['id' => 'generic-allocated', 'name' => 'Cinq frappes', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 3, 'steps' => [
+        ['id' => 'targets', 'type' => 'targets', 'title' => 'Répartir', 'minTargets' => 1, 'maxTargets' => 5, 'allocationTotal' => 5],
+        ['id' => 'strikes', 'type' => 'allocated-attacks', 'title' => 'Frappes', 'sourceStepId' => 'targets',
+            'awarenessStatId' => 'character-stat-instinct', 'damagePercent' => 50],
+    ]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($allocatedAbility['workflow']) === '', 'Allocated attacks are a generic editable step.');
+requireComplexAbility(preserveApplicationAbilityRows([['id' => 'generic-allocated', 'effect' => 'complex',
+    'workflow' => ['version' => 3, 'steps' => [['id' => 'strikes', 'type' => 'instruction']]]]], [$allocatedAbility])[0]['workflow'] === $allocatedAbility['workflow'],
+    'An older client cannot downgrade an unknown complex workflow.');
+$allocated = createApplicationComplexAbilityExecution(['id' => 'execution-allocated', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $allocatedAbility, 'now' => 5000]);
+$allocatedTokens = [$tokens[0], [...$tokens[1], 'stats' => [['id' => 'character-stat-instinct', 'value' => 55]]], $tokens[2]];
+$owner = ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'];
+$defender = ['id' => 'player-a', 'name' => 'A', 'role' => 'player'];
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'select-targets', 'expectedRevision' => 1,
+    'allocations' => [['tokenId' => 'target-a', 'count' => 5]]], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5100]);
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 2,
+    'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5200]);
+$projection = publicApplicationComplexAbilityExecution($allocated, 'player-a', false, $allocatedTokens);
+requireComplexAbility(($projection['participantOnly'] ?? false) === true && count($projection['stepStates']['strikes']['targets'] ?? []) === 1
+    && ($projection['controllerAccountId'] ?? 'nonempty') === '', 'Only the pending defender sees their own awareness prompt.');
+try {
+    applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+        'actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5300,
+        'roll' => static fn(string $formula): array => ['rawD100' => 1, 'total' => 1]]);
+    throw new RuntimeException('The attacker cannot roll for the defender.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->httpStatus === 403, 'Awareness is authorized for the target or GM only.');
+}
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+    'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5300,
+    'roll' => static fn(string $formula): array => ['rawD100' => 90, 'total' => 90]]);
+requireComplexAbility(($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? null) === false, 'A failed awareness prevents opposition.');
+$allocated['stepStates']['strikes']['attackRequestId'] = 'request-first-123456';
+$first = ['id' => 'attack-first', 'requestId' => 'request-first-123456', 'attackKind' => 'weapon',
+    'attackId' => 'sabre-glace', 'complexExecutionId' => $allocated['id'], 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'targetTokenId' => 'target-a', 'accountId' => 'caster-player',
+    'opposed' => false, 'damagePercent' => 50, 'status' => 'applied', 'createdAt' => 5301];
+try {
+    applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+        'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens,
+        'attack' => [...$first, 'opposed' => true], 'now' => 5400]);
+    throw new RuntimeException('A failed awareness cannot open opposition.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_attack_mismatch', 'A forged opposition is rejected.');
+}
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+    'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $first, 'now' => 5400]);
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 5,
+    'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5500]);
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 6], [
+    'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5600,
+    'roll' => static fn(string $formula): array => ['rawD100' => 30, 'total' => 30]]);
+$allocated['stepStates']['strikes']['attackRequestId'] = 'request-second-123456';
+$second = [...$first, 'id' => 'attack-second', 'requestId' => 'request-second-123456',
+    'attackId' => 'sabre-feu', 'opposed' => true, 'createdAt' => 5601];
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 7,
+    'attackRequestId' => $second['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $second, 'now' => 5700]);
+$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 8,
+    'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5800]);
+requireComplexAbility(($allocated['stepStates']['strikes']['awaitingAwareness'] ?? true) === false
+    && ($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? false) === true,
+    'Successful awareness applies to the current and later strikes without another check, even with a new weapon.');
+$damage = onlineRollAttackDamage(['damageComponents' => [['formula' => '20', 'type' => 'physical']],
+    'damagePercent' => 50], ['armorCategory' => 'medium', 'armor' => 20],
+    static fn(string $formula): array => ['total' => 20, 'breakdown' => '20']);
+requireComplexAbility(($damage['damage']['rawDamage'] ?? null) === 10 && ($damage['damage']['finalDamage'] ?? null) === 8,
+    'One-weapon fifty percent damage is applied before armor.');
+
+$persistentAbility = ['id' => 'persistent-orbs', 'name' => 'Orbes configurables', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 4, 'steps' => [[
+        'id' => 'charges', 'type' => 'counter', 'title' => 'Orbes', 'counterLabel' => 'Orbes',
+        'initial' => 0, 'maximum' => 3, 'gainAmount' => 1, 'gainTrigger' => 'bleeding-hp-loss',
+        'radiusCells' => 2, 'spendOncePerTurn' => true, 'combatPersistent' => true,
+        'spendOptions' => [['id' => 'burst', 'label' => 'Explosion', 'cost' => 1]],
+    ]]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($persistentAbility['workflow']) === '',
+    'A persistent blood counter can be built without a named-character rule.');
+$persistent = createApplicationComplexAbilityExecution(['id' => 'execution-persistent', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $persistentAbility,
+    'combatId' => 'combat-one', 'now' => 6000]);
+$map = ['naturalWidth' => 1000, 'naturalHeight' => 1000, 'gridSize' => 100];
+$source = [...$tokens[0], 'x' => 10, 'y' => 10, 'layerId' => 'ground'];
+$bleeding = [...$tokens[1], 'x' => 20, 'y' => 10, 'layerId' => 'ground', 'conditions' => ['Saignement']];
+$gain = static fn(array $entry, array $target, int $hpLost, string $combatId = 'combat-one'): array =>
+    applicationComplexAbilityGainBleedingCharges([$entry], ['sceneId' => 'scene-one', 'layerId' => 'ground',
+        'target' => $target, 'tokens' => [$source, $target], 'map' => $map, 'hpLost' => $hpLost,
+        'combatId' => $combatId, 'now' => $entry['updatedAt'] + 1])[0];
+foreach ([$gain($persistent, $bleeding, 0), $gain($persistent, [...$bleeding, 'conditions' => []], 1),
+    $gain($persistent, [...$bleeding, 'x' => 31], 1), $gain($persistent, $bleeding, 1, 'combat-two')] as $unchanged) {
+    requireComplexAbility($unchanged['revision'] === 1, 'No bleeding, HP loss, proximity, or combat means no gain.');
+}
+for ($index = 0; $index < 4; $index += 1) $persistent = $gain($persistent, $bleeding, 1);
+requireComplexAbility($persistent['stepStates']['charges']['value'] === 3 && $persistent['revision'] === 4,
+    'Repeated injuries fill the counter to exactly three charges.');
+$persistent = applyApplicationComplexAbilityCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
+    'expectedRevision' => 4], ['actor' => $owner, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 6100]);
+requireComplexAbility($persistent['stepStates']['charges']['value'] === 2, 'One use consumes one charge.');
+try {
+    applyApplicationComplexAbilityCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
+        'expectedRevision' => 5], ['actor' => $owner, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 6200]);
+    throw new RuntimeException('A second free use in the same turn must fail.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_turn_spend_limit', 'The turn limit has a specific refusal.');
+}
+$manuallyEnded = applyApplicationComplexAbilityCommand($persistent, ['action' => 'cancel', 'expectedRevision' => 5],
+    ['actor' => $owner, 'now' => 6300]);
+requireComplexAbility($manuallyEnded['status'] === 'cancelled' && $gain($manuallyEnded, $bleeding, 1)['revision'] === 6,
+    'An interrupted persistent spell cannot gain a charge afterward.');
 
 echo "complex-abilities-contract: ok\n";

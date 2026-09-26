@@ -62,9 +62,10 @@ function applicationCustomAttack(mixed $value): array {
 }
 function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
     $parts = applicationDamageComponents($attack['damageComponents'] ?? []);
+    $percent = max(1, min(100, (int) ($attack['damagePercent'] ?? 100)));
     if ($parts === []) {
         $rolled = onlineRollFormulaWithMode($attack['damageFormula'], 'normal');
-        return ['rolled' => $rolled, 'damage' => onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, $attack['damageType'] ?? 'physical'))];
+        return ['rolled' => $rolled, 'damage' => onlineAttackDamageSummary((int) round(max(0, (int) $rolled['total']) * $percent / 100), onlineAttackArmorPercent($target, $attack['damageType'] ?? 'physical'))];
     }
     $rollFormula ??= static fn (string $formula): array => onlineRollFormula($formula);
     $rollMode = 'normal';
@@ -95,7 +96,7 @@ function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFor
     $selected = $attempts[$selectedIndex];
     $results = []; $raw = 0; $final = 0;
     foreach ($selected['components'] as $component) {
-        $summary = onlineAttackDamageSummary(max(0, (int) $component['total']), onlineAttackArmorPercent($target, $component['type']));
+        $summary = onlineAttackDamageSummary((int) round(max(0, (int) $component['total']) * $percent / 100), onlineAttackArmorPercent($target, $component['type']));
         $results[] = [
             'type' => $component['type'],
             'formula' => $component['formula'],
@@ -126,6 +127,8 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
         $old = $byId[$entry['id'] ?? ''] ?? [];
         foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (!array_key_exists('completionCue', $entry) && array_key_exists('completionCue', $old)) $entry['completionCue'] = $old['completionCue'];
+        if (($entry['effect'] ?? $old['effect'] ?? '') === 'complex' && is_array($old['workflow'] ?? null)
+            && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
         foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
