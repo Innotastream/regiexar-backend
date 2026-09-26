@@ -72,6 +72,26 @@ assertAssistantDraft(normalizeAbilityAssistantDraft($conversation, [
     'name' => 'Forme de loup', 'effect' => 'metamorphosis', 'formCharacterId' => 'character-wolf',
 ])['effect'] === 'metamorphosis', 'Une forme du même propriétaire est admise.');
 
+$orbDraft = normalizeAbilityAssistantDraft($conversation, [
+    'name' => 'Émo-sphère flottante', 'effect' => 'complex', 'description' => 'Orbes de sang proches.',
+    'fatigueCost' => 15, 'castingStatId' => '', 'restRecharge' => 'none', 'usesPerRest' => 1,
+    'workflow' => ['version' => 4, 'steps' => [[
+        'id' => 'orbs', 'type' => 'counter', 'title' => 'Orbes disponibles', 'counterLabel' => 'Orbes',
+        'maximum' => 3, 'initial' => 0, 'gainAmount' => 1, 'gainTrigger' => 'bleeding-hp-loss',
+        'radiusCells' => 3, 'spendOncePerTurn' => true, 'combatPersistent' => true,
+        'spendOptions' => [
+            ['id' => 'explode', 'label' => 'Explosion', 'cost' => 1,
+                'effect' => ['kind' => 'damage', 'formula' => '1d2', 'damageType' => 'physical']],
+            ['id' => 'protect', 'label' => 'Protection', 'cost' => 1,
+                'effect' => ['kind' => 'guard', 'percent' => 20]],
+            ['id' => 'mine', 'label' => 'Préparer le terrain', 'cost' => 1, 'effect' => ['kind' => 'none']],
+        ],
+    ]]],
+]);
+assertAssistantDraft(($orbDraft['workflow']['steps'][0]['spendOptions'][0]['effect']['formula'] ?? '') === '1d2'
+    && ($orbDraft['workflow']['steps'][0]['spendOptions'][1]['effect']['percent'] ?? 0) === 20
+    && validApplicationAbilities([$orbDraft]), 'Le brouillon des orbes produit dégâts et protection configurables.');
+
 $sound = [
     'version' => 1, 'trigger' => 'completed',
     'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'Souffle.wav',

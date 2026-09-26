@@ -141,11 +141,23 @@ function normalizeApplicationComplexAbilitySpends(mixed $value): array
         if (!is_array($entry)) continue;
         $label = applicationComplexAbilityText($entry['label'] ?? '', 120);
         if ($label === '') continue;
+        $rawEffect = is_array($entry['effect'] ?? null) ? $entry['effect'] : [];
+        $kind = in_array($rawEffect['kind'] ?? '', ['damage', 'guard'], true) ? $rawEffect['kind'] : 'none';
+        $effect = ['kind' => $kind];
+        if ($kind === 'damage') {
+            $effect['formula'] = validApplicationAbilityFormula($rawEffect['formula'] ?? null)
+                ? strtolower(preg_replace('/\s+/', '', $rawEffect['formula']) ?? '') : '1d2';
+            $effect['damageType'] = in_array($rawEffect['damageType'] ?? '', ['physical', 'magical', 'ignore'], true)
+                ? $rawEffect['damageType'] : 'physical';
+        } elseif ($kind === 'guard') {
+            $effect['percent'] = applicationComplexAbilityInteger($rawEffect['percent'] ?? null, 1, 100, 20);
+        }
         $spends[] = [
             'id' => applicationComplexAbilityUniqueIdentifier($entry['id'] ?? '', 'spend-' . ($index + 1), $seen),
             'label' => $label,
             'description' => applicationComplexAbilityText($entry['description'] ?? '', 500),
             'cost' => applicationComplexAbilityInteger($entry['cost'] ?? null, 1, 999, 1),
+            'effect' => $effect,
         ];
     }
     return $spends;
@@ -182,6 +194,7 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
             $step['minTargets'] = $minimum;
             $step['maxTargets'] = applicationComplexAbilityInteger($raw['maxTargets'] ?? null, $minimum, 20, $minimum);
             $step['allocationTotal'] = applicationComplexAbilityInteger($raw['allocationTotal'] ?? null, 0, 100, 0);
+            $step['rangeCells'] = applicationComplexAbilityInteger($raw['rangeCells'] ?? null, 0, 100, 0);
             $targetSteps[] = $step['id'];
         } elseif ($type === 'rolls') {
             $formula = is_string($raw['formula'] ?? null) && validApplicationAbilityFormula($raw['formula'])
@@ -286,7 +299,21 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
             return 'L’étape ' . ($index + 1) . ' doit suivre une étape de ciblage.';
         }
         if ($step['type'] === 'choice' && count($step['options']) < 2) return 'Ajoutez au moins deux choix à l’étape ' . ($index + 1) . '.';
-        if ($step['type'] === 'counter' && $step['spendOptions'] === []) return 'Ajoutez au moins une utilisation de charge à l’étape ' . ($index + 1) . '.';
+        if ($step['type'] === 'counter') {
+            if ($step['spendOptions'] === []) return 'Ajoutez au moins une utilisation de charge à l’étape ' . ($index + 1) . '.';
+            foreach (is_array($value['steps'][$index]['spendOptions'] ?? null) ? $value['steps'][$index]['spendOptions'] : [] as $rawOption) {
+                $effect = is_array($rawOption) ? ($rawOption['effect'] ?? null) : null;
+                if ($effect === null) continue;
+                if (!is_array($effect) || !in_array($effect['kind'] ?? '', ['none', 'damage', 'guard'], true))
+                    return 'L’effet d’une utilisation de charge à l’étape ' . ($index + 1) . ' est inconnu.';
+                if ($effect['kind'] === 'damage' && (!validApplicationAbilityFormula($effect['formula'] ?? null)
+                    || !in_array($effect['damageType'] ?? '', ['physical', 'magical', 'ignore'], true)))
+                    return 'Renseignez une formule et un type de dégâts valides à l’étape ' . ($index + 1) . '.';
+                if ($effect['kind'] === 'guard' && (!is_int($effect['percent'] ?? null)
+                    || $effect['percent'] < 1 || $effect['percent'] > 100))
+                    return 'La protection de l’étape ' . ($index + 1) . ' doit valoir de 1 à 100 %.';
+            }
+        }
         if ($step['type'] === 'condition') {
             if (($step['subject'] === 'targets' || $step['fact'] === 'target-count')
                 && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
@@ -605,6 +632,18 @@ function applicationComplexAbilityInitializeAllocatedTargets(array &$execution, 
     }
 }
 
+function applicationComplexAbilityTargetInRange(?array $source, ?array $target, array $map, int $rangeCells): bool
+{
+    if ($rangeCells < 1) return true;
+    $width = (float) ($map['naturalWidth'] ?? 0);
+    $height = (float) ($map['naturalHeight'] ?? 0);
+    $grid = (float) ($map['gridSize'] ?? 0);
+    if ($source === null || $target === null || $width <= 0 || $height <= 0 || $grid <= 0) return false;
+    $dx = ((float) ($source['x'] ?? 0) - (float) ($target['x'] ?? 0)) * $width / (100 * $grid);
+    $dy = ((float) ($source['y'] ?? 0) - (float) ($target['y'] ?? 0)) * $height / (100 * $grid);
+    return sqrt($dx * $dx + $dy * $dy) <= $rangeCells + 1e-9;
+}
+
 function applicationComplexAbilityCurrentDefenseIndex(array $state): ?int
 {
     foreach (is_array($state['targets'] ?? null) ? $state['targets'] : [] as $index => $target) {
@@ -822,6 +861,7 @@ function applyApplicationComplexAbilityCommand(
     $owner = $actorId !== '' && $actorId === $execution['controllerAccountId'];
     $now = is_numeric($context['now'] ?? null) ? (int) $context['now'] : (int) floor(microtime(true) * 1000);
     $tokens = is_array($context['tokens'] ?? null) ? $context['tokens'] : [];
+    $map = is_array($context['map'] ?? null) ? $context['map'] : [];
     $roll = is_callable($context['roll'] ?? null) ? $context['roll'] : null;
     $step = $execution['workflow']['steps'][$execution['currentStepIndex']] ?? null;
     if (!is_array($step)) applicationComplexAbilityFail('L’étape courante n’existe plus.', 'complex_ability_step_missing');
@@ -889,6 +929,9 @@ function applyApplicationComplexAbilityCommand(
                 $tokenId = applicationComplexAbilityIdentifier($entry['tokenId'] ?? '', '', 80);
                 $token = applicationComplexAbilityTokenById($tokens, $tokenId);
                 if ($tokenId === '' || !is_array($token)) applicationComplexAbilityFail('Une cible n’est plus disponible.', 'complex_ability_target_missing', 404);
+                if (!applicationComplexAbilityTargetInRange(
+                    applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']), $token, $map, $step['rangeCells']
+                )) applicationComplexAbilityFail('Cette cible est hors de portée (' . $step['rangeCells'] . ' cases).', 'complex_ability_target_out_of_range');
                 $allocations[] = ['tokenId' => $tokenId, 'targetName' => applicationComplexAbilityText($token['name'] ?? '', 120, 'Cible'),
                     'count' => $entry['count']];
                 $ids[$tokenId] = true;
@@ -909,6 +952,11 @@ function applyApplicationComplexAbilityCommand(
             if ($execution['status'] === 'active' && ($nextStep['type'] ?? '') === 'defense-series') {
                 $nextState =& $execution['stepStates'][$nextStep['id']];
                 applicationComplexAbilityInitializeDefenses($execution, $nextStep, $nextState, $tokens);
+                unset($nextState);
+            }
+            if ($execution['status'] === 'active' && ($nextStep['type'] ?? '') === 'allocated-attacks') {
+                $nextState =& $execution['stepStates'][$nextStep['id']];
+                applicationComplexAbilityInitializeAllocatedTargets($execution, $nextStep, $nextState, $tokens);
                 unset($nextState);
             }
         } elseif ($step['type'] === 'rolls' && $action === 'roll') {
@@ -1086,12 +1134,27 @@ function applyApplicationComplexAbilityCommand(
             if (!is_array($option)) applicationComplexAbilityFail('Cette utilisation de charge n’existe plus.', 'complex_ability_spend_missing', 400);
             $previous = applicationComplexAbilityInteger($state['value'] ?? null, 0, $step['maximum'], $step['initial']);
             if ($previous < $option['cost']) applicationComplexAbilityFail($step['counterLabel'] . ' insuffisant : ' . $previous . '/' . $option['cost'] . '.', 'complex_ability_counter_insufficient');
+            $effect = $option['effect'] ?? ['kind' => 'none'];
+            $targetId = applicationComplexAbilityIdentifier($command['targetTokenId'] ?? '');
+            $target = $effect['kind'] === 'none' ? null : applicationComplexAbilityTokenById($tokens, $targetId);
+            if ($effect['kind'] !== 'none' && (!is_array($target) || ($target['layerId'] ?? 'ground') !== $execution['layerId'])) {
+                applicationComplexAbilityFail('Choisissez une cible visible sur le niveau courant pour cet effet.', 'complex_ability_effect_target_missing', 400);
+            }
+            $rolled = null;
+            if ($effect['kind'] === 'damage') {
+                if (!is_callable($roll)) applicationComplexAbilityFail('Le jet de dégâts autoritatif est indisponible.', 'complex_ability_effect_roll_missing');
+                $rolled = $roll($effect['formula']);
+            }
             $state['value'] = $previous - $option['cost'];
             if ($step['spendOncePerTurn']) $state['lastSpendTurnKey'] = $turnKey;
+            $state['lastUse'] = ['optionId' => $optionId, 'effect' => $effect, 'targetTokenId' => $targetId,
+                'targetName' => is_array($target) ? applicationComplexAbilityText($target['name'] ?? '', 120, 'Cible') : '',
+                'rolled' => $rolled, 'revision' => $execution['revision'] + 1];
             $state['events'][] = ['at' => $now, 'type' => 'spend', 'value' => $state['value'], 'amount' => $option['cost'], 'optionId' => $option['id'], 'actorId' => $actorId];
             $state['events'] = array_slice($state['events'], -XAR_COMPLEX_ABILITY_MAXIMUM_EVENTS);
             applicationComplexAbilityAppendEvent($execution, ['type' => 'counter', 'actorId' => $actorId, 'actorName' => $actorName,
-                'stepId' => $step['id'], 'label' => $option['label'] . ' · ' . $step['counterLabel'] . ' : ' . $previous . ' → ' . $state['value'], 'detail' => $option['description']], $now);
+                'stepId' => $step['id'], 'label' => $option['label'] . ' · ' . $step['counterLabel'] . ' : ' . $previous . ' → ' . $state['value'],
+                'detail' => trim($option['description'] . (is_array($target) ? ' · ' . $state['lastUse']['targetName'] : ''))], $now);
         } elseif ($step['type'] === 'counter' && $action === 'complete-step') {
             if ($step['combatPersistent']) applicationComplexAbilityFail('Ce sort persiste jusqu’à son interruption ou à la fin du combat.', 'complex_ability_persistent');
             applicationComplexAbilityAppendEvent($execution, ['type' => 'step', 'actorId' => $actorId, 'actorName' => $actorName,

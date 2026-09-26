@@ -1984,6 +1984,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
+            || !validApplicationDomainObjectList($payload['nextAttackGuards'] ?? [], 60)
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
             || !validApplicationDomainObjectList($payload['restEvents'] ?? [], 10)
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
@@ -2379,6 +2380,7 @@ function legacyStateToDomains(array $state): array
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
+            'nextAttackGuards' => is_array($state['nextAttackGuards'] ?? null) ? $state['nextAttackGuards'] : [],
             'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
             'restEvents' => is_array($state['restEvents'] ?? null) ? $state['restEvents'] : [],
             'playerActions' => is_array($state['playerActions'] ?? null) ? $state['playerActions'] : [],
@@ -2567,6 +2569,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
+        'nextAttackGuards' => is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
         'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],

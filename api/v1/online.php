@@ -4239,6 +4239,38 @@ function applyOnlineAttackConditions(PDO $connection, array &$records, array &$p
     return $attack;
 }
 
+function onlineConsumeNextAttackGuard(PDO $connection, array &$records, array &$pending, string $tokenKey, int $damage): array
+{
+    $parts = explode(':', $tokenKey, 3);
+    if (count($parts) !== 3 || $damage <= 0) return ['damage' => $damage, 'prevented' => 0, 'percent' => 0];
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
+    if ($guards === []) return ['damage' => $damage, 'prevented' => 0, 'percent' => 0];
+    $initiative = $pending['initiative:' . $parts[1]]['payload'] ?? applicationDomainPayload($records, 'initiative:' . $parts[1]);
+    foreach ($guards as $index => $guard) {
+        if (!is_array($guard) || ($guard['sceneId'] ?? '') !== $parts[1]
+            || ($guard['targetTokenId'] ?? '') !== $parts[2] || ($initiative['active'] ?? false) !== true
+            || ($guard['combatId'] ?? '') !== ($initiative['combatId'] ?? '')) continue;
+        $percent = max(1, min(100, (int) ($guard['percent'] ?? 0)));
+        $prevented = min($damage, (int) round($damage * $percent / 100));
+        array_splice($guards, $index, 1);
+        $activity['nextAttackGuards'] = $guards;
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        return ['damage' => $damage - $prevented, 'prevented' => $prevented, 'percent' => $percent];
+    }
+    return ['damage' => $damage, 'prevented' => 0, 'percent' => 0];
+}
+
+function onlineRecordAttackGuard(array $attack, array $health): array
+{
+    $attack = [...$attack, ...$health];
+    if (($health['guardPercent'] ?? 0) <= 0) return $attack;
+    $attack['finalDamage'] = $health['appliedDamage'];
+    $attack['damage']['finalDamage'] = $health['appliedDamage'];
+    $attack['damage']['preventedDamage'] = (int) ($attack['damage']['preventedDamage'] ?? 0) + $health['guardPreventedDamage'];
+    return $attack;
+}
+
 function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pending, string $tokenKey, array $token, int $damage): array
 {
     $character = null;
@@ -4267,6 +4299,8 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
     if (onlineTokenIsDead($token, $controllerId !== '')) rejectOnlineCommand($connection, 409, 'Cette cible est déjà morte.', 'target_already_defeated');
     $requestedDamage = max(0, min(2000000000, $damage));
     if ($requestedDamage <= 0) rejectOnlineCommand($connection, 409, 'Aucun dégât effectif ne peut être appliqué.', 'attack_damage_not_effective');
+    $guard = onlineConsumeNextAttackGuard($connection, $records, $pending, $tokenKey, $requestedDamage);
+    $requestedDamage = $guard['damage'];
     $current = max(-1000000000, $previous - $requestedDamage);
     $applied = $previous - $current;
     $now = (int) floor(microtime(true) * 1000);
@@ -4307,6 +4341,7 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
         'currentHp' => $current,
         'maximumHp' => $maximum,
         'appliedDamage' => $applied,
+        'guardPercent' => $guard['percent'], 'guardPreventedDamage' => $guard['prevented'],
         'resourcePulse' => $applied > 0 ? $pulse : null,
         'characterId' => is_array($character) ? $characterId : '',
     ];
@@ -6117,7 +6152,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $result['discordContent'] = onlineAttackDiscordContent($attack);
                 } elseif ($combatActive) {
                     $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $damageSummary['finalDamage']);
-                    $attack = [...$attack, ...$health, 'status' => 'applied'];
+                    $attack = onlineRecordAttackGuard($attack, $health);
+                    $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
                     $result['discordContent'] = onlineAttackDiscordContent($attack);
                 } else {
                     $attack['status'] = 'pending';
@@ -6133,6 +6169,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $pendingAttacks[] = $attack;
                     $activity['pendingAttacks'] = $pendingAttacks;
                 }
+                // A consumed one-hit guard is server-owned activity state; the
+                // casting commit below must not restore a stale copy of it.
+                $activity['nextAttackGuards'] = ($pending['activity']['payload']['nextAttackGuards'] ?? $activity['nextAttackGuards'] ?? []);
                 if ($castingPlan !== null) {
                     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                     $cast = ['success' => ($hitOutcome['success'] ?? false) === true, 'statId' => $castingPlan['statId'], 'statLabel' => $castingPlan['statLabel'], 'outcome' => $hasCastingCheck ? $hitOutcome : null, 'roll' => $hasCastingCheck ? $hitRoll : null];
@@ -6438,7 +6477,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             $result['discordContent'] = onlineAttackDiscordContent($attack);
                         } elseif (($initiative['active'] ?? false) === true) {
                             $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $damageSummary['finalDamage']);
-                            $attack = [...$attack, ...$health, 'status' => 'applied', 'resolvedAt' => (int) floor(microtime(true) * 1000)];
+                            $attack = onlineRecordAttackGuard($attack, $health);
+                            $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
+                            $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
                             $result['discordContent'] = onlineAttackDiscordContent($attack);
                         } else {
                             $attack['status'] = 'pending';
@@ -6535,14 +6576,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         : 'rejected';
                     if ($provisionalStatus === 'applied' && (int) ($attack['finalDamage'] ?? 0) > 0) {
                         $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $attack['finalDamage']);
-                        $attack = [...$attack, ...$health, 'status' => 'applied', 'resolvedAt' => (int) floor(microtime(true) * 1000)];
+                        $attack = onlineRecordAttackGuard($attack, $health);
+                        $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
+                        $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
                     } else {
                         $attack['status'] = $provisionalStatus === 'applied' ? 'blocked' : $provisionalStatus;
                         $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
                     }
                 } else {
                     $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, max(0, (int) ($attack['finalDamage'] ?? 0)));
-                    $attack = [...$attack, ...$health, 'status' => 'applied', 'resolvedAt' => (int) floor(microtime(true) * 1000)];
+                    $attack = onlineRecordAttackGuard($attack, $health);
+                    $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
+                    $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
                 }
                 $result['discordContent'] = onlineAttackDiscordContent($attack);
             } else {

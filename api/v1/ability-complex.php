@@ -302,7 +302,7 @@ function onlineUseComplexAbility(
                 'expectedRevision' => $arguments['expectedRevision'] ?? null],
             [
                 'actor' => ['id' => $accountId, 'name' => $identity['display_name'] ?? '', 'role' => $isGm ? 'gm' : 'player'],
-                'tokens' => $tokens, 'now' => $now, 'attack' => $confirmedAttack,
+                'tokens' => $tokens, 'map' => $map, 'now' => $now, 'attack' => $confirmedAttack,
                 'combatActive' => ($initiative['active'] ?? false) === true
                     && (($current['combatId'] ?? '') === '' || ($current['combatId'] ?? '') === ($initiative['combatId'] ?? '')),
                 'turnKey' => $sceneId . ':' . (string) ($initiative['combatId'] ?? '') . ':' . (string) ($initiative['turnSerial'] ?? 0),
@@ -316,6 +316,44 @@ function onlineUseComplexAbility(
     } catch (ApplicationComplexAbilityException $error) {
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
     }
+    $effectResult = null;
+    if ($workflowAction === 'counter-spend' && ($currentStep['type'] ?? '') === 'counter') {
+        $use = $next['stepStates'][$currentStep['id']]['lastUse'] ?? [];
+        $effect = is_array($use['effect'] ?? null) ? $use['effect'] : [];
+        if (in_array($effect['kind'] ?? '', ['damage', 'guard'], true)) {
+            $targetKey = onlineTokenDomainKey($sceneId, $use['targetTokenId'] ?? '');
+            $target = applicationDomainPayload($records, $targetKey);
+            if ($target === [] || !onlineTokenOnActiveLayer($target, $map)) {
+                rejectOnlineCommand($connection, 409, 'La cible de cet effet a changé de niveau ou n’existe plus.', 'complex_ability_effect_target_changed');
+            }
+            if ($effect['kind'] === 'guard') {
+                if (($initiative['active'] ?? false) !== true || ($initiative['combatId'] ?? '') === '') {
+                    rejectOnlineCommand($connection, 409, 'La protection de la prochaine attaque exige un combat actif.', 'complex_ability_guard_outside_combat');
+                }
+                $guards = array_values(array_filter(is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
+                    static fn(mixed $guard): bool => is_array($guard) && (($guard['sceneId'] ?? '') !== $sceneId
+                        || ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? ''))));
+                if (count($guards) >= 60) rejectOnlineCommand($connection, 409, 'Trop de protections attendent déjà une attaque.', 'complex_ability_guard_capacity');
+                $guards[] = ['id' => 'guard-' . randomToken(12), 'sceneId' => $sceneId,
+                    'targetTokenId' => (string) $target['id'], 'combatId' => (string) ($initiative['combatId'] ?? ''),
+                    'percent' => $effect['percent'], 'sourceExecutionId' => $next['id']];
+                $activity['nextAttackGuards'] = $guards;
+                queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+                $effectResult = ['kind' => 'guard', 'targetTokenId' => $target['id'], 'targetName' => $target['name'] ?? 'Cible',
+                    'percent' => $effect['percent']];
+            } else {
+                $rolled = is_array($use['rolled'] ?? null) ? $use['rolled'] : [];
+                $summary = onlineAttackDamageSummary(max(0, (int) ($rolled['total'] ?? 0)),
+                    onlineAttackArmorPercent($target, $effect['damageType']));
+                $health = $summary['finalDamage'] > 0
+                    ? applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, $summary['finalDamage']) : null;
+                $effectResult = ['kind' => 'damage', 'targetTokenId' => $target['id'], 'targetName' => $target['name'] ?? 'Cible',
+                    'formula' => $effect['formula'], 'damageType' => $effect['damageType'], 'rawDamage' => $summary['rawDamage'],
+                    'appliedDamage' => (int) ($health['appliedDamage'] ?? 0),
+                    'health' => $health];
+            }
+        }
+    }
     if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') === 'completed' && ($next['endedByFailure'] ?? false) !== true) {
         applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $next['sourceTokenId'], 'onHitConditions' => $next['onHitConditions'] ?? [],
@@ -324,6 +362,7 @@ function onlineUseComplexAbility(
             (string) ($next['layerId'] ?? 'ground'), (string) ($next['sourceTokenId'] ?? ''),
             (applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''))['hidden'] ?? false) ? 'gm' : 'public');
     }
+    $activity = $pending['activity']['payload'] ?? $activity;
     $activity['abilityExecutions'][$executionIndex] = $next;
     $activity['abilityExecutions'] = trimApplicationComplexAbilityExecutions($activity['abilityExecutions']);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
@@ -341,6 +380,21 @@ function onlineUseComplexAbility(
         onlineAppendAbilityEffectRoll($records, $pending, $responseRolls[count($responseRolls) - 1]);
     }
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);
+    if (($effectResult['kind'] ?? '') === 'damage' && $effectResult['appliedDamage'] > 0) {
+        $effectAttack = applyOnlineAttackConditions($connection, $records, $pending, [
+            'id' => 'effect-' . $requestId, 'sceneId' => $sceneId, 'layerId' => $next['layerId'],
+            'sourceTokenId' => $next['sourceTokenId'], 'sourceName' => $next['sourceName'],
+            'targetTokenId' => $effectResult['targetTokenId'], 'targetName' => $effectResult['targetName'],
+            'attackName' => $next['abilityName'], 'damageType' => $effectResult['damageType'],
+            'status' => 'applied', 'onHitConditions' => [], 'appliedDamage' => $effectResult['appliedDamage'],
+            ...$effectResult['health'],
+        ]);
+        onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $effectAttack);
+        $latestActivity = $pending['activity']['payload'] ?? [];
+        foreach (is_array($latestActivity['abilityExecutions'] ?? null) ? $latestActivity['abilityExecutions'] : [] as $latestExecution) {
+            if (($latestExecution['id'] ?? '') === $next['id']) { $next = $latestExecution; break; }
+        }
+    }
     $actionEntry = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
         'kind' => 'ability-workflow', 'characterName' => $next['sourceName'],
         'summary' => $next['status'] === 'cancelled' ? 'Arrête ' . $next['abilityName']
@@ -350,7 +404,8 @@ function onlineUseComplexAbility(
     ]);
     $projected = publicApplicationComplexAbilityExecution($next, $accountId, $isGm, $tokens, $participantTokenId);
     if (!is_array($projected)) rejectOnlineCommand($connection, 403, 'Cette compétence ne vous est plus accessible.', 'complex_ability_forbidden');
-    $result = ['effect' => 'complex', 'execution' => $projected, 'rolls' => $responseRolls];
+    $result = ['effect' => 'complex', 'execution' => $projected, 'rolls' => $responseRolls,
+        'chargeEffect' => $effectResult === null ? null : array_diff_key($effectResult, ['health' => true])];
     onlineStorePersistentCommandReceipt($records, $pending, $receiptContext, 'ability-workflow', $requestId,
         $accountId, $actionEntry['id'], $executionId, $signature, $result);
     return [...$result, 'deduplicated' => false];

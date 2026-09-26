@@ -619,8 +619,9 @@ function completeAbilityAssistantRegieJob(PDO $connection, string $id): never
                 if (!is_array($draft)) throw new InvalidArgumentException('La proposition de compétence est absente.');
             } catch (InvalidArgumentException $validationError) {
                 $assistantStatus = 'blocked';
-                $response = 'J’ai compris la compétence, mais la proposition obtenue ne peut pas encore être appliquée sans risque. '
-                    . 'Un rapport technique limité aux informations utiles a été transmis automatiquement à la Régie.';
+                $reason = cleanAbilityAssistantText($validationError->getMessage(), 500, 'Motif de validation');
+                $response = 'Le brouillon proposé n’a pas été enregistré : ' . $reason
+                    . ' Corrigez ce réglage dans une nouvelle réponse à l’assistant. Un rapport limité a été transmis à la Régie.';
                 $validationGap = [
                     'code' => 'assistant_draft_validation',
                     'summary' => 'Une proposition comprise par l’assistant a été refusée par le contrat de compétence.',

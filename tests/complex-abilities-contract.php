@@ -392,6 +392,31 @@ requireComplexAbility($noGate['status'] === 'completed'
     && ($noGate['stepStates']['strikes']['targets'][1]['attacks'][0]['opposed'] ?? null) === false,
     'Opposition remains selectable for each target without an awareness roll.');
 
+$rangedAbility = ['id' => 'ranged-attacks', 'name' => 'Répartition à portée', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 4, 'steps' => [
+        ['id' => 'targets', 'type' => 'targets', 'minTargets' => 1, 'maxTargets' => 3, 'allocationTotal' => 5, 'rangeCells' => 2],
+        ['id' => 'strikes', 'type' => 'allocated-attacks', 'sourceStepId' => 'targets', 'awarenessMode' => 'required', 'damagePercent' => 50],
+    ]]];
+$ranged = createApplicationComplexAbilityExecution(['id' => 'execution-range', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $rangedAbility, 'now' => 9000]);
+$rangedMap = ['naturalWidth' => 1000, 'naturalHeight' => 1000, 'gridSize' => 100];
+$rangedTokens = [[...$tokens[0], 'x' => 10, 'y' => 10], [...$tokens[1], 'x' => 30, 'y' => 10],
+    [...$tokens[2], 'x' => 41, 'y' => 10]];
+try {
+    applyApplicationComplexAbilityCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
+        'allocations' => [['tokenId' => 'target-b', 'count' => 5]]],
+        ['actor' => $owner, 'tokens' => $rangedTokens, 'map' => $rangedMap, 'now' => 9010]);
+    throw new RuntimeException('A target outside two grid cells must fail.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_target_out_of_range', 'Range is enforced by the backend.');
+}
+$ranged = applyApplicationComplexAbilityCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
+    'allocations' => [['tokenId' => 'target-a', 'count' => 5]]],
+    ['actor' => $owner, 'tokens' => $rangedTokens, 'map' => $rangedMap, 'now' => 9010]);
+requireComplexAbility(($ranged['stepStates']['strikes']['targets'][0]['tokenId'] ?? '') === 'target-a'
+    && ($ranged['stepStates']['strikes']['targets'][0]['attackCount'] ?? 0) === 5,
+    'A selected target is ready on entry to allocated attacks without a preparatory command.');
+
 $persistentAbility = ['id' => 'persistent-orbs', 'name' => 'Orbes configurables', 'effect' => 'complex', 'formula' => '0',
     'workflow' => ['version' => 4, 'steps' => [[
         'id' => 'charges', 'type' => 'counter', 'title' => 'Orbes', 'counterLabel' => 'Orbes',

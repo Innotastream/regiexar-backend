@@ -1,3 +1,7 @@
+# Candidat backend 0.18.14 — ciblage et charges, client exact 3.4.12
+
+Build `client-3-4-12-targeted-complex-effects-20260926-1`. Les sélections peuvent imposer une portée en cases vérifiée par le serveur et préparent les cibles de la prochaine étape. Les charges configurées appliquent des dégâts ou une réduction sur la prochaine attaque. L’assistant détaille la raison des refus de brouillon. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 ; ne pas déployer le verrou 3.4.12 avant l’accord explicite pour ce refus. Le push ne constitue ni déploiement OVH ni distribution Windows.
+
 # Candidat backend 0.18.13 — perception facultative, client exact 3.4.11
 
 Build `client-3-4-11-configurable-complex-rules-20260926-1`. Les frappes réparties proposent désormais une vigilance facultative ; les étapes sans ce réglage gardent leur comportement antérieur. Le saignement n'alimente un compteur que si ce déclencheur a été choisi ; le gain manuel reste la valeur par défaut. Schéma MySQL **22** inchangé. La production observée avant ce candidat demeure sur 0.18.12 avec client exact 3.4.10 : ne pas déployer le verrou 3.4.11 sans accord explicite pour le refus des clients 3.4.10 encore utilisés. Le push de ce candidat ne constitue ni déploiement OVH ni distribution Windows.

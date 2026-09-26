@@ -116,8 +116,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.13");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.11");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.14");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.12");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -322,8 +322,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.4.11");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.11"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.4.12");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.12"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
