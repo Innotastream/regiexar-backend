@@ -1678,9 +1678,10 @@ function validApplicationCharacterDomain(array $payload): bool
 
 function normalizeApplicationFatigue(mixed $value): array
 {
-    $raw = is_array($value) ? ($value['current'] ?? 0) : 0;
+    $fatigue = is_array($value) ? $value : [];
+    $raw = $fatigue['current'] ?? 0;
     $current = is_numeric($raw) && is_finite((float) $raw) ? (float) $raw : 0.0;
-    return ['current' => max(0, min(150, $current)), 'max' => 150];
+    return [...$fatigue, 'current' => max(0, min(150, $current)), 'max' => 150];
 }
 
 function applicationDomainFatiguePayload(string $key, array $payload): array

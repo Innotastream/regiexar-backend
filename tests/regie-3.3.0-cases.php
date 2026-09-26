@@ -45,6 +45,7 @@ requireTactical(classifyOnlineD100Outcome(2, 1, -100, 0, true, true)['threshold'
     && str_contains(applicationD100Comparison(['raw' => 2, 'threshold' => 1, 'modifier' => -10,
         'fatigue' => ['current' => 150, 'max' => 150, 'penalty' => 100, 'before' => 80]]), 'minimum 1')
     && applicationDomainFatiguePayload('character:test', ['fatigue' => ['current' => 160, 'max' => 200]])['fatigue']['current'] == 150
+    && normalizeApplicationFatigue(['current' => 151, 'max' => 200, 'note' => 'conservée'])['note'] === 'conservée'
     && playerCharacterPatch($c, ['fatigue' => ['current' => 500, 'max' => 500]])['fatigue']['current'] == 150,
     'The final d100 threshold and direct character writes respect the same bounds.');
 requireTactical(applicationTacticalRollSpecification($rules, ['kind' => 'luck'])['formula'] === '1d100', 'Fatigue never modifies Chance.');
