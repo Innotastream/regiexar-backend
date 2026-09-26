@@ -1199,6 +1199,14 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
         }
     }
     $strict['opacity'] = rtrim(strtr(base64_encode($opacity), '+/', '-_'), '=');
+    // Visual fog cannot override wall occlusion. This second mask reaches the
+    // map edge so distant open ground remains translucent while the space
+    // behind a wall stays completely black, irrespective of vision distance.
+    $walls = $occlusion['walls'] ?? [];
+    $strict['occludedMask'] = ($walls['mask'] ?? '') === '' ? ''
+        : ($resolved['origins'] === [] ? $strict['mask']
+            : applicationComputeBaseVisionMask($occlusion, $resolved['origins'], $grid,
+                (int) ceil(hypot($naturalWidth, $naturalHeight) / $grid) + 1)['mask']);
     if (($resolved['viewerSeesFade'] ?? false) === true) {
         $strict['tokenMask'] = rtrim(strtr(base64_encode($tokenBytes), '+/', '-_'), '=');
     }

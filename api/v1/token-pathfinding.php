@@ -7,23 +7,24 @@ declare(strict_types=1);
 function onlineVisiblePathPointTester(?array $fog, array $vision): Closure
 {
     $masks = [];
-    foreach ([$fog, $vision] as $mask) {
+    foreach ([$fog, $vision] as $maskIndex => $mask) {
         if (($mask['enabled'] ?? false) !== true) continue;
         $bytes = applicationFogMaskBytes(['version' => XAR_FOG_MASK_VERSION, 'enabled' => true, 'width' => $mask['width'] ?? null, 'height' => $mask['height'] ?? null, 'mask' => $mask['mask'] ?? null]);
         if ($bytes === null) return static fn (float $x, float $y): bool => false;
         $rows = [];
-        for ($index = 0, $length = $mask['width'] * $mask['height']; $index < $length; $index++) {
-            if (applicationMaskBit($bytes, $index)) $rows[intdiv($index, $mask['width'])][] = $index % $mask['width'];
+        for ($cellIndex = 0, $length = $mask['width'] * $mask['height']; $cellIndex < $length; $cellIndex++) {
+            if (applicationMaskBit($bytes, $cellIndex)) $rows[intdiv($cellIndex, $mask['width'])][] = $cellIndex % $mask['width'];
         }
-        $masks[] = [$mask, $rows];
+        $masks[] = [$mask, $rows, $maskIndex === 1];
     }
-    // The optional radius covers every hidden cell intersecting the portrait,
-    // not only its centre. Walls and fog never get the decorative edge margin.
+    // Solid walls and painted fog retain their full footprint. Only a slight
+    // vision fringe on a portrait wider than its lit tile gets an allowance.
     return static function (float $x, float $y, float $radius = 0.0, float $naturalWidth = 1600.0, float $naturalHeight = 900.0) use ($masks): bool {
         if (!is_finite($x) || !is_finite($y) || $x < 0 || $x > 100 || $y < 0 || $y > 100) return false;
-        foreach ($masks as [$mask, $rows]) {
+        foreach ($masks as [$mask, $rows, $visionEdge]) {
+            $checkedRadius = $visionEdge && $radius > 0.0 ? max(0.0, $radius - min(6.0, $radius * 0.2)) : $radius;
             $cx = $x / 100 * ($mask['width'] - 1); $cy = $y / 100 * ($mask['height'] - 1);
-            $rx = $radius / $naturalWidth * ($mask['width'] - 1); $ry = $radius / $naturalHeight * ($mask['height'] - 1);
+            $rx = $checkedRadius / $naturalWidth * ($mask['width'] - 1); $ry = $checkedRadius / $naturalHeight * ($mask['height'] - 1);
             for ($row = max(0, (int) floor($cy - $ry - 0.5)), $end = min($mask['height'] - 1, (int) ceil($cy + $ry + 0.5)); $row <= $end; $row++) {
                 if (!isset($rows[$row])) continue;
                 $ny = max(0.0, abs($row - $cy) - 0.5) / max($ry, 1e-12);

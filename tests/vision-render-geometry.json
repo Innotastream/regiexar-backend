@@ -27,7 +27,8 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525"
+    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525",
+    "occludedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   {
     "name": "mixed party radii",
@@ -62,7 +63,8 @@
     ],
     "gridSize": 50,
     "strictSha256": "7c2454ecf45aa43eb4c28150b4ae4a6113cf7bc82b4dd059a67f32781f954c68",
-    "opacitySha256": "859ffde1d83a2f3841eef0eb8038a7d516c64b87eaa1fde4904e56a36123b327"
+    "opacitySha256": "859ffde1d83a2f3841eef0eb8038a7d516c64b87eaa1fde4904e56a36123b327",
+    "occludedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   {
     "name": "wall stops halo",
@@ -92,7 +94,8 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525"
+    "opacitySha256": "73c7ecf70efa8c0ed2304d79c40d434ccb0ed54bd3607edbe71eb2981b0de525",
+    "occludedSha256": "dc848ed411f6ac4b93d5842a3f3db803f40c4a3871bc05ca828d3c9b115d3590"
   },
   {
     "name": "first body not second",
@@ -122,7 +125,8 @@
     ],
     "gridSize": 50,
     "strictSha256": "8b7450278550774d6fb12f91814bf712423bbcf57fbe321cc415cc6064469419",
-    "opacitySha256": "c099c17651f3971ed3179545c78243d3d9f83104984fdc0862f2061a650ce240"
+    "opacitySha256": "c099c17651f3971ed3179545c78243d3d9f83104984fdc0862f2061a650ce240",
+    "occludedSha256": "1e0bbdf1830743527bb75a75a1910600a73bf22c0da4f89c3690de4995102547"
   },
   {
     "name": "max distance extended",
@@ -152,7 +156,8 @@
     ],
     "gridSize": 50,
     "strictSha256": "98c888ad8ef12bfde596d617cfc5102eba4e04d7bf47711b3d004d3799cc5372",
-    "opacitySha256": "461c36494f1c7a3643703c0abc3c6a914fbf27244d8041af0ef0cf79aa2b305e"
+    "opacitySha256": "461c36494f1c7a3643703c0abc3c6a914fbf27244d8041af0ef0cf79aa2b305e",
+    "occludedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   {
     "name": "origin inside wall",
@@ -182,6 +187,7 @@
     ],
     "gridSize": 50,
     "strictSha256": "a52e8871d4914a198d59c4902de81a078f5db969cad4aed14d2f24a4aa4f0bc7",
-    "opacitySha256": "50e7843bce8bc3dfa4f304817c879f077034a655d65499ceaf9f732972b0b2e3"
+    "opacitySha256": "50e7843bce8bc3dfa4f304817c879f077034a655d65499ceaf9f732972b0b2e3",
+    "occludedSha256": "a52e8871d4914a198d59c4902de81a078f5db969cad4aed14d2f24a4aa4f0bc7"
   }
 ]

@@ -1,3 +1,7 @@
+# Candidat backend 0.18.11 — ombre des murs, client exact 3.4.9
+
+Build `client-3-4-9-wall-shadow-vision-edge-20260926-1`. La projection Joueur et Stream distingue le mur de la brume décorative pour garder le noir derrière l'obstacle ; les mouvements tolèrent seulement une très légère bordure du pion hors vision, sans tolérance pour les murs ou le brouillard peint. Schéma MySQL **22** inchangé. Politique candidate exacte 3.4.9 : la production précédemment contrôlée sert encore 0.18.10 et le verrou 3.4.8. Qualification, déploiement et distribution Windows exigent leurs preuves propres.
+
 # Candidat backend 0.18.10 — verrou client 3.4.8
 
 Build `client-3-4-8-translucent-fog-vision-20260926-1`. Seule la version 3.4.8 franchit le verrou (`exactVersion=true`) ; 3.4.7 reçoit `426`. Le code de jeu et le schéma MySQL **22** restent inchangés. Le nouveau MSIX porte le brouillard translucide avec vision dynamique ; qualification CI, déploiement OVH et distribution Windows exigent leurs preuves propres.

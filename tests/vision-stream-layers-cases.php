@@ -102,6 +102,7 @@ foreach($cases as $case) {
     $actual=applicationComputeVisionRenderMask($case['occlusion'],$case['origins'],$case['gridSize']);
     requireTactical(hash('sha256',base64_decode(strtr($actual['mask'],'-_','+/'))) === $case['strictSha256'], $case['name'].': PHP strict visibility matches JavaScript.');
     requireTactical(hash('sha256',base64_decode(strtr($actual['opacity'],'-_','+/'))) === $case['opacitySha256'], $case['name'].': PHP progressive darkening matches JavaScript byte for byte.');
+    requireTactical(hash('sha256',base64_decode(strtr($actual['occludedMask'],'-_','+/'))) === $case['occludedSha256'], $case['name'].': PHP wall shadow matches JavaScript byte for byte.');
 }
 $occlusion=$cases[0]['occlusion'];$origins=$cases[0]['origins'];
 $render=applicationComputeVisionRenderMask($occlusion,$origins,50);

@@ -23,4 +23,15 @@ if (!$blocked['blocked'] || $blocked['path'] !== []) throw new RuntimeException(
 $hiddenEdge = static fn (float $x, float $y, float $radius = 0): bool => $radius === 0 || $x < 45;
 $blocked = findApplicationVisibleTokenPath($walls, $touch, $clear, 40, 1600, 900, $hiddenEdge);
 if (!$blocked['blocked']) throw new RuntimeException('Contact recovery crossed a hidden footprint.');
+$openWalls = ['version' => 1, 'width' => 512, 'height' => 288, 'mask' => ''];
+$edgeBytes = str_repeat("\0", 512 * 288 / 8);
+for ($y = 0; $y < 288; ++$y) for ($x = 264; $x < 512; ++$x) applicationSetMaskBit($edgeBytes, $y * 512 + $x, true);
+$edge = ['version' => 1, 'enabled' => true, 'width' => 512, 'height' => 288, 'mask' => rtrim(strtr(base64_encode($edgeBytes), '+/', '-_'), '=')];
+$start = ['x' => 47.0, 'y' => 50.0]; $goal = ['x' => 50.0, 'y' => 50.0];
+$visionEdge = onlineVisiblePathPointTester(null, $edge);
+$allowed = findApplicationVisibleTokenPath($openWalls, $start, $goal, 60, 1600, 900, $visionEdge);
+if ($allowed['blocked']) throw new RuntimeException('A shallow vision fringe rejected a slightly oversize portrait.');
+$paintedEdge = onlineVisiblePathPointTester($edge, ['enabled' => false]);
+$blocked = findApplicationVisibleTokenPath($openWalls, $start, $goal, 60, 1600, 900, $paintedEdge);
+if (!$blocked['blocked']) throw new RuntimeException('The vision fringe allowance leaked into painted fog.');
 echo "Full path footprints are enforced; only visible, shallow existing contacts may escape.\n";
