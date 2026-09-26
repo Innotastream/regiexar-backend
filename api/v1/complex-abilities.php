@@ -570,8 +570,8 @@ function applicationComplexAbilityGainBleedingCharges(mixed $value, array $conte
         $step = $execution['workflow']['steps'][$execution['currentStepIndex']] ?? null;
         if (!is_array($step) || $step['type'] !== 'counter' || !in_array($step['gainTrigger'], ['hp-loss', 'bleeding-hp-loss'], true)
             || ($step['combatPersistent'] && ($combatId === '' || $execution['combatId'] !== $combatId))) continue;
-        if ($step['gainCondition'] !== '' && !in_array($step['gainCondition'],
-            normalizeOnlineConditions($target['conditions'] ?? [], $target['condition'] ?? ''), true)) continue;
+        if ($step['gainCondition'] !== '' && !in_array(onlineConditionKey($step['gainCondition']),
+            array_map('onlineConditionKey', normalizeOnlineConditions($target['conditions'] ?? [], $target['condition'] ?? '')), true)) continue;
         $source = applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']);
         if (!is_array($source) || ($target['layerId'] ?? 'ground') !== $layerId || ($source['layerId'] ?? 'ground') !== $layerId) continue;
         $dx = ((float) ($source['x'] ?? 0) - (float) ($target['x'] ?? 0)) * $width / (100 * $grid);

@@ -1,6 +1,6 @@
 # Candidat backend 0.18.15 — marqueurs et compteur configurable, client exact 3.4.13
 
-Build `client-3-4-13-modular-ability-markers-20260926-1`. Les marqueurs posés sont projetés depuis les compétences actives sans entrer dans les unités ni dans l’initiative. Le compteur peut gagner sur perte de PV avec un état facultatif. Les protections en attente s’arrêtent avec la compétence. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 : ne pas déployer la politique exacte 3.4.13 sans accord explicite pour le refus des clients antérieurs. Le push du code ne constitue pas un déploiement.
+Build `client-3-4-13-modular-ability-markers-20260926-2`. Les marqueurs posés sont projetés depuis les compétences actives sans entrer dans les unités ni dans l’initiative. Le compteur peut gagner sur perte de PV avec un état facultatif. Les protections en attente s’arrêtent avec la compétence. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 : ne pas déployer la politique exacte 3.4.13 sans accord explicite pour le refus des clients antérieurs. Le push du code ne constitue pas un déploiement.
 
 ## Candidat historique backend 0.18.14 — ciblage, pings et fatigue, client exact 3.4.12
 

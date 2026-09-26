@@ -228,6 +228,10 @@ requireComplexAbility(applicationComplexAbilityGainBleedingCharges([$fresh], $hp
 $hpContext['target']['conditions'] = ['Brûlure'];
 requireComplexAbility(applicationComplexAbilityGainBleedingCharges([$fresh], $hpContext)[0]['stepStates']['orbs']['value'] === 1,
     'A configured condition on the injured target produces exactly one charge.');
+$caseVariant = $fresh;
+$caseVariant['workflow']['steps'][0]['gainCondition'] = 'BRULURE';
+requireComplexAbility(applicationComplexAbilityGainBleedingCharges([$caseVariant], $hpContext)[0]['stepStates']['orbs']['value'] === 1,
+    'A custom condition matches regardless of case and accent.');
 
 $conditionAbility = [
     'id' => 'conditional', 'name' => 'Seuil de sang', 'effect' => 'complex', 'formula' => '0',
