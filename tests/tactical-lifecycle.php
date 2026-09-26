@@ -227,7 +227,7 @@ foreach ([50, 98] as $fatigueLevel) {
         && ($outcome['fatigue']['before'] ?? null) === ($fatigueLevel === 98 ? 80 : null)
         && ($outcome['fatigue']['penalty'] ?? null) === ($fatigueLevel === 98 ? 48 : null)
         && str_contains(applicationRollActivityFields($roll)['detail'], 'dé brut ' . $outcome['raw'])
-        && str_contains(onlineDiscordRollContent($roll), 'seuil ' . ($fatigueLevel === 98 ? '80 −48 (fatigue 98/100) = 32' : '80')),
+        && str_contains(onlineDiscordRollContent($roll), 'seuil ' . ($fatigueLevel === 98 ? '80 −48 (fatigue 98/150) = 32' : '80')),
         'At fatigue ' . $fatigueLevel . ', one stored roll exposes its original die and actual server threshold');
 }
 

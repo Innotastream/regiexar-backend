@@ -836,6 +836,7 @@ function applicationPublicCharacterResources(array $character): array {
     $resources['mentalResistance'] = (float) ($resources['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0);
     $resources['mentalResistanceMax'] = (float) ($resources['mentalResistanceMax'] ?? $character['secret']['mentalResistanceMax'] ?? 100);
     $character['resources'] = $resources;
+    $character['fatigue'] = normalizeApplicationFatigue($character['fatigue'] ?? null);
     unset($character['secret']['mentalResistance'], $character['secret']['mentalResistanceMax']);
     return $character;
 }
@@ -2556,6 +2557,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['magicArmor'] = $magicalArmor['percent'];
     $current['temporalPerception'] = normalizeOnlineTemporalPerception($current['temporalPerception'] ?? null);
     $current['visionDistance'] = normalizeApplicationVisionDistance($current['visionDistance'] ?? null);
+    $current['fatigue'] = normalizeApplicationFatigue($current['fatigue'] ?? null);
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''));
     unset($current['speed']);
@@ -4711,7 +4713,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
-    $fatiguePenalty = max(0, (int) floor((float) ($character['fatigue']['current'] ?? 0) - 50));
+    $fatiguePenalty = max(0, (int) floor(normalizeApplicationFatigue($character['fatigue'] ?? null)['current'] - 50));
     if (is_array($character['stats'] ?? null)) {
         $labels = [
             'force' => 'Force', 'dexterity' => 'Dextérité', 'agility' => 'Agilité',
@@ -4723,12 +4725,12 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
             $token['stats'][] = [
                 'id' => 'character-stat-' . (string) $key,
                 'label' => $labels[(string) $key] ?? (string) $key,
-                'value' => (string) max(0, min(100, (float) ((isset($character['temporaryStats'][$key]) && $character['temporaryStats'][$key] !== '' && is_numeric($character['temporaryStats'][$key])) ? $character['temporaryStats'][$key] : $value) - $fatiguePenalty)),
+                'value' => (string) max(1, min(100, (float) ((isset($character['temporaryStats'][$key]) && $character['temporaryStats'][$key] !== '' && is_numeric($character['temporaryStats'][$key])) ? $character['temporaryStats'][$key] : $value) - $fatiguePenalty)),
             ];
         }
     }
-    $token['stats'][] = ['id' => 'character-stat-mentalResistance', 'label' => 'Résistance mentale', 'value' => (string) max(0, min(100, (float) ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0) - $fatiguePenalty))];
-    $token['fatigue'] = $character['fatigue'] ?? ['current' => 0, 'max' => 100];
+    $token['stats'][] = ['id' => 'character-stat-mentalResistance', 'label' => 'Résistance mentale', 'value' => (string) max(1, min(100, (float) ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0) - $fatiguePenalty))];
+    $token['fatigue'] = normalizeApplicationFatigue($character['fatigue'] ?? null);
     $token['hitThreshold'] = normalizeOnlineD100Difficulty($character['hitThreshold'] ?? null);
     $token['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
     $token['weaponAttacks'] = normalizeOnlineWeaponAttacks($character['weaponAttacks'] ?? [], extractOnlineDamageFormulas($character['weaponText'] ?? ''));
@@ -4742,7 +4744,7 @@ function normalizeOnlineD100Modifier(mixed $value): int
     return max(-100, min(100, is_numeric($value) ? (int) $value : 0));
 }
 
-function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0, mixed $resultModifier = 0, bool $remarkable = true): ?array
+function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0, mixed $resultModifier = 0, bool $remarkable = true, bool $minimumOne = false): ?array
 {
     if (!is_numeric($rawValue)) {
         return null;
@@ -4754,7 +4756,7 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
     $baseThreshold = $threshold === null ? null : max(0, min(100, (int) $threshold));
     $appliedModifier = normalizeOnlineD100Modifier($modifier);
     $appliedResultModifier = normalizeOnlineD100Modifier($resultModifier);
-    $effectiveThreshold = $baseThreshold === null ? null : max(0, min(100, $baseThreshold + $appliedModifier));
+    $effectiveThreshold = $baseThreshold === null ? null : max($minimumOne ? 1 : 0, min(100, $baseThreshold + $appliedModifier));
     $comparedResult = $raw + $appliedResultModifier;
     $common = [
         'raw' => $raw,
@@ -5991,10 +5993,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         rejectOnlineCommand($connection, 400, 'La compétence d’arme doit être un entier de 0 à 100.', 'attack_weapon_skill_invalid');
                     }
                     $fatiguePenalty = $sourceCharacter !== []
-                        ? max(0, (int) floor((float) ($source['fatigue']['current'] ?? 0) - 50)) : 0;
+                        ? max(0, (int) floor(normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] - 50)) : 0;
                     $source['weaponSkillBefore'] = (int) $rawSkill;
                     $source['stats'][] = ['id' => 'weapon-skill', 'label' => 'Compétence d’arme',
-                        'value' => max(0, (int) $rawSkill - $fatiguePenalty)];
+                        'value' => max(1, (int) $rawSkill - $fatiguePenalty)];
                 }
                 if ($abilityForAttack !== null && !$noCastingRoll) {
                     if ($selectedStatId === '') rejectOnlineCommand($connection, 400, 'Choisissez une statistique d’attaque.', 'attack_stat_required');
@@ -6020,7 +6022,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                 $hitRolled = $hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement'];
-                $hitOutcome = $hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true];
+                $hitOutcome = $hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true];
                 if ($hasCastingCheck && $hitOutcome !== null) {
                     $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
                     if ($fatigue !== null) $hitOutcome['fatigue'] = $fatigue;
@@ -6373,7 +6375,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                         $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
-                        $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier);
+                        $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true);
                         if ($outcome !== null) {
                             $fatigue = onlineStatFatigueDetails($target, (string) ($stats[$statIndex]['id'] ?? ''), $targetCharacter ?? null);
                             if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
@@ -6871,7 +6873,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
                 }
                 $outcome = in_array($kind, ['stat', 'hit'], true)
-                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat')
+                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat', $kind === 'stat')
                     : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
                 if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
                     $outcome['resultCustomized'] = $modifierMode === 'result';

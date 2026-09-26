@@ -211,12 +211,12 @@ auditCombat('Fatigue boundary and temporary zero preserve the exact d100 classif
         $character = ['stats' => ['force' => 73], 'temporaryStats' => ['force' => 41],
             'resources' => ['mentalResistance' => 61], 'fatigue' => ['current' => $fatigue, 'max' => $maximum]];
         $token = synchronizeOnlineCharacterToken(['characterId' => 'hero'], $character);
-        requireTactical((int) applicationAbilityCastingStat($token['stats'], 'force')['value'] === max(0, 41-$penalty)
-            && (int) applicationAbilityCastingStat($token['stats'], 'character-stat-mentalResistance')['value'] === max(0, 61-$penalty),
+        requireTactical((int) applicationAbilityCastingStat($token['stats'], 'force')['value'] === max(1, 41-$penalty)
+            && (int) applicationAbilityCastingStat($token['stats'], 'character-stat-mentalResistance')['value'] === max(1, 61-$penalty),
             'Fatigue subtracts every whole point beyond absolute 50, independently of its maximum');
         $character['temporaryStats']['force'] = 0;
         $zero = synchronizeOnlineCharacterToken(['characterId' => 'hero'], $character);
-        requireTactical((int) applicationAbilityCastingStat($zero['stats'], 'force')['value'] === 0, 'Temporary zero is authoritative');
+        requireTactical((int) applicationAbilityCastingStat($zero['stats'], 'force')['value'] === 1, 'Temporary zero is authoritative before the minimum roll threshold');
         if ($penalty) {
             $plan = applicationAbilityCastingPlan(['id' => 'zero', 'name' => 'Seuil nul', 'castingStatId' => 'force'], $zero, 'scene-one', [], []);
             $cast = onlineAbilityCastingRoll($plan, $zero, ['id' => 'account-player', 'display_name' => 'Joueur'], [], 'ground', $character);
@@ -228,8 +228,8 @@ auditCombat('Fatigue boundary and temporary zero preserve the exact d100 classif
     $plan = applicationAbilityCastingPlan(['id' => 'fatigue-proof', 'name' => 'Fatigue', 'castingStatId' => 'intelligence', 'fatigueCost' => 1], $source, 'scene-one', [], []);
     $cast = onlineAbilityCastingRoll($plan, $source, ['id' => 'account-player', 'display_name' => 'Joueur'], [], 'ground', $character);
     requireTactical($cast['outcome']['threshold'] === 49 && $cast['outcome']['fatigue']['before'] === 50
-        && (float) $cast['outcome']['fatigue']['current'] === 51.0 && (float) $cast['outcome']['fatigue']['max'] === 100.0,
-        'INT 50 at fatigue 51/100 preserves before 50, after 49 and pre-cost fatigue');
+        && (float) $cast['outcome']['fatigue']['current'] === 51.0 && (float) $cast['outcome']['fatigue']['max'] === 150.0,
+        'INT 50 at fatigue 51/150 preserves before 50, after 49 and pre-cost fatigue');
     foreach ([1,11,22,33,44] as $raw) requireTactical(classifyOnlineD100Outcome($raw, 0, 0, 100)['code'] === 'critical-success', 'Critical successes classify on raw dice');
     foreach ([66,77,88,99,100] as $raw) requireTactical(classifyOnlineD100Outcome($raw, 100, 0, -100)['code'] === 'critical-failure', 'Critical failures cannot be fabricated away with result adjustment');
     requireTactical(classifyOnlineD100Outcome(10, 40)['code'] === 'success' && classifyOnlineD100Outcome(55, 0)['code'] === 'special-success', 'Ten is ordinary and 55 special');

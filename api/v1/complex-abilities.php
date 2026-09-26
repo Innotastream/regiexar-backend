@@ -593,7 +593,7 @@ function applicationComplexAbilityTokenThreshold(array $token, array $step): int
         if (!is_array($stat)) continue;
         $matches = in_array((string) ($stat['id'] ?? ''), [$statId, $key, 'character-stat-' . $key], true)
             || applicationComplexAbilityComparable($stat['label'] ?? '') === ($labels[$key] ?? '');
-        if ($matches && is_numeric($stat['value'] ?? null)) return applicationComplexAbilityInteger($stat['value'], 0, 100, 0);
+        if ($matches && is_numeric($stat['value'] ?? null)) return max(1, applicationComplexAbilityInteger($stat['value'], 0, 100, 0));
     }
     applicationComplexAbilityFail('La statistique de défense n’existe plus sur la cible.', 'complex_ability_threshold_missing');
 }
@@ -978,7 +978,7 @@ function applyApplicationComplexAbilityCommand(
             if (!is_array($source) || (float) ($source['hp'] ?? 0) <= 0) applicationComplexAbilityFail('Le lanceur n’est plus en état d’attaquer.', 'complex_ability_source_defeated');
             $baseThreshold = applicationComplexAbilityTokenThreshold($source, ['thresholdMode' => 'stat', 'targetStatId' => $step['statId']]);
             $modifier = -min(100, count($state['attacks'] ?? []) * $step['penaltyPerSuccess']);
-            $threshold = max(0, $baseThreshold + $modifier);
+            $threshold = max(1, $baseThreshold + $modifier);
             if (!is_callable($roll)) applicationComplexAbilityFail('Le service de dés est indisponible.', 'complex_ability_roll_unavailable', 503);
             $rolled = $roll('1d100');
             $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;

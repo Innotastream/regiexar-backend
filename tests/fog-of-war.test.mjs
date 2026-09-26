@@ -34,7 +34,7 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   assert.match(domains, /invalid_map_fog/);
 });
 
-test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors vision", async () => {
+test("la projection masque les pions sous la brume tout en relayant les pings du niveau actif", async () => {
   const online = await source("api/v1/online.php");
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function requestedOnlineStateRevision"));
   assert.match(projection, /\$fog = applicationActiveMapFogState/);
@@ -49,7 +49,7 @@ test("la projection joueur ne divulgue ni pion ni signal sous la brume ou hors v
   assert.match(projection, /unset\(\$map\['walls'\]\)/);
   assert.match(projection, /\$map\['fog'\] = \$fog/);
   assert.match(projection, /\$map\['visionMask'\] = \$visionMask/);
-  assert.match(projection, /\|\| \$strictPointIsHidden\(\$ping\['x'\]/);
+  assert.doesNotMatch(projection, /\|\| \$strictPointIsHidden\(\$ping\['x'\]/);
   assert.match(projection, /'size' => \(float\) \(\$token\['size'\] \?\? 40\)/);
 });
 

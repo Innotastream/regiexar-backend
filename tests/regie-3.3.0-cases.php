@@ -26,7 +26,7 @@ $visible = visibleCharacter($c);
 requireTactical($visible['resources']['mentalResistance'] === 55.0 && !isset($visible['secret']), 'Mental resistance migrates into public resources without exposing MJ notes.');
 $rules = synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c);
 $values = array_column($rules['stats'], 'value', 'id');
-requireTactical($values['character-stat-force'] === '0' && $values['character-stat-agility'] === '59' && $values['character-stat-mentalResistance'] === '54', 'Temporary zero overrides base; fatigue beyond 50 affects statistic thresholds.');
+requireTactical($values['character-stat-force'] === '1' && $values['character-stat-agility'] === '59' && $values['character-stat-mentalResistance'] === '54', 'Temporary zero overrides base; the final statistic threshold remains at least one.');
 $c['fatigue'] = ['current' => 50, 'max' => 200];
 $half = array_column(synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c)['stats'], 'value', 'id');
 requireTactical($half['character-stat-agility'] === '60', 'Exactly 50 fatigue leaves casting stats unchanged regardless of maximum.');
@@ -36,6 +36,17 @@ $overHalf = array_column($fatigued['stats'], 'value', 'id');
 requireTactical($overHalf['character-stat-agility'] === '12', '98 fatigue subtracts 48 from the casting stat.');
 $fatigueCheck = applicationAbilityCastingPlan(['id' => 'fatigue-check', 'castingStatId' => 'character-stat-agility'], $fatigued, 'scene-one', [], []);
 requireTactical($fatigueCheck['threshold'] === 12, 'The reduced statistic is authoritative for a skill casting check.');
+$c['fatigue'] = ['current' => 300, 'max' => 999];
+$capped = synchronizeOnlineCharacterToken(['characterId' => $c['id']], $c);
+requireTactical((float) $capped['fatigue']['current'] === 150.0 && $capped['fatigue']['max'] === 150
+    && applicationAbilityCastingStat($capped['stats'], 'agility')['value'] === '1',
+    'Old sheets above the limit read as 150/150 and a fatigued stat never falls below one.');
+requireTactical(classifyOnlineD100Outcome(2, 1, -100, 0, true, true)['threshold'] === 1
+    && str_contains(applicationD100Comparison(['raw' => 2, 'threshold' => 1, 'modifier' => -10,
+        'fatigue' => ['current' => 150, 'max' => 150, 'penalty' => 100, 'before' => 80]]), 'minimum 1')
+    && applicationDomainFatiguePayload('character:test', ['fatigue' => ['current' => 160, 'max' => 200]])['fatigue']['current'] == 150
+    && playerCharacterPatch($c, ['fatigue' => ['current' => 500, 'max' => 500]])['fatigue']['current'] == 150,
+    'The final d100 threshold and direct character writes respect the same bounds.');
 requireTactical(applicationTacticalRollSpecification($rules, ['kind' => 'luck'])['formula'] === '1d100', 'Fatigue never modifies Chance.');
 
 function patchAbilityFixture(array $ability): MemoryConnection {
@@ -47,19 +58,21 @@ function patchAbilityFixture(array $ability): MemoryConnection {
 }
 $db = patchAbilityFixture(['manaCost' => 0, 'hpCost' => 0, 'fatigueCost' => 3, 'cooldownRounds' => 0, 'reusableInTurn' => false, 'difficultyIncrement' => 0]);
 $character = $db->payload('character:character-player');
-$character['fatigue'] = ['current' => 99, 'max' => 100];
+$character['fatigue'] = ['current' => 149, 'max' => 150];
 $db->put('character:character-player', $character);
 $fatigueRequest = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player',
     'targetTokenId' => 'token-player', 'abilityId' => 'patch-ability', 'requestId' => 'fatigue-overflow-use-001'];
 $firstFatigueCast = runCommand($db, 'ability.use', $fatigueRequest);
-requireTactical($firstFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 102,
-    'Fatigue reaches 102/100 without rejecting the authoritative cast.');
+requireTactical($firstFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 150
+    && ($firstFatigueCast->body['cast']['fatigueGained'] ?? null) == 1,
+    'Fatigue reaches 150 without exceeding the ceiling or rejecting the authoritative cast.');
 $repeatFatigueCast = runCommand($db, 'ability.use', $fatigueRequest);
 requireTactical($repeatFatigueCast->status === 200 && $repeatFatigueCast->body['deduplicated']
-    && $db->payload('character:character-player')['fatigue']['current'] == 102, 'A receipt does not charge fatigue twice.');
+    && $db->payload('character:character-player')['fatigue']['current'] == 150, 'A receipt does not charge fatigue twice.');
 $nextFatigueCast = runCommand($db, 'ability.use', [...$fatigueRequest, 'requestId' => 'fatigue-overflow-use-002']);
-requireTactical($nextFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 105,
-    'An existing over-maximum fatigue value does not block another cast.');
+requireTactical($nextFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 150
+    && ($nextFatigueCast->body['cast']['fatigueGained'] ?? null) == 0,
+    'A character at 150 may cast again without exceeding the limit.');
 $base = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-player', 'abilityId' => 'patch-ability'];
 $db = patchAbilityFixture([]);
 for ($i = 0; $i < 3; $i++) {

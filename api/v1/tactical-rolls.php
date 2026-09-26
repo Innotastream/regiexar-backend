@@ -16,14 +16,14 @@ function applicationRollUppercase(string $value): string {
 function onlineStatFatigueDetails(array $source, string $statId, ?array $character = null): ?array {
     if (!(str_starts_with($statId, 'character-stat-') || $statId === 'weapon-skill') || trim((string) ($source['characterId'] ?? '')) === ''
         || ($source['followCharacter'] ?? true) === false || trim((string) ($source['linkedTokenId'] ?? '')) !== '') return null;
-    $fatigue = is_array($source['fatigue'] ?? null) ? $source['fatigue'] : [];
-    $current = is_numeric($fatigue['current'] ?? null) ? (float) $fatigue['current'] : 0;
-    $maximum = is_numeric($fatigue['max'] ?? null) && (float) $fatigue['max'] > 0 ? (float) $fatigue['max'] : 100;
+    $fatigue = normalizeApplicationFatigue($source['fatigue'] ?? null);
+    $current = $fatigue['current'];
+    $maximum = $fatigue['max'];
     $penalty = max(0, (int) floor($current - 50));
     if ($penalty === 0) return null;
     $index = findEntryIndex(is_array($source['stats'] ?? null) ? $source['stats'] : [], $statId);
     if ($index < 0 || !is_numeric($source['stats'][$index]['value'] ?? null)) return null;
-    $effective = max(0, min(100, (int) $source['stats'][$index]['value']));
+    $effective = max(1, min(100, (int) $source['stats'][$index]['value']));
     $before = $effective > 0 ? min(100, $effective + $penalty) : null;
     $key = substr($statId, strlen('character-stat-'));
     if ($statId === 'weapon-skill' && is_numeric($source['weaponSkillBefore'] ?? null)) {
@@ -54,7 +54,8 @@ function applicationD100Comparison(array $outcome): string {
         $level = (0 + ($fatigue['current'] ?? 0)) . '/' . (0 + ($fatigue['max'] ?? 100));
         $parts[] = ($before === null ? 'fatigue ' . $level . ' : −' . $penalty . ' · seuil après fatigue ' . (int) ($outcome['baseThreshold'] ?? $threshold)
             : 'seuil ' . $before . ' −' . $penalty . ' (fatigue ' . $level . ')')
-            . ($modifier !== 0 ? ' ' . $signed($modifier) : '') . ' = ' . $threshold;
+            . ($modifier !== 0 ? ' ' . $signed($modifier) : '') . ' = ' . $threshold
+            . ($before !== null && $before - $penalty + $modifier < 1 && $threshold === 1 ? ' (minimum 1)' : '');
     } else {
         $parts[] = $modifier !== 0
             ? 'seuil ' . (int) ($outcome['baseThreshold'] ?? 0) . ' ' . $signed($modifier) . ' = ' . $threshold
@@ -293,7 +294,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $rolled = onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $spec['threshold'] !== null
-        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit')
+        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat')
         : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {

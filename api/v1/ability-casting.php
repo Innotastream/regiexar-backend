@@ -156,7 +156,9 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     }
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
-        'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost, 'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
+        'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost,
+        'fatigueGained' => min($fatigueCost, 150 - normalizeApplicationFatigue($source['fatigue'] ?? null)['current']),
+        'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
         'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
         'usedRound' => $round, 'cooldownRounds' => (int) ($ability['cooldownRounds'] ?? 0), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
@@ -187,7 +189,7 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
-    $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier);
+    $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true);
     if ($outcome !== null) {
         $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
@@ -319,9 +321,8 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $key = $characterKey ?: $sourceKey;
         $value = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
         if ($resource === 'fatigue') {
-            $fatigue = $value['fatigue'] ?? ['current' => 0, 'max' => 100];
-            $fatigue['current'] = (float) ($fatigue['current'] ?? 0) + $amount;
-            $value['fatigue'] = $fatigue;
+            $fatigue = normalizeApplicationFatigue($value['fatigue'] ?? null);
+            $value['fatigue'] = normalizeApplicationFatigue(['current' => $fatigue['current'] + $amount]);
         } else {
             $hp = (float) ($characterKey !== '' ? ($value['resources']['hp'] ?? 0) : ($value['hp'] ?? 0));
             if ($hp < $amount) rejectOnlineCommand($connection, 409, 'PV insuffisants.', 'ability_hp_insufficient');
@@ -345,7 +346,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     if ($recordRoll && is_array($cast['roll'] ?? null)) $activity['rolls'] = array_slice([$cast['roll'], ...($activity['rolls'] ?? [])], 0, 100);
     if (!$applyRecharge) {
         queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-        return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueCost'] ?? 0,
+        return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueGained'] ?? 0,
             'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0, 'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => 0, 'pendingValidation' => true];
     }
     unset($cast['pendingValidation']);
@@ -378,7 +379,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             (string) ($cast['roll']['mapEvent']['layerId'] ?? $source['layerId'] ?? 'ground'), (string) ($source['id'] ?? ''),
             ($source['hidden'] ?? false) || ($cast['roll']['visibility'] ?? '') === 'gm' ? 'gm' : 'public') : '';
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueCost'] ?? 0, 'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0,
+    return [...$cast, 'manaSpent' => $cost, 'hpSpent' => $plan['hpCost'] ?? 0, 'fatigueGained' => $plan['fatigueGained'] ?? 0, 'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0,
         'restRecharge' => $failedCooldown > 0 && !$retainCooldown ? 'none' : ($retainCooldown ? ($old['restRecharge'] ?? 'none') : ($plan['restRecharge'] ?? 'none')),
         'restUseCount' => $timer['restUseCount'] ?? 0, 'restUseLimit' => $plan['restUseLimit'], 'reusableInTurn' => $timer['reusableInTurn'] ?? false,
         'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => $remaining,

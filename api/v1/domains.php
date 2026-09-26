@@ -1676,6 +1676,23 @@ function validApplicationCharacterDomain(array $payload): bool
     return true;
 }
 
+function normalizeApplicationFatigue(mixed $value): array
+{
+    $raw = is_array($value) ? ($value['current'] ?? 0) : 0;
+    $current = is_numeric($raw) && is_finite((float) $raw) ? (float) $raw : 0.0;
+    return ['current' => max(0, min(150, $current)), 'max' => 150];
+}
+
+function applicationDomainFatiguePayload(string $key, array $payload): array
+{
+    if (str_starts_with($key, 'character:')) {
+        $payload['fatigue'] = normalizeApplicationFatigue($payload['fatigue'] ?? null);
+    } elseif (str_starts_with($key, 'token:') && array_key_exists('fatigue', $payload)) {
+        $payload['fatigue'] = normalizeApplicationFatigue($payload['fatigue']);
+    }
+    return $payload;
+}
+
 function domainPayloadContainsInlineImage(mixed $value, int $depth = 0): bool
 {
     if ($depth > 64) {
@@ -1950,7 +1967,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
     if (!validApplicationDomainShape($payload)) {
         sendError(400, 'Le domaine contient une structure hors limites.', 'invalid_domain_shape');
     }
-    $payload = sanitizeStateImageReferences($payload);
+    $payload = applicationDomainFatiguePayload($key, sanitizeStateImageReferences($payload));
     if ($key === 'table') {
         $activeSceneId = $payload['activeSceneId'] ?? null;
         if ($activeSceneId !== null
@@ -2169,7 +2186,7 @@ function applicationCharacterTokenDomainRecords(PDO $connection, string $charact
 function applicationDomainPayload(array $records, string $key, array $fallback = []): array
 {
     $payload = $records[$key]['payload'] ?? null;
-    return is_array($payload) ? $payload : $fallback;
+    return is_array($payload) ? applicationDomainFatiguePayload($key, $payload) : $fallback;
 }
 
 function canonicalApplicationDomainValue(mixed $value): mixed
@@ -2276,6 +2293,7 @@ function prepareApplicationDomainUpsert(
     if ($protectAgainstStaleEntityWrite) {
         $payload = protectApplicationDomainAgainstStaleEntityWrite($key, $payload, $current);
     }
+    $payload = applicationDomainFatiguePayload($key, $payload);
     $encoded = json_encode(
         applicationDomainPayloadForComparison($key, $payload),
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
@@ -2466,9 +2484,7 @@ function legacyStateToDomains(array $state): array
 
 function domainsToApplicationState(array $records, int $revision, ?string $updatedAt = null): array
 {
-    $payload = static fn (string $key, array $fallback = []): array => is_array($records[$key]['payload'] ?? null)
-        ? $records[$key]['payload']
-        : $fallback;
+    $payload = static fn (string $key, array $fallback = []): array => applicationDomainPayload($records, $key, $fallback);
     $table = $payload('table');
     $sceneIndex = $payload('scene-index');
     $roster = $payload('roster');
@@ -2849,7 +2865,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
             'key' => $key,
             'schemaVersion' => $records[$key]['schemaVersion'],
             'revision' => $records[$key]['revision'],
-            'payload' => $records[$key]['payload'],
+            'payload' => applicationDomainFatiguePayload($key, $records[$key]['payload']),
         ];
     }
     sendJson(200, [
