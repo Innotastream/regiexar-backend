@@ -1336,8 +1336,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         if (!is_array($ping)
             || (string) ($ping['sceneId'] ?? '') !== $visibleSceneId
             || (int) ($ping['expiresAt'] ?? 0) <= $nowMilliseconds
-            || onlineTokenLayerId(['layerId' => $ping['layerId'] ?? 'ground']) !== onlineTokenLayerId([], $map)
-            || $strictPointIsHidden($ping['x'] ?? 0, $ping['y'] ?? 0)) {
+            || onlineTokenLayerId(['layerId' => $ping['layerId'] ?? 'ground']) !== onlineTokenLayerId([], $map)) {
             continue;
         }
         $visibleMapPings[] = [

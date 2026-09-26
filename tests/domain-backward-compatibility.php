@@ -652,8 +652,8 @@ requireDomainCompatibility(
         && !array_key_exists('layers', $fogProjection['map'] ?? [])
         && ($fogProjection['map']['fog']['mask'] ?? null) === $fogMask
         && (($fogProjection['map']['tokens'][0]['size'] ?? null) === 40.0)
-        && array_column($fogProjection['mapPings'] ?? [], 'id') === ['ping-clear'],
-    'Le brouillard actif doit masquer adversaires et signaux côté serveur, conserver le pion possédé et ne jamais exposer les autres niveaux.'
+        && array_column($fogProjection['mapPings'] ?? [], 'id') === ['ping-fogged', 'ping-clear'],
+    'Le brouillard actif doit masquer les adversaires, conserver le pion possédé et projeter les pings du niveau actif.'
 );
 $d100Attempts = [
     ['total' => 44, 'rawD100' => 44],
