@@ -54,7 +54,12 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (array_key_exists('damageOverTime', $entry) && ($effect !== 'damage' || !validApplicationDamageOverTime($entry['damageOverTime']))) return false;
     if (array_key_exists('damageTargeting', $entry) && ($effect !== 'damage' || !validApplicationDamageTargeting($entry['damageTargeting']))) return false;
     if (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue'])) return false;
-    if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null);
+    if ($effect === 'complex') {
+        if (!validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)) return false;
+        $first = $entry['workflow']['steps'][0] ?? [];
+        return !is_array($first) || ($first['firstGateAtCast'] ?? false) !== true
+            || ($entry['castingStatId'] ?? '') === ($first['statId'] ?? '');
+    }
     if ($effect === 'movement') return true;
     if ($effect === 'summoning') return validApplicationDomainIdentifier($entry['summonLinkedTokenId'] ?? null, 180);
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);

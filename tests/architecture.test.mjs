@@ -79,8 +79,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.20'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-18-combat-audit-20260927-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.21'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-4-19-composable-condition-chain-20260927-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -116,8 +116,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.20");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.18");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.21");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.4.19");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -322,8 +322,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.4.18");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.18"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.4.19");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.4.19"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -530,7 +530,7 @@ test("l’assistant textuel reste lié au compte Régie, répare explicitement e
   assert.match(studio, /imageGenerationAvailable/);
   assert.match(online, /handleAbilityAssistantRoute\(\$connection/);
   assert.match(complex, /complex_ability_condition_private/);
-  assert.match(complex, /\['hp-percent', 'hp', 'mana-percent', 'mana', 'fatigue', 'stat'\]/);
+  assert.match(complex, /\$privateFacts = \['hp-percent', 'hp', 'max-hp', 'missing-hp', 'mana-percent', 'mana', 'max-mana', 'missing-mana', 'fatigue', 'stat'\]/);
 });
 
 test("la pause du Compte de la Régie ne bloque jamais les générations personnelles", async () => {

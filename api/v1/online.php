@@ -6158,6 +6158,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         }
                         $damagePercent = (int) $step['damagePercent'];
                     }
+                    if ($step['type'] === 'attack-chain' && ($step['targetMode'] ?? 'each') === 'once') {
+                        $plan = is_array($stepState['plan'] ?? null) ? $stepState['plan'] : [];
+                        if (($target['id'] ?? '') !== ($plan['targetTokenId'] ?? '')
+                            || ($arguments['attackId'] ?? '') !== ($plan['attackId'] ?? '')
+                            || ($arguments['statId'] ?? '') !== ($plan['statId'] ?? '')
+                            || ($arguments['opposed'] ?? false) !== ($plan['opposed'] ?? null))
+                            rejectOnlineCommand($connection, 409, 'Respectez la cible, l’arme et l’opposition prévues pour cette série.', 'complex_attack_plan_mismatch');
+                    }
                     $activity['abilityExecutions'][$executionIndex]['stepStates'][$stepId]['attackRequestId'] = $requestId;
                     // Damage, guard and casting may each queue a newer activity snapshot.
                     // Persist the reservation first so they cannot restore the old step.

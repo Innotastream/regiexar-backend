@@ -1,3 +1,7 @@
+# Candidat backend 0.18.21 — conditions composables, client exact 3.4.19
+
+Build `client-3-4-19-composable-condition-chain-20260927-1`. Le serveur valide et évalue les expressions de conditions ET/OU/NON, les ressources et résultats de chaîne, et la cible, l’arme, la statistique et l’opposition fixées pour une série. Le premier jet peut provenir du lancement de la capacité. Schéma MySQL **22** inchangé. La politique candidate exacte **3.4.19** nécessite un déploiement distinct et un contrôle public avant d’être déclarée en production.
+
 # Candidat backend 0.18.20 — audit des attaques, client exact 3.4.18
 
 Build `client-3-4-18-combat-audit-20260927-1`. Oppositions indépendantes et reçus pour les attaques de zone ; reprise des réactions ; dégâts périodiques cumulés avec l’armure actuelle ; expiration des protections en fin de combat. Le schéma MySQL reste à 22.

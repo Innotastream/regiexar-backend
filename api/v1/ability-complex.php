@@ -228,7 +228,7 @@ function onlineUseComplexAbility(
                     'sourceTokenId' => $source['id'] ?? '', 'sourceName' => $source['name'] ?? 'Personnage',
                     'characterId' => $owner['characterId'] ?? '',
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
-                    'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'now' => $now,
+                    'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'cast' => $cast, 'now' => $now,
                     'combatId' => $persistent ? $combatId : '',
                 ]);
             } catch (ApplicationComplexAbilityException $error) {

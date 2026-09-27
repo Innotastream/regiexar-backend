@@ -9,7 +9,7 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 5, 'steps' => [['type' => 'instruction']]]), 'format futur 5'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 6, 'steps' => [['type' => 'instruction']]]), 'format futur 6'),
     'A future workflow version is refused instead of being rewritten.'
 );
 
@@ -370,6 +370,57 @@ $chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll',
 requireComplexAbility($chain['stepStates']['chain']['rolls'][1]['threshold'] === 60
     && $chain['status'] === 'completed' && $chain['endedByFailure'] === true
     && count($chain['stepStates']['chain']['attacks']) === 1, 'The progressive penalty and first failure stop the series.');
+
+$singlePlanAbility = ['id' => 'generic-single-plan', 'name' => 'Série sans répétition', 'effect' => 'complex',
+    'castingStatId' => 'character-stat-agility', 'workflow' => ['version' => 5, 'steps' => [[
+        'id' => 'chain', 'type' => 'attack-chain', 'statId' => 'character-stat-agility', 'count' => 5,
+        'penaltyPerSuccess' => 10, 'stopOnFailure' => true, 'targetMode' => 'once', 'firstGateAtCast' => true,
+    ]]]];
+$single = createApplicationComplexAbilityExecution(['id' => 'execution-single-plan', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $singlePlanAbility, 'now' => 6000,
+    'cast' => ['success' => true, 'statId' => 'character-stat-agility',
+        'outcome' => ['raw' => 32, 'threshold' => 70, 'code' => 'success'], 'roll' => ['breakdown' => '32']]]);
+requireComplexAbility(count($single['stepStates']['chain']['rolls']) === 1
+    && $single['stepStates']['chain']['awaitingAttack'] === true, 'The cast is the first gate, never rolled twice.');
+$singleTokens = [[...$chainTokens[0], 'weaponAttacks' => [['id' => 'blade', 'formula' => '1d6']]], ...array_slice($chainTokens, 1)];
+$single = applyApplicationComplexAbilityCommand($single, ['action' => 'prepare-chain', 'expectedRevision' => 1,
+    'targetTokenId' => 'target-a', 'attackId' => 'blade', 'statId' => 'character-stat-agility', 'opposed' => true],
+    ['actor' => $chainContext['actor'], 'tokens' => $singleTokens, 'now' => 6001]);
+$single['stepStates']['chain']['attackRequestId'] = 'request-single-plan';
+$plannedAttack = ['id' => 'attack-planned', 'requestId' => 'request-single-plan', 'attackKind' => 'weapon',
+    'attackId' => 'blade', 'complexExecutionId' => $single['id'], 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'accountId' => 'caster-player', 'targetTokenId' => 'target-a',
+    'opposed' => true, 'hit' => ['statId' => 'character-stat-agility'], 'status' => 'applied', 'createdAt' => 6002];
+try {
+    applyApplicationComplexAbilityCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+        'attackRequestId' => 'request-single-plan'], ['actor' => $chainContext['actor'], 'tokens' => $singleTokens,
+        'now' => 6003, 'attack' => [...$plannedAttack, 'targetTokenId' => 'target-b']]);
+    throw new RuntimeException('A locked series cannot switch target.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_attack_mismatch', 'The server rejects a switched target.');
+}
+$single = applyApplicationComplexAbilityCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+    'attackRequestId' => 'request-single-plan'], ['actor' => $chainContext['actor'], 'tokens' => $singleTokens,
+    'now' => 6003, 'attack' => $plannedAttack]);
+requireComplexAbility(count($single['stepStates']['chain']['attacks']) === 1, 'The planned attack advances once.');
+
+$predicate = ['type' => 'all', 'conditions' => [
+    ['type' => 'fact', 'subject' => 'source', 'fact' => 'missing-hp', 'operator' => 'gte', 'value' => 40],
+    ['type' => 'any', 'conditions' => [
+        ['type' => 'fact', 'subject' => 'source', 'fact' => 'mana', 'operator' => 'gte', 'value' => 8],
+        ['type' => 'not', 'condition' => ['type' => 'fact', 'subject' => 'source', 'fact' => 'condition',
+            'operator' => 'eq', 'conditionLabel' => 'Influencé']],
+    ]],
+]];
+$conditionalAbility = ['id' => 'generic-expression', 'name' => 'Condition composée', 'effect' => 'complex',
+    'workflow' => ['version' => 5, 'steps' => [['id' => 'branch', 'type' => 'condition', 'expression' => $predicate,
+        'onTrueStepId' => 'finish', 'onFalseStepId' => 'finish']]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($conditionalAbility['workflow']) === '', 'Nested predicates validate.');
+$conditional = createApplicationComplexAbilityExecution(['id' => 'execution-condition', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $conditionalAbility, 'now' => 6100]);
+$predicateTokens = [[...$tokens[0], 'hp' => 55, 'maxHp' => 100, 'mana' => 8], ...array_slice($tokens, 1)];
+requireComplexAbility(evaluateApplicationComplexAbilityCondition($conditional, $conditional['workflow']['steps'][0], $predicateTokens)['outcome'] === true,
+    'Nested all/any/not evaluates live authoritative resources.');
 
 $allocatedAbility = ['id' => 'generic-allocated', 'name' => 'Cinq frappes', 'effect' => 'complex', 'formula' => '0',
     'workflow' => ['version' => 3, 'steps' => [
