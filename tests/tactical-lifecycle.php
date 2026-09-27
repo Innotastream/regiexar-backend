@@ -710,6 +710,7 @@ try {
     );
 }
 requireTactical(normalizeOnlineConditions(['poison', 'Empoisonné', 'endormis', 'KO', 'Mort', 'Marque du voile']) === ['Empoisonné','Endormi','Marque du voile'], 'Canonical labels, no duplicate or ordinary health states.');
+requireTactical(normalizeOnlineConditions(['influencée', 'Influencé', 'Charmé']) === ['Influencé', 'Charmé'], 'Influencé reste un effet distinct de Charmé.');
 requireTactical(normalizeOnlineConditions([], 'Poison') === [], 'An explicit empty array does not resurrect the legacy field.');
 requireTactical(onlineManualDeath(['conditions'=>['Mort']]) && !onlineManualDeath(['conditions'=>['Mort'],'healthOverride'=>null]), 'Explicit override clearing wins over legacy Mort.');
 $patched = playerCharacterPatch(['conditions'=>['Mort'], 'resources'=>['hp'=>1,'maxHp'=>100,'mana'=>1,'maxMana'=>10]], ['conditions'=>['Poison'], 'healthOverride'=>null, 'resources'=>['hp'=>-26,'mana'=>-2]]);

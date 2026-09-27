@@ -1,3 +1,7 @@
+# Candidat backend 0.18.18 — état Influencé et défenses, client exact 3.4.16
+
+Build `client-3-4-16-ability-defense-influence-20260927-1`. « Influencé » est normalisé comme état distinct de « Charmé ». Les anciennes étapes de défense des compétences complexes transmettent Avantage/Désavantage au service de dés, conservent les deux tentatives et le résultat retenu ; les oppositions des attaques de base étaient déjà couvertes. Schéma MySQL **22** inchangé. La production vérifiée le 27 septembre autorisait encore exactement 3.4.13 : ne pas déployer la politique candidate 3.4.16 sans accord explicite pour ce changement de verrou. Le push source ne constitue ni déploiement ni distribution Windows.
+
 # Candidat backend 0.18.17 — cinq armes, client exact 3.4.15
 
 Build `client-3-4-15-five-weapons-zero-damage-20260927-1`. Le serveur conserve jusqu’à cinq attaques de base distinctes, même si leurs formules sont égales. Les capacités de dégâts nuls et leurs états sont validés et résolus par le moteur existant. Schéma MySQL **22** inchangé. La production vérifiée le 27 septembre autorisait exactement 3.4.13 ; ne pas déployer la politique exacte 3.4.15 sans accord explicite pour le refus de ce client. Le push du code ne constitue ni un déploiement ni une distribution Windows.
@@ -361,5 +365,3 @@ Avant déploiement : analyse syntaxique de toutes les entrées PHP publiques, te
 # Backend OVH — Régie du Seuil 0.18.0
 
 Client exact **3.4.0**, build `client-3-4-0-assistant-manual-save-sounds-candidate-20260924-1`. Le schéma **22** ajoute le statut de réponse générale à l'assistant. Les conversations d'aide liées au compte fonctionnent sans personnage ; les propositions de compétences restent liées à une fiche autorisée. Les capacités classiques conservent et valident leur son, qui est renvoyé après le lancement réussi confirmé. Politique d'accès exacte `[3.4.0]`. Voir les notes [3.4.0](../../02-APPLICATION/regiexar/RELEASE-NOTES-v3.4.0.md).
-
----

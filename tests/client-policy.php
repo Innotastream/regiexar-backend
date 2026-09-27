@@ -31,8 +31,8 @@ function checkPolicy(bool $condition, string $message): void
 
 $policy = clientPolicy(['client' => ['enforce' => false, 'minimumVersion' => '1.0.0', 'latestVersion' => '99.0.0']]);
 checkPolicy($policy['enforce'] === true && $policy['exactVersion'] === true, 'La connexion impose la version courante exacte.');
-checkPolicy($policy['allowedVersions'] === ['3.4.15'], 'Seule la version 3.4.15 est admise.');
-checkPolicy($policy['minimumVersion'] === '3.4.15' && $policy['latestVersion'] === '3.4.15', 'La politique annonce exclusivement 3.4.15.');
+checkPolicy($policy['allowedVersions'] === ['3.4.16'], 'Seule la version 3.4.16 est admise.');
+checkPolicy($policy['minimumVersion'] === '3.4.16' && $policy['latestVersion'] === '3.4.16', 'La politique annonce exclusivement 3.4.16.');
 checkPolicy($policy['storeId'] === '9N5N5M67N704', 'Le Store reste inchangé.');
 $manifest = json_decode(file_get_contents(__DIR__ . '/../manifest.json'), true, 512, JSON_THROW_ON_ERROR);
 checkPolicy($manifest['allowedApplicationVersions'] === $policy['allowedVersions'], 'Le manifeste et la politique concordent.');
@@ -48,7 +48,7 @@ foreach (['/api/v1/media/' . str_repeat('a', 24), '/api/v1/shared-media', '/api/
 foreach (['gm', 'player'] as $mode) {
     $_SERVER['REQUEST_URI'] = '/api/v1/auth/login';
     $_SERVER['REQUEST_METHOD'] = 'POST';
-    foreach (['3.4.15'] as $version) {
+    foreach (['3.4.16'] as $version) {
         $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
         requireSupportedClient($connection, []);
         checkPolicy(true, "$mode $version atteint la vérification des identifiants.");
@@ -58,8 +58,8 @@ foreach (['gm', 'player'] as $mode) {
         try { requireSupportedClient($connection, []); throw new RuntimeException("Version admise à tort : $version"); }
         catch (PolicyResponse $response) {
             checkPolicy($response->status === 426, "$mode $version doit être refusé.");
-            checkPolicy($response->body['allowedVersions'] === ['3.4.15']
-                && $response->body['latestVersion'] === '3.4.15'
+            checkPolicy($response->body['allowedVersions'] === ['3.4.16']
+                && $response->body['latestVersion'] === '3.4.16'
                 && $response->body['exactVersion'] === true
                 && $response->body['code'] === 'client_update_required', 'Le refus décrit la mise à jour requise sans bloquer la santé publique.');
         }

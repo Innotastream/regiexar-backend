@@ -1195,11 +1195,17 @@ function applyApplicationComplexAbilityCommand(
             $token = applicationComplexAbilityTokenById($tokens, $target['tokenId']);
             if (!is_array($token)) applicationComplexAbilityFail('La cible n’est plus disponible.', 'complex_ability_target_missing', 404);
             $threshold = applicationComplexAbilityTokenThreshold($token, $step);
-            $rolled = $roll('1d100');
+            $rollMode = normalizeOnlineRollMode($command['rollMode'] ?? 'normal');
+            $rolled = $roll('1d100', $rollMode, true);
             $total = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : null;
-            if ($total === null) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
+            if ($total === null || $total < 1 || $total > 100 || ($rollMode !== 'normal' && count($rolled['attempts'] ?? []) !== 2)) {
+                applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
+            }
             $result = ['formula' => '1d100', 'total' => $total, 'threshold' => $threshold, 'success' => $total <= $threshold,
-                'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total)];
+                'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total),
+                'rollMode' => $rollMode, 'selectedIndex' => $rolled['selectedIndex'] ?? 0,
+                'attempts' => $rolled['attempts'] ?? [['total' => $total, 'rawD100' => $total,
+                    'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total)]]];
             $target['rolls'][] = $result; $attackNumber = count($target['rolls']);
             if ($result['success'] && $step['stopOnSuccess']) {
                 $target['status'] = 'succeeded'; $target['parryFromAttack'] = $attackNumber;

@@ -102,6 +102,25 @@ $execution = applyApplicationComplexAbilityCommand($execution, [
 requireComplexAbility($execution['currentStepIndex'] === 1 && count($execution['stepStates']['defenses']['targets']) === 2,
     'Target validation initializes the following defense step for immediate participant access.');
 
+foreach (['advantage' => [0, 20, true], 'disadvantage' => [1, 80, false]] as $mode => [$selectedIndex, $total, $success]) {
+    $defended = applyApplicationComplexAbilityCommand($execution, [
+        'action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a', 'rollMode' => $mode,
+    ], [
+        'actor' => ['id' => 'player-a', 'name' => 'A', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1220,
+        'roll' => static function (string $formula, string $requestedMode, bool $d100RollUnder) use ($mode, $selectedIndex, $total): array {
+            requireComplexAbility($formula === '1d100' && $requestedMode === $mode && $d100RollUnder,
+                'The defender mode reaches the d100 roll service.');
+            return ['formula' => $formula, 'total' => $total, 'rawD100' => $total, 'selectedIndex' => $selectedIndex,
+                'attempts' => [['total' => 20, 'rawD100' => 20, 'breakdown' => '20'],
+                    ['total' => 80, 'rawD100' => 80, 'breakdown' => '80']]];
+        },
+    ]);
+    $defense = $defended['stepStates']['defenses']['targets'][0]['rolls'][0];
+    requireComplexAbility($defense['rollMode'] === $mode && $defense['selectedIndex'] === $selectedIndex
+        && count($defense['attempts']) === 2 && $defense['success'] === $success,
+        'Both dice and the selected success are stored for defense ' . $mode . '.');
+}
+
 try {
     applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a'], [
         'actor' => ['id' => 'stranger', 'name' => 'Intrus', 'role' => 'player'], 'tokens' => $tokens,

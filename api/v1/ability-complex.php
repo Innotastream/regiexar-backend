@@ -306,8 +306,8 @@ function onlineUseComplexAbility(
                 'combatActive' => ($initiative['active'] ?? false) === true
                     && (($current['combatId'] ?? '') === '' || ($current['combatId'] ?? '') === ($initiative['combatId'] ?? '')),
                 'turnKey' => $sceneId . ':' . (string) ($initiative['combatId'] ?? '') . ':' . (string) ($initiative['turnSerial'] ?? 0),
-                'roll' => static function (string $formula) use (&$generatedRolls): array {
-                    $rolled = onlineRollFormulaWithMode($formula, 'normal');
+                'roll' => static function (string $formula, string $mode = 'normal', bool $d100RollUnder = false) use (&$generatedRolls): array {
+                    $rolled = onlineRollFormulaWithMode($formula, $mode, null, 0, $d100RollUnder);
                     $generatedRolls[] = $rolled;
                     return $rolled;
                 },
