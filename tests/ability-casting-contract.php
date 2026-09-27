@@ -98,6 +98,12 @@ requireCasting(
 $ability = ['id' => 'ability-mixed', 'name' => 'Flamme tranchante', 'formula' => '10+20+7', 'damageType' => 'physical', 'description' => '', 'effect' => 'damage',
     'damageComponents' => [['type' => 'physical', 'formula' => '10'], ['type' => 'magical', 'formula' => '20'], ['type' => 'ignore', 'formula' => '7']],
     'manaCost' => 8, 'cooldownRounds' => 3, 'castingStatId' => 'intelligence', 'reducedFailureCooldown' => true, 'image' => '/media/ability-test.png'];
+$effectOnly = ['id' => 'ability-effect-only', 'name' => 'Saignement sans blessure', 'formula' => '0', 'effect' => 'damage',
+    'damageComponents' => [['type' => 'physical', 'formula' => '0']], 'onHitConditions' => ['Saignement']];
+requireCasting(validApplicationAbilities([$effectOnly])
+    && normalizeOnlineAbilities([$effectOnly])[0]['damageComponents'][0]['formula'] === '0'
+    && onlineRollAttackDamage($effectOnly, ['armor' => 100])['damage']['finalDamage'] === 0,
+    'Une capacité de dégâts nuls garde son état et ne retire aucun PV.');
 $source = ['id' => 'token-one', 'characterId' => 'character-one', 'followCharacter' => true, 'mana' => 20, 'maxMana' => 30,
     'stats' => [['id' => 'intelligence', 'label' => 'Intelligence', 'value' => 62], ['id' => 'agility', 'label' => 'Agilité', 'value' => 47]]];
 foreach ([['hp' => 0], ['hp' => -1], ['hp' => INF], [], ['hp' => 50, 'healthOverride' => 'dead'], ['hp' => 50, 'conditions' => ['Mort']]] as $defeated) {

@@ -276,6 +276,23 @@ $migratedStandaloneToken = migrateOnlineCombatTokenPayload([
     'weaponAttacks' => [['id' => 'rune', 'formula' => '1d10', 'damageType' => 'magical']],
 ]);
 requireDomainCompatibility(
+    extractOnlineDamageFormulas("Fouet d30+6,\n2 Dague d20+4,\nArbalète d30+6") === ['d30+6', 'd20+4', 'd30+6']
+        && count(extractOnlineDamageFormulas('1d4 1d6 1d8 1d10 1d12 1d20')) === 5,
+    'La détection préserve les armes distinctes à formule répétée, jusqu’à cinq.'
+);
+$fiveWeapons = normalizeOnlineWeaponAttacks([
+    ['id' => 'fouet', 'formula' => 'd30+6', 'damageType' => 'physical', 'onHitConditions' => ['Saignement']],
+    ['id' => 'dagues', 'formula' => 'd20+4', 'damageType' => 'magical'],
+    ['id' => 'arbalete', 'formula' => 'd30+6', 'damageType' => 'ignore', 'onHitConditions' => ['Empoisonné']],
+], ['d30+6', 'd20+4', 'd30+6', '1d8', '1d10', '1d12']);
+requireDomainCompatibility(count($fiveWeapons) === 5
+    && array_column($fiveWeapons, 'id') === ['fouet', 'dagues', 'arbalete', 'weapon-4', 'weapon-5']
+    && $fiveWeapons[0]['onHitConditions'] === ['Saignement']
+    && $fiveWeapons[2]['onHitConditions'] === ['Empoisonné']
+    && array_column(normalizeOnlineWeaponAttacks($fiveWeapons, ['d20+4', 'd30+6', 'd30+6']), 'id') === ['dagues', 'fouet', 'arbalete'],
+    'Chaque arme répétée conserve son identifiant, type et effet lors d’un réordonnancement.'
+);
+requireDomainCompatibility(
     ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 8
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
         && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'

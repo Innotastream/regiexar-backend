@@ -1,3 +1,7 @@
+# Candidat backend 0.18.17 — cinq armes, client exact 3.4.15
+
+Build `client-3-4-15-five-weapons-zero-damage-20260927-1`. Le serveur conserve jusqu’à cinq attaques de base distinctes, même si leurs formules sont égales. Les capacités de dégâts nuls et leurs états sont validés et résolus par le moteur existant. Schéma MySQL **22** inchangé. La production vérifiée le 27 septembre autorisait exactement 3.4.13 ; ne pas déployer la politique exacte 3.4.15 sans accord explicite pour le refus de ce client. Le push du code ne constitue ni un déploiement ni une distribution Windows.
+
 # Candidat backend 0.18.16 — cadrage Stream, client exact 3.4.14
 
 Build `client-3-4-14-stream-fit-20260927-1`. La source Stream du client 3.4.14 cadre la carte entière sans reprendre le zoom historique de la scène. Le moteur accepte une vigilance unique par cible, un plan de frappes vérifié, puis attend la résolution des parades avant un seul compte rendu de dés concis. Aucun changement de schéma ou de données : MySQL reste à **22**. La production vérifiée le 26 septembre autorisait exactement 3.4.13 ; ne pas déployer la politique exacte 3.4.14 sans accord explicite pour refuser ce client. Le push du code ne constitue ni un déploiement ni une distribution Windows.

@@ -2322,26 +2322,39 @@ function extractOnlineDamageFormulas(mixed $value): array
     $formulas = [];
     foreach ($matches[1] ?? [] as $candidate) {
         $formula = strtolower(str_replace(' ', '', (string) $candidate));
-        if (validOnlineRollFormula($formula) && !in_array($formula, $formulas, true)) {
+        if (validOnlineRollFormula($formula)) {
             $formulas[] = $formula;
         }
+        if (count($formulas) === 5) break;
     }
-    return array_slice($formulas, 0, 30);
+    return $formulas;
 }
 
 function normalizeOnlineWeaponAttacks(mixed $value, array $formulas): array
 {
     $entries = is_array($value) ? array_values($value) : [];
-    $byFormula = [];
-    foreach ($entries as $entry) {
-        if (!is_array($entry)) continue;
-        $formula = strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? '')));
-        if ($formula !== '' && !isset($byFormula[$formula])) $byFormula[$formula] = $entry;
+    $requested = array_slice(array_values(array_filter(array_map(
+        static fn (mixed $formula): string => strtolower(str_replace(' ', '', (string) $formula)), $formulas
+    ))), 0, 5);
+    $previousFormula = static fn (mixed $entry): string => is_array($entry)
+        ? strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? ''))) : '';
+    $assigned = array_fill(0, count($requested), -1); $used = [];
+    foreach ($requested as $index => $formula) {
+        if ($previousFormula($entries[$index] ?? null) === $formula) { $assigned[$index] = $index; $used[$index] = true; }
+    }
+    foreach ($requested as $index => $formula) {
+        if ($assigned[$index] >= 0) continue;
+        foreach ($entries as $priorIndex => $entry) {
+            if (isset($used[$priorIndex]) || $previousFormula($entry) !== $formula) continue;
+            $assigned[$index] = $priorIndex; $used[$priorIndex] = true; break;
+        }
     }
     $normalized = [];
     $seen = [];
-    foreach (array_slice(array_values(array_unique($formulas)), 0, 30) as $index => $formula) {
-        $source = is_array($byFormula[$formula] ?? null) ? $byFormula[$formula] : (is_array($entries[$index] ?? null) ? $entries[$index] : []);
+    foreach ($requested as $index => $formula) {
+        $priorIndex = $assigned[$index] >= 0 ? $assigned[$index] : (!isset($used[$index]) ? $index : -1);
+        if ($priorIndex >= 0) $used[$priorIndex] = true;
+        $source = is_array($entries[$priorIndex] ?? null) ? $entries[$priorIndex] : [];
         $fallback = 'weapon-' . ($index + 1);
         $baseId = preg_replace('/[^A-Za-z0-9_-]+/', '-', substr((string) ($source['id'] ?? $fallback), 0, 120)) ?: $fallback;
         $id = $baseId;
