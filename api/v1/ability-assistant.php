@@ -362,7 +362,7 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
         unset($value['image']);
     }
     $effect = (string) ($value['effect'] ?? '');
-    if (!in_array($effect, ['damage', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex'], true)) {
+    if (!in_array($effect, ['damage', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition'], true)) {
         throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
     }
     $stats = ['', 'character-stat-force', 'character-stat-dexterity', 'character-stat-agility',

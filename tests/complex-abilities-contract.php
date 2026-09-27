@@ -606,4 +606,60 @@ $receipts[1]['attack']['status'] = 'awaiting-opposition';
 requireComplexAbility(onlineCompactComplexResult($reportExecution, $receipts) === null,
     'The single report waits for all eligible oppositions.');
 
+$guardWorkflow = ['version' => 4, 'steps' => [
+    ['id' => 'self', 'type' => 'guard', 'scope' => 'source', 'percent' => 50],
+    ['id' => 'nearby', 'type' => 'targets', 'minTargets' => 0, 'maxTargets' => 3, 'rangeCells' => 2],
+    ['id' => 'others', 'type' => 'guard', 'scope' => 'targets', 'sourceStepId' => 'nearby', 'percent' => 25],
+]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($guardWorkflow) === '',
+    'Separate guard and target steps are valid without a named character.');
+$guard = createApplicationComplexAbilityExecution(['id' => 'generic-guard', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player',
+    'ability' => ['id' => 'generic-protection', 'name' => 'Protection modulable', 'effect' => 'complex',
+        'formula' => '0', 'workflow' => $guardWorkflow], 'now' => 12000]);
+$nearbyTokens = [[...$tokens[0], 'x' => 10, 'y' => 10], [...$tokens[1], 'x' => 20, 'y' => 10],
+    [...$tokens[2], 'x' => 40, 'y' => 10]];
+try {
+    applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
+        ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => false]);
+    throw new RuntimeException('Guard should require active combat.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_guard_outside_combat', 'A guard requires combat.');
+}
+$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
+    ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => true, 'now' => 12001]);
+requireComplexAbility($guard['stepStates']['self']['protectedTokenIds'] === ['caster'],
+    'The first module protects only the source.');
+try {
+    applyApplicationComplexAbilityCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
+        'allocations' => [['tokenId' => 'target-b', 'count' => 1]]],
+        ['actor' => $owner, 'tokens' => $nearbyTokens, 'map' => $map, 'now' => 12002]);
+    throw new RuntimeException('Out-of-range protection should fail.');
+} catch (ApplicationComplexAbilityException $error) {
+    requireComplexAbility($error->errorCode === 'complex_ability_target_out_of_range', 'The target range is enforced.');
+}
+$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
+    'allocations' => [['tokenId' => 'target-a', 'count' => 1]]],
+    ['actor' => $owner, 'tokens' => $nearbyTokens, 'map' => $map, 'now' => 12003]);
+$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 3],
+    ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => true, 'now' => 12004]);
+requireComplexAbility($guard['status'] === 'completed' && $guard['stepStates']['others']['protectedTokenIds'] === ['target-a']
+    && $guard['workflow']['steps'][0]['percent'] === 50 && $guard['workflow']['steps'][2]['percent'] === 25,
+    'Independent target protections retain their own strengths.');
+
+$reaction = ['id' => 'configurable-reaction', 'name' => 'Riposte', 'effect' => 'opposition', 'formula' => '0',
+    'cooldownRounds' => 3, 'opposition' => ['statId' => 'character-stat-force', 'options' => [
+        ['id' => 'free', 'label' => 'Sans mana', 'manaCost' => 0, 'reflectPercent' => 25],
+        ['id' => 'paid', 'label' => 'Avec mana', 'manaCost' => 10, 'reflectPercent' => 50],
+    ]]];
+requireComplexAbility(validApplicationAbilityEffects($reaction)
+    && applicationAbilityEffectFields($reaction)['opposition']['options'][1]['reflectPercent'] === 50,
+    'A configurable defensive ability retains its choices and cooldown.');
+$periodic = ['id' => 'configurable-dot', 'name' => 'Effet récurrent', 'effect' => 'damage',
+    'formula' => '0', 'damageComponents' => [['type' => 'physical', 'formula' => '0']],
+    'damageOverTime' => ['label' => 'Poison', 'formula' => '2d6', 'damageType' => 'ignore', 'turns' => 3]];
+requireComplexAbility(validApplicationAbilityEffects($periodic)
+    && applicationAbilityEffectFields($periodic)['damageOverTime']['turns'] === 3,
+    'Periodic damage is part of the damage effect and may have zero initial damage.');
+
 echo "complex-abilities-contract: ok\n";

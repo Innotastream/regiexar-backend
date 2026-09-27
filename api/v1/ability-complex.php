@@ -183,9 +183,11 @@ function onlineUseComplexAbility(
         $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
         $persistent = count(array_filter($ability['workflow']['steps'] ?? [], static fn(mixed $step): bool => is_array($step)
             && ($step['type'] ?? '') === 'counter' && ($step['combatPersistent'] ?? false) === true)) > 0;
+        $requiresCombat = $persistent || count(array_filter($ability['workflow']['steps'] ?? [],
+            static fn(mixed $step): bool => is_array($step) && ($step['type'] ?? '') === 'guard')) > 0;
         $combatId = trim((string) ($initiative['combatId'] ?? ''));
-        if ($persistent && (($initiative['active'] ?? false) !== true || $combatId === '')) {
-            rejectOnlineCommand($connection, 409, 'Ce sort persistant exige un combat actif.', 'complex_ability_combat_required');
+        if ($requiresCombat && (($initiative['active'] ?? false) !== true || $combatId === '')) {
+            rejectOnlineCommand($connection, 409, 'Cette compétence exige un combat actif.', 'complex_ability_combat_required');
         }
         if ($persistent) foreach ($activity['abilityExecutions'] as $execution) {
             if (($execution['sceneId'] ?? '') === $sceneId && ($execution['sourceTokenId'] ?? '') === ($source['id'] ?? '')
@@ -317,6 +319,33 @@ function onlineUseComplexAbility(
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
     }
     $effectResult = null;
+    if ($workflowAction === 'apply-guard' && ($currentStep['type'] ?? '') === 'guard') {
+        if (($initiative['active'] ?? false) !== true || ($initiative['combatId'] ?? '') === '') {
+            rejectOnlineCommand($connection, 409, 'La protection de prochaine attaque exige un combat actif.', 'complex_ability_guard_outside_combat');
+        }
+        $targetIds = $next['stepStates'][$currentStep['id']]['protectedTokenIds'] ?? [];
+        $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''));
+        $targetStep = null;
+        foreach ($next['workflow']['steps'] as $candidate) if (($candidate['id'] ?? '') === ($currentStep['sourceStepId'] ?? '') && ($candidate['type'] ?? '') === 'targets') $targetStep = $candidate;
+        $guards = array_values(array_filter(is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
+            static fn(mixed $guard): bool => is_array($guard) && (($guard['sceneId'] ?? '') !== $sceneId
+                || ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? ''))));
+        if (count($guards) + count($targetIds) > 60) rejectOnlineCommand($connection, 409, 'Trop de protections attendent une attaque.', 'complex_ability_guard_capacity');
+        foreach ($targetIds as $tokenId) {
+            $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $tokenId));
+            if ($target === [] || !onlineTokenOnActiveLayer($target, $map)
+                || (($currentStep['scope'] ?? '') === 'targets' && (!is_array($targetStep)
+                    || !applicationComplexAbilityTargetInRange($source, $target, $map, (int) $targetStep['rangeCells'])))) {
+                rejectOnlineCommand($connection, 409, 'Une cible protégée a quitté sa portée ou son niveau.', 'complex_ability_guard_target_changed');
+            }
+            $guards[] = ['id' => 'guard-' . randomToken(12), 'sceneId' => $sceneId,
+                'targetTokenId' => (string) $target['id'], 'combatId' => (string) $initiative['combatId'],
+                'percent' => $currentStep['percent'], 'sourceExecutionId' => $next['id'], 'lifecycle' => 'next-attack'];
+        }
+        $activity['nextAttackGuards'] = $guards;
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        $effectResult = ['kind' => 'guard', 'targetCount' => count($targetIds), 'percent' => $currentStep['percent']];
+    }
     if ($workflowAction === 'counter-spend' && ($currentStep['type'] ?? '') === 'counter') {
         $use = $next['stepStates'][$currentStep['id']]['lastUse'] ?? [];
         $effect = is_array($use['effect'] ?? null) ? $use['effect'] : [];
@@ -366,7 +395,8 @@ function onlineUseComplexAbility(
     if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') !== 'active') {
         $activity['nextAttackGuards'] = array_values(array_filter(
             is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
-            static fn(mixed $guard): bool => is_array($guard) && ($guard['sourceExecutionId'] ?? '') !== $next['id']
+            static fn(mixed $guard): bool => is_array($guard) && (($guard['sourceExecutionId'] ?? '') !== $next['id']
+                || ($guard['lifecycle'] ?? '') === 'next-attack')
         ));
     }
     $activity['abilityExecutions'][$executionIndex] = $next;

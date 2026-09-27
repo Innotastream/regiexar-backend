@@ -1,3 +1,7 @@
+# Candidat backend 0.18.19 — client exact 3.4.17
+
+Build `client-3-4-17-composable-abilities-20260927-1`. Les parades par compétence, les dégâts périodiques au tour de la cible et les protections indépendantes de prochaine attaque sont résolus côté serveur. La politique candidate exacte 3.4.17 aligne cette source sur l’application. Schéma MySQL **22** inchangé. Aucun déploiement du nouveau verrou sur OVH n’est acquis : il refuserait les clients précédemment autorisés et demande une décision propre avant basculement.
+
 # Candidat backend 0.18.18 — état Influencé et défenses, client exact 3.4.16
 
 Build `client-3-4-16-ability-defense-influence-20260927-1`. « Influencé » est normalisé comme état distinct de « Charmé ». Les anciennes étapes de défense des compétences complexes transmettent Avantage/Désavantage au service de dés, conservent les deux tentatives et le résultat retenu ; les oppositions des attaques de base étaient déjà couvertes. Schéma MySQL **22** inchangé. La production vérifiée le 27 septembre autorisait encore exactement 3.4.13 : ne pas déployer la politique candidate 3.4.16 sans accord explicite pour ce changement de verrou. Le push source ne constitue ni déploiement ni distribution Windows.

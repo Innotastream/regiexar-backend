@@ -2002,6 +2002,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
+            || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [], 100)
             || !validApplicationDomainObjectList($payload['nextAttackGuards'] ?? [], 60)
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
             || !validApplicationDomainObjectList($payload['restEvents'] ?? [], 10)
@@ -2399,6 +2400,7 @@ function legacyStateToDomains(array $state): array
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
+            'damageOverTime' => is_array($state['damageOverTime'] ?? null) ? $state['damageOverTime'] : [],
             'nextAttackGuards' => is_array($state['nextAttackGuards'] ?? null) ? $state['nextAttackGuards'] : [],
             'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
             'restEvents' => is_array($state['restEvents'] ?? null) ? $state['restEvents'] : [],
@@ -2586,6 +2588,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
+        'damageOverTime' => is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [],
         'nextAttackGuards' => is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
         'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
@@ -2883,6 +2886,79 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     ], $headOnly);
 }
 
+function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, array &$pending, array $identity): void
+{
+    $turns = [];
+    $endedScenes = [];
+    foreach ($pending as $key => $change) {
+        if (!str_starts_with((string) $key, 'initiative:') || ($change['operation'] ?? '') !== 'upsert') continue;
+        $sceneId = substr((string) $key, strlen('initiative:'));
+        $next = $change['payload'] ?? [];
+        $previous = $change['current']['payload'] ?? [];
+        if (($previous['active'] ?? false) === true && ($next['active'] ?? false) !== true) {
+            $endedScenes[$sceneId] = true;
+            continue;
+        }
+        if (($next['active'] ?? false) !== true || (int) ($next['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) continue;
+        $tokenId = $next['order'][$next['currentIndex'] ?? 0] ?? '';
+        if (validApplicationDomainIdentifier($tokenId, 80)) $turns[] = [$sceneId, (string) $tokenId, $next];
+    }
+    if ($turns === [] && $endedScenes === []) return;
+    $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $dots = is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [];
+    if ($endedScenes !== []) {
+        $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
+        $liveGuards = array_values(array_filter($guards, static fn(mixed $guard): bool =>
+            is_array($guard) && !isset($endedScenes[(string) ($guard['sceneId'] ?? '')])));
+        if ($liveGuards !== $guards) $activity['nextAttackGuards'] = $liveGuards;
+    }
+    $remaining = [];
+    foreach ($dots as $dot) {
+        if (!is_array($dot) || isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) continue;
+        $keep = true;
+        foreach ($turns as [$sceneId, $tokenId, $initiative]) {
+            if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId
+                || (($dot['combatId'] ?? '') !== '' && $dot['combatId'] !== ($initiative['combatId'] ?? ''))
+                || (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial']) continue;
+            $key = onlineTokenDomainKey($sceneId, $tokenId);
+            $records = array_replace($records, applicationDomainRecords($connection, [$key]));
+            $target = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+            if ($target === [] || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '')) {
+                $keep = false;
+                break;
+            }
+            if (!validApplicationAbilityFormula($dot['formula'] ?? null)) { $keep = false; break; }
+            $rolled = onlineRollFormulaWithMode($dot['formula'], 'normal');
+            $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, (string) ($dot['damageType'] ?? 'physical')));
+            $applied = 0;
+            if ($summary['finalDamage'] > 0) {
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false);
+                $applied = (int) ($health['appliedDamage'] ?? 0);
+                $updatedTarget = $pending[$key]['payload'] ?? $target;
+                if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
+            }
+            $roll = onlineRollEntry($identity, $rolled, 'DOT · ' . (string) ($dot['label'] ?? 'Effet'), (string) ($target['name'] ?? 'Cible'));
+            if (($target['hidden'] ?? false) === true) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
+            $roll['mapEvent'] = ['kind' => 'damage', 'applied' => true, 'value' => $applied,
+                'label' => (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId,
+                'sourceTokenId' => $tokenId, 'anchorTokenId' => $tokenId,
+                'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
+            $activity = $pending['activity']['payload'] ?? $activity;
+            $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+            $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);
+            $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
+            if ($dot['remainingTurns'] === 0) $keep = false;
+            break;
+        }
+        if ($keep) $remaining[] = $dot;
+    }
+    if ($remaining !== $dots) $activity['damageOverTime'] = $remaining;
+    if ($remaining !== $dots || isset($roll) || isset($liveGuards) && $liveGuards !== $guards)
+        queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+}
+
 function patchApplicationDomains(PDO $connection): never
 {
     $identity = requireGmIdentity($connection);
@@ -2982,6 +3058,7 @@ function patchApplicationDomains(PDO $connection): never
             }
         }
         reconcileApplicationMountedTokenDomains($connection, $records, $pendingByKey, array_keys($mountedScenes));
+        applyApplicationDamageOverTimeOnTurn($connection, $records, $pendingByKey, $identity);
         $pending = array_values($pendingByKey);
         if ($pending === []) {
             $connection->commit();

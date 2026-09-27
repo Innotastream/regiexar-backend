@@ -177,9 +177,9 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
     $source = is_array($value) ? $value : [];
     $rawSteps = is_array($source['steps'] ?? null) && array_is_list($source['steps'])
         ? array_slice($source['steps'], 0, XAR_COMPLEX_ABILITY_MAXIMUM_STEPS) : [];
-    $types = ['instruction', 'targets', 'rolls', 'attack-chain', 'allocated-attacks', 'defense-series', 'choice', 'counter', 'condition'];
+    $types = ['instruction', 'targets', 'rolls', 'attack-chain', 'allocated-attacks', 'defense-series', 'guard', 'choice', 'counter', 'condition'];
     $titles = ['instruction' => 'Consigne', 'targets' => 'Choisir les cibles', 'rolls' => 'Effectuer les jets', 'attack-chain' => 'Attaques conditionnelles', 'allocated-attacks' => 'Attaques réparties',
-        'defense-series' => 'Défenses successives', 'choice' => 'Faire un choix', 'counter' => 'Suivre les charges',
+        'defense-series' => 'Défenses successives', 'guard' => 'Protéger de la prochaine attaque', 'choice' => 'Faire un choix', 'counter' => 'Suivre les charges',
         'condition' => 'Vérifier une condition'];
     $seen = []; $targetSteps = []; $steps = [];
     foreach ($rawSteps as $index => $raw) {
@@ -192,7 +192,7 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
             'description' => applicationComplexAbilityText($raw['description'] ?? '', 1000),
         ];
         if ($type === 'targets') {
-            $minimum = applicationComplexAbilityInteger($raw['minTargets'] ?? null, 1, 20, 1);
+            $minimum = applicationComplexAbilityInteger($raw['minTargets'] ?? null, 0, 20, 1);
             $step['minTargets'] = $minimum;
             $step['maxTargets'] = applicationComplexAbilityInteger($raw['maxTargets'] ?? null, $minimum, 20, $minimum);
             $step['allocationTotal'] = applicationComplexAbilityInteger($raw['allocationTotal'] ?? null, 0, 100, 0);
@@ -228,6 +228,12 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value): array
             $step['stopOnSuccess'] = ($raw['stopOnSuccess'] ?? true) !== false;
         } elseif ($type === 'choice') {
             $step['options'] = normalizeApplicationComplexAbilityChoices($raw['options'] ?? null);
+        } elseif ($type === 'guard') {
+            $step['scope'] = ($raw['scope'] ?? '') === 'targets' ? 'targets' : 'source';
+            $requested = applicationComplexAbilityIdentifier($raw['sourceStepId'] ?? '');
+            $step['sourceStepId'] = $step['scope'] === 'targets'
+                ? (in_array($requested, $targetSteps, true) ? $requested : ($targetSteps[count($targetSteps) - 1] ?? '')) : '';
+            $step['percent'] = applicationComplexAbilityInteger($raw['percent'] ?? null, 1, 100, 25);
         } elseif ($type === 'counter') {
             $step['counterId'] = applicationComplexAbilityIdentifier($raw['counterId'] ?? '', 'counter-' . ($index + 1));
             $step['counterLabel'] = applicationComplexAbilityText($raw['counterLabel'] ?? '', 120, 'Charges');
@@ -305,6 +311,9 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         if ($step['type'] === 'defense-series' && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
             return 'L’étape ' . ($index + 1) . ' doit suivre une étape de ciblage.';
         }
+        if ($step['type'] === 'guard' && $step['scope'] === 'targets' && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
+            return 'La protection de l’étape ' . ($index + 1) . ' doit utiliser une sélection de cibles précédente.';
+        }
         if ($step['type'] === 'choice' && count($step['options']) < 2) return 'Ajoutez au moins deux choix à l’étape ' . ($index + 1) . '.';
         if ($step['type'] === 'counter') {
             if ($step['spendOptions'] === []) return 'Ajoutez au moins une utilisation de charge à l’étape ' . ($index + 1) . '.';
@@ -379,6 +388,7 @@ function applicationComplexAbilityInitialStepState(array $step): array
     elseif ($step['type'] === 'defense-series') $state['targets'] = [];
     elseif ($step['type'] === 'choice') $state['choice'] = null;
     elseif ($step['type'] === 'counter') $state += ['value' => $step['initial'], 'deployments' => [], 'events' => [], 'lastSpendTurnKey' => ''];
+    elseif ($step['type'] === 'guard') $state['protectedTokenIds'] = [];
     elseif ($step['type'] === 'condition') $state += ['outcome' => null, 'matchedCount' => 0, 'subjectCount' => 0, 'branch' => ''];
     return $state;
 }
@@ -970,6 +980,18 @@ function applyApplicationComplexAbilityCommand(
                 'detail' => $result['matchedCount'] . '/' . $result['subjectCount'] . ' sujet(s) correspondent.',
             ], $now);
             applicationComplexAbilityFinishCondition($execution, $step, $state, $branch, $now);
+        } elseif ($step['type'] === 'guard' && $action === 'apply-guard') {
+            if (($context['combatActive'] ?? false) !== true) applicationComplexAbilityFail('Cette protection exige un combat actif.', 'complex_ability_guard_outside_combat');
+            $selected = $step['scope'] === 'source' ? [$execution['sourceTokenId']]
+                : array_column($execution['stepStates'][$step['sourceStepId']]['allocations'] ?? [], 'tokenId');
+            foreach ($selected as $tokenId) if (!is_array(applicationComplexAbilityTokenById($tokens, (string) $tokenId))) {
+                applicationComplexAbilityFail('Une cible de la protection n’est plus disponible.', 'complex_ability_target_missing', 404);
+            }
+            $state['protectedTokenIds'] = array_values(array_unique($selected));
+            applicationComplexAbilityAppendEvent($execution, ['type' => 'guard', 'actorId' => $actorId, 'actorName' => $actorName,
+                'stepId' => $step['id'], 'label' => $step['title'] . ' · ' . count($selected) . ' protégé(s)',
+                'detail' => $step['percent'] . ' % sur la prochaine attaque de chacun'], $now);
+            applicationComplexAbilityFinishStep($execution, $state, $now);
         } elseif ($step['type'] === 'instruction' && $action === 'acknowledge') {
             applicationComplexAbilityAppendEvent($execution, ['type' => 'step', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' validée'], $now);

@@ -15,11 +15,39 @@ function applicationDamageComponents(mixed $value): array {
 function applicationCombinedDamageFormula(array $parts): string {
     return str_replace(['+-', '++'], ['-', '+'], implode('+', array_column($parts, 'formula'))) ?: '0';
 }
+function validApplicationOppositionAbility(mixed $value): bool {
+    if (!is_array($value) || !validApplicationDomainIdentifier($value['statId'] ?? null, 120)
+        || !is_array($value['options'] ?? null) || !array_is_list($value['options'])
+        || count($value['options']) < 1 || count($value['options']) > 8) return false;
+    $seen = [];
+    foreach ($value['options'] as $option) {
+        if (!is_array($option) || !validApplicationDomainIdentifier($option['id'] ?? null, 80)
+            || isset($seen[$option['id']]) || !validApplicationDomainText($option['label'] ?? null, 120, false)
+            || !is_int($option['manaCost'] ?? null) || $option['manaCost'] < 0 || $option['manaCost'] > 1000000000
+            || !is_int($option['reflectPercent'] ?? null) || $option['reflectPercent'] < 0 || $option['reflectPercent'] > 100) return false;
+        $seen[$option['id']] = true;
+    }
+    return true;
+}
+function applicationOppositionAbility(array $value): array {
+    return ['statId' => (string) $value['statId'], 'options' => array_map(
+        static fn (array $option): array => ['id' => $option['id'], 'label' => $option['label'],
+            'manaCost' => $option['manaCost'], 'reflectPercent' => $option['reflectPercent']], $value['options'])];
+}
+function validApplicationDamageOverTime(mixed $value): bool {
+    return is_array($value) && validApplicationDomainText($value['label'] ?? null, 120, false)
+        && validApplicationAbilityFormula($value['formula'] ?? null)
+        && in_array($value['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
+        && is_int($value['turns'] ?? null) && $value['turns'] >= 1 && $value['turns'] <= 20;
+}
 function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition'], true)) return false;
+    if (array_key_exists('opposition', $entry) && (!in_array($effect, ['complex', 'opposition'], true) || !validApplicationOppositionAbility($entry['opposition']))) return false;
+    if ($effect === 'opposition' && !validApplicationOppositionAbility($entry['opposition'] ?? null)) return false;
+    if (array_key_exists('damageOverTime', $entry) && ($effect !== 'damage' || !validApplicationDamageOverTime($entry['damageOverTime']))) return false;
     if (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue'])) return false;
     if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null);
     if ($effect === 'movement') return true;
@@ -36,19 +64,23 @@ function applicationAbilityEffectFields(array $entry): array {
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
+    $opposition = validApplicationOppositionAbility($entry['opposition'] ?? null) ? ['opposition' => applicationOppositionAbility($entry['opposition'])] : [];
     if ($effect === 'complex') return [
         ...$casting,
         ...$conditions,
+        ...$opposition,
         'effect' => 'complex',
         'workflow' => normalizeApplicationComplexAbilityWorkflow($entry['workflow'] ?? null),
         ...$cue,
     ];
+    if ($effect === 'opposition') return [...$casting, ...$cue, ...$conditions, ...$opposition, 'effect' => 'opposition'];
     if ($effect === 'movement') return [...$casting, ...$cue, ...$conditions, 'effect' => 'movement'];
     if ($effect === 'summoning') return [...$casting, ...$cue, ...$conditions, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, ...$cue, ...$conditions, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
     if ($effect === 'metamorphosis') return [...$casting, ...$cue, ...$conditions, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
-    return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : [])];
+    return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : []),
+        ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : [])];
 }
 function applicationCustomAttack(mixed $value): array {
     if (!is_array($value)) throw new InvalidArgumentException('Attaque personnalisée invalide.');
@@ -131,7 +163,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
             && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'damageComponents', 'damageOverTime', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }
@@ -145,6 +177,8 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         && is_array($previous['transformation'] ?? null) && ($payload['characterId'] ?? '') === ($previous['characterId'] ?? '')
         && ($payload['followCharacter'] ?? true) !== false && empty($payload['linkedTokenId'])) $payload['transformation'] = $previous['transformation'];
     if ($key === 'activity') {
+        // Periodic damage is server owned; an old or modified MJ snapshot cannot reset its counters.
+        $payload['damageOverTime'] = is_array($previous['damageOverTime'] ?? null) ? $previous['damageOverTime'] : [];
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
@@ -178,7 +212,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
             if (is_array($attack['opposition'] ?? null) && isset($old['opposition']['accountId'])) {
                 $attack['opposition']['accountId'] = $old['opposition']['accountId'];
             }
-            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
