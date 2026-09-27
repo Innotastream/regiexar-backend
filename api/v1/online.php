@@ -4666,6 +4666,78 @@ function onlineAttackDiscordContent(array $attack): string
     return substr($content, 0, 1900);
 }
 
+function onlineCompactComplexResult(array $execution, array $receipts): ?string
+{
+    if (($execution['status'] ?? '') !== 'completed') return null;
+    $byRequest = [];
+    foreach ($receipts as $receipt) if (is_array($receipt['attack'] ?? null)
+        && ($receipt['attack']['complexExecutionId'] ?? '') === ($execution['id'] ?? '')) {
+        $byRequest[(string) ($receipt['requestId'] ?? '')] = $receipt['attack'];
+    }
+    $lines = ['**' . safeOnlineDiscordLabel($execution['sourceName'] ?? 'Personnage') . ' · '
+        . safeOnlineDiscordLabel($execution['abilityName'] ?? 'Compétence') . '**'];
+    $damages = [];
+    $number = 0;
+    foreach ($execution['workflow']['steps'] ?? [] as $step) {
+        $state = $execution['stepStates'][$step['id'] ?? ''] ?? [];
+        if (($step['type'] ?? '') === 'attack-chain') {
+            foreach ($state['rolls'] ?? [] as $index => $gate) {
+                $lines[] = 'Jet préalable ' . ($index + 1) . ' : ' . (int) ($gate['total'] ?? 0)
+                    . ' ' . (($gate['success'] ?? false) ? 'réussi' : 'raté');
+            }
+            $strikes = $state['attacks'] ?? [];
+        } elseif (($step['type'] ?? '') === 'allocated-attacks') {
+            $strikes = [];
+            $byTarget = [];
+            foreach ($state['targets'] ?? [] as $target) {
+                $byTarget[$target['tokenId']] = $target;
+            }
+            $plan = $execution['stepStates'][$step['sourceStepId'] ?? '']['attackPlan'] ?? [];
+            if (is_array($plan) && $plan !== []) {
+                $indexes = [];
+                foreach ($plan as $planned) {
+                    $tokenId = (string) ($planned['tokenId'] ?? '');
+                    $index = $indexes[$tokenId] ?? 0;
+                    $strike = $byTarget[$tokenId]['attacks'][$index] ?? null;
+                    if (!is_array($strike)) return null;
+                    $strikes[] = $strike;
+                    $indexes[$tokenId] = $index + 1;
+                }
+            } else foreach ($state['targets'] ?? [] as $target) foreach ($target['attacks'] ?? [] as $strike) $strikes[] = $strike;
+        } else continue;
+        $seenAwareness = [];
+        foreach ($strikes as $strike) {
+            $attack = $byRequest[(string) ($strike['requestId'] ?? '')] ?? null;
+            if (!is_array($attack) || in_array($attack['status'] ?? '', ['pending', 'awaiting-opposition'], true)) return null;
+            if (($attack['visibility'] ?? 'public') === 'gm') return '';
+            $number++;
+            $targetId = (string) ($attack['targetTokenId'] ?? '');
+            $parts = [];
+            if (($step['type'] ?? '') === 'allocated-attacks' && !isset($seenAwareness[$targetId])) {
+                $seenAwareness[$targetId] = true;
+                foreach ($byTarget[$targetId]['awarenessRolls'] ?? [] as $awareness) {
+                    $parts[] = 'VIG ' . (int) ($awareness['total'] ?? 0) . ' ' . (($awareness['success'] ?? false) ? 'réussie' : 'ratée');
+                }
+            }
+            $hit = $attack['hit'] ?? [];
+            $parts[] = 'ATK ' . (int) ($hit['raw'] ?? $hit['total'] ?? 0) . ' '
+                . (($hit['outcome']['success'] ?? false) ? 'réussie' : 'ratée');
+            if (is_array($attack['opposition']['outcome'] ?? null)) {
+                $opposition = $attack['opposition'];
+                $parts[] = 'OPP ' . (int) ($opposition['raw'] ?? $opposition['total'] ?? 0) . ' '
+                    . (($opposition['outcome']['success'] ?? false) ? 'réussie' : 'ratée');
+            }
+            $targetName = safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible');
+            $lines[] = $number . '. ' . $targetName . ' : ' . implode(' · ', $parts);
+            $damage = max(0, (int) ($attack['appliedDamage'] ?? 0));
+            if ($damage > 0) $damages[] = $targetName . ' −' . $damage . ' PV';
+        }
+    }
+    if ($number === 0 && count($lines) === 1) return null;
+    $lines[] = 'Dégâts : ' . ($damages === [] ? '0 PV' : implode(' · ', $damages));
+    return substr(implode("\n", $lines), 0, 1900);
+}
+
 function synchronizeOnlineCharacterToken(array $token, array $character): array
 {
     $updatedAt = (int) ($character['_updatedAt'] ?? floor(microtime(true) * 1000));
@@ -7396,6 +7468,41 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (is_array($loggedAction)) onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, $loggedAction);
         }
 
+        $compactComplex = false;
+        $complexExecutionId = trim((string) ($arguments['complexExecutionId'] ?? $arguments['executionId'] ?? $result['execution']['id'] ?? ''));
+        if ($complexExecutionId === '' && in_array($command, ['token.attack.oppose', 'token.attack.resolve'], true)) {
+            $resolvedAttackId = (string) ($arguments['attackId'] ?? $result['attack']['id'] ?? '');
+            $activityForLookup = is_array($pending['activity']['payload'] ?? null)
+                ? $pending['activity']['payload'] : applicationDomainPayload($records, 'activity');
+            foreach ($activityForLookup['attackReceipts'] ?? [] as $receipt) if (($receipt['attack']['id'] ?? '') === $resolvedAttackId) {
+                $complexExecutionId = (string) ($receipt['attack']['complexExecutionId'] ?? '');
+                break;
+            }
+        }
+        if ($complexExecutionId !== '') {
+            $activityForReport = is_array($pending['activity']['payload'] ?? null)
+                ? $pending['activity']['payload'] : applicationDomainPayload($records, 'activity');
+            foreach ($activityForReport['abilityExecutions'] ?? [] as $index => $execution) {
+                if (($execution['id'] ?? '') !== $complexExecutionId) continue;
+                $compactComplex = count(array_filter($execution['workflow']['steps'] ?? [],
+                    static fn(mixed $step): bool => in_array($step['type'] ?? '', ['allocated-attacks', 'attack-chain'], true))) > 0;
+                if ($compactComplex) {
+                    unset($result['discordContent']);
+                    if (($execution['compactDiscordSent'] ?? false) !== true) {
+                        $report = onlineCompactComplexResult($execution, $activityForReport['attackReceipts'] ?? []);
+                        if ($report !== null) {
+                            $activityForReport['abilityExecutions'][$index]['compactDiscordSent'] = true;
+                            queueOnlineDomainUpsert($pending, $records, 'activity', $activityForReport);
+                            if ($report !== '' && ($execution['sceneId'] ?? '') === onlineActiveSceneId($table)) {
+                                $result['discordContent'] = $report;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
         $targetScenes = [];
         foreach ($pending as $key => $_entry) {
             if (!str_starts_with((string) $key, 'token:')) continue;
@@ -7428,7 +7535,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
         $publicResultRolls = applicationPublicResultRolls($result);
-        if (in_array($command, ['roll', 'token.roll', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve'], true) && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
+        if (!$compactComplex && in_array($command, ['roll', 'token.roll', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve'], true) && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordResultRollContent($result));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];

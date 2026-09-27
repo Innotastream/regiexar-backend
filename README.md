@@ -1,3 +1,7 @@
+# Candidat backend 0.18.16 — cadrage Stream, client exact 3.4.14
+
+Build `client-3-4-14-stream-fit-20260927-1`. La source Stream du client 3.4.14 cadre la carte entière sans reprendre le zoom historique de la scène. Le moteur accepte une vigilance unique par cible, un plan de frappes vérifié, puis attend la résolution des parades avant un seul compte rendu de dés concis. Aucun changement de schéma ou de données : MySQL reste à **22**. La production vérifiée le 26 septembre autorisait exactement 3.4.13 ; ne pas déployer la politique exacte 3.4.14 sans accord explicite pour refuser ce client. Le push du code ne constitue ni un déploiement ni une distribution Windows.
+
 # Candidat backend 0.18.15 — marqueurs et compteur configurable, client exact 3.4.13
 
 Build `client-3-4-13-modular-ability-markers-20260926-2`. Les marqueurs posés sont projetés depuis les compétences actives sans entrer dans les unités ni dans l’initiative. Le compteur peut gagner sur perte de PV avec un état facultatif. Les protections en attente s’arrêtent avec la compétence. Schéma MySQL **22** inchangé. La production précédemment vérifiée autorisait 3.4.11 : ne pas déployer la politique exacte 3.4.13 sans accord explicite pour le refus des clients antérieurs. Le push du code ne constitue pas un déploiement.

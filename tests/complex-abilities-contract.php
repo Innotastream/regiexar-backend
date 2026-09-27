@@ -536,4 +536,55 @@ $retained = applyApplicationComplexAbilityCommand($retained, ['action' => 'cance
 requireComplexAbility($retained['stepStates']['charges']['value'] === 1,
     'Another persistent counter can explicitly retain its value on termination.');
 
+$onceAbility = ['id' => 'once-per-target', 'name' => 'Série libre', 'effect' => 'complex', 'formula' => '0',
+    'workflow' => ['version' => 4, 'steps' => [
+        ['id' => 'targets', 'type' => 'targets', 'minTargets' => 1, 'maxTargets' => 2, 'allocationTotal' => 3],
+        ['id' => 'strikes', 'type' => 'allocated-attacks', 'sourceStepId' => 'targets',
+            'awarenessMode' => 'once', 'awarenessStatId' => 'character-stat-instinct', 'damagePercent' => 50],
+    ]]];
+$onceTokens = [[...$tokens[0], 'stats' => [['id' => 'character-stat-instinct', 'value' => 60]],
+    'weaponAttacks' => [['id' => 'ice', 'formula' => '1d8'], ['id' => 'fire', 'formula' => '1d6']]],
+    [...$tokens[1], 'stats' => [['id' => 'character-stat-instinct', 'value' => 55]]],
+    [...$tokens[2], 'stats' => [['id' => 'character-stat-instinct', 'value' => 40]]]];
+$once = createApplicationComplexAbilityExecution(['id' => 'execution-once', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $onceAbility, 'now' => 11000]);
+$onceRolls = [20, 80];
+$plan = [['tokenId' => 'target-a', 'attackId' => 'ice', 'statId' => 'character-stat-instinct', 'opposed' => true],
+    ['tokenId' => 'target-b', 'attackId' => 'fire', 'statId' => 'character-stat-instinct', 'opposed' => true],
+    ['tokenId' => 'target-a', 'attackId' => 'fire', 'statId' => 'character-stat-instinct', 'opposed' => true]];
+$once = applyApplicationComplexAbilityCommand($once, ['action' => 'select-targets', 'expectedRevision' => 1,
+    'allocations' => [['tokenId' => 'target-a', 'count' => 2], ['tokenId' => 'target-b', 'count' => 1]],
+    'attackPlan' => $plan], ['actor' => $owner, 'tokens' => $onceTokens, 'now' => 11001,
+    'roll' => static function (string $formula) use (&$onceRolls): array {
+        $raw = array_shift($onceRolls); return ['rawD100' => $raw, 'total' => $raw];
+    }]);
+requireComplexAbility($onceRolls === [] && $once['stepStates']['strikes']['targets'][0]['aware'] === true
+    && $once['stepStates']['strikes']['targets'][1]['aware'] === false,
+    'Each target rolls exactly once before the first strike, with independent parry rights.');
+$once = applyApplicationComplexAbilityCommand($once, ['action' => 'prepare-target', 'expectedRevision' => $once['revision'],
+    'targetTokenId' => 'target-b'], ['actor' => $owner, 'tokens' => $onceTokens, 'now' => 11002]);
+requireComplexAbility($once['stepStates']['strikes']['awaitingAwareness'] === false
+    && $once['stepStates']['strikes']['awaitingAttack'] === true,
+    'Failed initial awareness never asks for a second roll and proceeds without opposition.');
+$reportExecution = [...$once, 'status' => 'completed', 'stepStates' => [
+    ...$once['stepStates'], 'strikes' => [...$once['stepStates']['strikes'], 'targets' => [
+        [...$once['stepStates']['strikes']['targets'][0], 'attacks' => [['requestId' => 'first'], ['requestId' => 'third']]],
+        [...$once['stepStates']['strikes']['targets'][1], 'attacks' => [['requestId' => 'second']]],
+    ]],
+]];
+$receipts = [];
+foreach (['first', 'second', 'third'] as $index => $id) $receipts[] = ['requestId' => $id, 'attack' => [
+    'complexExecutionId' => $once['id'], 'requestId' => $id,
+    'targetTokenId' => $index === 1 ? 'target-b' : 'target-a',
+    'targetName' => $index === 1 ? 'Cible B' : 'Cible A', 'visibility' => 'public',
+    'status' => 'applied', 'hit' => ['raw' => 30 + $index, 'outcome' => ['success' => true]],
+    'appliedDamage' => $index === 1 ? 0 : 8,
+]];
+$report = onlineCompactComplexResult($reportExecution, $receipts);
+requireComplexAbility(is_string($report) && substr_count($report, 'ATK') === 3 && substr_count($report, 'VIG') === 2
+    && str_contains($report, 'Dégâts :'), 'One compact report contains the attacks, initial awareness and damage.');
+$receipts[1]['attack']['status'] = 'awaiting-opposition';
+requireComplexAbility(onlineCompactComplexResult($reportExecution, $receipts) === null,
+    'The single report waits for all eligible oppositions.');
+
 echo "complex-abilities-contract: ok\n";

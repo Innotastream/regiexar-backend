@@ -379,10 +379,17 @@ function onlineUseComplexAbility(
         ? applicationComplexAbilityTokenById($tokens, $participantTokenId) : $source;
     $rollSubjectName = $workflowAction === 'awareness-roll' && is_array($rollSubject)
         ? (string) ($rollSubject['name'] ?? 'Cible') : $next['sourceName'];
-    foreach ($generatedRolls as $rolled) {
-        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . $stepTitle, $rollSubjectName);
-        $responseRolls[] = !is_array($rollSubject) || $rollSubject === [] ? $roll : onlineAbilityRollVisibility($roll, $rollSubject, $identity,
-            $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $rollSubject, $sceneId), $sceneId);
+    $newStep = $next['workflow']['steps'][$next['currentStepIndex'] ?? -1] ?? null;
+    $startAwareness = $workflowAction === 'select-targets' && ($newStep['type'] ?? '') === 'allocated-attacks'
+        && ($newStep['awarenessMode'] ?? '') === 'once';
+    foreach ($generatedRolls as $rollIndex => $rolled) {
+        $subject = $startAwareness
+            ? applicationComplexAbilityTokenById($tokens, $next['stepStates'][$newStep['id']]['targets'][$rollIndex]['tokenId'] ?? '')
+            : $rollSubject;
+        $subjectName = $startAwareness ? (string) ($subject['name'] ?? 'Cible') : $rollSubjectName;
+        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . ($startAwareness ? 'Vigilance' : $stepTitle), $subjectName);
+        $responseRolls[] = !is_array($subject) || $subject === [] ? $roll : onlineAbilityRollVisibility($roll, $subject, $identity,
+            $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $subject, $sceneId), $sceneId);
         onlineAppendAbilityEffectRoll($records, $pending, $responseRolls[count($responseRolls) - 1]);
     }
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);
