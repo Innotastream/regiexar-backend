@@ -40,6 +40,10 @@ function validApplicationDamageOverTime(mixed $value): bool {
         && in_array($value['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
         && is_int($value['turns'] ?? null) && $value['turns'] >= 1 && $value['turns'] <= 20;
 }
+function validApplicationDamageTargeting(mixed $value): bool {
+    return is_array($value) && ($value['mode'] ?? '') === 'area'
+        && is_int($value['radiusCells'] ?? null) && $value['radiusCells'] >= 1 && $value['radiusCells'] <= 20;
+}
 function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
@@ -48,6 +52,7 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (array_key_exists('opposition', $entry) && (!in_array($effect, ['complex', 'opposition'], true) || !validApplicationOppositionAbility($entry['opposition']))) return false;
     if ($effect === 'opposition' && !validApplicationOppositionAbility($entry['opposition'] ?? null)) return false;
     if (array_key_exists('damageOverTime', $entry) && ($effect !== 'damage' || !validApplicationDamageOverTime($entry['damageOverTime']))) return false;
+    if (array_key_exists('damageTargeting', $entry) && ($effect !== 'damage' || !validApplicationDamageTargeting($entry['damageTargeting']))) return false;
     if (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue'])) return false;
     if ($effect === 'complex') return validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null);
     if ($effect === 'movement') return true;
@@ -80,7 +85,8 @@ function applicationAbilityEffectFields(array $entry): array {
     if ($effect === 'metamorphosis') return [...$casting, ...$cue, ...$conditions, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
     return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : []),
-        ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : [])];
+        ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : []),
+        ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => ['mode' => 'area', 'radiusCells' => $entry['damageTargeting']['radiusCells']]] : [])];
 }
 function applicationCustomAttack(mixed $value): array {
     if (!is_array($value)) throw new InvalidArgumentException('Attaque personnalisée invalide.');
@@ -163,7 +169,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
             && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'damageOverTime', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'damageComponents', 'damageOverTime', 'damageTargeting', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }

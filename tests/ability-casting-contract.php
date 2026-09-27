@@ -396,4 +396,16 @@ requireCasting(str_contains($discord, 'Modificateurs') && str_contains($discord,
 requireCasting(str_contains($discord, 'Jet DMG **12** — PV perdus') && !str_contains($discord, '2d6+3') && !str_contains($discord, 'Jet DMG **18**'), 'Discord must show only the applied public damage, never the raw roll used to infer armor');
 requireCasting(!str_contains($discord, 'armure') && !str_contains($discord, '35 %') && !str_contains($discord, 'maximumHp'), 'Discord must not expose armor or private health state');
 
+$zone = ['mode' => 'area', 'radiusCells' => 2];
+requireCasting(validApplicationDamageTargeting($zone) && !validApplicationDamageTargeting(['mode' => 'area', 'radiusCells' => 21]), 'Le rayon des dégâts de zone doit être borné.');
+$zoneMap = ['naturalWidth' => 1000, 'naturalHeight' => 500, 'gridSize' => 100, 'activeLayerId' => 'ground'];
+$zoneCenter = ['id' => 'centre', 'x' => 40, 'y' => 40, 'layerId' => 'ground'];
+$zoneTokens = [$zoneCenter,
+    ['id' => 'allié', 'x' => 50, 'y' => 40, 'layerId' => 'ground'],
+    ['id' => 'adversaire', 'x' => 40, 'y' => 80, 'layerId' => 'ground'],
+    ['id' => 'loin', 'x' => 70, 'y' => 40, 'layerId' => 'ground'],
+    ['id' => 'masqué', 'x' => 40, 'y' => 45, 'layerId' => 'ground', 'hidden' => true],
+    ['id' => 'étage', 'x' => 40, 'y' => 45, 'layerId' => 'upper']];
+requireCasting(array_column(onlineDamageAreaTargets($zoneTokens, $zoneCenter, $zoneMap, 2), 'id') === ['centre', 'allié', 'adversaire'], 'La zone inclut les alliés et respecte les dimensions, les niveaux et les pions masqués.');
+
 echo json_encode(['checks' => $checks, 'status' => 'ok', 'scope' => 'pure PHP casting authority; no Windows, OVH or real-account acceptance'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE) . PHP_EOL;
