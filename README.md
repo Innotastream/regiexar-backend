@@ -1,3 +1,9 @@
+# Candidat backend 0.18.20 — audit des attaques, client exact 3.4.18
+
+Build `client-3-4-18-combat-audit-20260927-1`. Oppositions indépendantes et reçus pour les attaques de zone ; reprise des réactions ; dégâts périodiques cumulés avec l’armure actuelle ; expiration des protections en fin de combat. Le schéma MySQL reste à 22.
+
+La production contrôlée le 27 septembre 2026 reste sur **0.18.15**, verrou exact **3.4.13**. Le déploiement de ce candidat couperait ces clients et demande un accord explicite pour ce basculement. Le push source ne constitue pas ce déploiement.
+
 # Candidat backend 0.18.19 — client exact 3.4.17
 
 Build `client-3-4-17-composable-abilities-20260927-1`. Les parades par compétence, les dégâts périodiques au tour de la cible et les protections indépendantes de prochaine attaque sont résolus côté serveur. La politique candidate exacte 3.4.17 aligne cette source sur l’application. Schéma MySQL **22** inchangé. Aucun déploiement du nouveau verrou sur OVH n’est acquis : il refuserait les clients précédemment autorisés et demande une décision propre avant basculement.

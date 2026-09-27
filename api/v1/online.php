@@ -4430,7 +4430,7 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
         $characterKey = 'character:' . $characterId;
         if (validApplicationDomainKey($characterKey)) {
             $records = array_replace($records, applicationDomainRecords($connection, [$characterKey]));
-            $candidate = applicationDomainPayload($records, $characterKey);
+            $candidate = $pending[$characterKey]['payload'] ?? applicationDomainPayload($records, $characterKey);
             if ($candidate !== []) {
                 $character = $candidate;
                 $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
@@ -6465,7 +6465,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         }
                         if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
                         $areaAttack = $attack;
-                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection'] as $field) unset($areaAttack[$field]);
+                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId'] as $field) unset($areaAttack[$field]);
                         $areaAttack['id'] = 'attack-' . randomToken(12);
                         $areaAttack['requestId'] = 'area-' . randomToken(12);
                         $areaAttack['targetTokenId'] = $areaId;
@@ -6473,7 +6473,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $areaAttack['defenderAccountId'] = $areaController;
                         $areaAttack['damage'] = [];
                         $areaAttack['finalDamage'] = 0;
-                        if ($attack['status'] === 'awaiting-opposition') {
+                        $areaAttack['opposed'] = ($arguments['opposed'] ?? false) === true && (float) ($areaTarget['hp'] ?? 0) > 0;
+                        if ($areaAttack['opposed'] && ($hitOutcome['success'] ?? false) === true && ($hitOutcome['breaksOpposition'] ?? false) !== true) {
                             $areaAttack['status'] = 'awaiting-opposition';
                         } else {
                             $areaResult = onlineRollAttackDamage($areaAttack, $areaTarget);
@@ -6515,6 +6516,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             'detail' => onlineAttackHistoryDetail($areaAttack, false) . ' · zone de ' . $damageTargeting['radiusCells'] . ' cases',
                         ]);
                         if ($areaAttack['status'] === 'applied') onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $areaAttack);
+                        if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM - 1) rejectOnlineCommand($connection, 409, 'Le journal de sécurité des attaques est plein.', 'attack_receipt_capacity');
+                        $receipts[] = ['requestId' => $areaAttack['requestId'], 'accountId' => $accountId,
+                            'requestSignature' => $attackRequestSignature,
+                            'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS, 'attack' => $areaAttack];
                         $areaAttackResults[] = $isGm ? $areaAttack : publicOnlineAttackResult($areaAttack, true, false);
                     }
                     $activity = $pending['activity']['payload'] ?? $activity;
@@ -6649,7 +6654,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $targetKey = $parties['targetKey'];
                     $target = $parties['target'];
                     $defenderAccountId = $parties['targetController'];
-                    if (($attack['attackerRole'] ?? 'player') !== 'gm'
+                    if (empty($attack['areaRadiusCells']) && ($attack['attackerRole'] ?? 'player') !== 'gm'
                         && $defenderAccountId === (string) ($attack['accountId'] ?? '')) {
                         rejectOnlineCommand($connection, 409, 'La cible appartient désormais à l’attaquant. Le MJ doit annuler cette opposition.', 'opposition_target_no_longer_adverse');
                     }

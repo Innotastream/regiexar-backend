@@ -2911,7 +2911,10 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
         $liveGuards = array_values(array_filter($guards, static fn(mixed $guard): bool =>
             is_array($guard) && !isset($endedScenes[(string) ($guard['sceneId'] ?? '')])));
-        if ($liveGuards !== $guards) $activity['nextAttackGuards'] = $liveGuards;
+        if ($liveGuards !== $guards) {
+            $activity['nextAttackGuards'] = $liveGuards;
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        }
     }
     $remaining = [];
     foreach ($dots as $dot) {
@@ -2924,7 +2927,11 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $key = onlineTokenDomainKey($sceneId, $tokenId);
             $records = array_replace($records, applicationDomainRecords($connection, [$key]));
             $target = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
-            if ($target === [] || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '')) {
+            $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $target);
+            $characterKey = 'character:' . (string) ($target['characterId'] ?? '');
+            $character = $pending[$characterKey]['payload'] ?? applicationDomainPayload($records, $characterKey);
+            if ($character !== []) $target = synchronizeOnlineCharacterToken($target, $character);
+            if ($target === [] || onlineTokenIsDead($target, $controllerId !== '')) {
                 $keep = false;
                 break;
             }
@@ -2939,9 +2946,11 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
             }
             $roll = onlineRollEntry($identity, $rolled, 'DOT · ' . (string) ($dot['label'] ?? 'Effet'), (string) ($target['name'] ?? 'Cible'));
+            $roll['damageMitigation'] = $summary;
             if (($target['hidden'] ?? false) === true) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
             $roll['mapEvent'] = ['kind' => 'damage', 'applied' => true, 'value' => $applied,
-                'label' => (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId,
+                'label' => (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId, 'tokenId' => $tokenId,
+                'targetName' => (string) ($target['name'] ?? 'Cible'), 'attackId' => (string) $dot['id'],
                 'sourceTokenId' => $tokenId, 'anchorTokenId' => $tokenId,
                 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
             $activity = $pending['activity']['payload'] ?? $activity;

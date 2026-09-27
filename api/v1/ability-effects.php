@@ -218,7 +218,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
             if (is_array($attack['opposition'] ?? null) && isset($old['opposition']['accountId'])) {
                 $attack['opposition']['accountId'] = $old['opposition']['accountId'];
             }
-            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
