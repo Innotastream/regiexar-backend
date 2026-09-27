@@ -1141,7 +1141,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'tacticalDetailsShared' => ($token['revealDetailsToPlayers'] ?? false) === true,
             'publicHealth' => onlineHealthState($token['hp'] ?? null, $token['maxHp'] ?? null, $allied, onlineManualDeath($token))['code'],
             'ownedByYou' => $owned,
-            ...($owned ? ['independentClone' => trim((string) ($token['cloneSourceTokenId'] ?? '')) !== ''] : []),
+            ...($owned && trim((string) ($token['cloneSourceTokenId'] ?? '')) !== '' ? ['independentClone' => true] : []),
             'mountable' => ($token['mountable'] ?? false) === true,
             'mountControllable' => $effectiveControllerId === '' && ($token['mountControllable'] ?? false) === true,
             'maxRiders' => max(1, min(20, (int) ($token['maxRiders'] ?? 1))),
