@@ -29,6 +29,41 @@ $retry = runCommand($db, 'token.attack.oppose', $opposition, true, 'account-gm')
 requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) && $db->revision === $revision,
     'Each area target has its own idempotent opposition receipt.');
 
+$targeting = ['mode' => 'area', 'radiusCells' => 1, 'origin' => 'caster',
+    'affectCaster' => false, 'affectAllies' => false, 'affectEnemies' => true];
+requireTactical(validApplicationDamageTargeting($targeting), 'A caster-centered hostile area is valid.');
+requireTactical(!validApplicationDamageTargeting([...$targeting, 'affectEnemies' => false])
+    && !validApplicationDamageTargeting([...$targeting, 'origin' => 'unknown']), 'An empty or unknown area is rejected.');
+$db = fixture();
+$map = $db->payload('map:scene-one');
+$map['naturalWidth'] = 1000; $map['naturalHeight'] = 1000; $map['gridSize'] = 50;
+$db->put('map:scene-one', $map);
+$character = $db->payload('character:character-player');
+$character['abilities'] = [['id' => 'audit-caster-area', 'name' => 'Onde hostile', 'effect' => 'damage', 'formula' => '7',
+    'damageType' => 'ignore', 'castingStatId' => '', 'onHitConditions' => ['Influencé'], 'damageTargeting' => $targeting]];
+$db->put('character:character-player', $character);
+$monster = $db->payload('token:scene-one:token-monster');
+$monster['x'] = 21; $db->put('token:scene-one:token-monster', $monster);
+$ally = $db->payload('token:scene-one:token-monster-two');
+$ally['x'] = 22; $ally['controllerPlayerId'] = 'account-player';
+$db->put('token:scene-one:token-monster-two', $ally);
+$request = ['sourceTokenId' => 'token-player', 'targetTokenId' => 'token-player',
+    'attackKind' => 'ability', 'attackId' => 'audit-caster-area', 'opposed' => false,
+    'requestId' => 'audit-caster-area-0001'];
+$response = runCommand($db, 'token.attack', $request, true, 'account-gm');
+requireTactical($response->status === 200, 'A caster-centered area accepts its source as anchor: ' . $response->getMessage());
+requireTactical(($response->body['attack']['areaAnchorOnly'] ?? false) === true
+    && array_column($response->body['areaAttacks'] ?? [], 'targetTokenId') === ['token-monster'],
+    'Only the enemy receives an area attack; the source is an inert anchor.');
+requireTactical(($db->payload('character:character-player')['resources']['hp'] ?? null) === $character['resources']['hp']
+    && ($db->payload('token:scene-one:token-monster-two')['hp'] ?? null) === $ally['hp']
+    && ($db->payload('token:scene-one:token-monster')['hp'] ?? null) === $monster['hp'] - 7,
+    'Self and ally keep their HP; the enemy loses seven.');
+$beforeRetry = $db->revision;
+$retry = runCommand($db, 'token.attack', $request, true, 'account-gm');
+requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) && $db->revision === $beforeRetry,
+    'Caster-centered area deduplicates its launch and damage.');
+
 $db = fixture();
 $character = $db->payload('character:character-player');
 $character['resources']['hp'] = 100;

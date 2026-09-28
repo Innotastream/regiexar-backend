@@ -4332,7 +4332,7 @@ function onlineGainBleedingCharges(PDO $connection, array &$records, array &$pen
 }
 
 function applyOnlineAttackConditions(PDO $connection, array &$records, array &$pending, array $attack): array {
-    if (($attack['effectsApplied'] ?? false) || !in_array($attack['status'] ?? '', ['applied', 'blocked'], true)) return $attack;
+    if (($attack['areaAnchorOnly'] ?? false) || ($attack['effectsApplied'] ?? false) || !in_array($attack['status'] ?? '', ['applied', 'blocked'], true)) return $attack;
     $conditions = normalizeOnlineConditions($attack['onHitConditions'] ?? []);
     $key = onlineTokenDomainKey((string) $attack['sceneId'], (string) $attack['targetTokenId']);
     $target = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
@@ -6086,18 +6086,19 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
                 $targetController = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
+                $selfAreaRequest = ($target['id'] ?? null) === ($source['id'] ?? null) && ($arguments['attackKind'] ?? '') === 'ability';
                 if ($isGm) {
                     if ($source === [] || ($source['hidden'] ?? false) === true) {
                         rejectOnlineCommand($connection, 403, 'Le token attaquant doit être visible sur le niveau actif.', 'attack_source_not_visible');
                     }
-                    if ($target === [] || ($target['hidden'] ?? false) === true || ($target['id'] ?? '') === ($source['id'] ?? '')) {
+                    if ($target === [] || ($target['hidden'] ?? false) === true || (($target['id'] ?? '') === ($source['id'] ?? '') && !$selfAreaRequest)) {
                         rejectOnlineCommand($connection, 403, 'La cible doit être un autre token visible sur le niveau actif.', 'attack_target_not_visible');
                     }
                 } else {
                     if ($source === [] || $sourceController !== $accountId || ($source['hidden'] ?? false) === true) {
                         rejectOnlineCommand($connection, 403, 'Ce token attaquant ne vous appartient pas.', 'attack_source_forbidden');
                     }
-                    if ($target === [] || ($target['hidden'] ?? false) === true || $targetController === $accountId) {
+                    if ($target === [] || ($target['hidden'] ?? false) === true || ($targetController === $accountId && !$selfAreaRequest)) {
                         rejectOnlineCommand($connection, 403, 'Cette cible ne peut pas être attaquée.', 'attack_target_forbidden');
                     }
                 }
@@ -6220,13 +6221,28 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $areaTargetCandidates = [];
                 $damageTargeting = $attackKind === 'ability' ? ($abilities[$abilityIndex]['damageTargeting'] ?? null) : null;
                 if (validApplicationDamageTargeting($damageTargeting)) {
+                    if (($damageTargeting['origin'] ?? 'target') === 'caster' && ($target['id'] ?? '') !== ($source['id'] ?? '')) {
+                        rejectOnlineCommand($connection, 403, 'Une zone autour du lanceur doit être lancée sur son propre pion.', 'attack_area_origin_invalid');
+                    }
                     $areaTargetCandidates = onlineDamageAreaTargets(
-                        onlineSceneTokensForLights($connection, $records, $pending, $sceneId), $target, $map,
+                        onlineSceneTokensForLights($connection, $records, $pending, $sceneId),
+                        ($damageTargeting['origin'] ?? 'target') === 'caster' ? $source : $target, $map,
                         (int) $damageTargeting['radiusCells']);
+                    $areaTargetCandidates = array_values(array_filter($areaTargetCandidates,
+                        static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController): bool {
+                            $controller = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
+                            return applicationDamageAreaAffects($damageTargeting, (string) $source['id'], $sourceController,
+                                (string) ($candidate['id'] ?? ''), $controller);
+                        }));
                     if (count($areaTargetCandidates) > XAR_PENDING_ATTACK_MAXIMUM) {
                         rejectOnlineCommand($connection, 409, 'La zone contient trop de pions pour une seule attaque.', 'attack_area_too_many_targets');
                     }
                 }
+                if ($selfAreaRequest && (!validApplicationDamageTargeting($damageTargeting) || ($damageTargeting['origin'] ?? 'target') !== 'caster')) {
+                    rejectOnlineCommand($connection, 403, 'Cette attaque ne peut pas cibler le lanceur.', 'attack_self_forbidden');
+                }
+                $primaryAffects = !validApplicationDamageTargeting($damageTargeting)
+                    || applicationDamageAreaAffects($damageTargeting, (string) $source['id'], $sourceController, (string) $target['id'], $targetController);
                 if ($attackKind === 'ability') onlineAssertAbilityValidationAvailable($connection, $activity, $abilities[$abilityIndex], $source, true);
                 $selectedStatId = (string) (($arguments['statId'] ?? '') ?: ($attackKind === 'ability' ? ($abilities[$abilityIndex]['castingStatId'] ?? '') : ''));
                 $abilityForAttack = $attackKind === 'ability' ? $abilities[$abilityIndex] : null;
@@ -6283,7 +6299,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $hitRoll['visibility'] = 'gm';
                     $hitRoll['revealed'] = false;
                 }
-                $opposed = ($arguments['opposed'] ?? false) === true && (float) ($target['hp'] ?? 0) > 0;
+                $opposed = $primaryAffects && ($arguments['opposed'] ?? false) === true && (float) ($target['hp'] ?? 0) > 0;
                 $oppositionRequired = $opposed
                     && ($hitOutcome['success'] ?? false) === true
                     && ($hitOutcome['breaksOpposition'] ?? false) !== true;
@@ -6308,7 +6324,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $damageSpecification = ['onHitConditions' => $attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : $weaponConditions, 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', 'damagePercent' => $damagePercent, ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : []), ...($attackKind === 'ability' && validApplicationDamageOverTime($abilities[$abilityIndex]['damageOverTime'] ?? null) ? ['damageOverTime' => $abilities[$abilityIndex]['damageOverTime']] : [])];
                 $damageRoll = null;
                 $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
-                if (($hitOutcome['success'] ?? false) === true && !$oppositionRequired) {
+                if (($hitOutcome['success'] ?? false) === true && !$oppositionRequired && $primaryAffects) {
                     $damageResult = onlineRollAttackDamage($damageSpecification, $target);
                     $damageRolled = $damageResult['rolled']; $damageSummary = $damageResult['damage'];
                     $damageRoll = onlineRollEntry($identity, $damageRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Token'));
@@ -6331,6 +6347,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'attackName' => substr($attackName, 0, 120),
                     'attackKind' => $attackKind,
                     ...(validApplicationDamageTargeting($damageTargeting) ? ['areaRadiusCells' => (int) $damageTargeting['radiusCells']] : []),
+                    ...(!$primaryAffects ? ['areaAnchorOnly' => true] : []),
                     ...($complexExecutionId !== '' ? ['complexExecutionId' => $complexExecutionId] : []),
                     'attackId' => $attackId,
                     'opposed' => $opposed,
@@ -6465,6 +6482,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $areaTarget = $pending[$areaKey]['payload'] ?? applicationDomainPayload($records, $areaKey);
                         if ($areaTarget === [] || ($areaTarget['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($areaTarget, $map)) continue;
                         $areaController = onlineTokenControllerIdFromRecords($connection, $records, $areaTarget);
+                        if (!applicationDamageAreaAffects($damageTargeting, (string) $source['id'], $sourceController, $areaId, $areaController)) continue;
                         if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $areaTarget, $accountId, $sceneId)) continue;
                         $areaCharacterId = trim((string) ($areaTarget['characterId'] ?? ''));
                         if ($areaCharacterId !== '') {
@@ -6473,7 +6491,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         }
                         if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
                         $areaAttack = $attack;
-                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId'] as $field) unset($areaAttack[$field]);
+                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly'] as $field) unset($areaAttack[$field]);
                         $areaAttack['id'] = 'attack-' . randomToken(12);
                         $areaAttack['requestId'] = 'area-' . randomToken(12);
                         $areaAttack['targetTokenId'] = $areaId;

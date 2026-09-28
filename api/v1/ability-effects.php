@@ -42,7 +42,17 @@ function validApplicationDamageOverTime(mixed $value): bool {
 }
 function validApplicationDamageTargeting(mixed $value): bool {
     return is_array($value) && ($value['mode'] ?? '') === 'area'
-        && is_int($value['radiusCells'] ?? null) && $value['radiusCells'] >= 1 && $value['radiusCells'] <= 20;
+        && is_int($value['radiusCells'] ?? null) && $value['radiusCells'] >= 1 && $value['radiusCells'] <= 20
+        && (!array_key_exists('origin', $value) || in_array($value['origin'], ['target', 'caster'], true))
+        && (!array_key_exists('affectCaster', $value) || is_bool($value['affectCaster']))
+        && (!array_key_exists('affectAllies', $value) || is_bool($value['affectAllies']))
+        && (!array_key_exists('affectEnemies', $value) || is_bool($value['affectEnemies']))
+        && (($value['affectCaster'] ?? true) || ($value['affectAllies'] ?? true) || ($value['affectEnemies'] ?? true));
+}
+function applicationDamageAreaAffects(array $targeting, string $sourceId, string $sourceController, string $targetId, string $targetController): bool {
+    if ($sourceId === $targetId) return ($targeting['affectCaster'] ?? true) === true;
+    $allied = ($sourceController !== '') === ($targetController !== '');
+    return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
 function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
@@ -91,7 +101,12 @@ function applicationAbilityEffectFields(array $entry): array {
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
     return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : []),
         ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : []),
-        ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => ['mode' => 'area', 'radiusCells' => $entry['damageTargeting']['radiusCells']]] : [])];
+        ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => [
+            'mode' => 'area', 'radiusCells' => $entry['damageTargeting']['radiusCells'],
+            'origin' => $entry['damageTargeting']['origin'] ?? 'target',
+            'affectCaster' => $entry['damageTargeting']['affectCaster'] ?? true,
+            'affectAllies' => $entry['damageTargeting']['affectAllies'] ?? true,
+            'affectEnemies' => $entry['damageTargeting']['affectEnemies'] ?? true]] : [])];
 }
 function applicationCustomAttack(mixed $value): array {
     if (!is_array($value)) throw new InvalidArgumentException('Attaque personnalisée invalide.');
@@ -223,7 +238,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
             if (is_array($attack['opposition'] ?? null) && isset($old['opposition']['accountId'])) {
                 $attack['opposition']['accountId'] = $old['opposition']['accountId'];
             }
-            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'areaAnchorOnly', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
