@@ -55,7 +55,7 @@ requireTactical($response->status === 200, 'A caster-centered area accepts its s
 requireTactical(($response->body['attack']['areaAnchorOnly'] ?? false) === true
     && array_column($response->body['areaAttacks'] ?? [], 'targetTokenId') === ['token-monster'],
     'Only the enemy receives an area attack; the source is an inert anchor.');
-requireTactical(str_contains((string) ($response->body['discordContent'] ?? ''), 'lance Onde hostile autour de lui'),
+requireTactical(str_contains(onlineAttackDiscordContent($response->body['attack']), 'lance Onde hostile autour de lui'),
     'The area announcement does not present the source as its own victim.');
 requireTactical(($db->payload('character:character-player')['resources']['hp'] ?? null) === $character['resources']['hp']
     && ($db->payload('token:scene-one:token-monster-two')['hp'] ?? null) === $ally['hp']
