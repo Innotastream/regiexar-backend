@@ -4778,8 +4778,11 @@ function onlineAttackDiscordContent(array $attack): string
     if (($attack['visibility'] ?? 'public') === 'gm') return '';
     $hit = is_array($attack['hit'] ?? null) ? $attack['hit'] : [];
     $outcome = is_array($hit['outcome'] ?? null) ? $hit['outcome'] : [];
-    $content = '**' . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant')
-        . ' attaque ' . safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible') . ' avec ' . safeOnlineDiscordLabel($attack['attackName'] ?? 'Attaque') . '**';
+    $content = ($attack['areaAnchorOnly'] ?? false)
+        ? '**' . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Lanceur') . ' lance '
+            . safeOnlineDiscordLabel($attack['attackName'] ?? 'Capacité') . ' autour de lui**'
+        : '**' . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant')
+            . ' attaque ' . safeOnlineDiscordLabel($attack['targetName'] ?? 'Cible') . ' avec ' . safeOnlineDiscordLabel($attack['attackName'] ?? 'Attaque') . '**';
     if (($outcome['automatic'] ?? false) === true) {
         $content .= "\n\n**" . safeOnlineDiscordLabel($attack['sourceName'] ?? 'Attaquant') . "**\nJet ATK\nLancement sans jet";
     } else {
@@ -4802,7 +4805,7 @@ function onlineAttackDiscordContent(array $attack): string
         }
     } elseif (($attack['status'] ?? '') === 'applied' && onlineResourceNumber($attack['appliedDamage'] ?? 0) > 0) {
         $content .= "\n" . 'Jet DMG **' . max(0, onlineResourceNumber($attack['appliedDamage'])) . '** — PV perdus';
-    } elseif (in_array($attack['status'] ?? '', ['blocked', 'missed'], true)) {
+    } elseif (in_array($attack['status'] ?? '', ['blocked', 'missed'], true) && !($attack['areaAnchorOnly'] ?? false)) {
         $content .= "\n" . 'Aucun PV perdu';
     }
     return substr($content, 0, 1900);
@@ -6566,7 +6569,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'kind' => 'attack',
                     'characterName' => $attack['sourceName'],
                     'targetName' => $attack['targetName'],
-                    'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
+                    'summary' => ($attack['areaAnchorOnly'] ?? false)
+                        ? $attack['sourceName'] . ' lance ' . $attack['attackName'] . ' autour de lui'
+                        : $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
                     'detail' => $attackActivityDetail,
                 ]);
                 if (($attack['status'] ?? '') === 'applied') {
