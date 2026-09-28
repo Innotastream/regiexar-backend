@@ -5986,7 +5986,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $attackRequestSignature = onlineAttackRequestSignature($sceneId, $arguments);
             $sourceKey = onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? '');
             $targetKey = onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? '');
-            if ($sourceKey === '' || $targetKey === '' || $sourceKey === $targetKey) {
+            if ($sourceKey === '' || $targetKey === '' || ($sourceKey === $targetKey && ($arguments['attackKind'] ?? '') !== 'ability')) {
                 rejectOnlineCommand($connection, 400, 'Attaquant ou cible invalide.', 'invalid_attack_target');
             }
             $initiativeKey = 'initiative:' . $sceneId;
