@@ -1,3 +1,7 @@
+# Candidat backend 0.18.23 — combos complets, client exact 3.4.21
+
+Build `client-3-4-21-combo-dice-fog-20260929-1`. Les chaînes automatiques préparent leurs jets utiles, réutilisent chaque réussite comme jet d’attaque et appliquent leurs composantes de dégâts avec un seul coût et une seule recharge. Les réservations et les attaques en attente restent persistantes jusqu’au traitement du MJ. La luminosité du brouillard est validée entre 0 et 100 sans modifier les masques de visibilité. Schéma MySQL **22** inchangé. La production 0.18.22 / politique exacte 3.4.20 demeure en place tant que le nouveau basculement n’a pas reçu son accord explicite.
+
 # Candidat backend 0.18.22 — zones configurables, client exact 3.4.20
 
 Build `client-3-4-20-caster-area-target-filters-20260928-1`. Les dégâts de zone acceptent un centre sur le lanceur et des destinataires configurables : lanceur, alliés, ennemis. Les exclusions s’appliquent côté serveur aux dégâts, états, oppositions et reçus ; les anciennes zones gardent leur réglage implicite. Schéma MySQL **22** inchangé. La politique exacte **3.4.20** attend une décision de basculement depuis 3.4.19 et un contrôle public avant d’être déclarée en production.

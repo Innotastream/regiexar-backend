@@ -9,7 +9,7 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 6, 'steps' => [['type' => 'instruction']]]), 'format futur 6'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 7, 'steps' => [['type' => 'instruction']]]), 'format futur 7'),
     'A future workflow version is refused instead of being rewritten.'
 );
 
@@ -714,3 +714,36 @@ requireComplexAbility(validApplicationAbilityEffects($periodic)
     'Periodic damage is part of the damage effect and may have zero initial damage.');
 
 echo "complex-abilities-contract: ok\n";
+
+
+$batchAbility = ['id' => 'batch-formula', 'name' => 'Combo complet', 'workflow' => ['version' => 6, 'steps' => [[
+    'id' => 'chain', 'type' => 'attack-chain', 'resolutionMode' => 'batch', 'statId' => 'character-stat-agility',
+    'count' => 5, 'penaltyPerSuccess' => 10, 'stopOnFailure' => true, 'damageMode' => 'configured',
+    'damageComponents' => [['type' => 'ignore', 'formula' => '2d40+12']], 'allowOpposition' => true,
+]]]];
+requireComplexAbility(applicationComplexAbilityWorkflowError($batchAbility['workflow']) === '', 'Batch damage is a supported reusable module.');
+$batchTokens = [['id' => 'batch-source', 'hp' => 80, 'maxHp' => 100, 'stats' => [['id' => 'character-stat-agility', 'value' => 80]], 'weaponAttacks' => []],
+    ['id' => 'batch-target', 'hp' => 500, 'maxHp' => 500]];
+$batch = createApplicationComplexAbilityExecution(['id' => 'execution-batch', 'sceneId' => 'scene-one', 'sourceTokenId' => 'batch-source',
+    'controllerAccountId' => 'batch-player', 'ability' => $batchAbility, 'now' => 9000]);
+$draws = [12, 13, 81, 1]; $drawCount = 0;
+$batchContext = ['actor' => ['id' => 'batch-player', 'name' => 'Joueur', 'role' => 'player'], 'tokens' => $batchTokens, 'now' => 9001,
+    'roll' => static function(string $formula, string $mode, bool $under) use (&$draws, &$drawCount): array {
+        requireComplexAbility($formula === '1d100' && $mode === 'advantage' && $under, 'Batch keeps the player roll mode.');
+        $value = $draws[$drawCount++]; return ['total' => $value, 'rawD100' => $value];
+    }];
+$batch = applyApplicationComplexAbilityCommand($batch, ['action' => 'prepare-chain', 'expectedRevision' => 1,
+    'targetTokenId' => 'batch-target', 'attackId' => 'batch-formula', 'statId' => 'character-stat-agility', 'opposed' => true, 'rollMode' => 'advantage'], $batchContext);
+requireComplexAbility($drawCount === 3 && $batch['stepStates']['chain']['queuedAttackCount'] === 2, 'First failure stops the useful gates; successes determine the attacks.');
+requireComplexAbility(array_column($batch['stepStates']['chain']['rolls'], 'threshold') === [80,70,60], 'Cumulative penalty is exact.');
+for ($i = 0; $i < 2; $i++) {
+    $request = 'batch-attack-' . $i; $batch['stepStates']['chain']['attackRequestId'] = $request;
+    $batchContext['attack'] = ['id' => 'attack-' . $i, 'requestId' => $request, 'attackKind' => 'ability', 'attackId' => 'batch-formula',
+        'complexExecutionId' => $batch['id'], 'sceneId' => $batch['sceneId'], 'sourceTokenId' => $batch['sourceTokenId'],
+        'targetTokenId' => 'batch-target', 'accountId' => 'batch-player', 'opposed' => true,
+        'hit' => ['statId' => 'character-stat-agility'], 'status' => 'awaiting-opposition', 'createdAt' => 9002];
+    $batch = applyApplicationComplexAbilityCommand($batch, ['action' => 'confirm-attack', 'expectedRevision' => $batch['revision'], 'attackRequestId' => $request], $batchContext);
+}
+requireComplexAbility($batch['status'] === 'completed' && $batch['endedByFailure'] && count($batch['stepStates']['chain']['attacks']) === 2,
+    'Already successful strikes remain queued when the next gate fails.');
+requireComplexAbility($batch['workflow']['steps'][0]['damageComponents'] === [['type' => 'ignore', 'formula' => '2d40+12']], 'Special damage is never replaced with the weapon.');

@@ -259,7 +259,8 @@ function applicationFogMaskBytes(mixed $value): ?string
 
 function validApplicationFogState(mixed $value): bool
 {
-    return applicationFogMaskBytes($value) !== null;
+    return applicationFogMaskBytes($value) !== null && (!is_array($value) || !array_key_exists('brightness', $value)
+        || (is_int($value['brightness']) && $value['brightness'] >= 0 && $value['brightness'] <= 100));
 }
 
 function validApplicationMapFogState(array $map): bool

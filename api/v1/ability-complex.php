@@ -10,6 +10,7 @@ function onlineComplexAbilityRequestSignature(array $arguments): string
         'layerId' => (string) ($arguments['layerId'] ?? 'ground'),
         'sourceTokenId' => (string) ($arguments['sourceTokenId'] ?? ''),
         'abilityId' => (string) ($arguments['abilityId'] ?? ''),
+        'targetTokenId' => (string) ($arguments['targetTokenId'] ?? ''),
         'rollMode' => normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
         'modifier' => normalizeOnlineD100Modifier($arguments['modifier'] ?? 0),
         'modifierMode' => ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
@@ -229,6 +230,7 @@ function onlineUseComplexAbility(
                     'characterId' => $owner['characterId'] ?? '',
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
                     'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'cast' => $cast, 'now' => $now,
+                    'targetTokenId' => $arguments['targetTokenId'] ?? '',
                     'combatId' => $persistent ? $combatId : '',
                 ]);
             } catch (ApplicationComplexAbilityException $error) {
@@ -412,15 +414,36 @@ function onlineUseComplexAbility(
     $newStep = $next['workflow']['steps'][$next['currentStepIndex'] ?? -1] ?? null;
     $startAwareness = $workflowAction === 'select-targets' && ($newStep['type'] ?? '') === 'allocated-attacks'
         && ($newStep['awarenessMode'] ?? '') === 'once';
+    $batch = ($currentStep['resolutionMode'] ?? '') === 'batch' && $workflowAction === 'prepare-chain';
+    $gateOffset = count($currentStepState['rolls'] ?? []);
     foreach ($generatedRolls as $rollIndex => $rolled) {
         $subject = $startAwareness
             ? applicationComplexAbilityTokenById($tokens, $next['stepStates'][$newStep['id']]['targets'][$rollIndex]['tokenId'] ?? '')
             : $rollSubject;
         $subjectName = $startAwareness ? (string) ($subject['name'] ?? 'Cible') : $rollSubjectName;
-        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . ($startAwareness ? 'Vigilance' : $stepTitle), $subjectName);
+        $gate = $batch ? $next['stepStates'][$currentStep['id']]['rolls'][$gateOffset + $rollIndex] : null;
+        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . ($startAwareness ? 'Vigilance' : $stepTitle), $subjectName, $gate['outcomeDetails'] ?? null);
+        if ($batch) {
+            $next['stepStates'][$currentStep['id']]['rolls'][$gateOffset + $rollIndex]['rollId'] = $roll['id'];
+            $roll['diceAppearance'] = onlineDiceAppearance($source, trim((string) ($source['controllerPlayerId'] ?? '')) !== '');
+            $roll['mapEvent'] = ['kind' => 'roll', 'label' => 'Jet ATK', 'value' => $gate['total'],
+                'sceneId' => $sceneId, 'layerId' => $next['layerId'], 'tokenId' => $next['sourceTokenId'],
+                'sourceTokenId' => $next['sourceTokenId'], 'anchorTokenId' => $next['sourceTokenId'],
+                'targetTokenId' => $next['stepStates'][$currentStep['id']]['plan']['targetTokenId'],
+                'diceAppearance' => $roll['diceAppearance'], 'tone' => $gate['outcome']];
+            onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $next['characterId'], $rolled);
+        }
         $responseRolls[] = !is_array($subject) || $subject === [] ? $roll : onlineAbilityRollVisibility($roll, $subject, $identity,
             $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $subject, $sceneId), $sceneId);
         onlineAppendAbilityEffectRoll($records, $pending, $responseRolls[count($responseRolls) - 1]);
+    }
+    if ($batch) {
+        $latestActivity = $pending['activity']['payload'] ?? $activity;
+        foreach ($latestActivity['abilityExecutions'] as &$storedExecution) {
+            if (($storedExecution['id'] ?? '') === $next['id']) $storedExecution = $next;
+        }
+        unset($storedExecution);
+        queueOnlineDomainUpsert($pending, $records, 'activity', $latestActivity);
     }
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);
     if (($effectResult['kind'] ?? '') === 'damage' && $effectResult['appliedDamage'] > 0) {
