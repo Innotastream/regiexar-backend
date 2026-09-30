@@ -7,6 +7,7 @@ function validApplicationAbilityCastingFields(array $ability): bool {
     foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999] as $key => $limit) {
         if (array_key_exists($key, $ability) && (!is_int($ability[$key]) || $ability[$key] < 0 || $ability[$key] > $limit)) return false;
     }
+    if (array_key_exists('usesPerCombat', $ability) && (!is_int($ability['usesPerCombat']) || $ability['usesPerCombat'] < 0 || $ability['usesPerCombat'] > 100)) return false;
     if (array_key_exists('restRecharge', $ability) && !in_array($ability['restRecharge'], ['none', 'short', 'long'], true)) return false;
     if (array_key_exists('usesPerRest', $ability) && (!is_int($ability['usesPerRest']) || $ability['usesPerRest'] < 1 || $ability['usesPerRest'] > 100)) return false;
     foreach (['reusableInTurn', 'reducedFailureCooldown'] as $key) if (array_key_exists($key, $ability) && !is_bool($ability[$key])) return false;
@@ -16,6 +17,7 @@ function validApplicationAbilityCastingFields(array $ability): bool {
 
 function applicationAbilityCastingFields(array $ability): array {
     $result = [];
+    if (array_key_exists('usesPerCombat', $ability)) $result['usesPerCombat'] = max(0, min(100, (int) $ability['usesPerCombat']));
     if (array_key_exists('restRecharge', $ability)) $result['restRecharge'] = in_array($ability['restRecharge'], ['short', 'long'], true) ? $ability['restRecharge'] : 'none';
     if (array_key_exists('usesPerRest', $ability)) $result['usesPerRest'] = max(1, min(100, (int) $ability['usesPerRest']));
     if (array_key_exists('reusableInTurn', $ability)) $result['reusableInTurn'] = $ability['reusableInTurn'] === true;
@@ -127,9 +129,14 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     $round = max(1, (int) ($initiative['round'] ?? 1));
     $remaining = 0; $useCount = 0; $restUseCount = 0; $turnKey = applicationAbilityTurnKey($initiative);
     $restUseLimit = (int) ($ability['usesPerRest'] ?? 1);
+    $combatUseLimit = (int) ($ability['usesPerCombat'] ?? 0); $combatUseCount = 0;
+    $combatId = (string) ($initiative['combatId'] ?? '');
+    if ($combatUseLimit > 0 && (!(($initiative['active'] ?? false) === true) || $combatId === '')) throw new RuntimeException('ability_combat_required');
     foreach ($timers as $timer) {
         if (!is_array($timer) || ($timer['sceneId'] ?? '') !== $sceneId || ($timer['abilityId'] ?? '') !== ($ability['id'] ?? '')) continue;
         if ($owner['characterId'] !== '' ? ($timer['characterId'] ?? '') !== $owner['characterId'] : (($timer['characterId'] ?? '') !== '' || ($timer['tokenId'] ?? '') !== $owner['tokenId'])) continue;
+        if ($combatId !== '' && ($timer['combatId'] ?? '') === $combatId) $combatUseCount = max($combatUseCount, (int) ($timer['combatUseCount'] ?? 0));
+        if ($combatUseLimit > 0 && $combatUseCount >= $combatUseLimit) throw new RuntimeException('ability_combat_exhausted');
         $sameTurn = $turnKey !== '' && ($timer['turnKey'] ?? '') === $turnKey;
         if ($sameTurn) $useCount = (int) ($timer['useCount'] ?? 0);
         if (($timer['reusableInTurn'] ?? false) && $sameTurn) continue;
@@ -158,6 +165,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
         'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost,
         'fatigueGained' => min($fatigueCost, 150 - normalizeApplicationFatigue($source['fatigue'] ?? null)['current']),
+        'combatId' => $combatId, 'combatUseLimit' => $combatUseLimit, 'combatUseCount' => $combatUseCount,
         'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
         'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
         'usedRound' => $round, 'cooldownRounds' => (int) ($ability['cooldownRounds'] ?? 0), 'manaCost' => $manaCost,
@@ -174,7 +182,7 @@ function applicationAbilityFailedCooldownRounds(array $plan, array $cast): int {
 function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $source, string $sceneId, array $initiative, array $activity, ?string $legacyStatId = null): array {
     try { return applicationAbilityCastingPlan($ability, $source, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId); }
     catch (RuntimeException $error) {
-        $messages = ['ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
+        $messages = ['ability_combat_required' => 'Cette compétence exige un combat actif.', 'ability_combat_exhausted' => 'Toutes les utilisations de cette compétence ont été consommées pendant ce combat.', 'ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
             'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.',
             'ability_cast_stat_missing' => 'La caractéristique de lancement n’existe plus sur cette fiche.', 'ability_cast_invalid' => 'Les règles de lancement sont invalides.'];
         rejectOnlineCommand($connection, 409, $messages[$error->getMessage()] ?? 'Cette compétence ne peut pas être lancée.', $error->getMessage());
@@ -353,7 +361,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $cast['success'] ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];
-    if ($remaining > 0 || (($plan['trackUses'] ?? false) && ($plan['turnKey'] ?? '') !== '') || ($cast['success'] && in_array($plan['restRecharge'] ?? '', ['short', 'long'], true))) {
+    if (($cast['success'] && ($plan['combatUseLimit'] ?? 0) > 0) || $remaining > 0 || (($plan['trackUses'] ?? false) && ($plan['turnKey'] ?? '') !== '') || ($cast['success'] && in_array($plan['restRecharge'] ?? '', ['short', 'long'], true))) {
         $isGm = ($identity['effective_mode'] ?? '') === 'gm' && ($identity['permanent_role'] ?? '') === 'gm';
         $timerOwner = $isGm ? (onlineTokenControllerIdFromRecords($connection, $records, $source) ?: (string) $identity['id']) : (string) $identity['id'];
         $timers = array_values($activity['actionTimers'] ?? []);
@@ -368,6 +376,8 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             'turnKey' => $plan['turnKey'], 'useCount' => $plan['useCount'], 'reusableInTurn' => $failedCooldown > 0 ? false : $plan['reusableInTurn'],
             'restRecharge' => $retainCooldown ? $old['restRecharge'] : ($cast['success'] ? $plan['restRecharge'] : 'none'),
             'restUseCount' => $cast['success'] && in_array($plan['restRecharge'], ['short', 'long'], true) ? (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)) + 1 : (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)),
+            'combatId' => $plan['combatId'] ?? '', 'combatUseLimit' => $plan['combatUseLimit'] ?? 0,
+            'combatUseCount' => ($plan['combatUseCount'] ?? 0) + ($cast['success'] ? 1 : 0),
             'restUseLimit' => $plan['restUseLimit'], 'cooldownActive' => $cast['success'] || $retainCooldown || $failedCooldown > 0,
             'usedRound' => $retainCooldown ? $old['usedRound'] : $plan['usedRound'], 'readyRound' => $retainCooldown ? max($old['readyRound'], $plan['usedRound'] + $failedCooldown) : $plan['usedRound'] + $remaining, 'ownerPlayerId' => $timerOwner,
             'ownerLabel' => $source['name'] ?? 'Personnage', 'visibility' => 'private', 'createdAt' => $index !== null ? ($timers[$index]['createdAt'] ?? gmdate('c')) : gmdate('c'), 'updatedAt' => gmdate('c')];

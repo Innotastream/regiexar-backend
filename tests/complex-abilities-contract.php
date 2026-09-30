@@ -9,7 +9,7 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 7, 'steps' => [['type' => 'instruction']]]), 'format futur 7'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 8, 'steps' => [['type' => 'instruction']]]), 'format futur 8'),
     'A future workflow version is refused instead of being rewritten.'
 );
 
@@ -340,7 +340,7 @@ requireComplexAbility(count($retained) === XAR_COMPLEX_ABILITY_MAXIMUM_EXECUTION
     'An old active execution is retained ahead of newer terminal history.');
 
 $chainAbility = ['id' => 'generic-chain', 'name' => 'Série configurable', 'effect' => 'complex', 'formula' => '0',
-    'workflow' => ['version' => 3, 'steps' => [['id' => 'chain', 'type' => 'attack-chain', 'title' => 'Série',
+    'workflow' => ['version' => 3, 'steps' => [['id' => 'chain', 'type' => 'attack-chain', 'resolutionMode' => 'individual', 'title' => 'Série',
         'statId' => 'character-stat-agility', 'count' => 4, 'penaltyPerSuccess' => 10, 'stopOnFailure' => true]]]];
 requireComplexAbility(applicationComplexAbilityWorkflowError($chainAbility['workflow']) === '', 'A generic attack chain is editable.');
 $chain = createApplicationComplexAbilityExecution(['id' => 'execution-generic-chain', 'sceneId' => 'scene-one',
@@ -373,7 +373,7 @@ requireComplexAbility($chain['stepStates']['chain']['rolls'][1]['threshold'] ===
 
 $singlePlanAbility = ['id' => 'generic-single-plan', 'name' => 'Série sans répétition', 'effect' => 'complex',
     'castingStatId' => 'character-stat-agility', 'workflow' => ['version' => 5, 'steps' => [[
-        'id' => 'chain', 'type' => 'attack-chain', 'statId' => 'character-stat-agility', 'count' => 5,
+        'id' => 'chain', 'type' => 'attack-chain', 'resolutionMode' => 'individual', 'statId' => 'character-stat-agility', 'count' => 5,
         'penaltyPerSuccess' => 10, 'stopOnFailure' => true, 'targetMode' => 'once', 'firstGateAtCast' => true,
     ]]]];
 $single = createApplicationComplexAbilityExecution(['id' => 'execution-single-plan', 'sceneId' => 'scene-one',

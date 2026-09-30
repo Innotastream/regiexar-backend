@@ -51,7 +51,9 @@ jobs:
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php
       - name: Complex multi-step ability lifecycle
-        run: php tests/complex-abilities-contract.php
+        run: |
+          php tests/complex-abilities-contract.php
+          php tests/native-abilities-contract.php
       - name: Assistant classic abilities and repair
         run: php tests/ability-assistant-contract.php
       - name: Authoritative tactical rolls and audio loops

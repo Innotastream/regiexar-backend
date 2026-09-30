@@ -71,3 +71,15 @@ requireTactical($comboDb->payload('token:scene-one:token-monster')['hp'] == 1000
     && $comboDb->payload('character:character-player')['fatigue']['current'] === 5, 'PHP applies actual HP loss and pays mana/fatigue once.');
 foreach ([0,50,100] as $brightness) requireTactical(validApplicationFogState(['version' => 1, 'enabled' => true, 'width' => 32, 'height' => 32, 'mask' => '', 'brightness' => $brightness]), 'Fog brightness is accepted without a schema migration.');
 foreach ([-1,101,null,'0'] as $brightness) requireTactical(!validApplicationFogState(['version' => 1, 'enabled' => true, 'width' => 32, 'height' => 32, 'mask' => '', 'brightness' => $brightness]), 'Malformed brightness is rejected atomically.');
+
+foreach ([['physical',30,1,50],['physical',30,2,30],['magical',0,1,80],['magical',30,1,50],['ignore',0,1,100]] as [$type,$armor,$count,$expected]) {
+    $guardDb=fixture();$guardToken=$guardDb->payload('token:scene-one:token-monster');
+    $guardToken['hp']=$guardToken['maxHp']=1000;$guardDb->put('token:scene-one:token-monster',$guardToken);
+    $guardDb->put('initiative:scene-one',['active'=>true,'combatId'=>'guard-combat']);
+    $activity=$guardDb->payload('activity');$activity['nextAttackGuards']=array_fill(0,$count,['sceneId'=>'scene-one','targetTokenId'=>'token-monster','combatId'=>'guard-combat','percent'=>20,'stackGroup'=>'orbs','trigger'=>'damage','damageTypes'=>['physical','magical'],'armorStacking'=>'add']);
+    $guardDb->put('activity',$activity);$records=$guardDb->domains;$pending=[];
+    $basis=['rawDamage'=>100,'finalDamage'=>100-$armor,'armorPercent'=>$armor,'damageType'=>$type];
+    $health=applyOnlineAttackDamage($guardDb,$records,$pending,'token:scene-one:token-monster',$guardToken,100-$armor,true,$basis);
+    requireTactical($health['appliedDamage']===$expected && $pending['token:scene-one:token-monster']['payload']['hp']===1000-$expected,'PHP applies additive armor/orbs to actual HP with per-type exceptions.');
+    requireTactical($type==='ignore' ? !isset($pending['activity']) : $pending['activity']['payload']['nextAttackGuards']===[],'Only eligible damage consumes the entire orb guard group.');
+}

@@ -1,6 +1,6 @@
-# Candidat backend 0.18.23 — combos complets, client exact 3.4.21
+# Candidat backend 0.18.24 — compétences natives, client exact 3.5.0
 
-Build `client-3-4-21-combo-dice-fog-20260929-1`. Les chaînes automatiques préparent leurs jets utiles, réutilisent chaque réussite comme jet d’attaque et appliquent leurs composantes de dégâts avec un seul coût et une seule recharge. Les réservations et les attaques en attente restent persistantes jusqu’au traitement du MJ. La luminosité du brouillard est validée entre 0 et 100 sans modifier les masques de visibilité. Schéma MySQL **22** inchangé. La production 0.18.22 / politique exacte 3.4.20 demeure en place tant que le nouveau basculement n’a pas reçu son accord explicite.
+Build `client-3-5-0-native-abilities-20260930-1`. Les chaînes se résolvent automatiquement, les dégâts répartis peuvent réutiliser le jet de lancement, et les compteurs réagissent aux blessures ou aux nouveaux états configurés sans gain passif. Les protections peuvent se cumuler et être consommées sur les prochains dégâts ; les quotas par combat sont indépendants du repos. Les exécutions anciennes conservent leur cadence et leurs reçus. Schéma MySQL **22** inchangé. La production 0.18.23 / politique exacte 3.4.21 reste en place jusqu’à l’accord explicite pour la nouvelle coupure.
 
 # Candidat backend 0.18.22 — zones configurables, client exact 3.4.20
 

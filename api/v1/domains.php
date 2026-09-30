@@ -2941,7 +2941,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, (string) ($dot['damageType'] ?? 'physical')));
             $applied = 0;
             if ($summary['finalDamage'] > 0) {
-                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false);
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical']);
                 $applied = (int) ($health['appliedDamage'] ?? 0);
                 $updatedTarget = $pending[$key]['payload'] ?? $target;
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
