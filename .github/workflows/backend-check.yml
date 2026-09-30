@@ -87,6 +87,8 @@ jobs:
           set -o pipefail
           php tests/mysql-media-concurrency.php | tee mysql-concurrency.log
           grep -Fq 'Local MySQL concurrency integration passed.' mysql-concurrency.log
+          php tests/mysql-history-retention.php | tee mysql-history-retention.log
+          grep -Fq 'Local MySQL history retention integration passed.' mysql-history-retention.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

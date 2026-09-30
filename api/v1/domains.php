@@ -3134,7 +3134,9 @@ function cleanupApplicationDomainHistory(PDO $connection): void
 {
     $lockName = 'xar-regie-domain-cleanup';
     try {
-        if (random_int(1, 25) !== 1 || !acquireMaintenanceLock($connection, $lockName)) {
+        // Every committed write advances the bounded cleanup. A random gate
+        // left expired JSON snapshots accumulating faster than they were removed.
+        if ($connection->inTransaction() || !acquireMaintenanceLock($connection, $lockName)) {
             return;
         }
         try {
@@ -3142,14 +3144,15 @@ function cleanupApplicationDomainHistory(PDO $connection): void
                 'DELETE FROM application_domain_changes WHERE global_revision < '
                 . '(SELECT cutoff FROM (SELECT GREATEST(0, global_revision - 2000) AS cutoff '
                 . 'FROM application_domain_clock WHERE singleton_id = 1) AS retained) '
-                . 'LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
+                . 'ORDER BY global_revision, domain_key LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
             );
             $connection->exec(
                 'DELETE FROM application_domain_history '
                 . 'WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
-                . 'LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
+                . 'ORDER BY created_at, history_id LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
             );
-            cleanupExpiredMediaRetention($connection);
+            // Keep the existing cadence of the separate physical-media sweep.
+            if (random_int(1, 25) === 1) cleanupExpiredMediaRetention($connection);
         } finally {
             releaseMaintenanceLock($connection, $lockName);
         }

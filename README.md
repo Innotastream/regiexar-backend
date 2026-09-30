@@ -1,4 +1,8 @@
-# Candidat backend 0.18.25 — compétences natives, client exact 3.5.0
+# Candidat backend 0.18.26 — entretien des historiques, client exact 3.5.0
+
+Build `client-3-5-0-history-retention-20260930-1`. Chaque écriture validée fait avancer le nettoyage des historiques dépassant 30 jours, sans tirage aléatoire : suppression des plus anciens en lots de 500 au maximum et verrou de maintenance non bloquant. L'entretien refuse de démarrer dans une transaction métier ; la cadence du nettoyage physique des médias reste indépendante. Un contrat SQL réel vérifie la limite des lots, la frontière des 30 jours, la conservation des documents actuels et des deltas récents, les verrous concurrents et leur libération après erreur. Schéma MySQL **22** et politique exacte **3.5.0** conservés, sans nouveau client Windows. La source et les tests ne constituent pas une preuve de déploiement OVH.
+
+# Livraison précédente 0.18.25 — compétences natives, client exact 3.5.0
 
 Build `client-3-5-0-native-abilities-20260930-2`. Les chaînes se résolvent automatiquement, les dégâts répartis peuvent réutiliser le jet de lancement, et les compteurs réagissent aux blessures ou aux nouveaux états configurés sans gain passif. Les protections peuvent se cumuler et être consommées sur les prochains dégâts ; les quotas par combat sont indépendants du repos. Les exécutions anciennes conservent leur cadence et leurs reçus. Schéma MySQL **22** inchangé. La production 0.18.23 / politique exacte 3.4.21 reste en place jusqu’à l’accord explicite pour la nouvelle coupure.
 
