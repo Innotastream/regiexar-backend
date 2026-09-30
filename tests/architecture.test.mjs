@@ -80,8 +80,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.24'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-0-native-abilities-20260930-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.25'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-0-native-abilities-20260930-2'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -117,7 +117,7 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.24");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.25");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.5.0");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");

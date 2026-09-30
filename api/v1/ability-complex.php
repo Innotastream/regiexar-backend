@@ -389,7 +389,9 @@ function onlineUseComplexAbility(
         }
     }
     if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') === 'completed' && ($next['endedByFailure'] ?? false) !== true) {
-        if (($current['workflow']['version'] ?? 1) < 7) applyOnlineAttackConditions($connection, $records, $pending, [
+        $hasNativeAttacks = ($current['workflow']['version'] ?? 1) >= 7
+            && array_filter($current['workflow']['steps'], static fn(array $step): bool => in_array($step['type'], ['attack-chain', 'allocated-attacks'], true)) !== [];
+        if (!$hasNativeAttacks) applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $next['sourceTokenId'], 'onHitConditions' => $next['onHitConditions'] ?? [],
         ]);
         appendApplicationAbilityCueEvent($activity, $next['completionCue'] ?? null, $sceneId,
