@@ -20,6 +20,14 @@ try { applyApplicationComplexAbilityCommand($execution,$command,$context);throw 
 catch(ApplicationComplexAbilityException $e){nativeCheck($e->errorCode==='complex_ability_source_turn_required','Only the caster turn can consume orbs.');}
 $execution=applyApplicationComplexAbilityCommand($execution,$command,[...$context,'currentTokenId'=>'caster']);
 nativeCheck($execution['stepStates']['orbs']['value']===1,'Spending consumes a charge without recasting.');
+foreach ([0, 100] as $extraRevision) {
+    $stale = $execution;
+    $stale['revision'] += $extraRevision;
+    $stale['stepStates']['orbs']['value'] = 2;
+    $saved = preserveApplicationAbilityExtensions('activity', ['abilityExecutions'=>[$stale]], ['abilityExecutions'=>[$execution]]);
+    nativeCheck($saved['abilityExecutions'][0]['stepStates']['orbs']['value']===1,'A table snapshot cannot restore an authoritative spent charge.');
+    nativeCheck($saved['abilityExecutions'][0]['revision']===$execution['revision'],'A table snapshot cannot invent a workflow revision.');
+}
 nativeCheck(count(applicationComplexAbilityPlacedMarkers([$execution],'scene','ground',[$source,$target]))===1,'Exactly one visual orb remains.');
 $guards=[['sceneId'=>'scene','targetTokenId'=>'target','combatId'=>'combat','percent'=>20,'stackGroup'=>'spell'],['sceneId'=>'scene','targetTokenId'=>'target','combatId'=>'combat','percent'=>20,'stackGroup'=>'spell']];
 $markers=applicationComplexAbilityPlacedMarkers([],'scene','ground',[$source,$target],$guards,['active'=>true,'combatId'=>'combat']);

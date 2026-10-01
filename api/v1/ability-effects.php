@@ -224,7 +224,9 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         foreach (normalizeApplicationComplexAbilityExecutions($previous['abilityExecutions'] ?? []) as $execution) $executions[$execution['id']] = $execution;
         foreach (normalizeApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? []) as $execution) {
             $old = $executions[$execution['id']] ?? null;
-            if (!is_array($old) || (int) $execution['revision'] >= (int) $old['revision']) $executions[$execution['id']] = $execution;
+            // Existing workflows are command-owned; table snapshots cannot
+            // restore spent charges by claiming an equal or newer revision.
+            if (!is_array($old)) $executions[$execution['id']] = $execution;
         }
         if (array_key_exists('abilityExecutions', $payload) || $executions !== []) {
             $payload['abilityExecutions'] = trimApplicationComplexAbilityExecutions(array_values($executions));
