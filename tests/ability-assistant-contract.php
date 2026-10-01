@@ -92,6 +92,14 @@ assertAssistantDraft(($orbDraft['workflow']['steps'][0]['spendOptions'][0]['effe
     && ($orbDraft['workflow']['steps'][0]['spendOptions'][1]['effect']['percent'] ?? 0) === 20
     && validApplicationAbilities([$orbDraft]), 'Le brouillon des orbes produit dégâts et protection configurables.');
 
+$longRestOrb = normalizeAbilityAssistantDraft($conversation, [
+    ...$orbDraft, 'noDefensePossible' => true, 'restRecharge' => 'long', 'usesPerRest' => 1,
+]);
+assertAssistantDraft(($longRestOrb['noDefensePossible'] ?? false) === true
+    && ($longRestOrb['restRecharge'] ?? '') === 'long'
+    && ($longRestOrb['usesPerRest'] ?? 0) === 1,
+    'La proposition conserve l’interdiction explicite de défense et une activation par repos long.');
+
 $sound = [
     'version' => 1, 'trigger' => 'completed',
     'sound' => ['url' => '/media/abcdefghijklmnopqrstuvwx', 'name' => 'Souffle.wav',

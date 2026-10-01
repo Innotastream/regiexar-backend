@@ -6381,7 +6381,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $hitRoll['visibility'] = 'gm';
                     $hitRoll['revealed'] = false;
                 }
-                $opposed = $primaryAffects && ($arguments['opposed'] ?? false) === true && (float) ($target['hp'] ?? 0) > 0;
+                $defensePossible = ($abilityForAttack['noDefensePossible'] ?? false) !== true
+                    && ($execution['noDefensePossible'] ?? false) !== true;
+                $opposed = $defensePossible && $primaryAffects && ($arguments['opposed'] ?? false) === true && (float) ($target['hp'] ?? 0) > 0;
                 $oppositionRequired = $opposed
                     && ($hitOutcome['success'] ?? false) === true
                     && ($hitOutcome['breaksOpposition'] ?? false) !== true;
@@ -6584,7 +6586,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $areaAttack['defenderAccountId'] = $areaController;
                         $areaAttack['damage'] = [];
                         $areaAttack['finalDamage'] = 0;
-                        $areaAttack['opposed'] = ($arguments['opposed'] ?? false) === true && (float) ($areaTarget['hp'] ?? 0) > 0;
+                        $areaAttack['opposed'] = $defensePossible && ($arguments['opposed'] ?? false) === true && (float) ($areaTarget['hp'] ?? 0) > 0;
                         if ($areaAttack['opposed'] && ($hitOutcome['success'] ?? false) === true && ($hitOutcome['breaksOpposition'] ?? false) !== true) {
                             $areaAttack['status'] = 'awaiting-opposition';
                         } else {

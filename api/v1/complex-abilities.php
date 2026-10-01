@@ -503,6 +503,10 @@ function createApplicationComplexAbilityExecution(array $context): array
     $error = applicationComplexAbilityWorkflowError($ability['workflow'] ?? null);
     if ($error !== '') applicationComplexAbilityFail($error, 'complex_ability_definition_invalid', 400);
     $workflow = normalizeApplicationComplexAbilityWorkflow($ability['workflow'] ?? null);
+    if (($ability['noDefensePossible'] ?? false) === true) {
+        foreach ($workflow['steps'] as &$step) if ($step['type'] === 'attack-chain') $step['allowOpposition'] = false;
+        unset($step);
+    }
     $first = $workflow['steps'][0];
     $cast = is_array($context['cast'] ?? null) ? $context['cast'] : [];
     foreach ($workflow['steps'] as $configuredStep) if ($configuredStep['type'] === 'allocated-attacks' && $configuredStep['damageMode'] === 'configured' && (($ability['castingStatId'] ?? '') !== $configuredStep['statId'] || !($cast['success'] ?? false) || ($cast['statId'] ?? '') !== $configuredStep['statId'] || !is_array($cast['outcome'] ?? null))) applicationComplexAbilityFail('Cette série exige un jet de lancement de la même statistique.', 'complex_ability_definition_invalid', 400);
@@ -524,6 +528,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         'combatId' => applicationComplexAbilityIdentifier($context['combatId'] ?? '', '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($ability['id'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
+        ...(($ability['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
         'castGate' => ($cast['success'] ?? false) && is_array($cast['outcome'] ?? null) ? [
             'formula' => '1d100', 'total' => (int) $cast['outcome']['raw'], 'threshold' => (int) $cast['outcome']['threshold'],
             'success' => true, 'statId' => (string) $cast['statId'], 'outcomeDetails' => $cast['outcome'], 'rollId' => $cast['roll']['id'] ?? '',
@@ -561,6 +566,10 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
 {
     $source = is_array($value) ? $value : [];
     $workflow = normalizeApplicationComplexAbilityWorkflow($source['workflow'] ?? null, (int) ($source['workflow']['version'] ?? 1) < 7);
+    if (($source['noDefensePossible'] ?? false) === true) {
+        foreach ($workflow['steps'] as &$step) if ($step['type'] === 'attack-chain') $step['allowOpposition'] = false;
+        unset($step);
+    }
     $status = in_array($source['status'] ?? '', ['active', 'completed', 'cancelled'], true) ? $source['status'] : 'cancelled';
     $execution = [
         'id' => applicationComplexAbilityIdentifier($source['id'] ?? '', '', 120),
@@ -575,6 +584,7 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'combatId' => applicationComplexAbilityIdentifier($source['combatId'] ?? '', '', 120),
         'abilityId' => applicationComplexAbilityIdentifier($source['abilityId'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($source['abilityName'] ?? '', 120, 'Compétence complexe'),
+        ...(($source['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
         'castGate' => is_array($source['castGate'] ?? null) ? $source['castGate'] : null,
         'onHitConditions' => normalizeOnlineConditions($source['onHitConditions'] ?? []),
         'completionCue' => normalizeApplicationAbilityCompletionCue($source['completionCue'] ?? null),
@@ -1124,6 +1134,12 @@ function applyApplicationComplexAbilityCommand(
 ): array {
     $execution = normalizeApplicationComplexAbilityExecution($value);
     $command = is_array($commandValue) ? $commandValue : [];
+    if (($execution['noDefensePossible'] ?? false) === true) {
+        if (($command['opposed'] ?? false) === true) applicationComplexAbilityFail('Aucune défense n’est possible contre cette compétence.', 'complex_ability_defense_forbidden', 400);
+        foreach (is_array($command['attackPlan'] ?? null) ? $command['attackPlan'] : [] as $planned) {
+            if (($planned['opposed'] ?? false) === true) applicationComplexAbilityFail('Aucune défense n’est possible contre cette compétence.', 'complex_ability_defense_forbidden', 400);
+        }
+    }
     if ($execution['status'] !== 'active') applicationComplexAbilityFail('Cette compétence complexe est déjà terminée.', 'complex_ability_terminal');
     $expected = $command['expectedRevision'] ?? null;
     if (!is_int($expected) && !(is_numeric($expected) && (float) $expected === (float) (int) $expected)) $expected = null;
@@ -1541,16 +1557,14 @@ function applyApplicationComplexAbilityCommand(
                 applicationComplexAbilityFail('Le lanceur doit être sur le niveau courant pour poser le marqueur.', 'complex_ability_marker_source_missing');
             }
             $rolled = null;
-            if ($effect['kind'] === 'damage') {
-                if (!is_callable($roll)) applicationComplexAbilityFail('Le jet de dégâts autoritatif est indisponible.', 'complex_ability_effect_roll_missing');
-                $rolled = $roll($effect['formula']);
-            }
+            // Damage is rolled by the attack authority after any permitted defense.
             $markerId = $effect['kind'] === 'marker' ? 'marker-' . ($execution['revision'] + 1) : '';
             $state['value'] = $effect['kind'] === 'marker' ? $previous : $previous - $option['cost'];
             if ($markerId !== '') $state['deployments'] = [...$deployments, ['id' => $markerId, 'x' => (float) $source['x'],
                 'y' => (float) $source['y'], 'label' => $option['label'], 'movable' => $effect['movable'] === true]];
             if ($step['spendOncePerTurn']) $state['lastSpendTurnKey'] = $turnKey;
             $state['lastUse'] = ['optionId' => $optionId, 'effect' => $effect, 'targetTokenId' => $targetId,
+                ...($effect['kind'] === 'damage' ? ['opposed' => ($execution['noDefensePossible'] ?? false) !== true && ($command['opposed'] ?? true) !== false] : []),
                 'targetName' => is_array($target) ? applicationComplexAbilityText($target['name'] ?? '', 120, 'Cible') : '',
                 'markerId' => $markerId, 'rolled' => $rolled, 'revision' => $execution['revision'] + 1];
             $state['events'][] = ['at' => $now, 'type' => $markerId !== '' ? 'deploy' : 'spend', 'value' => $state['value'],

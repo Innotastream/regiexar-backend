@@ -55,6 +55,8 @@ function applicationDamageAreaAffects(array $targeting, string $sourceId, string
     return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    if (array_key_exists('noDefensePossible', $entry) && (!is_bool($entry['noDefensePossible'])
+        || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
@@ -84,6 +86,7 @@ function applicationAbilityEffectFields(array $entry): array {
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
+    if (in_array($effect, ['damage', 'complex'], true) && ($entry['noDefensePossible'] ?? false) === true) $conditions['noDefensePossible'] = true;
     $opposition = validApplicationOppositionAbility($entry['opposition'] ?? null) ? ['opposition' => applicationOppositionAbility($entry['opposition'])] : [];
     if ($effect === 'complex') return [
         ...$casting,
