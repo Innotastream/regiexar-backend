@@ -205,10 +205,15 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
     if ($key === 'activity') {
         // Periodic damage is server owned; an old or modified MJ snapshot cannot reset its counters.
         $payload['damageOverTime'] = is_array($previous['damageOverTime'] ?? null) ? $previous['damageOverTime'] : [];
+        $payload['pendingDotResolutions'] = $previous['pendingDotResolutions'] ?? [];
+        $payload['rollRevelations'] = $previous['rollRevelations'] ?? [];
+        $removedGuards = [];
+        foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (($receipt['kind'] ?? '') === 'combat-effect' && ($receipt['result']['kind'] ?? '') === 'guard' && ($receipt['result']['decision'] ?? '') === 'remove') $removedGuards[$receipt['result']['effectId']] = true;
+        if (is_array($payload['nextAttackGuards'] ?? null)) $payload['nextAttackGuards'] = array_values(array_filter($payload['nextAttackGuards'], static fn ($guard): bool => !isset($removedGuards[$guard['id'] ?? ''])));
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'];
+        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;

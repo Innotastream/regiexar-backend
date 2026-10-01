@@ -10,6 +10,7 @@ require_once __DIR__ . '/ability-use.php';
 require_once __DIR__ . '/ability-casting.php';
 require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
+require_once __DIR__ . '/ongoing-effects.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -2003,6 +2004,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
+            || !validApplicationDomainObjectList($payload['pendingDotResolutions'] ?? [], XAR_PENDING_DOT_RESOLUTION_MAXIMUM)
+            || !validApplicationDomainObjectList($payload['rollRevelations'] ?? [], 500)
             || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [], 100)
             || !validApplicationDomainObjectList($payload['nextAttackGuards'] ?? [], 60)
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
@@ -2402,6 +2405,8 @@ function legacyStateToDomains(array $state): array
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
             'damageOverTime' => is_array($state['damageOverTime'] ?? null) ? $state['damageOverTime'] : [],
+            'pendingDotResolutions' => is_array($state['pendingDotResolutions'] ?? null) ? $state['pendingDotResolutions'] : [],
+            'rollRevelations' => is_array($state['rollRevelations'] ?? null) ? $state['rollRevelations'] : [],
             'nextAttackGuards' => is_array($state['nextAttackGuards'] ?? null) ? $state['nextAttackGuards'] : [],
             'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
             'restEvents' => is_array($state['restEvents'] ?? null) ? $state['restEvents'] : [],
@@ -2590,6 +2595,8 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
         'damageOverTime' => is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [],
+        'pendingDotResolutions' => is_array($activity['pendingDotResolutions'] ?? null) ? $activity['pendingDotResolutions'] : [],
+        'rollRevelations' => is_array($activity['rollRevelations'] ?? null) ? $activity['rollRevelations'] : [],
         'nextAttackGuards' => is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
         'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
@@ -2909,6 +2916,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     $dots = is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [];
     if ($endedScenes !== []) {
+        onlineCaptureEndedDots($connection, $records, $pending, $activity, $endedScenes);
         $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
         $liveGuards = array_values(array_filter($guards, static fn(mixed $guard): bool =>
             is_array($guard) && !isset($endedScenes[(string) ($guard['sceneId'] ?? '')])));
@@ -2965,7 +2973,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         if ($keep) $remaining[] = $dot;
     }
     if ($remaining !== $dots) $activity['damageOverTime'] = $remaining;
-    if ($remaining !== $dots || isset($roll) || isset($liveGuards) && $liveGuards !== $guards)
+    if ($endedScenes !== [] || $remaining !== $dots || isset($roll) || isset($liveGuards) && $liveGuards !== $guards)
         queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
 }
 

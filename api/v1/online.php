@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . "/damage-guard.php";
+require_once __DIR__ . "/ongoing-effects.php";
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
@@ -1230,9 +1231,15 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             $visibleLuckStatistics[$characterId] = $luckStatistics[$characterId];
         }
     }
-    $rolls = array_values(array_filter($fullState['rolls'] ?? [], static function (mixed $roll) use ($dimIds): bool {
+    $revelations = array_column($fullState['rollRevelations'] ?? [], null, 'rollId');
+    $revealedRolls = array_map(static function (array $roll) use ($revelations): array {
+        $entry = $revelations[$roll['id'] ?? ''] ?? null;
+        return $entry === null ? $roll : [...$roll, 'revealed' => true, 'gmRevealed' => true, 'revealedAt' => $entry['revealedAt']];
+    }, $fullState['rolls'] ?? []);
+    $rolls = array_values(array_filter($revealedRolls, static function (mixed $roll) use ($dimIds): bool {
         if (!is_array($roll) || !(($roll['visibility'] ?? '') === 'public' || ($roll['revealed'] ?? false) === true)
             || (($roll['mapEvent']['kind'] ?? '') === 'damage' && ($roll['mapEvent']['applied'] ?? false) !== true)) return false;
+        if (($roll['gmRevealed'] ?? false) === true) return true;
         if (is_array($roll['mapEvent'] ?? null)) {
             foreach (['tokenId', 'anchorTokenId', 'sourceTokenId', 'targetTokenId'] as $key) {
                 if (isset($dimIds[(string) ($roll['mapEvent'][$key] ?? '')])) return false;
@@ -1241,6 +1248,13 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         return true;
     }));
     foreach ($rolls as $rollIndex => $roll) {
+        if (($roll['gmRevealed'] ?? false) === true) {
+            $rollScene = (string) ($roll['mapEvent']['sceneId'] ?? $roll['sourceSceneId'] ?? '');
+            $broadcastScene = (string) ($paused ? ($fullState['tacticalSync']['publishedActiveScene']['id'] ?? '') : ($fullState['activeSceneId'] ?? $fullState['activeScene']['id'] ?? ''));
+            if ($rollScene !== '' && $rollScene !== $broadcastScene) { unset($rolls[$rollIndex]); continue; }
+            $rolls[$rollIndex] = onlinePublicRevealedRoll($roll);
+            continue;
+        }
         $event = is_array($roll['mapEvent'] ?? null) ? $roll['mapEvent'] : [];
         $rollerTokenId = (string) ($event['tokenId'] ?? $event['sourceTokenId'] ?? $roll['sourceTokenId'] ?? '');
         $attackId = trim((string) ($event['attackId'] ?? ''));
@@ -1252,6 +1266,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         $rolls[$rollIndex] = publicOnlineAttackRoll($roll, $visibleTokenDetails[$rollerTokenId] ?? false, $phase,
             $phase === 'damage' && isset($ownedVisibleIds[$targetTokenId]));
     }
+    $rolls = array_values($rolls);
     $map = stripForbiddenPlayerData($map);
     $initiative = stripForbiddenPlayerData($initiative);
     $map = is_array($map) ? $map : [];
@@ -1405,7 +1420,9 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         if (!is_array($dot) || ($dot['sceneId'] ?? '') !== $visibleSceneId
             || !in_array($dot['targetTokenId'] ?? '', $visibleAttackTokenIds, true)) continue;
         $visibleDamageOverTime[] = publicOnlineAttackProjectionFields($dot,
-            ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns']);
+            isset($ownedVisibleIds[$dot['targetTokenId']]) || ($visibleTokenDetails[$dot['targetTokenId']] ?? false)
+                ? ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns', 'formula', 'damageType']
+                : ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns']);
     }
     foreach (is_array($fullState['pendingAttacks'] ?? null) ? $fullState['pendingAttacks'] : [] as $attack) {
         if (!is_array($attack)
@@ -1472,6 +1489,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
         'damageOverTime' => $visibleDamageOverTime,
+        'nextAttackGuards' => array_values(array_map(static fn(array $guard): array => publicOnlineAttackProjectionFields($guard,
+            ['id', 'sceneId', 'targetTokenId', 'label', 'percent', 'trigger', 'persistent']),
+            array_filter($fullState['nextAttackGuards'] ?? [], static fn(array $guard): bool => ($guard['sceneId'] ?? '') === $visibleSceneId
+                && (($visibleTokenDetails[$guard['targetTokenId'] ?? ''] ?? false) || isset($ownedVisibleIds[$guard['targetTokenId'] ?? '']))))),
         'abilityMarkers' => $visibleAbilityMarkers,
         'abilityCueEvents' => $visibleAbilityCueEvents,
         'restEvents' => $visibleRestEvents,
@@ -5154,13 +5175,17 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if ($command === 'ensure-player') {
+        if ($command === 'roll.reveal') {
+            $result = onlineGmRevealRoll($connection, $records, $pending, $table, $identity, $arguments);
+        } elseif (in_array($command, ['combat.effect.remove', 'combat.dot.resolve'], true)) {
+            $result = onlineCombatEffectCommand($connection, $records, $pending, $table, $identity, $arguments, $command === 'combat.dot.resolve');
+        } elseif ($command === 'ensure-player') {
             $records = applicationDomainRecords($connection);
             $roster = applicationDomainPayload($records, 'roster', [
                 'players' => [], 'characterOrder' => [], 'playerPreferences' => [],
@@ -7882,7 +7907,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
         $publicResultRolls = applicationPublicResultRolls($result);
-        if (!$compactComplex && in_array($command, ['roll', 'token.roll', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve'], true) && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
+        if (!$compactComplex && in_array($command, ['roll', 'token.roll', 'roll.reveal', 'combat.dot.resolve', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve'], true) && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordResultRollContent($result));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];

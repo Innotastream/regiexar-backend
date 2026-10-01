@@ -71,6 +71,7 @@ jobs:
           php tests/path-footprint.php
           php tests/media-access-lifecycle.php
           php tests/combat-audit-contract.php
+          php tests/ongoing-effects-contract.php
           php tests/ability-validation-contract.php
           php tests/pending-ability-domain-contract.php
       - name: Real SQL media concurrency and heartbeat

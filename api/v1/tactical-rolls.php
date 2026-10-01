@@ -302,6 +302,8 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
     }
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);
+    $roll['rollKind'] = $spec['kind'];
+    if ($sceneId !== '') $roll['sourceSceneId'] = $sceneId;
     $roll['diceAppearance'] = onlineDiceAppearance($source, !empty($source['controllerPlayerId']), $character ?? null);
     if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal', 'diceAppearance' => $roll['diceAppearance']];
     $sourceVisibleToPlayers = $tokenId !== '' && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);

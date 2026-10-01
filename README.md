@@ -1,3 +1,7 @@
+# Candidat backend 0.18.27 — jets révélés et effets, client exact 3.5.1
+
+Build `client-3-5-1-rolls-ongoing-effects-20261001-1`. Le MJ révèle les jets des créatures cachées par une commande autoritaire, sans publier leur seuil ni leur position. Il retire un effet précis. À la fin du combat, les DOT disparaissent et chaque cible vivante conserve un choix durable : dégâts restants cumulés, formule personnalisée ou aucun dégât. Les commandes conservent les autres changements et leurs reçus empêchent toute double application réseau. Schéma MySQL **22** conservé, sans conversion ni migration de données. La nouvelle politique admet exclusivement le client **3.5.1** après le basculement.
+
 # Candidat backend 0.18.26 — entretien des historiques, client exact 3.5.0
 
 Build `client-3-5-0-history-retention-20260930-1`. Chaque écriture validée fait avancer le nettoyage des historiques dépassant 30 jours, sans tirage aléatoire : suppression des plus anciens en lots de 500 au maximum et verrou de maintenance non bloquant. L'entretien refuse de démarrer dans une transaction métier ; la cadence du nettoyage physique des médias reste indépendante. Un contrat SQL réel vérifie la limite des lots, la frontière des 30 jours, la conservation des documents actuels et des deltas récents, les verrous concurrents et leur libération après erreur. Schéma MySQL **22** et politique exacte **3.5.0** conservés, sans nouveau client Windows. La source et les tests ne constituent pas une preuve de déploiement OVH.
