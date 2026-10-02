@@ -5611,6 +5611,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             $commandActionAlreadyLogged = is_array($receiptContext);
         } elseif ($command === 'token.move') {
+            // Movement must see the current execution under the same transaction
+            // as the token, including its path and remaining distance.
+            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
             if (!$isGm && ($table['tacticalSync']['paused'] ?? false) === true) {
                 rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             }
