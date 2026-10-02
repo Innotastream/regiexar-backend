@@ -9,7 +9,7 @@ function requireComplexAbility(bool $condition, string $message): void {
 }
 
 requireComplexAbility(
-    str_contains(applicationComplexAbilityWorkflowError(['version' => 8, 'steps' => [['type' => 'instruction']]]), 'format futur 8'),
+    str_contains(applicationComplexAbilityWorkflowError(['version' => 9, 'steps' => [['type' => 'instruction']]]), 'format futur 9'),
     'A future workflow version is refused instead of being rewritten.'
 );
 

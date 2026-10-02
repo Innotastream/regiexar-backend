@@ -305,7 +305,7 @@ function onlineUseComplexAbility(
                 $execution = createApplicationComplexAbilityExecution([
                     'id' => 'execution-' . randomToken(12), 'requestId' => $requestId,
                     'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map),
-                    'sourceTokenId' => $source['id'] ?? '', 'sourceName' => $source['name'] ?? 'Personnage',
+                    'sourcePosition' => $source, 'sourceTokenId' => $source['id'] ?? '', 'sourceName' => $source['name'] ?? 'Personnage',
                     'characterId' => $owner['characterId'] ?? '',
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
                     'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'cast' => $cast, 'now' => $now,

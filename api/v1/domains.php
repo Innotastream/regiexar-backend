@@ -1300,6 +1300,7 @@ function validApplicationAbilities(mixed $value): bool
         if (!validApplicationAbilityEffects($entry)
             || !validApplicationDomainIdentifier($entry['id'] ?? null, 120)
             || !validApplicationDomainText($entry['name'] ?? null, 120, false)
+            || (array_key_exists('name', $entry) && !validApplicationDomainText($entry['name'], 120, false))
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
             || (array_key_exists('damageType', $entry) && !in_array($entry['damageType'], ['physical', 'magical', 'ignore'], true))

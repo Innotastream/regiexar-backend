@@ -8,7 +8,7 @@ function applicationDamageComponents(mixed $value): array {
         if (!is_array($entry) || !in_array($entry['type'] ?? '', ['physical', 'magical', 'ignore'], true)
             || isset($seen[$entry['type']]) || !validApplicationAbilityFormula($entry['formula'] ?? null)) return [];
         $seen[$entry['type']] = true;
-        $parts[] = ['type' => $entry['type'], 'formula' => strtolower(preg_replace('/\s+/', '', $entry['formula']))];
+        $parts[] = ['type' => $entry['type'], 'formula' => strtolower(preg_replace('/\s+/', '', $entry['formula'])), ...(($entry['ignoreArmor'] ?? false) === true ? ['ignoreArmor' => true] : [])];
     }
     return $parts;
 }
@@ -157,7 +157,7 @@ function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFor
     $selected = $attempts[$selectedIndex];
     $results = []; $raw = 0; $final = 0;
     foreach ($selected['components'] as $component) {
-        $summary = onlineAttackDamageSummary((int) round(max(0, (int) $component['total']) * $percent / 100), onlineAttackArmorPercent($target, $component['type']));
+        $summary = onlineAttackDamageSummary((int) round(max(0, (int) $component['total']) * $percent / 100), ($component['ignoreArmor'] ?? false) === true ? 0 : onlineAttackArmorPercent($target, $component['type']));
         $results[] = [
             'type' => $component['type'],
             'formula' => $component['formula'],
