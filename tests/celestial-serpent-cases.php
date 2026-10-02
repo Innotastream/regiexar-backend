@@ -15,7 +15,7 @@ $serpentDb->put('initiative:scene-one', ['active' => true, 'combatId' => 'serpen
 $serpentDb->put('map:scene-one', ['grid' => false, 'gridSize' => 50, 'naturalWidth' => 1000, 'naturalHeight' => 1000]);
 $foe = $serpentDb->payload('token:scene-one:token-monster');
 $foe = [...$foe, 'x' => 35, 'y' => 50, 'hp' => 1000, 'maxHp' => 1000, 'magicArmorCategory' => 'special', 'magicArmor' => 100,
-    'stats' => [['id' => 'character-stat-agility', 'label' => 'Esquive', 'value' => 60], ['id' => 'character-stat-force', 'value' => 0]]];
+    'stats' => [['id' => 'character-stat-agility', 'label' => 'Esquive', 'value' => 60], ['id' => 'character-stat-force', 'label' => 'Force', 'value' => 0]]];
 $serpentDb->put('token:scene-one:token-monster', $foe);
 $start = runCommand($serpentDb, 'ability.complex', ['action' => 'start', 'sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'abilityId' => $serpentAbility['id'], 'requestId' => 'serpent-start-request']);
 requireTactical($start->status === 200 && is_array($start->body['execution'] ?? null), 'Serpent starts without casting roll: ' . $start->getMessage());
