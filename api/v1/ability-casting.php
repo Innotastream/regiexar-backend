@@ -130,8 +130,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     $remaining = 0; $useCount = 0; $restUseCount = 0; $turnKey = applicationAbilityTurnKey($initiative);
     $restUseLimit = (int) ($ability['usesPerRest'] ?? 1);
     $combatUseLimit = (int) ($ability['usesPerCombat'] ?? 0); $combatUseCount = 0;
-    $combatId = (string) ($initiative['combatId'] ?? '');
-    if ($combatUseLimit > 0 && (!(($initiative['active'] ?? false) === true) || $combatId === '')) throw new RuntimeException('ability_combat_required');
+    $combatId = ($initiative['active'] ?? false) === true ? (string) ($initiative['combatId'] ?? '') : '';
     foreach ($timers as $timer) {
         if (!is_array($timer) || ($timer['sceneId'] ?? '') !== $sceneId || ($timer['abilityId'] ?? '') !== ($ability['id'] ?? '')) continue;
         if ($owner['characterId'] !== '' ? ($timer['characterId'] ?? '') !== $owner['characterId'] : (($timer['characterId'] ?? '') !== '' || ($timer['tokenId'] ?? '') !== $owner['tokenId'])) continue;
@@ -361,7 +360,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $cast['success'] ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];
-    if (($cast['success'] && ($plan['combatUseLimit'] ?? 0) > 0) || $remaining > 0 || (($plan['trackUses'] ?? false) && ($plan['turnKey'] ?? '') !== '') || ($cast['success'] && in_array($plan['restRecharge'] ?? '', ['short', 'long'], true))) {
+    if (($cast['success'] && ($plan['combatUseLimit'] ?? 0) > 0 && ($plan['combatId'] ?? '') !== '') || $remaining > 0 || (($plan['trackUses'] ?? false) && ($plan['turnKey'] ?? '') !== '') || ($cast['success'] && in_array($plan['restRecharge'] ?? '', ['short', 'long'], true))) {
         $isGm = ($identity['effective_mode'] ?? '') === 'gm' && ($identity['permanent_role'] ?? '') === 'gm';
         $timerOwner = $isGm ? (onlineTokenControllerIdFromRecords($connection, $records, $source) ?: (string) $identity['id']) : (string) $identity['id'];
         $timers = array_values($activity['actionTimers'] ?? []);
@@ -377,7 +376,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             'restRecharge' => $retainCooldown ? $old['restRecharge'] : ($cast['success'] ? $plan['restRecharge'] : 'none'),
             'restUseCount' => $cast['success'] && in_array($plan['restRecharge'], ['short', 'long'], true) ? (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)) + 1 : (int) ($old['restUseCount'] ?? (in_array($old['restRecharge'] ?? '', ['short', 'long'], true) ? 1 : 0)),
             'combatId' => $plan['combatId'] ?? '', 'combatUseLimit' => $plan['combatUseLimit'] ?? 0,
-            'combatUseCount' => ($plan['combatUseCount'] ?? 0) + ($cast['success'] ? 1 : 0),
+            'combatUseCount' => ($plan['combatId'] ?? '') !== '' && ($plan['combatUseLimit'] ?? 0) > 0 ? ($plan['combatUseCount'] ?? 0) + ($cast['success'] ? 1 : 0) : 0,
             'restUseLimit' => $plan['restUseLimit'], 'cooldownActive' => $cast['success'] || $retainCooldown || $failedCooldown > 0,
             'usedRound' => $retainCooldown ? $old['usedRound'] : $plan['usedRound'], 'readyRound' => $retainCooldown ? max($old['readyRound'], $plan['usedRound'] + $failedCooldown) : $plan['usedRound'] + $remaining, 'ownerPlayerId' => $timerOwner,
             'ownerLabel' => $source['name'] ?? 'Personnage', 'visibility' => 'private', 'createdAt' => $index !== null ? ($timers[$index]['createdAt'] ?? gmdate('c')) : gmdate('c'), 'updatedAt' => gmdate('c')];

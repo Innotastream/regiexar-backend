@@ -1,3 +1,7 @@
+# Candidat backend 0.18.30 — usages hors combat et journal des frappes, client exact 3.5.4
+
+Build `client-3-5-4-hira-quota-journal-20261003-1`. Le quota « une utilisation par combat » ne bloque plus l’exploration et ne comptabilise pas les usages hors combat sous un identifiant historique. Les séries réutilisent leur jet acquis avec son détail et ses deux essais éventuels, y compris lors d’une reprise d’ancienne exécution. La validation du journal reste stricte. Les exigences des véritables sorts persistants et les droits de contrôle restent inchangés. Schémas MySQL 22, session 19 et workflow 8 conservés. Politique exacte 3.5.4 à appliquer après qualification du paquet Windows.
+
 # Candidat backend 0.18.29 — trajet du Serpent Céleste, client exact 3.5.3
 
 Build `client-3-5-3-serpent-path-weapons-20261002-1`. Une étape de déplacement conserve le trajet accepté par le serveur et limite sa distance cumulée. Le ciblage peut se limiter aux ennemis sur ce trajet. Une série configurée peut infliger ses propres dégâts sans jet de toucher, conserver leur nature magique et ignorer l’armure. Les défenses imposées par étape sont contrôlées côté serveur, notamment l’esquive avec désavantage. Les frappes automatiques ne créent plus de faux jet dans le journal. Les armes conservent leur nom, y compris avec des formules identiques. Schéma MySQL 22 conservé ; aucune purge ou conversion de données. La politique exacte 3.5.3 sera appliquée après qualification et accord pour la nouvelle coupure de clients.

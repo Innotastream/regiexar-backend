@@ -1809,4 +1809,5 @@ require __DIR__ . '/regie-3.3.0-cases.php';
 require __DIR__ . '/combat-audit-cases.php';
 require __DIR__ . '/complex-combo-cases.php';
 require __DIR__ . '/celestial-serpent-cases.php';
+require __DIR__ . '/ability-gate-journal-cases.php';
 fwrite(STDOUT, 'Cycle tactique PHP 3.2.0 : ' . $GLOBALS['checks'] . " contrôles réussis\n");

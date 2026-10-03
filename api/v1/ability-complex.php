@@ -265,7 +265,7 @@ function onlineUseComplexAbility(
             && ($step['type'] ?? '') === 'counter' && ($step['combatPersistent'] ?? false) === true)) > 0;
         $requiresCombat = $persistent || count(array_filter($ability['workflow']['steps'] ?? [],
             static fn(mixed $step): bool => is_array($step) && ($step['type'] ?? '') === 'guard')) > 0;
-        $combatId = trim((string) ($initiative['combatId'] ?? ''));
+        $combatId = ($initiative['active'] ?? false) === true ? trim((string) ($initiative['combatId'] ?? '')) : '';
         if ($requiresCombat && (($initiative['active'] ?? false) !== true || $combatId === '')) {
             rejectOnlineCommand($connection, 409, 'Cette compétence exige un combat actif.', 'complex_ability_combat_required');
         }

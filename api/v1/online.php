@@ -6389,7 +6389,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $resultModifier = $hitModifierMode === 'result' ? $hitModifierValue : 0;
                 $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-                $hitRolled = $chainGate !== null ? [...$chainGate, 'rawD100' => $chainGate['total'], 'total' => $chainGate['total']]
+                $hitRolled = $chainGate !== null ? applicationComplexAbilityGateRoll($chainGate, $activity['rolls'] ?? [])
                     : ($hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement']);
                 $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true))
                     : ($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]);

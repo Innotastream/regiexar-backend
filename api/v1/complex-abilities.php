@@ -547,6 +547,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         'castGate' => ($cast['success'] ?? false) && is_array($cast['outcome'] ?? null) ? [
             'formula' => '1d100', 'total' => (int) $cast['outcome']['raw'], 'threshold' => (int) $cast['outcome']['threshold'],
             'success' => true, 'statId' => (string) $cast['statId'], 'outcomeDetails' => $cast['outcome'], 'rollId' => $cast['roll']['id'] ?? '',
+            'roll' => is_array($cast['roll'] ?? null) ? $cast['roll'] : null,
         ] : null,
         'onHitConditions' => normalizeOnlineConditions($ability['onHitConditions'] ?? []),
         'completionCue' => normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null),
@@ -565,7 +566,7 @@ function createApplicationComplexAbilityExecution(array $context): array
             'success' => true, 'outcome' => (string) ($outcome['code'] ?? 'success'),
             'outcomeDetails' => $outcome, 'rollId' => $cast['roll']['id'] ?? '',
             'breakdown' => applicationComplexAbilityText($cast['roll']['breakdown'] ?? '', 500, (string) ($outcome['raw'] ?? '')),
-            'fromCast' => true,
+            'roll' => is_array($cast['roll'] ?? null) ? $cast['roll'] : null, 'fromCast' => true,
         ];
         $execution['stepStates'][$first['id']]['awaitingAttack'] = true;
         $execution['stepStates'][$first['id']]['gateAt'] = $now;
@@ -575,6 +576,24 @@ function createApplicationComplexAbilityExecution(array $context): array
         'label' => $execution['abilityName'] . ' commence',
     ], $now);
     return $execution;
+}
+
+// No reroll: new gates retain their original roll, old gates recover it by ID.
+function applicationComplexAbilityGateRoll(array $gate, array $rolls = []): array
+{
+    $recorded = is_array($gate['roll'] ?? null) ? $gate['roll'] : null;
+    if ($recorded === null && !empty($gate['rollId'])) {
+        foreach ($rolls as $roll) if (($roll['id'] ?? '') === $gate['rollId']) { $recorded = $roll; break; }
+    }
+    $recorded ??= $gate;
+    $raw = $gate['total'];
+    return [
+        'formula' => $recorded['formula'] ?? $gate['formula'] ?? '1d100',
+        'total' => $recorded['total'] ?? $raw, 'rawD100' => $raw,
+        'breakdown' => is_string($recorded['breakdown'] ?? null) ? $recorded['breakdown'] : '[' . $raw . ']',
+        'rollMode' => $recorded['rollMode'] ?? 'normal', 'selectedIndex' => $recorded['selectedIndex'] ?? 0,
+        ...(is_array($recorded['attempts'] ?? null) ? ['attempts' => $recorded['attempts']] : []),
+    ];
 }
 
 function normalizeApplicationComplexAbilityExecution(mixed $value): array

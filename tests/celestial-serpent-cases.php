@@ -51,3 +51,27 @@ if (($resolved['opposition']['outcome']['success'] ?? false) === true) requireTa
 else requireTactical($resolved['damage']['rawDamage'] >= 7 && $resolved['damage']['rawDamage'] <= 36 && $resolved['damage']['armorPercent'] === 0 && $resolved['damage']['finalDamage'] === $resolved['damage']['rawDamage'], '1d30+6 remains magical and ignores armor.');
 $names = normalizeOnlineWeaponAttacks([], ['1d30+6', '1d20+4', '1d30+6'], "Fouet d30+6,\n2 Dague d20+4,\nArbalète de poing d30+6");
 requireTactical(array_column($names, 'name') === ['Fouet', '2 Dague', 'Arbalète de poing'], 'Duplicate weapon formulas keep distinct names.');
+
+foreach ([false,true] as $quotaGm) {
+    $quotaDb=fixture(); $quotaSheet=$quotaDb->payload('character:character-player');
+    $quotaSheet['abilities']=[$serpentAbility]; $quotaSheet['stats']['agility']=75;
+    $quotaDb->put('character:character-player',$quotaSheet);
+    $quotaDb->put('initiative:scene-one',['active'=>false,'combatId'=>'historical-combat','round'=>1,'order'=>[]]);
+    $quotaActor=$quotaGm?'account-gm':'account-player';
+    foreach ([1,2] as $quotaUse) {
+        $quotaStart=runCommand($quotaDb,'ability.complex',['action'=>'start','sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player','abilityId'=>$serpentAbility['id'],'requestId'=>'outside-serpent-'.$quotaUse],$quotaGm,$quotaActor);
+        requireTactical($quotaStart->status===200,'Outside combat remains available to MJ and owner: '.$quotaStart->getMessage());
+        requireTactical($quotaStart->body['execution']['combatId']==='','An exploration execution is not attached to a historical combat.');
+        requireTactical(($quotaDb->payload('activity')['actionTimers']??[])===[],'A combat-only quota produces no exploration timer.');
+        $quotaExecution=$quotaStart->body['execution'];
+        $quotaCancel=runCommand($quotaDb,'ability.complex',['action'=>'command','executionId'=>$quotaExecution['id'],'expectedRevision'=>$quotaExecution['revision'],'requestId'=>'outside-cancel-'.$quotaUse,'command'=>['action'=>'cancel']],$quotaGm,$quotaActor);
+        requireTactical($quotaCancel->status===200,'Cancel preserves the exploration execution receipt.');
+    }
+    $quotaDb->put('initiative:scene-one',['active'=>true,'combatId'=>'fresh-combat','round'=>1,'currentIndex'=>0,'order'=>['token-player']]);
+    $quotaCombat=runCommand($quotaDb,'ability.complex',['action'=>'start','sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player','abilityId'=>$serpentAbility['id'],'requestId'=>'fresh-combat-serpent'],$quotaGm,$quotaActor);
+    requireTactical($quotaCombat->status===200 && $quotaDb->payload('activity')['actionTimers'][0]['combatUseCount']===1,'Exploration did not consume the new combat quota.');
+    $quotaExecution=$quotaCombat->body['execution'];
+    runCommand($quotaDb,'ability.complex',['action'=>'command','executionId'=>$quotaExecution['id'],'expectedRevision'=>$quotaExecution['revision'],'requestId'=>'combat-quota-cancel','command'=>['action'=>'cancel']],$quotaGm,$quotaActor);
+    $quotaAgain=runCommand($quotaDb,'ability.complex',['action'=>'start','sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player','abilityId'=>$serpentAbility['id'],'requestId'=>'fresh-combat-serpent-again'],$quotaGm,$quotaActor);
+    requireTactical($quotaAgain->status===409 && ($quotaAgain->body['code']??'')==='ability_combat_exhausted','The active combat quota remains authoritative.');
+}

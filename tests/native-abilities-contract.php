@@ -39,6 +39,10 @@ $plan=applicationAbilityCastingPlan($castAbility,$caster,'scene',$initiative,[])
 nativeCheck($plan['combatUseLimit']===1,'Combat quota is independent from rest recharge.');
 try {applicationAbilityCastingPlan($castAbility,$caster,'scene',$initiative,[['sceneId'=>'scene','abilityId'=>'once','characterId'=>'','tokenId'=>'caster','combatId'=>'combat','combatUseCount'=>1,'cooldownActive'=>false]]);throw new RuntimeException('Quota must block a second activation.');}
 catch(RuntimeException $e){nativeCheck($e->getMessage()==='ability_combat_exhausted','Quota survives cooldown completion.');}
+$outsidePlan=applicationAbilityCastingPlan($castAbility,$caster,'scene',['active'=>false,'combatId'=>'combat'],[['sceneId'=>'scene','abilityId'=>'once','characterId'=>'','tokenId'=>'caster','combatId'=>'combat','combatUseCount'=>1,'cooldownActive'=>false]]);
+nativeCheck($outsidePlan['combatId']==='' && $outsidePlan['combatUseCount']===0,'Outside combat neither requires nor consumes a quota, even with a historical combat ID.');
+$nextCombatPlan=applicationAbilityCastingPlan($castAbility,$caster,'scene',['active'=>true,'combatId'=>'next-combat'],[['sceneId'=>'scene','abilityId'=>'once','characterId'=>'','tokenId'=>'caster','combatId'=>'combat','combatUseCount'=>1,'cooldownActive'=>false]]);
+nativeCheck($nextCombatPlan['combatUseCount']===0,'A new combat has its own quota.');
 $orbGuard=['percent'=>20,'damageTypes'=>['physical','magical'],'armorStacking'=>'add'];
 foreach([['physical',30,50],['magical',0,80],['magical',30,50],['ignore',0,100]] as [$type,$armor,$expected]){
     $basis=['rawDamage'=>100,'finalDamage'=>100-$armor,'armorPercent'=>$armor,'damageType'=>$type];
