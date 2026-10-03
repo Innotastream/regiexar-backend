@@ -6840,7 +6840,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $attack['opposition'] = ['requestId' => $requestId, 'requestSignature' => $oppositionRequestSignature, 'accountId' => $accountId, 'skipped' => true, 'reason' => $decision === 'skip' ? 'gm-disallowed' : 'target-ko', 'rolledByGm' => $isGm];
                     } else {
                         $stats = is_array($target['stats'] ?? null) ? $target['stats'] : [];
-                        $statIndex = findEntryIndex($stats, $attack['defenseStatId'] ?? $defenseAbility['statId'] ?? (string) ($arguments['statId'] ?? ''));
+                        $requestedDefenseStatId = $attack['defenseStatId'] ?? $defenseAbility['statId'] ?? (string) ($arguments['statId'] ?? '');
+                        $resolvedDefenseStat = !empty($attack['defenseStatId']) ? applicationAbilityCastingStat($stats, (string) $requestedDefenseStatId) : null;
+                        $statIndex = findEntryIndex($stats, (string) ($resolvedDefenseStat['id'] ?? $requestedDefenseStatId));
                         if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
                             rejectOnlineCommand($connection, 404, 'Cette statistique de défense n’existe plus sur le token.', 'opposition_stat_missing');
                         }

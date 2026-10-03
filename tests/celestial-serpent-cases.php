@@ -15,7 +15,7 @@ $serpentDb->put('initiative:scene-one', ['active' => true, 'combatId' => 'serpen
 $serpentDb->put('map:scene-one', ['grid' => false, 'gridSize' => 50, 'naturalWidth' => 1000, 'naturalHeight' => 1000]);
 $foe = $serpentDb->payload('token:scene-one:token-monster');
 $foe = [...$foe, 'x' => 35, 'y' => 50, 'hp' => 1000, 'maxHp' => 1000, 'magicArmorCategory' => 'special', 'magicArmor' => 100,
-    'stats' => [['id' => 'character-stat-agility', 'label' => 'Esquive', 'value' => '60'], ['id' => 'character-stat-force', 'label' => 'Force', 'value' => '0']]];
+    'stats' => [['id' => 'agility', 'label' => 'Agilité', 'value' => '60'], ['id' => 'force', 'label' => 'Force', 'value' => '0']]];
 requireTactical(validApplicationTokenDomain($foe), 'Serpent defense fixture is a valid persistent token.');
 $serpentDb->put('token:scene-one:token-monster', $foe);
 $start = runCommand($serpentDb, 'ability.complex', ['action' => 'start', 'sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'abilityId' => $serpentAbility['id'], 'requestId' => 'serpent-start-request']);
@@ -46,7 +46,7 @@ requireTactical(runCommand($serpentDb, 'token.attack', $attackBody)->body['dedup
 $defense = runCommand($serpentDb, 'token.attack.oppose', ['attackId' => $attack->body['attack']['id'], 'requestId' => 'serpent-defense-request', 'decision' => 'roll', 'statId' => 'character-stat-force', 'rollMode' => 'normal'], true, 'account-gm');
 requireTactical($defense->status === 200, 'Serpent defense resolves: ' . $defense->getMessage());
 $resolved = $defense->body['attack'];
-requireTactical($resolved['opposition']['statId'] === 'character-stat-agility' && $resolved['opposition']['rollMode'] === 'disadvantage' && count($resolved['opposition']['attempts']) === 2, 'Server enforces Agility disadvantage despite forged client options.');
+requireTactical($resolved['opposition']['statId'] === 'agility' && $resolved['opposition']['rollMode'] === 'disadvantage' && count($resolved['opposition']['attempts']) === 2, 'Server enforces creature Agility disadvantage despite forged client options.');
 if (($resolved['opposition']['outcome']['success'] ?? false) === true) requireTactical($resolved['finalDamage'] === 0, 'Successful dodge prevents automatic hit damage.');
 else requireTactical($resolved['damage']['rawDamage'] >= 7 && $resolved['damage']['rawDamage'] <= 36 && $resolved['damage']['armorPercent'] === 0 && $resolved['damage']['finalDamage'] === $resolved['damage']['rawDamage'], '1d30+6 remains magical and ignores armor.');
 $names = normalizeOnlineWeaponAttacks([], ['1d30+6', '1d20+4', '1d30+6'], "Fouet d30+6,\n2 Dague d20+4,\nArbalète de poing d30+6");
