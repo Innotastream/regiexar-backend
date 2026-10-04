@@ -2594,7 +2594,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'pendingAbilityCasts' => is_array($activity['pendingAbilityCasts'] ?? null) ? $activity['pendingAbilityCasts'] : [],
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
-        'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []),
+        'abilityExecutions' => applicationComplexAbilityResultsFromReceipts(normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []), $activity['attackReceipts'] ?? []),
         'damageOverTime' => is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [],
         'pendingDotResolutions' => is_array($activity['pendingDotResolutions'] ?? null) ? $activity['pendingDotResolutions'] : [],
         'rollRevelations' => is_array($activity['rollRevelations'] ?? null) ? $activity['rollRevelations'] : [],

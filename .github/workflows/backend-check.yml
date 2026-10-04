@@ -54,6 +54,7 @@ jobs:
         run: |
           php tests/complex-abilities-contract.php
           php tests/native-abilities-contract.php
+          php tests/allocated-attacks-contract.php
           php tests/counter-defense-contract.php
       - name: Assistant classic abilities and repair
         run: php tests/ability-assistant-contract.php

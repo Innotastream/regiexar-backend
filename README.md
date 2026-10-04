@@ -1,3 +1,7 @@
+# Candidat backend 0.18.31 — frappes multicibles et résultats durables, client exact 3.5.5
+
+Build `client-3-5-5-multitarget-kit-20261004-1`. Chaque frappe répartie libère son reçu après confirmation, conserve son résultat public propre et s'actualise après opposition ou validation MJ. Les lectures enrichissent les anciennes exécutions depuis leurs reçus sans modifier leur révision ni rejouer d'effet. Une frappe automatique configurée n'exige aucune statistique d'attaque inutilisée. Les contrôles d'opposition, de rôle et de concurrence restent autoritaires. Aucun changement de fiche, migration SQL ou réactivation d'ancien déroulé ; schémas MySQL 22, session 19, fiche 8 et workflow 8 conservés.
+
 # Candidat backend 0.18.30 — usages hors combat et journal des frappes, client exact 3.5.4
 
 Build `client-3-5-4-hira-quota-journal-20261003-1`. Le quota « une utilisation par combat » ne bloque plus l’exploration et ne comptabilise pas les usages hors combat sous un identifiant historique. Les séries réutilisent leur jet acquis avec son détail et ses deux essais éventuels, y compris lors d’une reprise d’ancienne exécution. La validation du journal reste stricte. Les exigences des véritables sorts persistants et les droits de contrôle restent inchangés. Schémas MySQL 22, session 19 et workflow 8 conservés. Politique exacte 3.5.4 à appliquer après qualification du paquet Windows.

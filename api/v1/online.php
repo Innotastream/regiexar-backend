@@ -1345,7 +1345,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     }
     $visibleAbilityExecutions = [];
     foreach (normalizeApplicationComplexAbilityExecutions($fullState['abilityExecutions'] ?? []) as $execution) {
-        if (($execution['status'] ?? '') !== 'active'
+        if ((($execution['status'] ?? '') !== 'active' && ($execution['controllerAccountId'] ?? '') !== $accountId)
             || (string) ($execution['sceneId'] ?? '') !== $visibleSceneId
             || (string) ($execution['layerId'] ?? 'ground') !== $visibleLayerId
             || !isset($clearlyVisibleIds[(string) ($execution['sourceTokenId'] ?? '')])) continue;
@@ -4737,6 +4737,7 @@ function onlineFinalizeAttackDamageRoll(array $attack): array
 
 function onlineMergeAttackActivityRolls(array $activity, array $attack): array
 {
+    $activity['abilityExecutions'] = applicationComplexAbilityUpdateAttackResult($activity['abilityExecutions'] ?? [], $attack);
     $attackRolls = onlineAttackRollBundle($attack)['rolls'];
     if ($attackRolls === []) return $activity;
     $identifiers = [];
