@@ -46,6 +46,8 @@ jobs:
         run: php tests/client-policy.php
       - name: Monotonic backend release authority
         run: php tests/backend-release-anti-rollback.php
+      - name: Character lore import and owner projection
+        run: php tests/character-lore-contract.php
       - name: Tactical lifecycle and concurrent conditions
         run: php tests/tactical-lifecycle.php
       - name: Ability casting costs and cooldowns
@@ -90,6 +92,8 @@ jobs:
           set -o pipefail
           php tests/mysql-media-concurrency.php | tee mysql-concurrency.log
           grep -Fq 'Local MySQL concurrency integration passed.' mysql-concurrency.log
+          php tests/mysql-character-lore.php | tee mysql-character-lore.log
+          grep -Fq 'Local MySQL character lore integration passed.' mysql-character-lore.log
           php tests/mysql-history-retention.php | tee mysql-history-retention.log
           grep -Fq 'Local MySQL history retention integration passed.' mysql-history-retention.log
       - name: Architecture contracts

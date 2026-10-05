@@ -1618,6 +1618,7 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if (array_key_exists('lore', $payload) && !validApplicationDomainText($payload['lore'], 200000)) return false;
     if (array_key_exists('morale', $payload) && !validApplicationDomainText($payload['morale'], 1000)) return false;
     if (array_key_exists('moraleExtremes', $payload)) {
         $extremes = $payload['moraleExtremes'];

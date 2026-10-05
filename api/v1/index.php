@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.31';
-const XAR_BACKEND_BUILD = 'client-3-5-5-multitarget-kit-20261004-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.5.5';
+const XAR_BACKEND_VERSION = '0.18.32';
+const XAR_BACKEND_BUILD = 'client-3-5-6-character-lore-20261005-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.5.6';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.5.5'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.5.6'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 22;
+const XAR_DATABASE_SCHEMA_VERSION = 23;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -1113,6 +1113,12 @@ function ensureCurrentSchema(PDO $connection): void
                 ]);
             $version = 22;
         }
+        if ($version < 23) {
+            ensureCharacterLoreImportTable($connection);
+            $connection->prepare('INSERT IGNORE INTO schema_migrations (version,name,checksum) VALUES (23,:name,:checksum)')
+                ->execute([':name' => 'character_lore_import_backups', ':checksum' => hash('sha256', 'character_lore_imports|immutable-backup|3.5.6')]);
+            $version = 23;
+        }
     } finally {
         try {
             $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v11')");
@@ -2115,6 +2121,7 @@ function recoverAdministratorAccount(PDO $connection): never
 require_once __DIR__ . '/diagnostics.php';
 require_once __DIR__ . '/runtime-diagnostics.php';
 installBackendDiagnostics();
+require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/ability-assistant.php';
@@ -2185,6 +2192,7 @@ if ($route === '/api/v1/health') {
         // strictement sans effet de bord.
         if (!$headOnly) {
             repairOnlineRosterOwnershipsOnRead($connection, []);
+            importAdaOriginLoreOnRead($connection);
         }
         sendJson(200, [
             'status' => 'ok',
@@ -2194,6 +2202,7 @@ if ($route === '/api/v1/health') {
             'build' => XAR_BACKEND_BUILD,
             'clientPolicy' => clientPolicy($configuration),
             'ownershipRepair' => onlineRosterOwnershipRepairStatus($connection),
+            'characterLoreImport' => characterLoreImportStatus($connection),
         ], $headOnly);
     } catch (Throwable $error) {
         error_log('[xar-regie-api] database health check failed: ' . get_class($error));

@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
-const PHP_SOURCES = ["api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+const PHP_SOURCES = ["api/v1/character-lore.php", "tests/character-lore-contract.php","api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -12,7 +12,7 @@ function phpBlocks(source) {
 
 PHP_SOURCES.push("api/v1/diagnostics.php", "api/v1/runtime-diagnostics.php", "tests/diagnostics-contract.php", "tests/runtime-diagnostics-contract.php");
 PHP_SOURCES.push("api/v1/complex-movement.php", "tests/celestial-serpent-cases.php", "api/v1/damage-guard.php", "tests/native-abilities-contract.php");
-PHP_SOURCES.push("tests/mysql-history-retention.php");
+PHP_SOURCES.push("tests/mysql-history-retention.php", "tests/mysql-character-lore.php");
 
 function balancedPhpDelimiters(source) {
   const code = phpBlocks(source);
@@ -81,8 +81,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.31'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-5-multitarget-kit-20261004-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.32'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-6-character-lore-20261005-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -118,9 +118,9 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.31");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.5.5");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 22);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.32");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.5.6");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 23);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
@@ -324,8 +324,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.5.5");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.5.5"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.5.6");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.5.6"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);

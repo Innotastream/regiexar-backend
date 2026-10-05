@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . "/damage-guard.php";
 require_once __DIR__ . "/ongoing-effects.php";
 
@@ -2575,7 +2576,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $allowed = [
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'temporaryStats', 'fatigue', 'morale',
-        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'darkVision', 'initiativeBonus', 'conditions', 'publicNotes', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
+        'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'darkVision', 'initiativeBonus', 'conditions', 'publicNotes', 'lore', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
         'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
         'shortcuts', 'abilities', 'linkedTokens',
     ];
@@ -2583,6 +2584,8 @@ function playerCharacterPatch(array $current, array $patch): array
         if (array_key_exists($key, $patch)) {
             if ($key === 'portrait') {
                 $current[$key] = normalizePersistedImageReference($patch[$key]);
+            } elseif ($key === 'lore') {
+                $current[$key] = normalizeOnlineCharacterLore($patch[$key]);
             } elseif ($key === 'conditions') {
                 $current[$key] = normalizeOnlineConditions($patch[$key]);
             } elseif ($key === 'abilities') {
