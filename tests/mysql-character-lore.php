@@ -78,7 +78,7 @@ try {
     loreSqlCheck($saved['payload']['resources']['hp'] === 5 && json_decode($backup['before_payload'], true) === $before
         && (int) $backup['source_domain_revision'] === 18 && (int) $backup['committed_global_revision'] === 102,
         'The import preserves concurrent resources and backs up the latest real revision.');
-    $story = require __DIR__ . '/../api/v1/data/ada-origin.php';
+    $story = require __DIR__ . '/../api/v1/lore-catalog/ada-origin.php';
     loreSqlCheck($saved['payload']['lore'] === $story && $saved['revision'] === 19 && domainClockRecord($db)['globalRevision'] === 102,
         'The complete narrative is persisted through the real domain writer.');
     $modified = $saved['payload']; $modified['lore'] = 'Modification ultérieure autorisée';

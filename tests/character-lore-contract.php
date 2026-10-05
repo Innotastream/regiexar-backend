@@ -7,7 +7,7 @@ function loreCheck(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
     echo 'PASS ' . $message . "\n";
 }
-$text = require __DIR__ . '/../api/v1/data/ada-origin.php';
+$text = require __DIR__ . '/../api/v1/lore-catalog/ada-origin.php';
 loreCheck(strlen($text) > 40000 && str_contains($text, '### La prison dorée'), 'The complete requested narrative and chapters are present.');
 loreCheck(normalizeOnlineCharacterLore("  été\r\n\0suite  ") === "été\nsuite", 'Plain text and accents normalize without losing paragraphs.');
 $oversizedRejected = false;

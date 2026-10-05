@@ -50,7 +50,7 @@ function siteCharacterLoreCatalog(): array
 {
     static $catalog = null;
     if ($catalog !== null) return $catalog;
-    $catalog = json_decode(file_get_contents(__DIR__ . '/data/site-character-lores.json'), true, 512, JSON_THROW_ON_ERROR);
+    $catalog = json_decode(file_get_contents(__DIR__ . '/lore-catalog/site-character-lores.json'), true, 512, JSON_THROW_ON_ERROR);
     foreach ($catalog['imports'] as $spec) {
         if (hash('sha256', $spec['text']) !== $spec['sha256'] || normalizeOnlineCharacterLore($spec['text']) !== $spec['text']) {
             throw new RuntimeException('character_lore_catalog_invalid');
@@ -132,7 +132,7 @@ function importCharacterLoreOnce(PDO $connection, array $spec): array
 function importAdaOriginLoreOnRead(PDO $connection): array
 {
     return importCharacterLoreOnce($connection, ['importKey' => XAR_ADA_LORE_IMPORT_KEY, 'names' => ['Ada'],
-        'ownerAlias' => 'ada', 'text' => require __DIR__ . '/data/ada-origin.php']);
+        'ownerAlias' => 'ada', 'text' => require __DIR__ . '/lore-catalog/ada-origin.php']);
 }
 
 function importSiteCharacterLoresOnRead(PDO $connection): array
