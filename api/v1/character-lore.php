@@ -21,7 +21,8 @@ function planAdaOriginLoreImport(array $records, array $accounts, string $text):
     $matches = [];
     foreach ($records as $key => $record) {
         if (!str_starts_with((string) $key, 'character:')) continue;
-        $character = applicationDomainPayload($records, (string) $key);
+        $character = $record['payload'] ?? null;
+        if (!is_array($character)) continue;
         if (strtolower(trim((string) ($character['name'] ?? ''))) === 'ada') $matches[$key] = $character;
     }
     if (count($matches) !== 1) return ['status' => count($matches) === 0 ? 'character_missing' : 'character_ambiguous'];
