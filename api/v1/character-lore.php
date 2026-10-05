@@ -12,28 +12,51 @@ function normalizeOnlineCharacterLore(mixed $value): string
     return $text;
 }
 
-// The UI is generic. This one-time import resolves the requested character
-// against live records and the active owner; it never creates or reassigns one.
-function planAdaOriginLoreImport(array $records, array $accounts, string $text): array
+// Resolve only exact declared character names against current authoritative
+// records. Preserve the actual owner, including an unassigned MJ-only sheet.
+function planCharacterLoreImport(array $records, array $accounts, array $names, string $text, ?string $ownerAlias = null): array
 {
-    $accountId = onlineUniqueAccountIdForAlias($accounts, 'ada');
-    if ($accountId === '') return ['status' => 'owner_missing_or_ambiguous'];
+    $accountId = $ownerAlias === null ? '' : onlineUniqueAccountIdForAlias($accounts, $ownerAlias);
+    if ($ownerAlias !== null && $accountId === '') return ['status' => 'owner_missing_or_ambiguous'];
+    $names = array_map(static fn ($name) => strtolower(trim((string) $name)), $names);
     $matches = [];
     foreach ($records as $key => $record) {
         if (!str_starts_with((string) $key, 'character:')) continue;
         $character = $record['payload'] ?? null;
         if (!is_array($character)) continue;
-        if (strtolower(trim((string) ($character['name'] ?? ''))) === 'ada') $matches[$key] = $character;
+        if (in_array(strtolower(trim((string) ($character['name'] ?? ''))), $names, true)) $matches[$key] = $character;
     }
     if (count($matches) !== 1) return ['status' => count($matches) === 0 ? 'character_missing' : 'character_ambiguous'];
     $key = array_key_first($matches);
     $before = $matches[$key];
-    if (($before['ownerPlayerId'] ?? '') !== $accountId || $key !== 'character:' . ($before['id'] ?? '')) {
+    $actualOwner = (string) ($before['ownerPlayerId'] ?? '');
+    if (($ownerAlias !== null && $actualOwner !== $accountId) || $key !== 'character:' . ($before['id'] ?? '')) {
         return ['status' => 'owner_mismatch'];
+    }
+    if ($actualOwner !== '' && count(array_filter($accounts, static fn ($account) => ($account['id'] ?? '') === $actualOwner)) !== 1) {
+        return ['status' => 'owner_missing_or_ambiguous'];
     }
     $after = $before;
     $after['lore'] = normalizeOnlineCharacterLore($text);
     return ['status' => 'ready', 'key' => $key, 'before' => $before, 'after' => $after];
+}
+
+function planAdaOriginLoreImport(array $records, array $accounts, string $text): array
+{
+    return planCharacterLoreImport($records, $accounts, ['Ada'], $text, 'ada');
+}
+
+function siteCharacterLoreCatalog(): array
+{
+    static $catalog = null;
+    if ($catalog !== null) return $catalog;
+    $catalog = json_decode(file_get_contents(__DIR__ . '/data/site-character-lores.json'), true, 512, JSON_THROW_ON_ERROR);
+    foreach ($catalog['imports'] as $spec) {
+        if (hash('sha256', $spec['text']) !== $spec['sha256'] || normalizeOnlineCharacterLore($spec['text']) !== $spec['text']) {
+            throw new RuntimeException('character_lore_catalog_invalid');
+        }
+    }
+    return $catalog;
 }
 
 function ensureCharacterLoreImportTable(PDO $connection): void
@@ -47,31 +70,32 @@ function ensureCharacterLoreImportTable(PDO $connection): void
         . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 }
 
-function characterLoreImportStatus(PDO $connection): array
+function characterLoreImportStatus(PDO $connection, string $importKey = XAR_ADA_LORE_IMPORT_KEY): array
 {
     $statement = $connection->prepare('SELECT lore_sha256 FROM character_lore_imports WHERE import_key = :key');
-    $statement->execute([':key' => XAR_ADA_LORE_IMPORT_KEY]);
+    $statement->execute([':key' => $importKey]);
     $hash = $statement->fetchColumn();
-    return ['import' => XAR_ADA_LORE_IMPORT_KEY, 'applied' => is_string($hash), 'backupPreserved' => is_string($hash)];
+    return ['import' => $importKey, 'applied' => is_string($hash), 'backupPreserved' => is_string($hash)];
 }
 
-function importAdaOriginLoreOnRead(PDO $connection): array
+function importCharacterLoreOnce(PDO $connection, array $spec): array
 {
-    if (characterLoreImportStatus($connection)['applied']) return ['status' => 'already_applied'];
+    $importKey = (string) $spec['importKey'];
+    if (preg_match('/^[a-z0-9-]{1,96}$/D', $importKey) !== 1) throw new RuntimeException('character_lore_import_key_invalid');
+    if (characterLoreImportStatus($connection, $importKey)['applied']) return ['status' => 'already_applied'];
     $connection->beginTransaction();
     try {
         // All domain writers serialize through this same clock. Recheck the
         // import after acquiring it, so two requests cannot overwrite an edit.
         $clock = domainClockRecord($connection, true);
-        if (characterLoreImportStatus($connection)['applied']) {
+        if (characterLoreImportStatus($connection, $importKey)['applied']) {
             $connection->commit();
             return ['status' => 'already_applied'];
         }
         $records = applicationDomainRecordsByPrefix($connection, 'character:');
         $statement = $connection->query('SELECT id, username, display_name FROM accounts WHERE revoked_at IS NULL ORDER BY id');
         $accounts = $statement === false ? [] : $statement->fetchAll();
-        $text = require __DIR__ . '/data/ada-origin.php';
-        $plan = planAdaOriginLoreImport($records, $accounts, $text);
+        $plan = planCharacterLoreImport($records, $accounts, $spec['names'], $spec['text'], $spec['ownerAlias'] ?? null);
         if ($plan['status'] !== 'ready') {
             $connection->commit();
             return ['status' => $plan['status']];
@@ -84,12 +108,15 @@ function importAdaOriginLoreOnRead(PDO $connection): array
         $protectedAfter = $change['payload'];
         unset($protectedBefore['lore'], $protectedBefore['_updatedAt'], $protectedAfter['lore'], $protectedAfter['_updatedAt']);
         if ($protectedBefore != $protectedAfter) throw new RuntimeException('character_lore_import_unrelated_change');
+        // Validation can normalize numeric representations. The import must
+        // still persist exactly the original fields plus lore and its timestamp.
+        $change['payload'] = $after;
         $revision = persistDomainChangesInTransaction($connection, [], $clock, [$change]);
         $backup = $connection->prepare('INSERT INTO character_lore_imports '
             . '(import_key, character_id, source_domain_revision, committed_global_revision, before_payload, lore_sha256) '
             . 'VALUES (:key, :character, :source, :committed, :before, :hash)');
         $backup->execute([
-            ':key' => XAR_ADA_LORE_IMPORT_KEY, ':character' => $plan['before']['id'],
+            ':key' => $importKey, ':character' => $plan['before']['id'],
             ':source' => $records[$plan['key']]['revision'], ':committed' => $revision,
             ':before' => json_encode($plan['before'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             ':hash' => hash('sha256', $plan['after']['lore']),
@@ -100,4 +127,32 @@ function importAdaOriginLoreOnRead(PDO $connection): array
         if ($connection->inTransaction()) $connection->rollBack();
         throw $error;
     }
+}
+
+function importAdaOriginLoreOnRead(PDO $connection): array
+{
+    return importCharacterLoreOnce($connection, ['importKey' => XAR_ADA_LORE_IMPORT_KEY, 'names' => ['Ada'],
+        'ownerAlias' => 'ada', 'text' => require __DIR__ . '/data/ada-origin.php']);
+}
+
+function importSiteCharacterLoresOnRead(PDO $connection): array
+{
+    $results = [];
+    foreach (siteCharacterLoreCatalog()['imports'] as $spec) {
+        $results[$spec['character']] = importCharacterLoreOnce($connection, $spec)['status'];
+    }
+    return $results;
+}
+
+function siteCharacterLoreImportStatus(PDO $connection, array $results = []): array
+{
+    $characters = []; $applied = 0;
+    foreach (siteCharacterLoreCatalog()['imports'] as $spec) {
+        $status = characterLoreImportStatus($connection, $spec['importKey']);
+        if ($status['applied']) $applied++;
+        $characters[] = ['character' => $spec['character'], 'applied' => $status['applied'],
+            'backupPreserved' => $status['backupPreserved'],
+            'status' => $results[$spec['character']] ?? ($status['applied'] ? 'already_applied' : 'pending')];
+    }
+    return ['expected' => count($characters), 'applied' => $applied, 'characters' => $characters];
 }

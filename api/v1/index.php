@@ -2190,9 +2190,11 @@ if ($route === '/api/v1/health') {
         // L'exécuter sur le GET de santé permet au déploiement de la déclencher
         // et de la contrôler sans attendre une action d'un joueur. HEAD demeure
         // strictement sans effet de bord.
+        $siteLoreResults = [];
         if (!$headOnly) {
             repairOnlineRosterOwnershipsOnRead($connection, []);
             importAdaOriginLoreOnRead($connection);
+            $siteLoreResults = importSiteCharacterLoresOnRead($connection);
         }
         sendJson(200, [
             'status' => 'ok',
@@ -2203,6 +2205,7 @@ if ($route === '/api/v1/health') {
             'clientPolicy' => clientPolicy($configuration),
             'ownershipRepair' => onlineRosterOwnershipRepairStatus($connection),
             'characterLoreImport' => characterLoreImportStatus($connection),
+            'siteCharacterLoreImports' => siteCharacterLoreImportStatus($connection, $siteLoreResults),
         ], $headOnly);
     } catch (Throwable $error) {
         error_log('[xar-regie-api] database health check failed: ' . get_class($error));

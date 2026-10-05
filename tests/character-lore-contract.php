@@ -32,4 +32,32 @@ $patched = playerCharacterPatch($character, ['lore' => $text, 'secret' => ['note
 loreCheck($patched['lore'] === $text && $patched['ownerPlayerId'] === 'fixture-owner' && $patched['secret']['notes'] === 'fixture only', 'Owner edits accept long lore while rejecting secret and ownership patches.');
 $visible = visibleCharacter($patched);
 loreCheck($visible['lore'] === $text && !isset($visible['secret']), 'The owner projection preserves the narrative and strips MJ secrets.');
+$catalog = siteCharacterLoreCatalog();
+loreCheck(array_column($catalog['imports'], 'character') === ['inho', 'hira', 'gohachu', 'krael', 'nedrezar', 'killgert'],
+    'The current public site supplies exactly the six other character lores.');
+foreach ($catalog['imports'] as $spec) {
+    $source = array_replace($character, ['id' => 'fixture-' . $spec['character'], 'name' => $spec['names'][0], 'lore' => 'Ancien récit']);
+    $key = 'character:' . $source['id'];
+    $plan = planCharacterLoreImport([$key => ['payload' => $source]], $accounts, $spec['names'], $spec['text']);
+    $expected = $source; $expected['lore'] = $spec['text'];
+    loreCheck($plan['status'] === 'ready' && $plan['before'] === $source && $plan['after'] === $expected,
+        'Site import changes only the lore of ' . $spec['character'] . ' and preserves its actual owner.');
+}
+$gohachu = $catalog['imports'][2]; $krael = $catalog['imports'][3];
+loreCheck($gohachu['storyCount'] === 3 && $gohachu['chapterCount'] === 12 && str_contains($gohachu['text'], '# Saison 2'),
+    'Gohachu includes origin, season one and season two without omissions.');
+loreCheck($krael['storyCount'] === 2 && str_contains($krael['text'], 'https://xar-tsaroth.fr/media/personnages/lore/krael-chute.mp4'),
+    'Krael includes season three and the canonical narrative video reference.');
+$source = array_replace($character, ['id' => 'fixture-gohachu', 'name' => 'Gohachu Forgefer']);
+$record = ['character:fixture-gohachu' => ['payload' => $source]];
+loreCheck(planCharacterLoreImport($record, $accounts, $gohachu['names'], $gohachu['text'])['status'] === 'ready',
+    'An explicitly declared full name resolves the same character.');
+$record['character:duplicate'] = ['payload' => array_replace($source, ['id' => 'duplicate', 'name' => 'Gohachu'])];
+loreCheck(planCharacterLoreImport($record, $accounts, $gohachu['names'], $gohachu['text'])['status'] === 'character_ambiguous',
+    'Two exact name variants never choose a sheet arbitrarily.');
+loreCheck(planCharacterLoreImport($records, $accounts, ['Absent'], 'Récit')['status'] === 'character_missing',
+    'Missing characters never create placeholder sheets.');
+$source = array_replace($character, ['ownerPlayerId' => null]);
+loreCheck(planCharacterLoreImport(['character:fixture-ada' => ['payload' => $source]], [], ['Ada'], 'Récit')['status'] === 'ready',
+    'An unassigned MJ sheet is updated without creating or assigning an account.');
 echo "Character lore contracts passed.\n";

@@ -87,6 +87,38 @@ try {
         && applicationDomainRecords($db)['character:fixture-ada']['payload']['lore'] === $modified['lore']
         && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === 1,
         'Later user edits survive every repeated import request.');
+    $catalog = siteCharacterLoreCatalog(); $originals = [];
+    foreach ($catalog['imports'] as $i => $spec) {
+        $character = array_replace($before, ['id' => 'fixture-' . $spec['character'], 'name' => $spec['names'][0],
+            'ownerPlayerId' => $i === 5 ? null : 'fixture-owner', 'lore' => 'Ancien récit de ' . $spec['character']]);
+        $originals[$spec['character']] = $character;
+        $db->prepare('INSERT INTO application_domains VALUES (:key,1,30,:payload,NULL,UTC_TIMESTAMP(3))')->execute([
+            ':key' => 'character:' . $character['id'], ':payload' => json_encode($character)]);
+    }
+    $results = importSiteCharacterLoresOnRead($db);
+    loreSqlCheck(count($results) === 6 && count(array_filter($results, static fn ($value) => $value === 'applied')) === 6,
+        'All six existing site characters receive their complete stories through the real SQL writer.');
+    foreach ($catalog['imports'] as $spec) {
+        $record = applicationDomainRecords($db)['character:fixture-' . $spec['character']];
+        $expected = $originals[$spec['character']]; $expected['lore'] = $spec['text'];
+        $payload = $record['payload']; unset($payload['_updatedAt'], $expected['_updatedAt']);
+        $statement = $db->prepare('SELECT * FROM character_lore_imports WHERE import_key=:key');
+        $statement->execute([':key' => $spec['importKey']]); $backup = $statement->fetch();
+        loreSqlCheck($payload === $expected && $record['revision'] === 31
+            && json_decode($backup['before_payload'], true) === $originals[$spec['character']]
+            && (int) $backup['source_domain_revision'] === 30 && $backup['lore_sha256'] === $spec['sha256'],
+            'The current fields and exact pre-import backup of ' . $spec['character'] . ' remain intact.');
+    }
+    $record = applicationDomainRecords($db)['character:fixture-inho']; $edited = $record['payload']; $edited['lore'] = 'Texte édité ensuite';
+    $db->prepare("UPDATE application_domains SET payload=:payload WHERE domain_key='character:fixture-inho'")->execute([':payload' => json_encode($edited)]);
+    $revision = domainClockRecord($db)['globalRevision']; $results = importSiteCharacterLoresOnRead($db);
+    $status = siteCharacterLoreImportStatus($db, $results);
+    loreSqlCheck($status['expected'] === 6 && $status['applied'] === 6
+        && count(array_filter($results, static fn ($value) => $value === 'already_applied')) === 6
+        && applicationDomainRecords($db)['character:fixture-inho']['payload']['lore'] === 'Texte édité ensuite'
+        && domainClockRecord($db)['globalRevision'] === $revision
+        && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === 7,
+        'Repeated health maintenance preserves all later edits, original backups and revisions.');
     echo "Local MySQL character lore integration passed.\n";
 } finally {
     if ($db instanceof PDO && $db->inTransaction()) $db->rollBack();
