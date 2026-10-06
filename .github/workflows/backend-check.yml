@@ -43,6 +43,7 @@ jobs:
       - name: Domain backward compatibility
         run: |
           php tests/dynamic-items-contract.php
+          php -n tests/dynamic-items-contract.php
           php tests/domain-backward-compatibility.php
       - name: Exact current-version login policy
         run: php tests/client-policy.php

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 function itemFailure(string $message, int $status = 400): never { throw new RuntimeException($message, $status); }
 function itemId(mixed $value): bool { return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,180}$/D', $value) === 1; }
-function itemText(mixed $value, int $maximum): string { if (!is_string($value)) return ''; $value = str_replace("\0", '', $value); if (function_exists('mb_substr')) return mb_substr($value, 0, $maximum); preg_match('/^.{0,' . $maximum . '}\/us', $value, $match); return $match[0] ?? ''; }
+function itemText(mixed $value, int $maximum): string { if (!is_string($value)) return ''; $value = str_replace("\0", '', $value); if (function_exists('mb_substr')) return mb_substr($value, 0, $maximum); preg_match('/^.{0,' . $maximum . '}/us', $value, $match); return $match[0] ?? ''; }
 function itemImage(mixed $value): string {
     if (!is_string($value) || $value === '') return '';
     if (preg_match('#^/media/[A-Za-z0-9_.-]+$#D', $value) === 1) return $value;

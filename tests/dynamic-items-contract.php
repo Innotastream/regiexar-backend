@@ -14,6 +14,7 @@ $state = ['activeSceneId' => 'scene', 'scenes' => [['id' => 'scene']], 'tactical
     'items' => ['version' => 1, 'templates' => [['id' => 'letter', 'kind' => 'letter', 'name' => 'Lettre', 'document' => ['blocks' => [['type' => 'paragraph', 'text' => 'Secret privé']]]], ['id' => 'potion', 'kind' => 'potion', 'name' => 'Potion', 'potion' => ['hp' => 10, 'mana' => -100, 'fatigue' => 200]]],
     'instances' => [['id' => 'letter-one', 'templateId' => 'letter', 'revision' => 1, 'location' => ['kind' => 'inventory', 'characterId' => 'hero-a']], ['id' => 'potion-one', 'templateId' => 'potion', 'revision' => 1, 'location' => ['kind' => 'inventory', 'characterId' => 'hero-a']]]]];
 $owner = ['id' => 'owner-a', 'role' => 'player'];
+itemCheck(itemText("été\nsuite", 2) === 'ét', 'Unicode text stays valid with or without mbstring');
 $args = ['itemId' => 'letter-one', 'characterId' => 'hero-a', 'expectedItemRevision' => 1, 'targetCharacterId' => 'hero-b'];
 itemRefused(fn() => applyDynamicItemCommand($state, ['id' => 'owner-b', 'role' => 'player'], 'item.transfer', $args), 403);
 $given = applyDynamicItemCommand($state, $owner, 'item.transfer', $args);
