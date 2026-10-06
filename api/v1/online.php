@@ -1219,6 +1219,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'name' => $character['name'] ?? 'Personnage',
             'portrait' => $character['portrait'] ?? null,
             'color' => $character['color'] ?? '#8d72cb',
+            'skills' => is_string($character['skills'] ?? null) ? $character['skills'] : '',
+            'specialSkills' => is_string($character['specialSkills'] ?? null) ? $character['specialSkills'] : '',
+            'passives' => is_string($character['passives'] ?? null) ? $character['passives'] : '',
+            'abilities' => normalizeOnlineAbilities($character['abilities'] ?? []),
         ];
         if (($character['ownerPlayerId'] ?? null) === $accountId) {
             $myCharacters[] = visibleCharacter($character);

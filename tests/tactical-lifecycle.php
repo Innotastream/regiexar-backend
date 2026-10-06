@@ -1811,4 +1811,5 @@ require __DIR__ . '/complex-combo-cases.php';
 require __DIR__ . '/celestial-serpent-cases.php';
 require __DIR__ . '/ability-gate-journal-cases.php';
 require __DIR__ . '/dynamic-items-cases.php';
+require __DIR__ . '/shared-character-abilities-cases.php';
 fwrite(STDOUT, 'Cycle tactique PHP 3.2.0 : ' . $GLOBALS['checks'] . " contrôles réussis\n");
