@@ -8856,7 +8856,7 @@ function streamOnlineMedia(PDO $connection, string $id, bool $headOnly = false):
     header('Content-Type: ' . (string) $record['content_type']);
     header('Content-Length: ' . ($end - $start + 1));
     header('Accept-Ranges: bytes');
-    header('Cache-Control: private, max-age=3600');
+    header(str_starts_with((string) ($record['original_name'] ?? ''), 'item-docx-') ? 'Cache-Control: no-store' : 'Cache-Control: private, max-age=3600');
     header('X-Content-Type-Options: nosniff');
     if ($status === 206) {
         header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);

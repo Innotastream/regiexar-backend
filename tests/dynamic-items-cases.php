@@ -36,3 +36,10 @@ $conflict = runCommand($db, 'item.consume', [...$consume, 'characterId' => 'char
 requireTactical($conflict->status === 409 && $db->revision === $revision, 'A reused request identity with changed arguments is refused');
 $refusedLore = runCommand($db, 'character.patch', ['characterId' => 'character-player', 'patch' => ['lore' => 'Edit forbidden']]);
 requireTactical($refusedLore->status === 403 && !isset($db->payload('character:character-player')['lore']), 'Native player patch keeps the lore read only');
+
+$mediaId = 'abcdefghijklmnopqrstuvwx';
+$mediaState = ['characters' => [['id' => 'hero-doc', 'ownerPlayerId' => 'owner-doc']], 'map' => [], 'scenes' => [],
+    'items' => ['version' => 1, 'templates' => [['id' => 'doc', 'kind' => 'letter', 'name' => 'Lettre', 'image' => '', 'document' => ['blocks' => [['type' => 'image', 'src' => '/media/' . $mediaId]]]]],
+    'instances' => [['id' => 'doc-one', 'templateId' => 'doc', 'revision' => 1, 'location' => ['kind' => 'inventory', 'characterId' => 'hero-doc']]]]];
+requireTactical(onlineMediaVisibleInPlayerState($mediaState, ['id' => 'owner-doc'], $mediaId), 'Native media authority includes illustrations from the current owned inventory');
+requireTactical(!onlineMediaVisibleInPlayerState($mediaState, ['id' => 'other-owner'], $mediaId), 'Native media authority refuses another player’s document illustrations');
