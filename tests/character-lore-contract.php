@@ -28,8 +28,12 @@ $wrong = $records; $wrong['character:fixture-ada']['payload']['ownerPlayerId'] =
 loreCheck(planAdaOriginLoreImport($wrong, $accounts, $text)['status'] === 'owner_mismatch', 'A mismatched actual owner blocks the import.');
 $duplicates = [...$accounts, ['id' => 'second-owner', 'username' => 'ada', 'display_name' => 'Ada']];
 loreCheck(planAdaOriginLoreImport($records, $duplicates, $text)['status'] === 'owner_missing_or_ambiguous', 'An ambiguous account blocks the import.');
-$patched = playerCharacterPatch($character, ['lore' => $text, 'secret' => ['notes' => 'forbidden'], 'ownerPlayerId' => 'forbidden']);
-loreCheck($patched['lore'] === $text && $patched['ownerPlayerId'] === 'fixture-owner' && $patched['secret']['notes'] === 'fixture only', 'Owner edits accept long lore while rejecting secret and ownership patches.');
+$characterWithLore = array_replace($character, ['lore' => $text]);
+$editRefused = false;
+try { playerCharacterPatch($characterWithLore, ['lore' => 'Modification refusée']); } catch (RuntimeException $error) { $editRefused = $error->getCode() === 403; }
+loreCheck($editRefused, 'Owner edits cannot change the read-only narrative.');
+$patched = playerCharacterPatch($characterWithLore, ['lore' => $text, 'secret' => ['notes' => 'forbidden'], 'ownerPlayerId' => 'forbidden']);
+loreCheck($patched['lore'] === $text && $patched['ownerPlayerId'] === 'fixture-owner' && $patched['secret']['notes'] === 'fixture only', 'Owner patches preserve long lore while rejecting secret and ownership changes.');
 $visible = visibleCharacter($patched);
 loreCheck($visible['lore'] === $text && !isset($visible['secret']), 'The owner projection preserves the narrative and strips MJ secrets.');
 $catalog = siteCharacterLoreCatalog();
