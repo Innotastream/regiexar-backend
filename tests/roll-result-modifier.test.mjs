@@ -12,13 +12,14 @@ test("le backend distingue modification de seuil et personnalisation du résulta
     source("api/v1/domains.php")
   ]);
   assert.match(online, /classifyOnlineD100Outcome\(mixed \$rawValue, mixed \$threshold = null, mixed \$modifier = 0, mixed \$resultModifier = 0, bool \$remarkable = true, bool \$minimumOne = false\)/);
-  assert.match(online, /\$comparedResult = \$raw \+ \$appliedResultModifier/);
-  assert.match(online, /\$success = \$comparedResult <= \$effectiveThreshold/);
+  assert.match(online, /'result' => \$apply \? \$raw \+ \$appliedResultModifier : \$raw/);
+  assert.match(online, /\$success = \$raw <= \$effectiveThreshold/);
   assert.match(online, /\$modifierMode = \(\$arguments\['modifierMode'\] \?\? ''\) === 'result'/);
   assert.match(online, /\$formula = '1d100' \. \(\$resultModifier !== 0/);
   assert.match(online, /classifyOnlineD100Outcome\(\$rolled\['rawD100'\] \?\? null, \$threshold, \$modifier, \$resultModifier, \$kind === 'stat', \$kind === 'stat'\)/);
   assert.match(online, /classifyOnlineD100Outcome\([^\n]+, null, 0, 0, false\)/);
   assert.match(domains, /'resultModifier'/);
   assert.match(domains, /\$outcome\['result'\]/);
+  assert.match(domains, /is_bool\(\$outcome\['resultModifierApplied'\]\)/);
   assert.match(online, /unset\(\$map\['layers'\]\)/, "les préréglages inactifs doivent rester privés au MJ");
 });

@@ -1548,6 +1548,7 @@ function validApplicationRollDomain(array $payload): bool
         && (!array_key_exists('baseThreshold', $outcome) || $outcome['baseThreshold'] === null || validApplicationDomainNumber($outcome['baseThreshold'], 0, 100))
         && validApplicationDomainNumber($outcome['modifier'] ?? null, -100, 100)
         && (!array_key_exists('resultModifier', $outcome) || validApplicationDomainNumber($outcome['resultModifier'], -100, 100))
+        && (!array_key_exists('resultModifierApplied', $outcome) || is_bool($outcome['resultModifierApplied']))
         && (!array_key_exists('result', $outcome) || validApplicationDomainNumber($outcome['result'], -99, 200))
         && (!array_key_exists('threshold', $outcome) || $outcome['threshold'] === null || validApplicationDomainNumber($outcome['threshold'], 0, 100))
         && in_array(($outcome['code'] ?? ''), ['critical-success', 'special-success', 'critical-failure', 'success', 'failure'], true)

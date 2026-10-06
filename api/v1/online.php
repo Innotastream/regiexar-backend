@@ -3969,7 +3969,7 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
     }
     if (is_array($source['outcome'] ?? null)) {
         $public['outcome'] = publicOnlineAttackProjectionFields($source['outcome'], [
-            'raw', 'result', 'resultModifier', 'resultCustomized', 'modifier', 'code', 'label', 'success',
+            'raw', 'result', 'resultModifier', 'resultModifierApplied', 'resultCustomized', 'modifier', 'code', 'label', 'success',
             'effect', 'immediate', 'automatic', 'breaksOpposition', 'requiresGmValidation',
         ]);
         if ($detailsVisible) {
@@ -4559,6 +4559,9 @@ function onlineOutcomeResultLabel(mixed $outcome, mixed $fallback = '—'): stri
     $outcome = is_array($outcome) ? $outcome : [];
     $value = (string) ($outcome['result'] ?? $outcome['raw'] ?? $fallback);
     $adjustment = (int) ($outcome['resultModifier'] ?? 0);
+    if ($adjustment !== 0 && ($outcome['resultModifierApplied'] ?? null) === false) {
+        return $value . ' · ajustement ' . ($adjustment > 0 ? '+' : '−') . abs($adjustment) . ' non appliqué';
+    }
     if ($adjustment !== 0 || ($outcome['resultCustomized'] ?? false) === true) {
         return $value . ' · personnalisé (dé ' . (string) ($outcome['raw'] ?? '—')
             . ($adjustment < 0 ? ' − ' : ' + ') . abs($adjustment) . ')';
@@ -4582,7 +4585,9 @@ function onlineD100ModifierSummary(mixed $value): string
         $parts[] = ($thresholdModifier > 0 ? 'bonus' : 'malus') . ' de seuil ' . onlineSignedCalculationNumber($thresholdModifier);
     }
     if ($resultModifier !== 0) {
-        $parts[] = ($resultModifier < 0 ? 'bonus' : 'malus') . ' de résultat ' . onlineSignedCalculationNumber($resultModifier);
+        $parts[] = ($outcome['resultModifierApplied'] ?? null) === false
+            ? 'ajustement de résultat ' . onlineSignedCalculationNumber($resultModifier) . ' non appliqué'
+            : ($resultModifier < 0 ? 'bonus' : 'malus') . ' de résultat ' . onlineSignedCalculationNumber($resultModifier);
     }
     return implode(' · ', $parts);
 }
@@ -5045,36 +5050,48 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
     $appliedModifier = normalizeOnlineD100Modifier($modifier);
     $appliedResultModifier = normalizeOnlineD100Modifier($resultModifier);
     $effectiveThreshold = $baseThreshold === null ? null : max($minimumOne ? 1 : 0, min(100, $baseThreshold + $appliedModifier));
-    $comparedResult = $raw + $appliedResultModifier;
     $common = [
         'raw' => $raw,
         'baseThreshold' => $baseThreshold,
         'modifier' => $appliedModifier,
         'threshold' => $effectiveThreshold,
     ];
-    if ($appliedResultModifier !== 0) {
-        $common['resultModifier'] = $appliedResultModifier;
-        $common['result'] = $comparedResult;
-    }
+    $adjustedResult = static fn(bool $apply): array => $appliedResultModifier !== 0 ? [
+        'resultModifier' => $appliedResultModifier,
+        'resultModifierApplied' => $apply,
+        'result' => $apply ? $raw + $appliedResultModifier : $raw,
+    ] : [];
     $immediate = ['effect' => true, 'immediate' => true, 'breaksOpposition' => true, 'requiresGmValidation' => true];
     if ($remarkable && in_array($raw, [1, 11, 22, 33, 44], true)) {
-        return [...$common, 'code' => 'critical-success', 'label' => 'RÉUSSITE CRITIQUE', 'success' => true, ...$immediate];
+        return [...$common, ...$adjustedResult(false), 'code' => 'critical-success', 'label' => 'RÉUSSITE CRITIQUE', 'success' => true, ...$immediate];
     }
     if ($remarkable && $raw === 55) {
-        return [...$common, 'code' => 'special-success', 'label' => 'RÉUSSITE SPÉCIALE', 'success' => true, ...$immediate];
+        return [...$common, ...$adjustedResult(false), 'code' => 'special-success', 'label' => 'RÉUSSITE SPÉCIALE', 'success' => true, ...$immediate];
     }
     if ($remarkable && in_array($raw, [66, 77, 88, 99, 100], true)) {
-        return [...$common, 'code' => 'critical-failure', 'label' => 'ÉCHEC CRITIQUE', 'success' => false, ...$immediate];
+        return [...$common, ...$adjustedResult(false), 'code' => 'critical-failure', 'label' => 'ÉCHEC CRITIQUE', 'success' => false, ...$immediate];
     }
     if ($effectiveThreshold === null) {
         return null;
     }
-    $success = $comparedResult <= $effectiveThreshold;
-    return [...$common, 'code' => $success ? 'success' : 'failure', 'label' => $success ? 'RÉUSSITE' : 'ÉCHEC', 'success' => $success, 'effect' => false];
+    $success = $raw <= $effectiveThreshold;
+    return [...$common, ...$adjustedResult($success), 'code' => $success ? 'success' : 'failure', 'label' => $success ? 'RÉUSSITE' : 'ÉCHEC', 'success' => $success, 'effect' => false];
+}
+
+function applyOnlineD100ResultToRoll(array &$rolled, ?array $outcome): void
+{
+    if (($outcome['resultModifierApplied'] ?? null) !== false) return;
+    $rolled['formula'] = '1d100';
+    $rolled['total'] = $outcome['raw'];
+    $rolled['breakdown'] = '[' . $outcome['raw'] . ']';
+    if (is_array($rolled['attempts'] ?? null)) $rolled['attempts'] = array_map(static fn(array $attempt): array => [
+        ...$attempt, 'total' => $attempt['rawD100'], 'breakdown' => '[' . $attempt['rawD100'] . ']',
+    ], $rolled['attempts']);
 }
 
 function onlineRollEntry(array $identity, array $rolled, string $label, string $characterName, ?array $outcome = null): array
 {
+    applyOnlineD100ResultToRoll($rolled, $outcome);
     $entry = [
         'id' => randomToken(12),
         'label' => substr($label, 0, 120),
@@ -6397,6 +6414,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     : ($hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement']);
                 $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true))
                     : ($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]);
+                applyOnlineD100ResultToRoll($hitRolled, $hitOutcome);
                 if ($hasCastingCheck && $hitOutcome !== null) {
                     $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
                     if ($fatigue !== null) $hitOutcome['fatigue'] = $fatigue;
@@ -6859,6 +6877,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                         $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
                         $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true);
+                        applyOnlineD100ResultToRoll($rolled, $outcome);
                         if ($outcome !== null) {
                             $fatigue = onlineStatFatigueDetails($target, (string) ($stats[$statIndex]['id'] ?? ''), $targetCharacter ?? null);
                             if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
@@ -7376,6 +7395,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $fatigue = onlineStatFatigueDetails($token, (string) ($arguments['statId'] ?? ''), $character ?? null);
                     if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
                 }
+                applyOnlineD100ResultToRoll($rolled, $outcome);
                 onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $rollCharacterId, $rolled, in_array($kind, ['damage', 'ability'], true));
                 $roll = onlineRollEntry($identity, $rolled, $label, (string) ($token['name'] ?? 'Token'), $outcome);
                 $roll['diceAppearance'] = onlineDiceAppearance($token, true, $character ?? null);

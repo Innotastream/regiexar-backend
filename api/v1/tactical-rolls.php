@@ -45,7 +45,8 @@ function applicationD100Comparison(array $outcome): string {
     $modifier = (int) ($outcome['modifier'] ?? 0);
     $threshold = (int) $outcome['threshold'];
     $signed = static fn(int $value): string => ($value > 0 ? '+' : '−') . abs($value);
-    $parts = ['dé brut ' . $raw . ($resultModifier !== 0
+    $gatedAdjustment = is_bool($outcome['resultModifierApplied'] ?? null);
+    $parts = ['dé brut ' . $raw . ($resultModifier !== 0 && !$gatedAdjustment
         ? ' ' . $signed($resultModifier) . ' = ' . (int) ($outcome['result'] ?? $raw + $resultModifier) : '')];
     $fatigue = is_array($outcome['fatigue'] ?? null) ? $outcome['fatigue'] : [];
     if (is_numeric($fatigue['penalty'] ?? null) && (int) $fatigue['penalty'] > 0) {
@@ -61,6 +62,9 @@ function applicationD100Comparison(array $outcome): string {
             ? 'seuil ' . (int) ($outcome['baseThreshold'] ?? 0) . ' ' . $signed($modifier) . ' = ' . $threshold
             : 'seuil ' . $threshold;
     }
+    if ($resultModifier !== 0 && $gatedAdjustment) $parts[] = $outcome['resultModifierApplied']
+        ? 'résultat ' . $raw . ' ' . $signed($resultModifier) . ' = ' . (int) $outcome['result']
+        : 'ajustement ' . $signed($resultModifier) . ' non appliqué';
     return implode(' · ', $parts);
 }
 
@@ -296,6 +300,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $outcome = $spec['threshold'] !== null
         ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat')
         : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
+    applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {
         $fatigue = onlineStatFatigueDetails($source, (string) ($arguments['statId'] ?? ''), $character ?? null);

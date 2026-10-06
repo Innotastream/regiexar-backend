@@ -21,7 +21,26 @@ requireTactical($stat['threshold'] === 63 && $stat['modifier'] === 10 && $stat['
 $customStat = applicationTacticalRollSpecification($creature, ['kind' => 'custom-stat', 'label' => 'Résistance', 'threshold' => 71, 'modifier' => -12, 'modifierMode' => 'result']);
 requireTactical($customStat['threshold'] === 71 && $customStat['formula'] === '1d100-12' && $customStat['resultModifier'] === -12 && $customStat['modifier'] === 0, 'Custom stat result modifiers must preserve the raw die');
 $outcome = classifyOnlineD100Outcome(55, $customStat['threshold'], $customStat['modifier'], $customStat['resultModifier']);
-requireTactical($outcome['raw'] === 55 && $outcome['result'] === 43 && $outcome['code'] === 'special-success', 'Special outcomes use the raw result with personalized result shown separately');
+requireTactical($outcome['raw'] === 55 && $outcome['result'] === 55 && $outcome['resultModifierApplied'] === false && $outcome['code'] === 'special-success', 'Special outcomes keep their raw face without a result adjustment');
+foreach (range(0, 100) as $threshold) foreach (range(1, 100) as $raw) {
+    $base = classifyOnlineD100Outcome($raw, $threshold);
+    foreach ([-100, 100] as $adjustment) {
+        $adjusted = classifyOnlineD100Outcome($raw, $threshold, 0, $adjustment);
+        requireTactical($adjusted['code'] === $base['code'], 'Result adjustment never changes success or critical classification');
+        requireTactical($adjusted['result'] === ($base['code'] === 'success' ? $raw + $adjustment : $raw), 'Only ordinary success receives the adjustment');
+    }
+}
+$failed = classifyOnlineD100Outcome(51, 50, 0, -40);
+requireTactical($failed['success'] === false && $failed['result'] === 51 && $failed['resultModifierApplied'] === false, 'Force 50, raw 51, adjustment -40 must fail');
+requireTactical(classifyOnlineD100Outcome(51, 50, 1)['success'] === true && classifyOnlineD100Outcome(49, 50, -2)['success'] === false, 'Signed statistic changes affect the initial success threshold');
+requireTactical(applicationD100Comparison($failed) === 'dé brut 51 · seuil 50 · ajustement −40 non appliqué', 'A failed result reports the unapplied adjustment honestly');
+requireTactical(applicationD100Comparison(classifyOnlineD100Outcome(39, 50, 0, -20)) === 'dé brut 39 · seuil 50 · résultat 39 −20 = 19', 'The successful adjustment follows the raw threshold comparison');
+requireTactical(onlineOutcomeResultLabel($failed) === '51 · ajustement −40 non appliqué', 'Opposition uses the same unapplied result label');
+$failedDice = ['formula' => '1d100-40', 'total' => 11, 'breakdown' => '[51] -40', 'selectedIndex' => 1,
+    'attempts' => [['rawD100' => 39, 'total' => -1, 'breakdown' => '[39] -40'], ['rawD100' => 51, 'total' => 11, 'breakdown' => '[51] -40']]];
+applyOnlineD100ResultToRoll($failedDice, $failed);
+requireTactical($failedDice['formula'] === '1d100' && $failedDice['total'] === 51 && $failedDice['breakdown'] === '[51]'
+    && array_column($failedDice['attempts'], 'total') === [39, 51] && $failedDice['selectedIndex'] === 1, 'Ignored adjustments keep coherent dice totals and both raw attempts');
 requireTactical(applicationTacticalRollSpecification($creature, ['kind' => 'hit'])['threshold'] === 42, 'Hit uses the stored threshold');
 $luck = applicationTacticalRollSpecification($creature, ['kind' => 'luck', 'formula' => '8d20', 'modifier' => 99, 'rollMode' => 'advantage']);
 requireTactical($luck['formula'] === '1d100' && $luck['rollMode'] === 'advantage' && $luck['d100RollUnder'] === true, 'Luck remains an unmodified d100 and accepts advantage');
