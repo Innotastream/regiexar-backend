@@ -1,4 +1,8 @@
-# Candidat backend 0.18.32 — lore des personnages, client exact 3.5.6
+# Candidat backend 0.18.33 — import des fiches historiques, client exact 3.5.6
+
+Build `client-3-5-6-lore-import-preservation-20261006-2`. Le contrôle de conservation des champs compare désormais la fiche qui sera réellement enregistrée à sa sauvegarde, avec leurs types exacts. Les valeurs par défaut ajoutées par le validateur ne bloquent plus l’import et ne sont pas enregistrées à cette occasion. La recette SQL couvre les fiches sans portée, vision nocturne ni maximum de fatigue explicites, avec rollback, concurrence et conservation des éditions suivantes. Une santé en échec distingue la base et l’étape de maintenance sans exposer de fiche, compte ou détail d’exception. Application 3.5.6, schémas et launcher inchangés.
+
+# Backend 0.18.32 — lore des personnages, client exact 3.5.6
 
 Build `client-3-5-6-lore-roll-order-20261006-1`. Le MJ et le propriétaire peuvent conserver un récit complet sur leur fiche. Les imports d’Ada, Inho, Hira, Gohachu, Krael, Killgert et Nedrezar ne modifient que le lore et son horodatage. Les récits du site conservent leurs chapitres, signatures, saisons et la référence vidéo de Krael. Les correspondances exactes sont résolues dans les fiches et comptes actifs, sans création ni réassignation. La table SQL 23 `character_lore_imports` conserve la fiche précédente et sa révision dans la même transaction que l’écriture. Les imports sont idempotents, sérialisés par l’horloge des domaines, et préservent les éditions ultérieures. La santé expose leur résultat sans donnée privée. Les schémas session 19 et fiche 8 et le launcher restent inchangés. Le push ne constitue pas une preuve de déploiement OVH.
 

@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.32';
-const XAR_BACKEND_BUILD = 'client-3-5-6-lore-roll-order-20261006-1';
+const XAR_BACKEND_VERSION = '0.18.33';
+const XAR_BACKEND_BUILD = 'client-3-5-6-lore-import-preservation-20261006-2';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.5.6';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.5.6'];
@@ -2181,6 +2181,7 @@ try {
 
 if ($route === '/api/v1/health') {
     requireMethod($method, ['GET', 'HEAD']);
+    $healthStage = 'database';
     try {
         $statement = $connection->query('SELECT 1');
         if ($statement === false || (int) $statement->fetchColumn() !== 1) {
@@ -2192,10 +2193,14 @@ if ($route === '/api/v1/health') {
         // strictement sans effet de bord.
         $siteLoreResults = [];
         if (!$headOnly) {
+            $healthStage = 'ownership';
             repairOnlineRosterOwnershipsOnRead($connection, []);
+            $healthStage = 'ada_lore';
             importAdaOriginLoreOnRead($connection);
+            $healthStage = 'site_lore';
             $siteLoreResults = importSiteCharacterLoresOnRead($connection);
         }
+        $healthStage = 'reporting';
         sendJson(200, [
             'status' => 'ok',
             'service' => 'xar-tsaroth-regie',
@@ -2208,8 +2213,10 @@ if ($route === '/api/v1/health') {
             'siteCharacterLoreImports' => siteCharacterLoreImportStatus($connection, $siteLoreResults),
         ], $headOnly);
     } catch (Throwable $error) {
-        error_log('[xar-regie-api] database health check failed: ' . get_class($error));
-        sendJson(503, ['ok' => false, 'status' => 'unavailable', 'code' => 'database_unreachable'], $headOnly);
+        error_log('[xar-regie-api] health check failed at ' . $healthStage . ': ' . get_class($error));
+        sendJson(503, ['ok' => false, 'status' => 'unavailable',
+            'code' => $healthStage === 'database' ? 'database_unreachable' : 'maintenance_failed',
+            'stage' => $healthStage], $headOnly);
     }
 }
 

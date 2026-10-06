@@ -35,9 +35,14 @@ try {
     ensureCharacterLoreImportTable($db); ensureCharacterLoreImportTable($db);
     $db->exec("INSERT INTO accounts VALUES ('fixture-owner','ada','Ada',NULL)");
     $db->exec("INSERT INTO application_domain_clock VALUES (1,100,19,1,NULL,UTC_TIMESTAMP(3))");
-    $before = ['id' => 'fixture-ada', 'name' => 'Ada', 'ownerPlayerId' => 'fixture-owner', 'visionDistance' => 8, 'darkVision' => 'none',
-        'resources' => ['hp' => 13, 'maxHp' => 20, 'mana' => 7, 'maxMana' => 10], 'fatigue' => ['current' => 12, 'max' => 150],
+    $before = ['id' => 'fixture-ada', 'name' => 'Ada', 'ownerPlayerId' => 'fixture-owner',
+        'resources' => ['hp' => 13, 'maxHp' => 20, 'mana' => 7, 'maxMana' => 10], 'fatigue' => ['current' => 12],
         'stats' => ['force' => 20], 'secret' => ['notes' => 'synthetic secret'], 'lore' => 'Ancien récit', '_updatedAt' => 42];
+    $normalized = validatedDomainPayload('character:fixture-ada', $before);
+    loreSqlCheck(!array_key_exists('visionDistance', $before) && !array_key_exists('darkVision', $before)
+        && !array_key_exists('max', $before['fatigue']) && $normalized['visionDistance'] === 8
+        && $normalized['darkVision'] === 'none' && $normalized['fatigue']['max'] === 150,
+        'Historical fixture exercises defaults that validation must not persist during a lore import.');
     $insert = $db->prepare('INSERT INTO application_domains VALUES (\'character:fixture-ada\',1,17,:payload,NULL,UTC_TIMESTAMP(3))');
     $insert->execute([':payload' => json_encode($before)]);
     $db->exec("CREATE TRIGGER lore_failure BEFORE INSERT ON character_lore_imports FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic backup failure'");
@@ -81,6 +86,9 @@ try {
     $story = require __DIR__ . '/../api/v1/lore-catalog/ada-origin.php';
     loreSqlCheck($saved['payload']['lore'] === $story && $saved['revision'] === 19 && domainClockRecord($db)['globalRevision'] === 102,
         'The complete narrative is persisted through the real domain writer.');
+    loreSqlCheck(!array_key_exists('visionDistance', $saved['payload']) && !array_key_exists('darkVision', $saved['payload'])
+        && !array_key_exists('max', $saved['payload']['fatigue']),
+        'Lore import accepts historical sheets without filling unrelated defaults.');
     $modified = $saved['payload']; $modified['lore'] = 'Modification ultérieure autorisée';
     $db->prepare("UPDATE application_domains SET payload=:payload, revision=20 WHERE domain_key='character:fixture-ada'")->execute([':payload' => json_encode($modified)]);
     loreSqlCheck(importAdaOriginLoreOnRead($db)['status'] === 'already_applied'

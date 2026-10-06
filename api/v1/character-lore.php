@@ -105,11 +105,12 @@ function importCharacterLoreOnce(PDO $connection, array $spec): array
         $change = prepareApplicationDomainUpsert($plan['key'], $after, $records[$plan['key']]);
         if ($change === null) throw new RuntimeException('character_lore_import_not_prepared');
         $protectedBefore = $plan['before'];
-        $protectedAfter = $change['payload'];
+        $protectedAfter = $after;
         unset($protectedBefore['lore'], $protectedBefore['_updatedAt'], $protectedAfter['lore'], $protectedAfter['_updatedAt']);
-        if ($protectedBefore != $protectedAfter) throw new RuntimeException('character_lore_import_unrelated_change');
-        // Validation can normalize numeric representations. The import must
-        // still persist exactly the original fields plus lore and its timestamp.
+        if ($protectedBefore !== $protectedAfter) throw new RuntimeException('character_lore_import_unrelated_change');
+        // The validator may add defaults to historical sheets. Compare the
+        // actual payload to be persisted, preserving every original field and
+        // its type; only lore and its timestamp belong to this import.
         $change['payload'] = $after;
         $revision = persistDomainChangesInTransaction($connection, [], $clock, [$change]);
         $backup = $connection->prepare('INSERT INTO character_lore_imports '
