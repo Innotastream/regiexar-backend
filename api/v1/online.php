@@ -1487,6 +1487,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             : ($fullState['activeScene'] ?? null)),
         'rolls' => stripForbiddenPlayerData(array_slice(array_values(array_filter($rolls,
             static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
+        'items' => publicItemStore($fullState['items'] ?? [], $characters, ['id' => $accountId], ['sceneId' => $visibleSceneId, 'layerId' => $visibleLayerId, 'paused' => $paused], static fn($location) => !$strictPointIsHidden($location['x'], $location['y'])),
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
         'damageOverTime' => $visibleDamageOverTime,
@@ -2585,7 +2586,7 @@ function playerCharacterPatch(array $current, array $patch): array
             if ($key === 'portrait') {
                 $current[$key] = normalizePersistedImageReference($patch[$key]);
             } elseif ($key === 'lore') {
-                $current[$key] = normalizeOnlineCharacterLore($patch[$key]);
+                if ($patch[$key] !== ($current[$key] ?? '')) throw new RuntimeException('Le lore est en lecture seule.', 403);
             } elseif ($key === 'conditions') {
                 $current[$key] = normalizeOnlineConditions($patch[$key]);
             } elseif ($key === 'abilities') {
@@ -5215,13 +5216,16 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if ($command === 'roll.reveal') {
+        if (in_array($command, ['item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume'], true)) {
+            $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
+            $commandActionAlreadyLogged = true;
+        } elseif ($command === 'roll.reveal') {
             $result = onlineGmRevealRoll($connection, $records, $pending, $table, $identity, $arguments);
         } elseif (in_array($command, ['combat.effect.remove', 'combat.dot.resolve'], true)) {
             $result = onlineCombatEffectCommand($connection, $records, $pending, $table, $identity, $arguments, $command === 'combat.dot.resolve');
@@ -5482,6 +5486,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 rejectOnlineCommand($connection, 403, 'Cette fiche ne vous appartient pas.', 'character_forbidden');
             }
             $patch = is_array($arguments['patch'] ?? null) ? $arguments['patch'] : [];
+            if (array_key_exists('lore', $patch) && $patch['lore'] !== ($character['lore'] ?? '')) {
+                rejectOnlineCommand($connection, 403, 'Le lore est en lecture seule.', 'readonly_character_lore');
+            }
             $previousConditions = normalizeOnlineConditions($character['conditions'] ?? []);
             $legacyWholePatch = legacyWholePlayerCharacterPatch($patch);
             if ($legacyWholePatch && playerCharacterPatchChangesCurrent($character, $patch)) {

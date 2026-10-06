@@ -11,10 +11,11 @@ require_once __DIR__ . '/ability-casting.php';
 require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
 require_once __DIR__ . '/ongoing-effects.php';
+require_once __DIR__ . '/dynamic-items.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
-const XAR_SESSION_SCHEMA_VERSION = 19;
+const XAR_SESSION_SCHEMA_VERSION = 20;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -38,7 +39,7 @@ const XAR_LUCK_ROLL_MAXIMUM = 1000000000;
 
 function validApplicationDomainKey(string $key): bool
 {
-    if (in_array($key, ['table', 'scene-index', 'roster', 'luck', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
+    if (in_array($key, ['table', 'scene-index', 'roster', 'luck', 'items', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
         return true;
     }
     return preg_match('/^(?:scene|map|initiative|presentation|token-index):[A-Za-z0-9_-]{1,80}$/D', $key) === 1
@@ -1974,6 +1975,10 @@ function validatedDomainPayload(string $key, mixed $payload): array
         sendError(400, 'Le domaine contient une structure hors limites.', 'invalid_domain_shape');
     }
     $payload = applicationDomainFatiguePayload($key, sanitizeStateImageReferences($payload));
+    if ($key === 'items') {
+        try { $payload = normalizeItemStore($payload); }
+        catch (RuntimeException $error) { sendError(400, $error->getMessage(), 'invalid_items_domain'); }
+    }
     if ($key === 'table') {
         $activeSceneId = $payload['activeSceneId'] ?? null;
         if ($activeSceneId !== null
@@ -2294,6 +2299,11 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
+    if (str_starts_with($key, 'character:') && $protectAgainstStaleEntityWrite && is_array($payload) && is_array($current['payload'] ?? null)) {
+        $oldLore = $current['payload']['lore'] ?? '';
+        if (array_key_exists('lore', $payload) && $payload['lore'] !== $oldLore) sendError(403, 'Le lore est en lecture seule.', 'readonly_character_lore');
+        if ($oldLore !== '') $payload['lore'] = $oldLore;
+    }
     if ($key === 'activity' && $protectAgainstStaleEntityWrite && is_array($payload)) {
         $payload = preserveApplicationPendingAbilityValidation($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     }
@@ -2397,6 +2407,7 @@ function legacyStateToDomains(array $state): array
         'luck' => [
             'characters' => normalizeApplicationLuckStatistics($state['luckStatistics'] ?? []),
         ],
+        'items' => is_array($state['items'] ?? null) ? $state['items'] : ['version' => 1, 'templates' => [], 'instances' => []],
         'activity' => [
             'actionTimers' => is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [],
             'actionTimerTombstones' => is_array($state['actionTimerTombstones'] ?? null) ? $state['actionTimerTombstones'] : [],
@@ -2584,6 +2595,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'playerTombstones' => is_array($roster['playerTombstones'] ?? null) ? $roster['playerTombstones'] : [],
         'characterTombstones' => is_array($roster['characterTombstones'] ?? null) ? $roster['characterTombstones'] : [],
         'luckStatistics' => normalizeApplicationLuckStatistics($luck['characters'] ?? []),
+        'items' => $payload('items', ['version' => 1, 'templates' => [], 'instances' => []]),
         'map' => is_array($combat['map'] ?? null) ? $combat['map'] : [],
         'initiative' => is_array($combat['initiative'] ?? null) ? $combat['initiative'] : [],
         'discordCapture' => is_array($table['discordCapture'] ?? null) ? $table['discordCapture'] : [],
@@ -2723,7 +2735,7 @@ function playerApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
     $clock = domainClockRecord($connection);
-    $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'activity', 'audio', 'detached-combat']);
+    $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'items', 'activity', 'audio', 'detached-combat']);
     $table = applicationDomainPayload($records, 'table');
     $roster = applicationDomainPayload($records, 'roster');
     $sceneId = (string) ($table['activeSceneId'] ?? '');
@@ -3004,6 +3016,7 @@ function patchApplicationDomains(PDO $connection): never
         if (!validApplicationDomainKey($key) || isset($seen[$key])) {
             sendError(400, 'Clé de domaine invalide ou dupliquée.', 'invalid_domain_key');
         }
+        if ($key === 'items') sendError(403, 'Les objets se modifient uniquement par leurs actions.', 'readonly_items_domain');
         if ($key === 'luck') {
             sendError(403, 'Le calculateur de chance est alimenté uniquement par les jets autoritatifs.', 'readonly_luck_domain');
         }

@@ -216,7 +216,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create'];
+        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
