@@ -299,7 +299,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $rolled = onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $spec['threshold'] !== null
         ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat')
-        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null) : null);
+        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId)) : null);
     applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {

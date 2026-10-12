@@ -293,7 +293,7 @@ requireDomainCompatibility(count($fiveWeapons) === 5
     'Chaque arme répétée conserve son identifiant, type et effet lors d’un réordonnancement.'
 );
 requireDomainCompatibility(
-    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 8
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 9
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
         && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'
         && !array_key_exists('speed', $migratedCombatCharacter)

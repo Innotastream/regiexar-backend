@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/device-state.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -60,12 +61,20 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device'], true)) return false;
+    foreach (['projectile','useWeaponDamage'] as $key) if (isset($entry[$key]) && !is_bool($entry[$key])) return false;
+    try {
+        if (isset($entry['infusion'])) dsInfusion($entry['infusion']);
+        if (isset($entry['conditionRider'])) dsRider($entry['conditionRider']);
+        if (isset($entry['castingChoices']) && (!is_array($entry['castingChoices']) || count(dsCastingChoices($entry['castingChoices']))!==count($entry['castingChoices']))) return false;
+        if ($effect==='device') dsDefinition($entry['device']??null);
+    } catch (RuntimeException $error) { return false; }
     if (array_key_exists('opposition', $entry) && (!in_array($effect, ['complex', 'opposition'], true) || !validApplicationOppositionAbility($entry['opposition']))) return false;
     if ($effect === 'opposition' && !validApplicationOppositionAbility($entry['opposition'] ?? null)) return false;
     if (array_key_exists('damageOverTime', $entry) && ($effect !== 'damage' || !validApplicationDamageOverTime($entry['damageOverTime']))) return false;
     if (array_key_exists('damageTargeting', $entry) && ($effect !== 'damage' || !validApplicationDamageTargeting($entry['damageTargeting']))) return false;
     if (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue'])) return false;
+    if ($effect==='device') return true;
     if ($effect === 'complex') {
         if (!validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)) return false;
         $first = $entry['workflow']['steps'][0] ?? [];
@@ -86,6 +95,12 @@ function applicationAbilityEffectFields(array $entry): array {
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
+    if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
+    if(($entry['useWeaponDamage']??false)===true) $conditions['useWeaponDamage']=true;
+    if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
+    if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
+    if(dsRider($entry['conditionRider']??null)) $conditions['conditionRider']=dsRider($entry['conditionRider']);
+    if($effect==='device') return [...$casting,...$cue,...$conditions,'effect'=>'device','device'=>dsDefinition($entry['device'])];
     if (in_array($effect, ['damage', 'complex'], true) && ($entry['noDefensePossible'] ?? false) === true) $conditions['noDefensePossible'] = true;
     $opposition = validApplicationOppositionAbility($entry['opposition'] ?? null) ? ['opposition' => applicationOppositionAbility($entry['opposition'])] : [];
     if ($effect === 'complex') return [

@@ -110,6 +110,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $simpleRoll && !$hasCastingCheck ? normalizeOnlineD100Modifier($arguments['modifier'] ?? 0) : 0,
         $attack ? normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0) : 0,
         $attack && ($arguments['opposed'] ?? false) === true,
+        ...($attack && (array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
@@ -178,8 +179,22 @@ function applicationAbilityFailedCooldownRounds(array $plan, array $cast): int {
         && trim((string) ($plan['statId'] ?? '')) !== '' ? 1 : 0;
 }
 
-function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $source, string $sceneId, array $initiative, array $activity, ?string $legacyStatId = null): array {
-    try { return applicationAbilityCastingPlan($ability, $source, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId); }
+function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $source, string $sceneId, array $initiative, array $activity, ?string $legacyStatId = null, array $mechanicsState = []): array {
+    if ($mechanicsState === []) {
+        $deviceRecords = applicationDomainRecords($connection, ['devices', 'map:'.$sceneId]);
+        $mechanicsState = ['devices'=>dsStore(applicationDomainPayload($deviceRecords, 'devices', dsEmpty())), 'map'=>applicationDomainPayload($deviceRecords, 'map:'.$sceneId)];
+    }
+    try{dsAssertActions($mechanicsState,$source,$sceneId);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'timed_action_block');}
+    $stationIndex = dsProvider($mechanicsState['devices'], $source, $mechanicsState['map'], $sceneId, 'onlineDeviceDirect');
+    if ($stationIndex !== null) {
+        $station = $mechanicsState['devices']['devices'][$stationIndex];
+        $source['mana'] = $station['mana']; $source['maxMana'] = max($source['maxMana'] ?? 0, $station['mana']);
+    }
+    try {
+        $plan = applicationAbilityCastingPlan($ability, $source, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId);
+        if ($stationIndex !== null) $plan['manaProviderDeviceId'] = $station['id'];
+        return $plan;
+    }
     catch (RuntimeException $error) {
         $messages = ['ability_combat_required' => 'Cette compétence exige un combat actif.', 'ability_combat_exhausted' => 'Toutes les utilisations de cette compétence ont été consommées pendant ce combat.', 'ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
             'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.',
@@ -292,7 +307,14 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $cast
     );
     $cost = (int) $plan['manaCost'];
-    if ($cost > 0) {
+    if ($cost > 0 && !empty($plan['manaProviderDeviceId'])) {
+        $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
+        $store = dsStore($pending['devices']['payload'] ?? applicationDomainPayload($records, 'devices', dsEmpty()));
+        $index = dsDevice($store, $plan['manaProviderDeviceId']);
+        if ($store['devices'][$index]['mana'] < $cost) rejectOnlineCommand($connection, 409, 'La batterie à portée ne contient pas assez de mana.', 'battery_mana_insufficient');
+        $store['devices'][$index]['mana'] -= $cost; $store['devices'][$index]['revision']++;
+        queueOnlineDomainUpsert($pending, $records, 'devices', $store);
+    } elseif ($cost > 0) {
         $characterKey = $plan['characterId'] !== '' ? 'character:' . $plan['characterId'] : '';
         $sourceKey = !empty($source['id']) ? onlineTokenDomainKey($plan['sceneId'], $source['id']) : '';
         $pulse = ['id' => 'resource-' . randomToken(12), 'resource' => 'mana', 'delta' => -$cost, 'at' => $now];
@@ -461,6 +483,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if ($index < 0) rejectOnlineCommand($connection, 404, 'Cette compétence n’existe plus.', 'token_ability_missing');
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
+    if($continuation===null && (!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
     $extended = ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);

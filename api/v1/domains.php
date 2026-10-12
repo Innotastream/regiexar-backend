@@ -12,10 +12,11 @@ require_once __DIR__ . '/ability-complex.php';
 require_once __DIR__ . '/tactical-rolls.php';
 require_once __DIR__ . '/ongoing-effects.php';
 require_once __DIR__ . '/dynamic-items.php';
+require_once __DIR__ . '/device-state.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
-const XAR_SESSION_SCHEMA_VERSION = 20;
+const XAR_SESSION_SCHEMA_VERSION = 21;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -39,7 +40,7 @@ const XAR_LUCK_ROLL_MAXIMUM = 1000000000;
 
 function validApplicationDomainKey(string $key): bool
 {
-    if (in_array($key, ['table', 'scene-index', 'roster', 'luck', 'items', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
+    if (in_array($key, ['table', 'scene-index', 'roster', 'luck', 'items', 'devices', 'activity', 'library', 'audio', 'forge', 'detached-combat'], true)) {
         return true;
     }
     return preg_match('/^(?:scene|map|initiative|presentation|token-index):[A-Za-z0-9_-]{1,80}$/D', $key) === 1
@@ -1347,6 +1348,7 @@ function validApplicationTokenDomain(array $payload): bool
         }
     }
     if (array_key_exists('conditions', $payload) && !validApplicationConditions($payload['conditions'])) return false;
+    if (array_key_exists('conditionImmunities', $payload) && !validApplicationConditions($payload['conditionImmunities'])) return false;
     if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('image', $payload)
         && $payload['image'] !== null
@@ -1634,12 +1636,13 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 8)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 9)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
         return false;
     }
+    if (array_key_exists('conditionImmunities', $payload) && !validApplicationConditions($payload['conditionImmunities'])) return false;
     if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('hitThreshold', $payload)
         && $payload['hitThreshold'] !== null
@@ -1905,13 +1908,15 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
     }
     foreach ($previous['pendingAttacks'] ?? [] as $attack) if (is_array($attack)) $attacks[$attack['id'] ?? ''] = $attack;
-    $preserve = static function (mixed $attack) use ($attacks): mixed {
+    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion']));
+    $preserve = static function (mixed $attack) use ($attacks,$protected): mixed {
         if (!is_array($attack)) return $attack;
         if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
         $old = $attacks[$attack['id'] ?? ''] ?? [];
-        if (is_array($old['deferredAbilityCast'] ?? null)) return $old;
+        if ($protected($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
+        foreach(['deviceOrigin','projectileGate','conditionRider','riderApplied','infusion'] as $field)unset($attack[$field]);
         return $attack;
     };
     if (is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = array_map($preserve, $payload['pendingAttacks']);
@@ -1926,13 +1931,13 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         }
     }
     foreach ($previous['attackReceipts'] ?? [] as $receipt) {
-        if (is_array($receipt['attack']['deferredAbilityCast'] ?? null)) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        if ($protected($receipt['attack']??null)) $receipts[$receipt['requestId'] ?? ''] = $receipt;
     }
     if (array_key_exists('attackReceipts', $payload) || $receipts !== []) $payload['attackReceipts'] = array_values($receipts);
     // Erasing an entire pending attack must not bypass the protection above.
     $presentIds = array_fill_keys(array_column(is_array($payload['pendingAttacks'] ?? null) ? $payload['pendingAttacks'] : [], 'id'), true);
     foreach ($previous['pendingAttacks'] ?? [] as $attack) {
-        if (is_array($attack) && is_array($attack['deferredAbilityCast'] ?? null) && !isset($presentIds[$attack['id'] ?? ''])) {
+        if ($protected($attack) && !isset($presentIds[$attack['id'] ?? ''])) {
             if (!is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = [];
             $payload['pendingAttacks'][] = $attack;
         }
@@ -1978,6 +1983,9 @@ function validatedDomainPayload(string $key, mixed $payload): array
     if ($key === 'items') {
         try { $payload = normalizeItemStore($payload); }
         catch (RuntimeException $error) { sendError(400, $error->getMessage(), 'invalid_items_domain'); }
+    }
+    if($key==='devices'){
+        try{$payload=dsStore($payload);}catch(RuntimeException $error){sendError(400,$error->getMessage(),'invalid_devices_domain');}
     }
     if ($key === 'table') {
         $activeSceneId = $payload['activeSceneId'] ?? null;
@@ -2408,6 +2416,7 @@ function legacyStateToDomains(array $state): array
             'characters' => normalizeApplicationLuckStatistics($state['luckStatistics'] ?? []),
         ],
         'items' => is_array($state['items'] ?? null) ? $state['items'] : ['version' => 1, 'templates' => [], 'instances' => []],
+        'devices' => dsStore($state['devices'] ?? null),
         'activity' => [
             'actionTimers' => is_array($state['actionTimers'] ?? null) ? $state['actionTimers'] : [],
             'actionTimerTombstones' => is_array($state['actionTimerTombstones'] ?? null) ? $state['actionTimerTombstones'] : [],
@@ -2596,6 +2605,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'characterTombstones' => is_array($roster['characterTombstones'] ?? null) ? $roster['characterTombstones'] : [],
         'luckStatistics' => normalizeApplicationLuckStatistics($luck['characters'] ?? []),
         'items' => $payload('items', ['version' => 1, 'templates' => [], 'instances' => []]),
+        'devices' => dsStore($payload('devices', dsEmpty())),
         'map' => is_array($combat['map'] ?? null) ? $combat['map'] : [],
         'initiative' => is_array($combat['initiative'] ?? null) ? $combat['initiative'] : [],
         'discordCapture' => is_array($table['discordCapture'] ?? null) ? $table['discordCapture'] : [],
@@ -3017,6 +3027,7 @@ function patchApplicationDomains(PDO $connection): never
             sendError(400, 'Clé de domaine invalide ou dupliquée.', 'invalid_domain_key');
         }
         if ($key === 'items') sendError(403, 'Les objets se modifient uniquement par leurs actions.', 'readonly_items_domain');
+        if ($key === 'devices') sendError(403, 'Les dispositifs se modifient uniquement par leurs actions.', 'readonly_devices_domain');
         if ($key === 'luck') {
             sendError(403, 'Le calculateur de chance est alimenté uniquement par les jets autoritatifs.', 'readonly_luck_domain');
         }
@@ -3094,6 +3105,7 @@ function patchApplicationDomains(PDO $connection): never
         reconcileApplicationMountedTokenDomains($connection, $records, $pendingByKey, array_keys($mountedScenes));
         applyApplicationDamageOverTimeOnTurn($connection, $records, $pendingByKey, $identity);
         $pending = array_values($pendingByKey);
+        $pending = onlineAdvanceDevicesOnChanges($connection, $records, $pending, $identity);
         if ($pending === []) {
             $connection->commit();
             sendJson(200, ['ok' => true, 'revision' => $clock['globalRevision'], 'domains' => []]);

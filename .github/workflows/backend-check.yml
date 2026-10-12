@@ -55,6 +55,8 @@ jobs:
         run: php tests/tactical-lifecycle.php
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php
+      - name: Infusions, devices and individual consent
+        run: php tests/device-native-contract.php
       - name: Complex multi-step ability lifecycle
         run: |
           php tests/complex-abilities-contract.php
@@ -99,6 +101,8 @@ jobs:
           grep -Fq 'Local MySQL character lore integration passed.' mysql-character-lore.log
           php tests/mysql-history-retention.php | tee mysql-history-retention.log
           grep -Fq 'Local MySQL history retention integration passed.' mysql-history-retention.log
+          php tests/mysql-devices-concurrency.php | tee mysql-devices-concurrency.log
+          grep -Fq 'Local MySQL device concurrency integration passed.' mysql-devices-concurrency.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

@@ -184,6 +184,9 @@ function createAbilityAssistantConversation(PDO $connection): never
             if (count($forms) >= 50) break;
         }
         $context['availableForms'] = $forms;
+        $items=applicationDomainPayload(applicationDomainRecords($connection,['items']),'items',['version'=>1,'templates'=>[],'instances'=>[]]);$counts=[];
+        foreach($items['instances']??[] as $item)if($item['location']['kind']==='inventory'&&($item['location']['characterId']??'')===$characterId)$counts[$item['templateId']]=($counts[$item['templateId']]??0)+1;
+        $context['ammunition']=array_values(array_map(static fn($template)=>['id'=>$template['id'],'name'=>mb_substr($template['name'],0,120),'quantity'=>$counts[$template['id']]??0],array_filter($items['templates']??[],static fn($template)=>$template['kind']==='object'&&isset($counts[$template['id']]))));
     }
     if ($help) $context['mode'] = 'help';
     $context['role'] = (string) $identity['effective_mode'];
@@ -362,7 +365,7 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
         unset($value['image']);
     }
     $effect = (string) ($value['effect'] ?? '');
-    if (!in_array($effect, ['damage', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition'], true)) {
+    if (!in_array($effect, ['damage', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition', 'device'], true)) {
         throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
     }
     $stats = ['', 'character-stat-force', 'character-stat-dexterity', 'character-stat-agility',
@@ -387,6 +390,7 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
     if ($effect === 'metamorphosis' && !in_array((string) ($value['formCharacterId'] ?? ''), array_column($context['availableForms'] ?? [], 'id'), true)) {
         throw new InvalidArgumentException('Créez et choisissez une seconde fiche du même propriétaire pour cette forme.');
     }
+    if($effect==='device' && ($value['device']['kind']??'')==='launcher' && !in_array((string)($value['device']['ammoTemplateId']??''),array_column($context['ammunition']??[],'id'),true))throw new InvalidArgumentException('Choisissez des munitions réellement présentes dans le contexte de cette fiche.');
     $normalized = normalizeOnlineAbilities([$value])[0] ?? null;
     $workflowError = $effect === 'complex' && is_array($normalized)
         ? applicationComplexAbilityWorkflowError($normalized['workflow'] ?? null)

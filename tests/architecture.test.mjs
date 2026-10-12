@@ -82,7 +82,7 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.34'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-7-dynamic-items-draft-20261006-1'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-7-leihr-mechanics-draft-20261012-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -114,7 +114,7 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(index, /SMALLINT UNSIGNED NOT NULL DEFAULT 16/);
   assert.match(index, /state_schema_version = :state_schema_version/);
   assert.match(index, /SMALLINT UNSIGNED NOT NULL DEFAULT 19/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 20/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 21/);
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'activity', 'audio', 'detached-combat'\]/);
@@ -268,7 +268,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(online, /breaksOpposition'[\s\S]*?requiresGmValidation'/);
   assert.match(online, /'token\.attack\.resolve'/);
   assert.match(online, /'token\.attack\.oppose'/);
-  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 20/);
+  assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 21/);
   assert.match(domains, /pendingAttacks/);
   assert.match(domains, /attackReceipts/);
   assert.match(domains, /XAR_PENDING_ATTACK_MAXIMUM = 100/);
@@ -311,7 +311,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(projection, /'lights'/);
   assert.ok(online.indexOf("$connection->commit();") < online.indexOf("$result['mapProjection']"),
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
-  assert.match(online, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['mechanics\.command', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => [^\n]*empty\(\$token\['mountedOnTokenId'\]\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -738,7 +738,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['mechanics\.command', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);
@@ -946,7 +946,7 @@ test("les domaines bornent aussi les structures imbriquées et les registres sec
   assert.match(domains, /\(\$folderChannels\[\(string\) \$folderId\] \?\? null\) !== \$channel/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\) && \$payload\['resourcePulse'\] !== null/);
   assert.match(domains, /\$payload\['map'\]\['tokens'\][^\n]+2000/);
-  assert.match(online, /\$current\['characterSchemaVersion'\] = 8/);
+  assert.match(online, /\$current\['characterSchemaVersion'\] = 9/);
   assert.match(online, /normalizeOnlineAbilities/);
   assert.match(online, /'hitThreshold'/);
   assert.match(online, /\['stat', 'hit'\]/);
