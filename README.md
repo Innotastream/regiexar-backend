@@ -1,4 +1,12 @@
-# Candidat backend 0.18.33 — import des fiches historiques, client exact 3.5.6
+# Candidat backend 0.18.35 — connexion des sessions historiques, client exact 3.5.7
+
+Build `client-3-5-7-domain-read-contract-20261012-1`. Une session déjà initialisée pouvait garder le numéro de contrat de sa dernière écriture, notamment 19 pour la 3.5.6. La lecture des documents annonçait alors ce numéro au client 3.5.7, qui attend le contrat 21 et refusait l'ouverture après authentification. La réponse annonce désormais le contrat pris en charge par le serveur, comme la lecture d'état complet. L'horloge persistée, les fiches, lores, objets et révisions restent inchangés lors de cette lecture. Les schémas futurs sont toujours refusés avant toute écriture. La recette MariaDB couvre les contrats historiques 12, 19 et 20, le contrat courant, les lectures complètes, les deltas vides et les sélections de documents. Le schéma MySQL 23 et le paquet Windows 3.5.7 sont inchangés ; seule la version exacte 3.5.7 reste autorisée. Le push ne prouve pas le déploiement OVH.
+
+# Backend 0.18.34 — capacités de Leihr, client exact 3.5.7
+
+Build `client-3-5-7-leihr-mechanics-draft-20261012-1`. Infusions, station rechargeable, lanceur partagé, bombes à fabrication validée, dôme mobile et rayon à consentements individuels sont gérés par les commandes serveur et les reçus persistants. La production a été vérifiée le 12 octobre avec le verrou exact 3.5.7. Le correctif 0.18.35 ci-dessus répare la lecture initiale des sessions déjà enregistrées ; il ne remplace aucune fiche et n'exige pas un nouveau paquet Windows.
+
+# Backend 0.18.33 — import des fiches historiques, client exact 3.5.6
 
 Build `client-3-5-6-lore-import-preservation-20261006-2`. Le contrôle de conservation des champs compare désormais la fiche qui sera réellement enregistrée à sa sauvegarde, avec leurs types exacts. Les valeurs par défaut ajoutées par le validateur ne bloquent plus l’import et ne sont pas enregistrées à cette occasion. La recette SQL couvre les fiches sans portée, vision nocturne ni maximum de fatigue explicites, avec rollback, concurrence et conservation des éditions suivantes. Une santé en échec distingue la base et l’étape de maintenance sans exposer de fiche, compte ou détail d’exception. Application 3.5.6, schémas et launcher inchangés.
 

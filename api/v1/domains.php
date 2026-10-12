@@ -2908,7 +2908,10 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     sendJson(200, [
         'ok' => true,
         'architecture' => 'revisioned-domains',
-        'stateSchemaVersion' => $clock['stateSchemaVersion'],
+        // The response uses this server's supported session contract. The clock
+        // records the last persisted write and may still name an older session.
+        // domainClockRecord already rejects future schemas before this read.
+        'stateSchemaVersion' => XAR_SESSION_SCHEMA_VERSION,
         'domainSchemaVersion' => $clock['domainSchemaVersion'],
         'revision' => $clock['globalRevision'],
         'reset' => $reset,

@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.34';
-const XAR_BACKEND_BUILD = 'client-3-5-7-leihr-mechanics-draft-20261012-1';
+const XAR_BACKEND_VERSION = '0.18.35';
+const XAR_BACKEND_BUILD = 'client-3-5-7-domain-read-contract-20261012-1';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.5.7';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.5.7'];

@@ -103,6 +103,8 @@ jobs:
           grep -Fq 'Local MySQL history retention integration passed.' mysql-history-retention.log
           php tests/mysql-devices-concurrency.php | tee mysql-devices-concurrency.log
           grep -Fq 'Local MySQL device concurrency integration passed.' mysql-devices-concurrency.log
+          php tests/mysql-domain-schema.php | tee mysql-domain-schema.log
+          grep -Fq 'Local MySQL domain schema integration passed.' mysql-domain-schema.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 
