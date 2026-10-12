@@ -16,7 +16,7 @@ require_once __DIR__ . '/device-state.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
-const XAR_SESSION_SCHEMA_VERSION = 21;
+const XAR_SESSION_SCHEMA_VERSION = 22;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
@@ -198,7 +198,9 @@ function normalizeApplicationLuckStatistics(mixed $value): array
         if (!is_string($characterId) || !validApplicationDomainIdentifier($characterId, 180) || !is_array($record)) continue;
         $rollCount = is_int($record['rollCount'] ?? null) ? $record['rollCount'] : 0;
         $rawTotal = is_int($record['rawTotal'] ?? null) ? $record['rawTotal'] : 0;
-        if ($rollCount < 1 || $rollCount > XAR_LUCK_ROLL_MAXIMUM || $rawTotal < $rollCount || $rawTotal > $rollCount * 100) continue;
+        if ($rollCount < 0 || $rollCount > XAR_LUCK_ROLL_MAXIMUM || $rawTotal < $rollCount || $rawTotal > $rollCount * 100
+            || ($rollCount === 0 && ($record['resetValue'] ?? null) !== 50)
+            || ($rollCount > 0 && array_key_exists('resetValue', $record))) continue;
         $updatedAt = is_string($record['updatedAt'] ?? null) && strlen($record['updatedAt']) <= 80 && strtotime($record['updatedAt']) !== false
             ? $record['updatedAt'] : null;
         $startedAt = is_string($record['startedAt'] ?? null) && strlen($record['startedAt']) <= 80 && strtotime($record['startedAt']) !== false
@@ -209,6 +211,7 @@ function normalizeApplicationLuckStatistics(mixed $value): array
             'rawTotal' => $rawTotal,
             'startedAt' => $startedAt,
             'updatedAt' => $updatedAt,
+            ...($rollCount === 0 ? ['resetValue' => 50] : []),
         ];
     }
     return $normalized;
@@ -219,9 +222,11 @@ function validApplicationLuckDomain(array $payload): bool
     if (array_keys($payload) !== ['characters'] || !validApplicationDomainMap($payload['characters'], XAR_LUCK_CHARACTER_MAXIMUM, 180)) return false;
     foreach ($payload['characters'] as $characterId => $record) {
         if (!is_array($record)
-            || array_diff(array_keys($record), ['rollCount', 'rawTotal', 'startedAt', 'updatedAt']) !== []
+            || array_diff(array_keys($record), ['rollCount', 'rawTotal', 'startedAt', 'updatedAt', 'resetValue']) !== []
             || !is_int($record['rollCount'] ?? null)
-            || $record['rollCount'] < 1
+            || $record['rollCount'] < 0
+            || ($record['rollCount'] === 0 && ($record['resetValue'] ?? null) !== 50)
+            || ($record['rollCount'] > 0 && array_key_exists('resetValue', $record))
             || $record['rollCount'] > XAR_LUCK_ROLL_MAXIMUM
             || !is_int($record['rawTotal'] ?? null)
             || $record['rawTotal'] < $record['rollCount']

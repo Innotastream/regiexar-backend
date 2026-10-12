@@ -20,6 +20,19 @@ function normalizeItemTemplate(array $value): array {
     $image = itemImage($value['image'] ?? '');
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image];
+    if (array_key_exists('sourceAbilityId', $value) || array_key_exists('creatorCharacterId', $value)) {
+        if (!itemId($value['sourceAbilityId'] ?? null) || !itemId($value['creatorCharacterId'] ?? null)) itemFailure('Le lien de l’objet à sa compétence est invalide.');
+        $result['sourceAbilityId'] = $value['sourceAbilityId'];
+        $result['creatorCharacterId'] = $value['creatorCharacterId'];
+    }
+    if (array_key_exists('stockBindings', $value)) {
+        if (!is_array($value['stockBindings']) || count($value['stockBindings']) > 1000) itemFailure('Les liens de stock sont invalides.');
+        $result['stockBindings'] = [];
+        foreach ($value['stockBindings'] as $link) {
+            if (!is_array($link) || !itemId($link['characterId'] ?? null) || !itemId($link['abilityId'] ?? null)) itemFailure('Les liens de stock sont invalides.');
+            $result['stockBindings'][] = ['characterId' => $link['characterId'], 'abilityId' => $link['abilityId']];
+        }
+    }
     if (isset($value['document'])) {
         $document = $value['document'];
         if (!is_array($document) || !is_array($document['blocks'] ?? null) || count($document['blocks']) > 1000) itemFailure('Le document est trop long.');
@@ -132,6 +145,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         elseif (($location['kind'] ?? '') !== 'ground' || !in_array($location['sceneId'] ?? '', array_column($state['scenes'] ?? [], 'id'), true)) itemFailure('Choisissez un inventaire ou une scène existante.');
         $item = ['id' => $args['itemId'], 'templateId' => $args['templateId'], 'revision' => 1, 'location' => $location];
         $items['instances'][] = $item;
+        if ($location['kind'] === 'inventory') rememberLinkedItemStock($items, $character($location['characterId']), $item['templateId']);
         return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
     }
     $index = array_search($args['itemId'] ?? '', array_column($items['instances'], 'id'), true);
@@ -147,6 +161,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
     } else {
         if ($item['location']['kind'] !== 'inventory' || $item['location']['characterId'] !== ($args['characterId'] ?? '')) itemFailure('Cet objet n’est plus dans cet inventaire.', 409);
         $source = $owned($args['characterId'] ?? null);
+        rememberLinkedItemStock($items, $source, $item['templateId']);
         if ($command === 'item.transfer') {
             $target = $character($args['targetCharacterId'] ?? null);
             if (!$isGm && ($target['ownerPlayerId'] ?? '') === '') itemFailure('Ce personnage n’appartient à aucun joueur.', 403);
@@ -165,8 +180,47 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             $item['location'] = ['kind' => 'consumed', 'characterId' => $source['id']];
         } else itemFailure('Action d’objet inconnue.');
     }
+    if ($item['location']['kind'] === 'inventory') rememberLinkedItemStock($items, $character($item['location']['characterId']), $item['templateId']);
     $item['revision']++; $items['instances'][$index] = $item;
     return ['items' => normalizeItemStore($items), 'result' => ['item' => $item], 'characterPatch' => $patch];
+}
+
+function linkedItemTemplateIds(array $character, array $templates = []): array {
+    $ids = []; $abilityIds = [];
+    foreach ($character['abilities'] ?? [] as $ability) {
+        $abilityIds[(string) ($ability['id'] ?? '')] = true;
+        if (($ability['device']['kind'] ?? '') === 'launcher' && itemId($ability['device']['ammoTemplateId'] ?? null)) $ids[$ability['device']['ammoTemplateId']] = true;
+    }
+    foreach ($templates as $template) if (($template['creatorCharacterId'] ?? null) === ($character['id'] ?? false)
+        && isset($abilityIds[$template['sourceAbilityId'] ?? ''])) $ids[$template['id']] = true;
+    return array_values(array_map(static fn(array $template): string => $template['id'], array_filter($templates,
+        static fn(array $template): bool => $template['kind'] === 'object' && isset($ids[$template['id']]))));
+}
+
+function rememberLinkedItemStock(array &$store, ?array $character, string $templateId): void {
+    $ability = null;
+    foreach ($character['abilities'] ?? [] as $entry) if (($entry['device']['kind'] ?? '') === 'launcher'
+        && ($entry['device']['ammoTemplateId'] ?? '') === $templateId && itemId($entry['id'] ?? null)) { $ability = $entry; break; }
+    if ($ability === null) return;
+    foreach ($store['templates'] as &$template) {
+        if ($template['id'] !== $templateId || $template['kind'] !== 'object') continue;
+        $bindings = $template['stockBindings'] ?? [];
+        foreach ($bindings as $link) if ($link['characterId'] === $character['id'] && $link['abilityId'] === $ability['id']) return;
+        if (count($bindings) >= 1000) itemFailure('Le stock atteint sa limite de liens.', 409);
+        $template['stockBindings'] = [...$bindings, ['characterId' => $character['id'], 'abilityId' => $ability['id']]];
+        return;
+    }
+}
+
+function readableLinkedStock(array $store, array $character, string $templateId): bool {
+    $abilities = array_fill_keys(array_column($character['abilities'] ?? [], 'id'), true);
+    foreach ($store['templates'] ?? [] as $template) if ($template['id'] === $templateId) {
+        if (($template['creatorCharacterId'] ?? '') === $character['id'] && isset($abilities[$template['sourceAbilityId'] ?? ''])) return true;
+        foreach ($template['stockBindings'] ?? [] as $link) if ($link['characterId'] === $character['id'] && isset($abilities[$link['abilityId']])) return true;
+    }
+    foreach ($store['instances'] ?? [] as $item) if ($item['templateId'] === $templateId
+        && in_array($item['location']['kind'], ['inventory', 'consumed'], true) && $item['location']['characterId'] === $character['id']) return true;
+    return false;
 }
 
 function publicItemStore(array $store, array $characters, ?array $identity, array $context, callable $visible): array {
@@ -179,6 +233,11 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
         if (!$inventory && !$ground) continue;
         $instances[] = $item; $ids[$item['templateId']] = true;
         if ($inventory) $ownIds[$item['templateId']] = true;
+    }
+    foreach ($characters as $character) if (isset($owned[$character['id']])) {
+        foreach (linkedItemTemplateIds($character, $store['templates'] ?? []) as $templateId) {
+            if (readableLinkedStock($store, $character, $templateId)) { $ids[$templateId] = true; $ownIds[$templateId] = true; }
+        }
     }
     $templates = [];
     foreach ($store['templates'] ?? [] as $template) if (isset($ids[$template['id']])) $templates[] = isset($ownIds[$template['id']]) ? $template : array_intersect_key($template, array_fill_keys(['id', 'name', 'kind', 'image'], true));

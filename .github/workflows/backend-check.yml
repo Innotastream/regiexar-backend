@@ -47,6 +47,8 @@ jobs:
           php tests/domain-backward-compatibility.php
       - name: Exact current-version login policy
         run: php tests/client-policy.php
+      - name: Global MJ Chance reset and durable replay
+        run: php tests/luck-reset-contract.php
       - name: Monotonic backend release authority
         run: php tests/backend-release-anti-rollback.php
       - name: Character lore import and owner projection
@@ -105,6 +107,8 @@ jobs:
           grep -Fq 'Local MySQL device concurrency integration passed.' mysql-devices-concurrency.log
           php tests/mysql-domain-schema.php | tee mysql-domain-schema.log
           grep -Fq 'Local MySQL domain schema integration passed.' mysql-domain-schema.log
+          php tests/mysql-luck-reset.php | tee mysql-luck-reset.log
+          grep -Fq 'Local MySQL Chance reset integration passed.' mysql-luck-reset.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

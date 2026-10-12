@@ -24,6 +24,14 @@ $approved=deviceCommand($db,'craft.resolve',['craftRequestId'=>$requestId,'appro
 requireDevice($approved->status===200&&count($approved->body['itemIds'])===2,'Native approved batch has two unique items');
 requireDevice($db->payload('character:character-player')['resources']['mana']==80&&$db->payload('character:character-player')['fatigue']['current']==0,'Only creation mana is charged');
 requireDevice(count($db->payload('activity')['actionTimers']??[])===0,'Creation starts no cooldown');
+$cacheDb=new MemoryConnection(array_map(static fn(array $entry): array=>$entry['payload'],$db->domains));
+$nextBatch=deviceCommand($cacheDb,'craft.request',['characterId'=>'character-player','sourceTokenId'=>'token-player','abilityId'=>'native-bomb','quantity'=>1]);
+$nextApproved=deviceCommand($cacheDb,'craft.resolve',['craftRequestId'=>$nextBatch->body['craftRequestId'],'approve'=>true],$gm);
+$cachedItems=$cacheDb->payload('items');
+requireDevice($nextApproved->status===200 && count($cachedItems['templates'])===1 && count($cachedItems['instances'])===3
+    && count(array_unique(array_column($cachedItems['instances'],'id')))===3 && count(array_unique(array_column($cachedItems['instances'],'templateId')))===1,'Successive approved batches reuse one model and keep three unique instances');
+requireDevice($cachedItems['templates'][0]['creatorCharacterId']==='character-player' && $cachedItems['templates'][0]['sourceAbilityId']==='native-bomb'
+    && $cacheDb->payload('character:character-player')['resources']['mana']==70,'The stable model keeps its exact maker and ability with one creation payment per bomb');
 $store=$db->payload('devices');$bomb=$store['devices'][0];
 $launch=deviceCommand($db,'bomb.launch',['characterId'=>'character-player','sourceTokenId'=>'token-player','deviceId'=>$bomb['id'],'delay'=>2,'x'=>45,'y'=>50]);
 requireDevice($launch->status===200,'Native bomb launch succeeds');

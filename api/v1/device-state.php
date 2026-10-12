@@ -187,8 +187,10 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
             if(dsBombCount($state,$store,$owner['id'])+$request['quantity']>$definition['maximumInventory']) dsError('L’inventaire a changé : le nombre maximal de bombes serait dépassé.');
             if(($request['sceneId']??$sceneId)!==$sceneId)dsError('La scène de cette fabrication a changé.');
             $token=!empty($request['sourceTokenId'])?dsToken($state,$owner,['sourceTokenId'=>$request['sourceTokenId']]):null;
-            dsPayMana($state,$store,$owner,$token,$request['cost'],$context); $state['items']=normalizeItemStore($state['items']??null); $templateId=$id('template');
-            $state['items']['templates'][]=['id'=>$templateId,'kind'=>'object','name'=>$ability['name'],'description'=>'Bombe fabriquée et validée par le MJ.','image'=>'']; $itemIds=[];
+            dsPayMana($state,$store,$owner,$token,$request['cost'],$context); $state['items']=normalizeItemStore($state['items']??null); $existingTemplate=null;
+            foreach($state['items']['templates'] as $template) if($template['kind']==='object' && ($template['sourceAbilityId']??'')===$ability['id'] && ($template['creatorCharacterId']??'')===$owner['id']) {$existingTemplate=$template;break;}
+            $templateId=$existingTemplate['id']??$id('template');
+            if($existingTemplate===null) $state['items']['templates'][]=['id'=>$templateId,'kind'=>'object','name'=>$ability['name'],'description'=>'Bombe fabriquée et validée par le MJ.','image'=>'','sourceAbilityId'=>$ability['id'],'creatorCharacterId'=>$owner['id']]; $itemIds=[];
             for($n=0;$n<$request['quantity'];$n++) {
                 $itemId=$id('item'); $itemIds[]=$itemId; $state['items']['instances'][]=['id'=>$itemId,'templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$owner['id']]];
                 dsAppend($store,['id'=>$id('device'),'revision'=>1,'status'=>'inventory','itemId'=>$itemId,'creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId'],
@@ -225,7 +227,10 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if(($owner['resources']['maxMana']??0)<=0)dsError('Ce personnage doit posséder du mana pour utiliser le lanceur.');
         foreach($state['items']['instances']??[] as $i=>$item) if($item['templateId']===$device['definition']['ammoTemplateId'] && $item['location']['kind']==='inventory' && $item['location']['characterId']===$device['creatorCharacterId']) {$ammo=$i;break;}
         if($ammo<0) dsError('Le créateur ne possède plus de carreau dans son inventaire.');
-        dsPayMana($state,$store,$owner,$token,$spent,$context); $item=&$state['items']['instances'][$ammo]; $item['location']=['kind'=>'consumed','characterId'=>$device['creatorCharacterId']]; $item['revision']++;
+        dsPayMana($state,$store,$owner,$token,$spent,$context);
+        $creatorIndex=dsIndex($state['characters'],$device['creatorCharacterId']);
+        rememberLinkedItemStock($state['items'],$creatorIndex>=0?$state['characters'][$creatorIndex]:null,$state['items']['instances'][$ammo]['templateId']);
+        $item=&$state['items']['instances'][$ammo]; $item['location']=['kind'=>'consumed','characterId'=>$device['creatorCharacterId']]; $item['revision']++;
         $effects[]=['type'=>'attack','sourceCharacterId'=>$owner['id'],'sourceTokenId'=>$token['id'],'targetTokenId'=>$args['targetTokenId']??'','statId'=>$args['statId'],'name'=>$device['name'],'projectile'=>$device['definition']['projectile'],'opposed'=>($args['opposed']??true)!==false,
             'rollMode'=>$args['rollMode']??'normal',
             'damageComponents'=>[['type'=>$device['definition']['damageType'],'formula'=>$device['definition']['damageFormula']],['type'=>'ignore','formula'=>(string)($spent*$device['definition']['infusion']['ratio'])]],

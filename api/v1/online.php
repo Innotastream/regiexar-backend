@@ -5,6 +5,7 @@ require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . "/damage-guard.php";
 require_once __DIR__ . "/ongoing-effects.php";
 require_once __DIR__ . '/device-runtime.php';
+require_once __DIR__ . '/luck-reset.php';
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
@@ -2853,7 +2854,7 @@ function onlineCharacterLuckThreshold(PDO $connection, array &$records, array $p
     if (!isset($records['luck'])) $records = array_replace($records, applicationDomainRecords($connection, ['luck']));
     $luck = is_array($pending['luck']['payload'] ?? null) ? $pending['luck']['payload'] : applicationDomainPayload($records, 'luck', ['characters' => []]);
     $record = normalizeApplicationLuckStatistics($luck['characters'] ?? [])[$characterId] ?? null;
-    return is_array($record) ? (int) round(round($record['rawTotal'] / $record['rollCount'], 2)) : null;
+    return is_array($record) ? ($record['rollCount'] === 0 ? 50 : (int) round(round($record['rawTotal'] / $record['rollCount'], 2))) : null;
 }
 
 function onlineRecordCharacterLuckD100(
@@ -5256,13 +5257,16 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['mechanics.command', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if ($command === 'mechanics.command') {
+        if ($command === 'luck.reset') {
+            $result = onlineResetCharacterLuck($connection, $records, $pending, $identity, $arguments, $sceneId);
+            $commandActionAlreadyLogged = true;
+        } elseif ($command === 'mechanics.command') {
             $result = $mechanicsApplied['result'];
             if (!($result['deduplicated'] ?? false)) {
                 $attacks = onlineDeviceEffects($connection, $records, $pending, $identity, $mechanicsApplied['effects']);

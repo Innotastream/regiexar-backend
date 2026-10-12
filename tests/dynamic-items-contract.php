@@ -47,4 +47,17 @@ itemRefused(fn() => applyDynamicItemCommand($state, $owner, 'item.template.creat
 itemRefused(fn() => normalizeItemStore([...$state['items'], 'version' => 2]), 409);
 itemRefused(fn() => normalizeItemStore([...$state['items'], 'instances' => [...$state['items']['instances'], $state['items']['instances'][0]]]), 400);
 itemRefused(fn() => normalizeItemTemplate(['id' => 'bad', 'kind' => 'book', 'name' => 'Livre', 'image' => 'https://other.example/track.png']), 400);
+$tracked = $state;
+$tracked['characters'][0]['abilities'] = [['id'=>'launcher','device'=>['kind'=>'launcher','ammoTemplateId'=>'bolt']]];
+$tracked['items'] = ['version'=>1,'templates'=>[['id'=>'bolt','kind'=>'object','name'=>'Carreau lourd','description'=>'Munition privée','image'=>'']],
+    'instances'=>[['id'=>'last-bolt','templateId'=>'bolt','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'hero-a']]]];
+$moved=applyDynamicItemCommand($tracked,$owner,'item.transfer',['itemId'=>'last-bolt','characterId'=>'hero-a','targetCharacterId'=>'hero-b','expectedItemRevision'=>1]);
+$zero=publicItemStore($moved['items'],$tracked['characters'],$owner,[],fn()=>false);
+itemCheck(count($zero['templates'])===1 && $zero['instances']===[] && $zero['templates'][0]['name']==='Carreau lourd', 'The last transfer preserves a real ability stock at zero without a usable instance');
+itemCheck(publicItemStore(['version'=>1,'templates'=>$tracked['items']['templates'],'instances'=>[]],$tracked['characters'],$owner,[],fn()=>false)['templates']===[], 'An invented ammunition reference cannot reveal an unrelated private model');
+itemCheck(publicItemStore($moved['items'],$tracked['characters'],null,[],fn()=>false)['templates']===[], 'No identity sees linked private stocks');
+$bomb=['id'=>'bomb','kind'=>'object','name'=>'Bombe à flux','sourceAbilityId'=>'bombs','creatorCharacterId'=>'hero-a'];
+itemCheck(normalizeItemTemplate($bomb)['sourceAbilityId']==='bombs', 'Craft model linkage survives native normalization');
+itemRefused(fn()=>normalizeItemTemplate([...$bomb,'creatorCharacterId'=>'bad id']),400);
+itemRefused(fn()=>normalizeItemTemplate([...$bomb,'stockBindings'=>[['characterId'=>'hero-a','abilityId'=>'bad id']]]),400);
 fwrite(STDOUT, "Dynamic items PHP contract: $checks checks passed.\n");
