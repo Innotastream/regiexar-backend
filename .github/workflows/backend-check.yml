@@ -75,6 +75,8 @@ jobs:
         run: php tests/diagnostics-contract.php
       - name: Private PHP warning and failure journal
         run: php tests/runtime-diagnostics-contract.php
+      - name: Check short SSE upstream leases
+        run: php tests/sse-lease-contract.php
       - name: Reliability audit regressions
         run: |
           php tests/backend-future-schema.php

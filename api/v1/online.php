@@ -14,6 +14,7 @@ const XAR_ABILITY_SOUND_MAXIMUM_UPLOAD_DURATION_MILLISECONDS = 5000;
 const XAR_MEDIA_MAINTENANCE_CANDIDATES = 5;
 const XAR_SSE_MINIMUM_POLL_MICROSECONDS = 250000;
 const XAR_SSE_MAXIMUM_POLL_MICROSECONDS = 750000;
+const XAR_SSE_STREAM_LIFETIME_SECONDS = 0.75;
 const XAR_SSE_FLUSH_PADDING_BYTES = 8192;
 const XAR_IDENTITY_OWNERSHIP_REPAIR_VERSION = 6;
 const XAR_ATTACK_RECEIPT_TTL_MILLISECONDS = 24 * 60 * 60 * 1000;
@@ -8273,10 +8274,14 @@ function streamOnlineEvents(PDO $connection): never
     $nextConnectionTouchAt = $startedAt + 12.0;
     $nextHeartbeatAt = $startedAt + 10.0;
     $idleChecks = 0;
-    $streamLifetime = 20.0 + (onlineEventReconnectDelayMilliseconds($connectionId) / 1000.0);
+    // Release the shared FastCGI worker between short upstream leases. The Node
+    // relay keeps its downstream SSE open and resumes from the last revision.
+    $streamLifetime = XAR_SSE_STREAM_LIFETIME_SECONDS;
     $revisionStatement = $connection->prepare('SELECT global_revision FROM application_domain_clock WHERE singleton_id = 1');
     while (!connection_aborted() && microtime(true) - $startedAt < $streamLifetime) {
-        usleep(onlineEventPollDelayMicroseconds($idleChecks));
+        $remainingMicroseconds = (int) floor(($startedAt + $streamLifetime - microtime(true)) * 1000000);
+        if ($remainingMicroseconds <= 0) break;
+        usleep(min(onlineEventPollDelayMicroseconds($idleChecks), $remainingMicroseconds));
         $now = microtime(true);
         $revisionStatement->execute();
         $nextRevision = (int) ($revisionStatement->fetchColumn() ?: 0);
