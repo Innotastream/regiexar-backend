@@ -4,6 +4,14 @@ declare(strict_types=1);
 // Native PHP counterpart of public/device-state.js. Storage and dice are
 // supplied by the authority inside its existing transaction/clock lock.
 function dsError(string $message, int $status = 409): never { throw new RuntimeException($message, $status); }
+function dsImage(mixed $value): string {
+    if(!is_string($value)||strlen($value)>4096||preg_match('/[\x00\r\n]/',$value))return '';
+    $image=trim($value);
+    if(preg_match('#^/media/[A-Za-z0-9_-]{24}$#D',$image)===1)return $image;
+    if(strlen($image)>2048)return '';
+    $url=parse_url($image);
+    return is_array($url)&&strtolower($url['scheme']??'')==='https'&&strtolower($url['host']??'')==='regie-xar-tsaroth.fr'&&!isset($url['user'],$url['pass'])&&!isset($url['user'])&&!isset($url['pass'])&&!isset($url['port'])?$image:'';
+}
 function dsAmount(mixed $value, int $minimum = 0): int {
     if (!is_int($value) || $value < $minimum || $value > 1000000000) dsError('Renseignez une quantité entière valide.', 400);
     return $value;
@@ -37,15 +45,15 @@ function dsDefinition(mixed $v): array {
     $stat=static fn($key,$fallback)=>in_array($v[$key]??'',dsStats(),true)?$v[$key]:$fallback;
     $base=['version'=>1,'kind'=>$v['kind'],'interactionRangeCells'=>$int('interactionRangeCells',0,100,2)];
     return match($v['kind']) {
-        'battery'=>[...$base,'radiusCells'=>$int('radiusCells',1,100,2),'chargeRatio'=>$int('chargeRatio',1,100,2),'requireDirectRange'=>($v['requireDirectRange']??true)!==false],
-        'launcher'=>[...$base,'damageFormula'=>$formula('damageFormula','1d35'),'damageType'=>$damage('physical'),
+        'battery'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'radiusCells'=>$int('radiusCells',1,100,2),'chargeRatio'=>$int('chargeRatio',1,100,2),'requireDirectRange'=>($v['requireDirectRange']??true)!==false],
+        'launcher'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'damageFormula'=>$formula('damageFormula','1d35'),'damageType'=>$damage('physical'),
             'infusion'=>dsInfusion([...($v['infusion']??[]),'enabled'=>true,'minimumMana'=>$v['infusion']['minimumMana']??5,'refundOnMiss'=>false]),
             'firingStats'=>dsCastingChoices($v['firingStats']??null)?:['character-stat-intelligence','character-stat-dexterity'],
             'ammoTemplateId'=>preg_match('/^[A-Za-z0-9_-]{1,180}$/D',(string)($v['ammoTemplateId']??''))===1?$v['ammoTemplateId']:'','projectile'=>($v['projectile']??true)!==false],
         'explosive'=>[...$base,'craftManaCost'=>$int('craftManaCost',0,1000000,10),'maximumInventory'=>$int('maximumInventory',1,100,5),
             'minimumDelay'=>$int('minimumDelay',1,100,1),'maximumDelay'=>max($int('minimumDelay',1,100,1),$int('maximumDelay',1,100,3)),
             'radiusCells'=>$int('radiusCells',1,100,4),'damageFormula'=>$formula('damageFormula','1d60+12'),'damageType'=>$damage('magical'),'gmApproval'=>true],
-        'dome'=>[...$base,'radiusCells'=>$int('radiusCells',1,100,5),'channelStartTurn'=>$int('channelStartTurn',1,100,3),
+        'dome'=>[...$base,'canSetDown'=>($v['canSetDown']??true)!==false,'radiusCells'=>$int('radiusCells',1,100,5),'channelStartTurn'=>$int('channelStartTurn',1,100,3),
             'channelManaCost'=>$int('channelManaCost',0,1000000,10),'penaltyIncrement'=>$int('penaltyIncrement',0,100,10),'channelStatId'=>$stat('channelStatId','character-stat-intelligence'),
             'projectileStatId'=>$stat('projectileStatId','character-stat-dexterity'),'damagePercent'=>$int('damagePercent',0,100,50),'pointBlankCells'=>$int('pointBlankCells',0,100,1),
             'affectAllies'=>true,'affectEnemies'=>true],
@@ -61,9 +69,11 @@ function dsStore(mixed $value): array {
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1
-            || !in_array($entry['status']??'', ['active','inventory','awaiting-launch','spent','stopped','failed','broken','repaired'],true)
+            || !in_array($entry['status']??'', ['active','packed','inventory','awaiting-launch','spent','stopped','failed','broken','repaired'],true)
             || empty($entry['creatorCharacterId']) || empty($entry['sceneId']) || !dsNumber($entry['x']??null) || !dsNumber($entry['y']??null)) dsError('Le registre des dispositifs est invalide.');
         dsDefinition($entry['definition']); $ids[$entry['id']]=true;
+        if($entry['definition']['kind']==='dome'&&array_key_exists('mode',$entry)&&!in_array($entry['mode'],['carried','placed'],true))dsError('L’état du bouclier est invalide.');
+        if(isset($entry['image'])&&$entry['image']!==''&&dsImage($entry['image'])==='')dsError('L’image du dispositif est invalide.',400);
         if (isset($entry['mana'])) {if($entry['definition']['kind']==='beam'){if(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000)dsError('La réserve de ce rayon est invalide.');}else dsAmount($entry['mana']);}
     }
     return $value;
@@ -76,7 +86,7 @@ function dsOwner(array $state,array $actor,string $id): int {
 }
 function dsToken(array $state,array $owner,array $args): array {
     foreach($state['map']['tokens']??[] as $token) if (($token['id']??'')===($args['sourceTokenId']??'') && ($token['characterId']??'')===$owner['id']
-        && ($token['followCharacter']??true)!==false && empty($token['linkedTokenId']) && !($token['hidden']??false)
+        && ($token['followCharacter']??true)!==false && ($token['usesCharacterSheet']??true)!==false && empty($token['independentClone']) && empty($token['linkedTokenId']) && !($token['hidden']??false)
         && ($token['layerId']??'ground')===($state['map']['activeLayerId']??'ground')) {
         if (($owner['resources']['hp']??$token['hp']??0)<=0||($owner['healthOverride']??'')==='dead'||($token['healthOverride']??'')==='dead') dsError('Un personnage KO ou mort ne peut pas utiliser ce dispositif.');
         dsAssertActions($state,$token,$state['activeSceneId']);
@@ -137,13 +147,33 @@ function dsAssertItemLimits(array $state):void {
     $inventories=[];foreach($state['items']['instances']??[] as $item){$bomb=$bombs[$item['id']]??null;if(!$bomb||$item['location']['kind']!=='inventory')continue;$id=$item['location']['characterId'];$entry=$inventories[$id]??['count'=>0,'maximum'=>$bomb['definition']['maximumInventory']];$entry['count']++;$entry['maximum']=min($entry['maximum'],$bomb['definition']['maximumInventory']);$inventories[$id]=$entry;if($entry['count']>$entry['maximum'])dsError('Le nombre maximal de bombes dans cet inventaire serait dépassé.');}
 }
 function dsAppend(array &$store,array $device): array { if(count($store['devices'])>=1000 || dsIndex($store['devices'],$device['id'])>=0) dsError('Le registre des dispositifs est plein.'); $store['devices'][]=$device; return $device; }
+function dsPlacement(array $state,array $actor,array $token,array $definition,array $args,array $context): array {
+    if(!array_key_exists('x',$args)&&!array_key_exists('y',$args))return ['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground'];
+    if(!dsNumber($args['x']??null)||!dsNumber($args['y']??null)||$args['x']<0||$args['x']>100||$args['y']<0||$args['y']>100)dsError('Choisissez une position valide sur la carte.',400);
+    $point=['x'=>$args['x'],'y'=>$args['y'],'layerId'=>$token['layerId']??'ground'];
+    if($definition['interactionRangeCells']>0&&dsDistance($token,$point,$state['map'])>$definition['interactionRangeCells'])dsError('Posez le dispositif à portée de votre personnage.');
+    if(isset($context['direct'])&&!($context['direct'])($token,$point,$state['map']))dsError('Un mur empêche de poser le dispositif ici.');
+    if($actor['role']!=='gm'&&isset($context['visible'])&&!($context['visible'])($point))dsError('Choisissez une position visible sur le niveau courant.',403);
+    return $point;
+}
+function dsInteraction(array $state,array $actor,array $token,array $device,array $context): void {
+    dsReach($state,$token,$device);
+    if(isset($context['direct'])&&!($context['direct'])($token,$device,$state['map']))dsError('Un mur empêche de manipuler le dispositif.');
+    if($actor['role']!=='gm'&&isset($context['visible'])&&!($context['visible'])($device))dsError('Ce dispositif n’est pas visible.',403);
+}
+function dsDomeMode(array $args,array $definition): string {
+    $mode=$args['mode']??'carried';
+    if(!in_array($mode,['carried','placed'],true))dsError('Choisissez si le bouclier est porté ou posé.',400);
+    if($mode==='placed'&&!$definition['canSetDown'])dsError('Ce bouclier doit rester porté.',400);
+    return $mode;
+}
 function dsDeployment(array &$state,array &$store,array $actor,array $owner,array $token,array $ability,array $args,array $context): array {
     $definition=dsDefinition($ability['device']); $extra=match($definition['kind']) {
-        'battery'=>['mana'=>0], 'dome'=>['channelCount'=>0,'activeTurns'=>0,'lastChannelTurn'=>null],
+        'battery'=>['mana'=>0], 'dome'=>['mode'=>dsDomeMode($args,$definition),'channelCount'=>0,'activeTurns'=>0,'lastChannelTurn'=>null],
         'beam'=>['mana'=>0,'participants'=>array_map(static fn($id)=>['characterId'=>$id,'status'=>'pending'],$args['participantCharacterIds']),'mark'=>$args['mark'],'waitingForConsent'=>true],default=>[] };
     return dsAppend($store,['id'=>($context['id'])('device'),'revision'=>1,'status'=>'active','creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']?:$actor['id'],
-        'sourceTokenId'=>$token['id'],'abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'sceneId'=>$state['activeSceneId'],'x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground','definition'=>$definition,
-        'activatedRound'=>(int)($state['initiative']['round']??1),'activatedTurn'=>(int)($state['initiative']['turnSerial']??0),...$extra]);
+        'sourceTokenId'=>$token['id'],'abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'image'=>dsImage($ability['image']??''),'sceneId'=>$state['activeSceneId'],'x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground','definition'=>$definition,
+        'activatedRound'=>(int)($state['initiative']['round']??1),'activatedTurn'=>(int)($state['initiative']['turnSerial']??0),...$extra,...($definition['kind']==='dome'&&$extra['mode']==='carried'?['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground']:dsPlacement($state,$actor,$token,$definition,$args,$context))]);
 }
 function dsCompleteBomb(array &$device,array $state,array $token,array $args,bool $success): void {
     $device=array_replace($device,['status'=>$success?'active':'failed','revision'=>$device['revision']+1,'sourceTokenId'=>$token['id'],'sceneId'=>$state['activeSceneId'],'layerId'=>$token['layerId']??'ground',
@@ -193,7 +223,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
             if($existingTemplate===null) $state['items']['templates'][]=['id'=>$templateId,'kind'=>'object','name'=>$ability['name'],'description'=>'Bombe fabriquée et validée par le MJ.','image'=>'','sourceAbilityId'=>$ability['id'],'creatorCharacterId'=>$owner['id']]; $itemIds=[];
             for($n=0;$n<$request['quantity'];$n++) {
                 $itemId=$id('item'); $itemIds[]=$itemId; $state['items']['instances'][]=['id'=>$itemId,'templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$owner['id']]];
-                dsAppend($store,['id'=>$id('device'),'revision'=>1,'status'=>'inventory','itemId'=>$itemId,'creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId'],
+                dsAppend($store,['id'=>$id('device'),'revision'=>1,'status'=>'inventory','image'=>dsImage($ability['image']??''),'itemId'=>$itemId,'creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId'],
                     'sourceTokenId'=>'','abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'sceneId'=>$sceneId,'layerId'=>'ground','x'=>0,'y'=>0,'definition'=>$definition]);
             }
             $request['status']='approved'; $request['approvedAt']=$now; $result=['itemIds'=>$itemIds,'manaSpent'=>$request['cost']];
@@ -211,17 +241,65 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
             $mark=$args['mark']??[]; if(!dsNumber($mark['x']??null)||!dsNumber($mark['y']??null)||$mark['x']<0||$mark['x']>100||$mark['y']<0||$mark['y']>100||dsDistance($token,$mark,$state['map'])===0.0) dsError('Placez une marque valide pour le rayon.',400);
             $args['participantCharacterIds']=$participants;
         }
+        if($definition['kind']!=='dome'||dsDomeMode($args,$definition)==='placed')dsPlacement($state,$actor,$token,$definition,$args,$context);
         $cast=($context['cast'])($state,$store,$owner,$token,$ability,$args); $result=['cast'=>$cast];
         if($cast['pendingGmApproval']??false) $store['pendingRolls'][]=['id'=>$id('validation'),'type'=>'deploy','cast'=>$cast,'ownerId'=>$owner['id'],'tokenId'=>$token['id'],'ability'=>$ability,'args'=>$args,'sceneId'=>$sceneId];
         elseif($cast['success']) $result['deviceId']=dsDeployment($state,$store,$actor,$owner,$token,$ability,$args,$context)['id'];
+    } elseif($command==='device.image') {
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];$holder=$device['creatorCharacterId'];
+        if($device['definition']['kind']==='explosive') {
+            if(in_array($device['status'],['inventory','awaiting-launch'],true)) {
+                foreach($state['items']['instances']??[] as $item)if($item['id']===$device['itemId']&&$item['location']['kind']==='inventory'){$holder=$item['location']['characterId'];break;}
+            } else $holder=$device['operatorCharacterId']??$device['creatorCharacterId'];
+        }
+        dsOwner($state,$actor,$holder);
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
+        if($actor['role']!=='gm'&&($state['tacticalSync']['paused']??false))dsError('La table est temporairement verrouillée.',423);
+        if(!is_string($args['image']??null)||$args['image']!==''&&dsImage($args['image'])==='')dsError('Importez une image du pion valide.',400);
+        $device['image']=dsImage($args['image']);$device['revision']++;$result=['deviceId'=>$device['id'],'imageUpdated'=>true];
+    } elseif($command==='device.pack'||$command==='device.place') {
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];$definition=dsDefinition($device['definition']);
+        $owner=&$state['characters'][dsOwner($state,$actor,$device['creatorCharacterId'])];$token=dsToken($state,$owner,$args);
+        if(!in_array($definition['kind'],['battery','launcher'],true)||!$definition['canPack'])dsError('Ce dispositif ne peut pas être replié.',400);
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
+        if($actor['role']!=='gm'&&($state['tacticalSync']['paused']??false))dsError('La table est temporairement verrouillée.',423);
+        dsTurn($state,$actor,$token);
+        if($command==='device.pack') {
+            if($device['status']!=='active')dsError('Ce dispositif est déjà replié ou indisponible.');
+            dsReach($state,$token,$device);
+            if(isset($context['direct'])&&!($context['direct'])($token,$device,$state['map']))dsError('Un mur empêche de récupérer le dispositif.');
+            if($actor['role']!=='gm'&&isset($context['visible'])&&!($context['visible'])($device))dsError('Ce dispositif n’est pas visible.',403);
+            $device['status']='packed';$result=['deviceId'=>$device['id'],'packed'=>true];
+        } else {
+            if($device['status']!=='packed')dsError('Ce dispositif n’est pas replié.');
+            $device=array_replace($device,dsPlacement($state,$actor,$token,$definition,$args,$context),['status'=>'active','sceneId'=>$sceneId,'sourceTokenId'=>$token['id']]);
+            $result=['deviceId'=>$device['id'],'placed'=>true,'reused'=>true];
+        }
+        $device['revision']++;
+    } elseif($command==='dome.mode') {
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'')];$definition=dsDefinition($device['definition']);
+        $owner=&$state['characters'][dsOwner($state,$actor,$device['creatorCharacterId'])];$token=dsToken($state,$owner,$args);
+        if($definition['kind']!=='dome'||!$definition['canSetDown'])dsError('Ce bouclier doit rester porté.',400);
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce bouclier a changé. Actualisez ses actions.');
+        if($device['sceneId']!==$sceneId)dsError('Ce bouclier appartient à une autre scène.');
+        $mode=dsDomeMode($args,$definition);
+        if($mode===($device['mode']??'carried'))dsError('Le bouclier est déjà dans cet état.');
+        if($mode==='carried'){
+            dsReach($state,$token,$device);
+            if(isset($context['direct'])&&!($context['direct'])($token,$device,$state['map']))dsError('Un mur empêche de reprendre le bouclier.');
+            if($actor['role']!=='gm'&&isset($context['visible'])&&!($context['visible'])($device))dsError('Ce bouclier n’est pas visible.',403);
+        }
+        $position=$mode==='carried'?['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground']:dsPlacement($state,$actor,$token,$definition,$args,$context);
+        $device=array_replace($device,$position,['mode'=>$mode,'sourceTokenId'=>$token['id']]);$device['revision']++;
+        $result=['deviceId'=>$device['id'],'mode'=>$mode,'reused'=>true];
     } elseif($command==='battery.charge') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'')]; $owner=&$state['characters'][dsOwner($state,$actor,$device['creatorCharacterId'])]; $token=dsToken($state,$owner,$args);
-        if($device['definition']['kind']!=='battery') dsError('Ce dispositif ne possède pas de batterie.',400); dsTurn($state,$actor,$token); dsReach($state,$token,$device);
+        if($device['definition']['kind']!=='battery') dsError('Ce dispositif ne possède pas de batterie.',400); dsTurn($state,$actor,$token); dsInteraction($state,$actor,$token,$device,$context);
         $spent=dsAmount($args['mana']??null,1); if($device['mana']+$spent*$device['definition']['chargeRatio']>1000000000) dsError('La batterie atteindrait sa limite.');
         dsResource($state,$owner,'mana',-$spent); $device['mana']+=$spent*$device['definition']['chargeRatio']; $device['revision']++; $result=['manaSpent'=>$spent,'batteryMana'=>$device['mana']];
     } elseif($command==='launcher.fire') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'')]; $owner=&$state['characters'][dsOwner($state,$actor,$args['characterId']??'')]; $token=dsToken($state,$owner,$args);
-        if($device['definition']['kind']!=='launcher') dsError('Ce dispositif ne peut pas tirer.',400); dsTurn($state,$actor,$token); dsReach($state,$token,$device);
+        if($device['definition']['kind']!=='launcher') dsError('Ce dispositif ne peut pas tirer.',400); dsTurn($state,$actor,$token); dsInteraction($state,$actor,$token,$device,$context);
         if(!in_array($args['statId']??'', $device['definition']['firingStats'],true)) dsError('Choisissez une statistique de tir valide.',400);
         $spent=dsAmount($args['mana']??null,$device['definition']['infusion']['minimumMana']); $ammo=-1;
         if(($owner['resources']['maxMana']??0)<=0)dsError('Ce personnage doit posséder du mana pour utiliser le lanceur.');
@@ -298,10 +376,14 @@ function applicationAdvanceDevices(array $state,array $previous,array $context):
     }unset($condition);$store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($entry)=>$entry['remainingTurns']>0));
     foreach($store['devices'] as &$device) {
         if($device['status']!=='active'||$device['sceneId']!==$sceneId)continue;
-        $oi=dsIndex($state['characters'],$device['creatorCharacterId']);$ti=dsIndex($state['map']['tokens'],$device['sourceTokenId']);$owner=null;if($oi>=0)$owner=&$state['characters'][$oi];$token=$ti>=0?$state['map']['tokens'][$ti]:null;
+        $oi=dsIndex($state['characters'],$device['creatorCharacterId']);$ti=dsIndex($state['map']['tokens'],$device['sourceTokenId']);
+        // Detach the previous reference before clearing it: several active
+        // devices may share one caster, whose sheet must remain intact.
+        unset($owner);$owner=null;if($oi>=0)$owner=&$state['characters'][$oi];$token=$ti>=0?$state['map']['tokens'][$ti]:null;
         if($device['definition']['kind']==='dome'&&(!$owner||!$token||($owner['resources']['hp']??0)<=0||($owner['healthOverride']??'')==='dead'||($token['healthOverride']??'')==='dead')){$device['status']='stopped';$device['revision']++;continue;}
         if($device['definition']['kind']==='dome'&&$token&&($manual||($current['order'][$current['currentIndex']??0]??'')===$token['id']&&($device['lastChannelTurn']!==$current['turnSerial']||($device['lastChannelCombatId']??'')!==($current['combatId']??'')))) {
-            $device['activeTurns']++;$device['lastChannelTurn']=$current['turnSerial'];$device['x']=$token['x'];$device['y']=$token['y'];$device['layerId']=$token['layerId']??'ground';
+            $device['activeTurns']++;$device['lastChannelTurn']=$current['turnSerial'];
+            if(($device['mode']??'carried')!=='placed'){$device['x']=$token['x'];$device['y']=$token['y'];$device['layerId']=$token['layerId']??'ground';}
             $device['lastChannelCombatId']=$current['combatId']??'';
             $pending=false;foreach($store['pendingRolls'] as $entry)if(($entry['deviceId']??'')===$device['id']&&$entry['type']==='channel')$pending=true;
             if($device['activeTurns']+1>=$device['definition']['channelStartTurn']&&!$pending) {

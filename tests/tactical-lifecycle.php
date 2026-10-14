@@ -34,6 +34,7 @@ final class MemoryConnection extends PDO
     public array $domains = [];
     public array $healthOverlays = [];
     public array $accounts = [];
+    public array $mediaObjects = [];
     public int $revision = 1;
     private ?array $snapshot = null;
     public function __construct(array $domains)
@@ -47,12 +48,17 @@ final class MemoryConnection extends PDO
     public function payload(string $key): array { return $this->domains[$key]['payload'] ?? []; }
     public function prepare(string $query, array $options = []): PDOStatement|false { return new MemoryStatement($this, $query); }
     public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false { $s = $this->prepare($query); $s->execute(); return $s; }
-    public function beginTransaction(): bool { $this->snapshot = [$this->domains, $this->revision]; return true; }
+    public function beginTransaction(): bool { $this->snapshot = [$this->domains, $this->revision, $this->mediaObjects]; return true; }
     public function inTransaction(): bool { return $this->snapshot !== null; }
     public function commit(): bool { $this->snapshot = null; return true; }
-    public function rollBack(): bool { [$this->domains, $this->revision] = $this->snapshot; $this->snapshot = null; return true; }
+    public function rollBack(): bool { [$this->domains, $this->revision, $this->mediaObjects] = $this->snapshot; $this->snapshot = null; return true; }
     public function executeSql(string $sql, array $params): array
     {
+        if($sql==='SELECT id FROM media_objects WHERE id = :id FOR UPDATE')return isset($this->mediaObjects[$params[':id']])?[['id'=>$params[':id']]]:[];
+        if($sql==='UPDATE media_objects SET pending_delete_at = NULL WHERE id = :id AND pending_delete_at IS NOT NULL'){
+            if(isset($this->mediaObjects[$params[':id']]))$this->mediaObjects[$params[':id']]['pending_delete_at']=null;
+            return [];
+        }
         if (str_starts_with($sql, 'SELECT global_revision, state_schema_version')) return [[
             'global_revision' => $this->revision, 'state_schema_version' => XAR_SESSION_SCHEMA_VERSION, 'domain_schema_version' => 1, 'legacy_revision' => null, 'initialized_at' => 'done',
         ]];

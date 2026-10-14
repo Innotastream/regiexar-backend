@@ -74,7 +74,12 @@ function onlineLauncherAbility(array $device,int $mana,string $statId): array {
 }
 function onlineDeviceCommands(PDO $db,array &$records,array &$pending,array $identity,array $arguments): array {
     $state=onlineDeviceState($db,$records,$pending);$actor=['id'=>$identity['id'],'role'=>onlineIdentityIsGm($identity)?'gm':'player'];
-    $applied=applicationApplyDeviceCommand($state,$actor,(string)($arguments['command']??''),$arguments['arguments']??[],onlineDeviceContext($db,$records,$pending,[...$identity,'mechanicsAutomatic'=>($arguments['command']??'')==='scene.advance']));
+    $context=onlineDeviceContext($db,$records,$pending,[...$identity,'mechanicsAutomatic'=>($arguments['command']??'')==='scene.advance']);
+    if($actor['role']!=='gm'&&in_array($arguments['command']??'',['device.deploy','device.pack','device.place','dome.mode','battery.charge','launcher.fire'],true)) {
+        $map=publicPlayerState($state,$identity,[])['map'];
+        $context['visible']=static fn(array $point):bool=>!applicationFogCoversPoint($map['fog']??null,$point['x'],$point['y'])&&!applicationVisionCoversPoint($map['visionMask']??null,$point['x'],$point['y']);
+    }
+    $applied=applicationApplyDeviceCommand($state,$actor,(string)($arguments['command']??''),$arguments['arguments']??[],$context);
     onlineDeviceFlush($applied['state'],$records,$pending);return $applied;
 }
 function onlineDeviceRememberResult(array &$records,array &$pending,string $requestId,array $result): void {
@@ -188,7 +193,9 @@ function onlineDeviceProjectile(PDO $db,array &$records,array &$pending,array $i
     $context=onlineDeviceContext($db,$records,$pending,$identity);
     foreach($state['devices']['devices'] as $device) {
         if($device['status']!=='active'||$device['definition']['kind']!=='dome'||$device['sceneId']!==$state['activeSceneId']||dsDistance($source,$target,$map)<=$device['definition']['pointBlankCells'])continue;
-        $ci=dsIndex($map['tokens'],$device['sourceTokenId']);if($ci<0)continue;$center=$map['tokens'][$ci];$layer=$center['layerId']??'ground';
+        if(($device['mode']??'carried')==='placed')$center=$device;
+        else{$ci=dsIndex($map['tokens'],$device['sourceTokenId']);if($ci<0)continue;$center=$map['tokens'][$ci];}
+        $layer=$center['layerId']??'ground';
         if(($center['hidden']??false)||$layer!==($source['layerId']??'ground')||$layer!==($target['layerId']??'ground'))continue;
         if(dsDistance($source,$center,$map)<=$device['definition']['radiusCells']&&dsDistance($target,$center,$map)<=$device['definition']['radiusCells'])continue;
         $level=$map['layers'][$layer]??$map;$sx=($level['naturalWidth']??$map['naturalWidth'])/(100*$map['gridSize']);$sy=($level['naturalHeight']??$map['naturalHeight'])/(100*$map['gridSize']);$dx=($target['x']-$source['x'])*$sx;$dy=($target['y']-$source['y'])*$sy;
@@ -217,9 +224,11 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
     $own=[];foreach($characters as $character)if(($character['ownerPlayerId']??'')===($identity['id']??null))$own[$character['id']]=true;
     $items=[];foreach($context['items']['instances']??[] as $item)if($item['location']['kind']==='inventory'&&isset($own[$item['location']['characterId']]))$items[$item['id']]=true;
     $devices=[];foreach($store['devices']??[] as $device) {
-        if($device['definition']['kind']==='dome'){$ci=dsIndex($context['tokens']??[],$device['sourceTokenId']);if($ci<0||!in_array($device['sourceTokenId'],$context['visibleTokenIds']??[],true))continue;$center=$context['tokens'][$ci];$device=array_replace($device,['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$center['layerId']??'ground']);}
-        if(in_array($device['status'],['inventory','awaiting-launch'],true)){if(!isset($items[$device['itemId']]))continue;}
+        if($device['definition']['kind']==='dome'&&($device['mode']??'carried')!=='placed'){$ci=dsIndex($context['tokens']??[],$device['sourceTokenId']);if($ci<0||!in_array($device['sourceTokenId'],$context['visibleTokenIds']??[],true))continue;$center=$context['tokens'][$ci];$device=array_replace($device,['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$center['layerId']??'ground']);}
+        if($device['status']==='packed'){if(!isset($own[$device['creatorCharacterId']]))continue;}
+        elseif(in_array($device['status'],['inventory','awaiting-launch'],true)){if(!isset($items[$device['itemId']]))continue;}
         elseif(($context['paused']??false)||$device['sceneId']!==$context['sceneId']||$device['layerId']!==$context['layerId']||!$visible($device))continue;
+        $device['image']=dsImage(array_key_exists('image',$device)?$device['image']:($device['ability']['image']??''));
         unset($device['ability'],$device['controllerAccountId']);
         if(isset($device['participants'])){$device['participants']=array_map(static fn($entry)=>['characterId'=>$entry['characterId'],'status'=>$entry['status']],$device['participants']);if(!isset($own[$device['creatorCharacterId']]))unset($device['mana']);}
         $devices[]=$device;

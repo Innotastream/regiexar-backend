@@ -17,6 +17,14 @@ $state = ['schemaVersion' => XAR_SESSION_SCHEMA_VERSION, 'activeSceneId' => 'sce
     'scenes' => [['id' => 'prepared', 'map' => ['image' => '/media/' . $secret]]], 'tracks' => [['url' => '/media/' . $audio]], 'initiative' => []];
 foreach ([$id, $portrait, $audio] as $visible) mediaCheck(onlineMediaVisibleInPlayerState($state, $player, $visible), 'Visible map, own portrait and public audio remain accessible.');
 mediaCheck(!onlineMediaVisibleInPlayerState($state, $player, $secret), 'An administrator in Player mode cannot load hidden or prepared images.');
+$gear=str_repeat('g',24);$deviceState=$state;$deviceState['devices']=dsEmpty();
+$deviceState['devices']['devices'][]=['id'=>'visible-gear','revision'=>1,'status'=>'active','creatorCharacterId'=>'character-one','sourceTokenId'=>'','abilityId'=>'station','name'=>'Station','sceneId'=>'scene-one','layerId'=>'ground','x'=>50,'y'=>50,'image'=>'/media/'.$gear,'mana'=>0,'definition'=>dsDefinition(['kind'=>'battery'])];
+mediaCheck(onlineMediaVisibleInPlayerState($deviceState,$player,$gear),'An image on a visible equipment token is readable by its actual player view.');
+mediaCheck(onlineMediaVisibleInPlayerState($deviceState,[...$player,'id'=>'other-player'],$gear),'Other players can read the picture of the same visible map equipment.');
+$deviceState['devices']['devices'][0]['layerId']='upper';
+mediaCheck(!onlineMediaVisibleInPlayerState($deviceState,$player,$gear),'A device picture on another level stays private even to a permanent administrator in Player mode.');
+$deviceState['devices']['devices'][0]['layerId']='ground';$deviceState['devices']['devices'][0]['status']='packed';
+mediaCheck(onlineMediaVisibleInPlayerState($deviceState,$player,$gear)&&!onlineMediaVisibleInPlayerState($deviceState,[...$player,'id'=>'other-player'],$gear),'The picture of folded equipment is available only to its effective owner.');
 $draft = ['id' => $id, 'stored_name' => onlineMediaStorageName($id, '.png', $player), 'uploaded_by_account_id' => $player['id']];
 mediaCheck($draft['stored_name'] === $id . '.player.png', 'The authenticated effective Player mode, including permanent GM accounts, produces the marker.');
 mediaCheck(onlineMediaStorageName($id, '.png', [...$player, 'effective_mode' => 'gm']) === $id . '.png', 'GM uploads never produce a Player preview marker.');
