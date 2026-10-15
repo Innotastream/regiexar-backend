@@ -59,6 +59,10 @@ jobs:
         run: php tests/ability-casting-contract.php
       - name: Infusions, devices and individual consent
         run: php tests/device-native-contract.php
+      - name: Unit inventories, independent clones and linked passages
+        run: |
+          php tests/unit-inventory-contract.php
+          php tests/map-passages-contract.php
       - name: Complex multi-step ability lifecycle
         run: |
           php tests/complex-abilities-contract.php

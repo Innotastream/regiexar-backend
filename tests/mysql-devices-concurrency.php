@@ -8,6 +8,7 @@ if(preg_match('/^mysql:host=127\.0\.0\.1;port=([1-9][0-9]{3,4});charset=utf8mb4$
 require_once __DIR__.'/../api/v1/domains.php';
 require_once __DIR__.'/../api/v1/online.php';
 function sendError(int $status,string $message,string $code=''):never{throw new RuntimeException($message,$status);}
+function randomToken(int $bytes=32):string{return rtrim(strtr(base64_encode(random_bytes($bytes)),'+/','-_'),'=');}
 function devicesSqlConnection(?string $schema=null):PDO{
  $db=new PDO((string)getenv('XAR_TEST_MYSQL_DSN'),(string)getenv('XAR_TEST_MYSQL_USER'),(string)getenv('XAR_TEST_MYSQL_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,PDO::ATTR_EMULATE_PREPARES=>false]);
  $db->exec("SET time_zone='+00:00', SESSION innodb_lock_wait_timeout=8");
@@ -54,7 +55,7 @@ try{
  $workers=[startDeviceSqlWorker($schema,'device-sql-distinct-request-one'),startDeviceSqlWorker($schema,'device-sql-distinct-request-two')];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}
  usleep(200000);deviceSqlCheck((int)$db->query('SELECT COUNT(*) FROM application_domain_history')->fetchColumn()===0,'No competing command writes while the actual domain clock is held.');$db->commit();
  $results=array_map('finishDeviceSqlWorker',$workers);$workers=[];$success=array_values(array_filter($results,static fn($result)=>isset($result['result'])));$errors=array_values(array_filter($results,static fn($result)=>isset($result['error'])));
- deviceSqlCheck(count($success)===1&&count($errors)===1&&$errors[0]['status']===409,'Only one competing five-mana shot succeeds; the other is refused.');
+ deviceSqlCheck(count($success)===1&&count($errors)===1&&$errors[0]['status']===409,'Only one competing five-mana shot succeeds; the other is refused. '.json_encode($results));
  $records=applicationDomainRecords($db);deviceSqlCheck(applicationDomainPayload($records,'character:fixture-user-character')['resources']['mana']==4,'The authoritative personal reserve contains exactly four mana.');
  deviceSqlCheck(count(array_filter(applicationDomainPayload($records,'items')['instances'],static fn($item)=>$item['location']['kind']==='inventory'))===19,'Exactly one of the creator’s twenty distant bolts is consumed.');
  deviceSqlCheck($success[0]['effects'][0]['sourceCharacterId']===$user['id']&&$success[0]['effects'][0]['statId']==='character-stat-dexterity','The canonical firing effect belongs to the actual user and chosen statistic.');
@@ -64,6 +65,29 @@ try{
  $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'device-sql-same-request-0001'),startDeviceSqlWorker($schema,'device-sql-same-request-0001')];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
  deviceSqlCheck(count(array_filter($results,static fn($result)=>isset($result['result'])))===2&&count(array_filter($results,static fn($result)=>$result['result']['deduplicated']??false))===1,'Both identical calls succeed and one is a durable receipt replay.');
  $fresh=devicesSqlConnection($schema);$records=applicationDomainRecords($fresh);deviceSqlCheck(applicationDomainPayload($records,'character:fixture-user-character')['resources']['mana']==5&&count(array_filter(applicationDomainPayload($records,'items')['instances'],static fn($item)=>$item['location']['kind']==='inventory'))===19,'A new SQL connection observes one payment and one bolt after the concurrent replay.');
+ // Exercise the same transaction clock for a passage into another scene.
+ $destinationMap=[...$map,'tokens'=>[],'layers'=>['upper'=>['naturalWidth'=>2000,'naturalHeight'=>1200,'lights'=>[]]]];
+ upsertApplicationDomain($db,'scene-index',['order'=>['fixture-scene','fixture-arrival']],10,null);
+ upsertApplicationDomain($db,'scene:fixture-arrival',['metadata'=>['id'=>'fixture-arrival','name'=>'Arrivée SQL']],10,null);
+ upsertApplicationDomain($db,'map:fixture-arrival',$destinationMap,10,null);
+ $gmIdentity=[...$identity,'permanent_role'=>'gm','effective_mode'=>'gm'];
+ $passageCommand=static function(string $command,array $args,array $actor)use($db):array {
+   $db->beginTransaction();try{$clock=domainClockRecord($db,true);$records=applicationDomainRecords($db);$pending=[];
+     $result=onlinePassageCommand($db,$records,$pending,$actor,$command,$args);
+     if($pending)persistDomainChangesInTransaction($db,$actor,$clock,array_values($pending));$db->commit();return $result;
+   }catch(Throwable $error){$db->rollBack();throw $error;}
+ };
+ $passageCommand('passage.create',['requestId'=>'sql-passage-create-000001','endpoints'=>[
+   ['sceneId'=>'fixture-scene','id'=>'sql-departure','name'=>'Escalier SQL','kind'=>'stairs','layerId'=>'ground','x'=>56,'y'=>50],
+   ['sceneId'=>'fixture-arrival','id'=>'sql-arrival','name'=>'Portail SQL','kind'=>'portal','layerId'=>'upper','x'=>70,'y'=>60],
+ ]],$gmIdentity);
+ $travelArgs=['requestId'=>'sql-passage-travel-000001','sceneId'=>'fixture-scene','passageId'=>'sql-departure','expectedRevision'=>1,'tokenId'=>'fixture-user-token','expectedX'=>55,'expectedY'=>50];
+ $passageCommand('passage.use',$travelArgs,$identity);$again=$passageCommand('passage.use',$travelArgs,$identity);
+ $records=applicationDomainRecords(devicesSqlConnection($schema));
+ deviceSqlCheck(($again['deduplicated']??false)&&applicationDomainPayload($records,'token:fixture-scene:fixture-user-token')===[],'A persisted SQL passage removes the departure token once and accepts a receipt replay.');
+ $arrived=applicationDomainPayload($records,'token:fixture-arrival:fixture-user-token');
+ deviceSqlCheck(($arrived['layerId']??'')==='upper'&&$arrived['x']>65&&$arrived['x']<80&&applicationDomainPayload($records,'table')['activeSceneId']==='fixture-scene','A new SQL connection sees the linked arrival without a broadcast change.');
+ deviceSqlCheck(applicationDomainPayload($records,'character:fixture-user-character')['resources']['mana']==5,'Travelling and replaying a passage leave resources intact.');
  echo "Local MySQL device concurrency integration passed.\n";
 }finally{
  foreach($workers as [$process,$pipes]){foreach($pipes as $pipe)if(is_resource($pipe))fclose($pipe);if(is_resource($process)){proc_terminate($process);proc_close($process);}}

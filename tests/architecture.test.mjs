@@ -13,6 +13,7 @@ function phpBlocks(source) {
 PHP_SOURCES.push("api/v1/diagnostics.php", "api/v1/runtime-diagnostics.php", "tests/diagnostics-contract.php", "tests/runtime-diagnostics-contract.php");
 PHP_SOURCES.push("api/v1/complex-movement.php", "tests/celestial-serpent-cases.php", "api/v1/damage-guard.php", "tests/native-abilities-contract.php");
 PHP_SOURCES.push("tests/mysql-history-retention.php", "tests/mysql-character-lore.php");
+PHP_SOURCES.push('api/v1/unit-authority.php','api/v1/device-items.php','api/v1/map-passages.php','api/v1/token-spacing.php','tests/unit-inventory-contract.php','tests/map-passages-contract.php');
 
 function balancedPhpDelimiters(source) {
   const code = phpBlocks(source);
@@ -81,8 +82,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.38'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-10-device-tokens-shield-20261014-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.39'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-5-11-unit-devices-passages-20261015-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -118,8 +119,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.38");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.5.10");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.39");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.5.11");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 23);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -311,7 +312,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(projection, /'lights'/);
   assert.ok(online.indexOf("$connection->commit();") < online.indexOf("$result['mapProjection']"),
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
-  assert.match(online, /\['luck\.reset', 'mechanics\.command', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => [^\n]*empty\(\$token\['mountedOnTokenId'\]\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -324,8 +325,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.5.10");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.5.10"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.5.11");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.5.11"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -740,7 +741,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['luck\.reset', 'mechanics\.command', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.template\.create', 'item\.spawn', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.consume', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);

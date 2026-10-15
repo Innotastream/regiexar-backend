@@ -45,8 +45,9 @@ requireDevice($db->payload('character:character-player')['resources']['mana']==7
 $stationId=$station->body['deviceId'];$store=$db->payload('devices');$stationRecord=$store['devices'][dsDevice($store,$stationId)];
 $beforePack=$db->payload('character:character-player');$itemStore=$db->payload('items');
 $packed=deviceCommand($db,'device.pack',['deviceId'=>$stationId,'sourceTokenId'=>'token-player','expectedRevision'=>$stationRecord['revision']]);
-requireDevice($packed->status===200&&$db->payload('devices')['devices'][dsDevice($db->payload('devices'),$stationId,false)]['status']==='packed','Native station can be folded');
-requireDevice($db->payload('character:character-player')===$beforePack&&$db->payload('items')===$itemStore,'Folding preserves resources and inventory exactly');
+requireDevice($packed->status===200&&$db->payload('devices')['devices'][dsDevice($db->payload('devices'),$stationId,false)]['status']==='inventory','Native station is the same object in inventory');
+$physicalItemId=$stationRecord['itemId'];$storedItem=$db->payload('items')['instances'][dsIndex($db->payload('items')['instances'],$physicalItemId)];
+requireDevice($db->payload('character:character-player')===$beforePack&&count($db->payload('items')['instances'])===count($itemStore['instances'])&&$storedItem['location']===['kind'=>'inventory','characterId'=>'character-player'],'Folding moves the unique instance without changing resources or item count');
 $store=$db->payload('devices');$revision=$store['devices'][dsDevice($store,$stationId,false)]['revision'];$source=$db->payload('token:scene-one:token-player');
 $replaced=deviceCommand($db,'device.place',['deviceId'=>$stationId,'sourceTokenId'=>'token-player','expectedRevision'=>$revision,'x'=>$source['x']+2,'y'=>$source['y']]);
 requireDevice($replaced->status===200&&$replaced->body['reused']===true,'Native placement reuses an already paid station');
@@ -98,7 +99,7 @@ $records=applicationDomainRecords($db);$state=onlineDeviceState($db,$records,[])
 $target=['id'=>'native-test-target','x'=>80,'y'=>50,'layerId'=>'ground'];
 $dome=['id'=>'native-dome','revision'=>1,'status'=>'active','creatorCharacterId'=>'character-player','controllerAccountId'=>'account-player','sourceTokenId'=>'native-centre','abilityId'=>'native-echo','ability'=>['id'=>'native-echo'],'name'=>'Dôme natif','sceneId'=>'scene-one','layerId'=>'ground','x'=>50,'y'=>50,'definition'=>dsDefinition(['kind'=>'dome'])];
 $stored=$db->payload('devices');$stored['devices'][]=$dome;$db->put('devices',$stored);
-$db->put('token:scene-one:native-centre',['id'=>'native-centre','x'=>50,'y'=>50,'layerId'=>'ground','hidden'=>false,'hp'=>1,'maxHp'=>1]);
+$db->put('token:scene-one:native-centre',['id'=>'native-centre','characterId'=>'character-player','x'=>50,'y'=>50,'layerId'=>'ground','hidden'=>false,'hp'=>1,'maxHp'=>1]);
 $db->put('token-index:scene-one',['order'=>['token-player','token-monster','token-monster-two','native-centre']]);
 $records=applicationDomainRecords($db);$pending=[];$player=['id'=>'account-player','display_name'=>'Joueur fictif','effective_mode'=>'player','permanent_role'=>'player'];
 $gate=onlineDeviceProjectile($db,$records,$pending,$player,$source,$target,true);

@@ -13,6 +13,8 @@ require_once __DIR__ . '/tactical-rolls.php';
 require_once __DIR__ . '/ongoing-effects.php';
 require_once __DIR__ . '/dynamic-items.php';
 require_once __DIR__ . '/device-state.php';
+require_once __DIR__ . '/map-passages.php';
+require_once __DIR__ . '/token-spacing.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -273,6 +275,7 @@ function validApplicationFogState(mixed $value): bool
 
 function validApplicationMapFogState(array $map): bool
 {
+    try{normalizePassages($map['passages']??null);}catch(RuntimeException $error){return false;}
     if (array_key_exists('lights', $map) && !validApplicationMapLights($map['lights'])) {
         return false;
     }
@@ -396,7 +399,7 @@ function validApplicationMapLights(mixed $value): bool
             || (array_key_exists('color', $light)
                 && (!is_string($light['color']) || preg_match('/^#[0-9a-f]{6}$/iD', $light['color']) !== 1))
             || (array_key_exists('icon', $light)
-                && !in_array($light['icon'], ['torch', 'orb', 'wisp'], true))) return false;
+                && !in_array($light['icon'], ['torch', 'flame', 'orb', 'wisp'], true))) return false;
         $seen[$id] = true;
     }
     return true;
@@ -416,7 +419,7 @@ function normalizeApplicationMapLights(mixed $value): array
         'portable' => $light['portable'] ?? false,
         'carrierTokenId' => ($light['portable'] ?? false) === true ? ($light['carrierTokenId'] ?? null) : null,
         'color' => strtolower((string) ($light['color'] ?? XAR_MAP_LIGHT_DEFAULT_COLOR)),
-        'icon' => in_array($light['icon'] ?? null, ['torch', 'orb', 'wisp'], true) ? $light['icon'] : 'torch',
+        'icon' => in_array($light['icon'] ?? null, ['torch', 'flame', 'orb', 'wisp'], true) ? $light['icon'] : 'torch',
     ], $value);
     usort($lights, static fn (array $left, array $right): int => strcmp($left['id'], $right['id']));
     return $lights;

@@ -1318,6 +1318,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     } elseif (is_array($fullState['activeScene'] ?? null) && is_string($fullState['activeScene']['id'] ?? null)) {
         $visibleSceneId = (string) $fullState['activeScene']['id'];
     }
+    $map['passages']=publicPassages($fullState,$map,$visibleLayerId,static fn($entry)=>!$strictPointIsHidden($entry['x'],$entry['y']));
     $visibleActionTimers = [];
     foreach (is_array($fullState['actionTimers'] ?? null) ? $fullState['actionTimers'] : [] as $timer) {
         if (!is_array($timer) || (string) ($timer['sceneId'] ?? '') !== $visibleSceneId) {
@@ -1496,7 +1497,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             : ($fullState['activeScene'] ?? null)),
         'rolls' => stripForbiddenPlayerData(array_slice(array_values(array_filter($rolls,
             static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
-        'items' => publicItemStore($fullState['items'] ?? [], $characters, ['id' => $accountId], ['sceneId' => $visibleSceneId, 'layerId' => $visibleLayerId, 'paused' => $paused], static fn($location) => !$strictPointIsHidden($location['x'], $location['y'])),
+        'items' => publicItemStore($fullState['items'] ?? [], $characters, $streamPov?null:['id' => $accountId], ['sceneId' => $visibleSceneId, 'layerId' => $visibleLayerId, 'paused' => $paused,'tokens'=>$streamPov?[]:$map['tokens']], static fn($location) => !$strictPointIsHidden($location['x'], $location['y'])),
         'devices' => $visibleDevices,
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
@@ -5258,7 +5259,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5588,6 +5589,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
         } elseif (in_array($command, ['token.conditions.update', 'character.conditions.update'], true)) {
             if ($command === 'token.conditions.update' && !$isGm && ($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             $result = applyOnlineTokenConditionUpdate($connection, $records, $pending, $identity, $sceneId, $arguments, $isGm, $command === 'character.conditions.update');
+        } elseif (in_array($command,['passage.create','passage.edit','passage.link','passage.remove','passage.use'],true)) {
+            $result=onlinePassageCommand($connection,$records,$pending,$identity,$command,$arguments);
+            $commandActionAlreadyLogged=true;
         } elseif ($command === 'light.carry') {
             $result = applyOnlineLightCarryCommand($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'token.mount') {
@@ -5780,6 +5784,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $result['path'] = $resolved['path'];
                 $result['pathReason'] = $resolved['reason'] ?? null;
                 $result['adjustedDestination'] = ($resolved['adjusted'] ?? false) === true;
+            }
+            if(!$isGm||($arguments['separate']??false)===true||($arguments['assisted']??false)===true){
+                $resolved=separateOnlineTokenPosition($token,$resolved,$map,$sceneTokens,(!$isGm||($arguments['assisted']??false)===true)?$visible:null);
+                if($resolved['separated']??false){$result['path']=$resolved['path']??null;$result['adjustedDestination']=true;}
             }
             $positionChanged = (float) ($token['x'] ?? 50) !== (float) $resolved['x']
                 || (float) ($token['y'] ?? 50) !== (float) $resolved['y'];
@@ -6411,7 +6419,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if (($mechanicsDefinition['useWeaponDamage']??false)===true) {
                     $stored=$source['weaponAttacks']??[];$weaponList=normalizeOnlineWeaponAttacks($stored,array_column($stored,'formula'),$source['weaponText']??'');
                     $index=findEntryIndex($weaponList,(string)($arguments['weaponAttackId']??''));
-                    if($index<0)rejectOnlineCommand($connection,400,'Choisissez une arme de votre fiche pour cette compétence.','ability_weapon_required');
+                    if($index<0||empty($weaponList[$index]['formula']))rejectOnlineCommand($connection,400,'Choisissez une arme de votre fiche pour cette compétence.','ability_weapon_required');
                     $damageComponents=[['type'=>$weaponList[$index]['damageType'],'formula'=>$weaponList[$index]['formula']]];$damageFormula=$weaponList[$index]['formula'];$damageType=$weaponList[$index]['damageType'];
                 }
                 try { $infusion=onlineDeviceInfusion($connection,$records,$pending,$identity,$mechanicsDefinition,$arguments,$source,(int)($mechanicsDefinition['manaCost']??0)); }

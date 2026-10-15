@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__.'/device-items.php';
 
 function onlineTokenLayerId(array $token, array $map = []): string
 {
@@ -95,26 +96,26 @@ function onlineGroupPositionValidator(array $map): Closure
     };
 }
 
-function onlineGroupPositionIsFree(array $point, array $token, float $width, float $height, array $occupied, Closure $wallFree): bool
+function onlineGroupPositionIsFree(array $point, array $token, float $width, float $height, array $occupied, Closure $wallFree, float $padding = 0): bool
 {
-    $radius = onlineGroupTokenSize($token) / 2;
+    $radius = onlineGroupTokenSize($token) / 2 + $padding / 2;
     if ($point['x'] * $width / 100 < $radius || $point['x'] * $width / 100 > $width - $radius
-        || $point['y'] * $height / 100 < $radius || $point['y'] * $height / 100 > $height - $radius || !$wallFree($point, $token)) return false;
+        || $point['y'] * $height / 100 < $radius || $point['y'] * $height / 100 > $height - $radius || !$wallFree($point, [...$token,'size'=>onlineGroupTokenSize($token)+$padding])) return false;
     foreach ($occupied as $other) {
         if (hypot(($point['x'] - $other['x']) * $width / 100, ($point['y'] - $other['y']) * $height / 100)
-            < $radius + onlineGroupTokenSize($other) / 2 + 0.1) return false;
+            < $radius + onlineGroupTokenSize($other) / 2 + $padding / 2 + 0.1) return false;
     }
     return true;
 }
 
-function nearestOnlineGroupPosition(array $desired, array $token, array $map, array $occupied = [], ?array $start = null): ?array
+function nearestOnlineGroupPosition(array $desired, array $token, array $map, array $occupied = [], ?array $start = null, float $padding = 0, ?Closure $allowed = null): ?array
 {
     $width = (float) ($map['naturalWidth'] ?? 1600) ?: 1600.0;
     $height = (float) ($map['naturalHeight'] ?? 900) ?: 900.0;
     $step = max(1.0, min($width / 511, $height / 511));
     $wallFree = onlineGroupPositionValidator($map);
-    $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map): bool {
-        if (!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree)) return false;
+    $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map, $padding, $allowed): bool {
+        if ($allowed!==null&&!$allowed($point)||!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree,$padding)) return false;
         if ($start === null) return true;
         $resolved = applicationResolveWallCollision($map['walls'] ?? null, $start, $point, $token['size'] ?? 40, $width, $height, true);
         return !$resolved['blocked'] && abs($resolved['x'] - $point['x']) < 0.000001 && abs($resolved['y'] - $point['y']) < 0.000001;
@@ -310,6 +311,11 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
     $position = nearestOnlineGroupPosition($desired, $clone, $layer, array_values(array_filter($occupied, static fn (array $t): bool => onlineTokenLayerId($t, $map) === $clone['layerId'])));
     if ($position === null) rejectOnlineCommand($connection, 409, 'Aucune place libre près de ce pion pour son clone.', 'clone_position_unavailable');
     $clone = array_replace($clone, $position);
+    $records=array_replace($records,applicationDomainRecords($connection,['items','devices']));
+    $copy=copyUnitInventory(['characters'=>empty($character)?[]:[$character],'items'=>$pending['items']['payload']??applicationDomainPayload($records,'items'),
+        'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices'),'activeSceneId'=>$sceneId,'map'=>[...$map,'tokens'=>$occupied]],$source,$clone,static fn($prefix)=>$prefix.'-'.randomToken(16));
+    queueOnlineDomainUpsert($pending,$records,'items',$copy['items']);
+    if(is_array($copy['devices']))queueOnlineDomainUpsert($pending,$records,'devices',$copy['devices']);
     $index['order'][] = $clone['id'];
     queueOnlineDomainUpsert($pending, $records, onlineTokenDomainKey($sceneId, $clone['id']), $clone);
     queueOnlineDomainUpsert($pending, $records, $indexKey, $index);
