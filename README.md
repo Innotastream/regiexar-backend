@@ -1,3 +1,9 @@
+# Backend 0.18.41 — client exact 3.6.1
+
+Build `client-3-6-1-table-tokens-passages-comfort-20261016-1`. Commandes atomiques de jetons communs et de déplacement d’objets posés, frappes rémanentes, bonus temporaires, Jokers publics et passages respectant murs, brouillard et bloqueurs. Aucun changement de schéma SQL. Les anciens clients sont refusés ; seule la 3.6.1 franchit le verrou de connexion. Les preuves externes établissent séparément CI et déploiement.
+
+## Historique
+
 # Préparation locale backend 0.18.40 — client exact 3.6.0
 
 Build candidat `client-3-6-0-map-tools-objects-groups-candidate-20261015-1`. Brouillard opaque à la ligne de vue, lumières visibles de loin uniquement en ligne libre, transport des lumières entre scènes, placement sans répulsion par un pion caché, groupes de scènes et de bestiaire, passages masquables et objets illustrés avec droits de lecture, ramassage, transfert et destruction. Les commandes conservent les exemplaires, reçus, révisions et droits effectifs ; aucune migration SQL ni donnée réelle n’est modifiée. Aucun push, déploiement ou basculement public n’a été effectué pour ce candidat.

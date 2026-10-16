@@ -47,6 +47,10 @@ $context = [
     'availableForms' => [['id' => 'character-wolf', 'name' => 'Loup']],
 ];
 $conversation = conversationWithAbilityContext($context);
+$buff = normalizeAbilityAssistantDraft($conversation, ['name'=>'Gourdin de recette','effect'=>'enhancement','formula'=>'0',
+    'attackEnhancement'=>['mode'=>'echo','formula'=>'1d40+6','allyFormula'=>'1d20+3','damageType'=>'magical','turns'=>5]]);
+assertAssistantDraft($buff['effect']==='enhancement' && $buff['attackEnhancement']['allyFormula']==='1d20+3', 'Un buff rémanent reste modifiable par assistance.');
+assertAssistantDraft(rejectedAssistantDraft($conversation, ['name'=>'Buff vide','effect'=>'enhancement','formula'=>'0']), 'Un buff sans effet configuré est refusé.');
 $damage = normalizeAbilityAssistantDraft($conversation, [
     'name' => 'Frappe de braise', 'effect' => 'damage', 'description' => 'Une flamme.',
     'damageComponents' => [['type' => 'magical', 'formula' => '2d6+3']],

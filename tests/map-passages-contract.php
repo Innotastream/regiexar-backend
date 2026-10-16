@@ -101,7 +101,10 @@ foreach(['adjacent','fog','flag','covered'] as $kind){
     }unset($destinationMap);
     $result=applicationApplyPassageCommand($case,['id'=>'player','role'=>'player'],'passage.use',['sceneId'=>'one','passageId'=>'a','expectedRevision'=>1,'tokenId'=>'unit','expectedX'=>21,'expectedY'=>20]);
     $arrived=$result['state']['scenes'][1]['combat']['map']['tokens'][1];
-    requireTactical($kind==='covered'?hypot(($arrived['x']-75)*10,($arrived['y']-75)*10)>30:abs($arrived['x']-75)<0.00001&&abs($arrived['y']-75)<0.00001,'Passage exits preserve adjacent portraits and ignore hidden centres, while separating complete visible covers');$exitSpacingChecks++;
+    $safeArrival=$kind==='covered'?hypot(($arrived['x']-75)*10,($arrived['y']-75)*10)>30
+        :($kind==='fog'?!applicationFogCoversPoint($case['scenes'][1]['combat']['map']['layers']['upper']['fog'],$arrived['x'],$arrived['y'])
+            :abs($arrived['x']-75)<0.00001&&abs($arrived['y']-75)<0.00001);
+    requireTactical($safeArrival,'Passage exits preserve nearby portraits, separate complete covers and never land in painted fog');$exitSpacingChecks++;
 }
 $convoyChecks=0;
 foreach(['scene-one','scene-two'] as $targetScene)foreach([false,true] as $edge){

@@ -57,14 +57,14 @@ function applicationDamageAreaAffects(array $targeting, string $sourceId, string
     return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
 function validApplicationAbilityEffects(array $entry): bool {
-    if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement'], true)
+    if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement', 'enhancement'], true)
         || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
     if (array_key_exists('noDefensePossible', $entry) && (!is_bool($entry['noDefensePossible'])
         || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
     if (!validApplicationAbilityCastingFields($entry)) return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device', 'enhancement'], true)) return false;
     foreach (['projectile','useWeaponDamage'] as $key) if (isset($entry[$key]) && !is_bool($entry[$key])) return false;
     try {
         if (isset($entry['infusion'])) dsInfusion($entry['infusion']);
@@ -84,6 +84,7 @@ function validApplicationAbilityEffects(array $entry): bool {
         return !is_array($first) || ($first['firstGateAtCast'] ?? false) !== true
             || ($entry['castingStatId'] ?? '') === ($first['statId'] ?? '');
     }
+    if ($effect === 'enhancement') return applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null;
     if ($effect === 'movement') return true;
     if ($effect === 'summoning') return validApplicationDomainIdentifier($entry['summonLinkedTokenId'] ?? null, 180);
     if ($effect === 'healing') return validApplicationAbilityFormula($entry['healingFormula'] ?? null);
@@ -98,7 +99,7 @@ function applicationAbilityEffectFields(array $entry): array {
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
-    if (in_array($effect, ['damage', 'healing', 'movement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
+    if (in_array($effect, ['damage', 'healing', 'movement', 'enhancement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
         $conditions['attackEnhancement'] = applicationAttackEnhancement($entry['attackEnhancement']);
     if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
     if(($entry['useWeaponDamage']??false)===true) $conditions['useWeaponDamage']=true;
@@ -117,6 +118,7 @@ function applicationAbilityEffectFields(array $entry): array {
         ...$cue,
     ];
     if ($effect === 'opposition') return [...$casting, ...$cue, ...$conditions, ...$opposition, 'effect' => 'opposition'];
+    if ($effect === 'enhancement') return [...$casting, ...$cue, ...$conditions, 'effect' => 'enhancement'];
     if ($effect === 'movement') return [...$casting, ...$cue, ...$conditions, 'effect' => 'movement'];
     if ($effect === 'summoning') return [...$casting, ...$cue, ...$conditions, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, ...$cue, ...$conditions, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
@@ -237,7 +239,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break'];
+        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;

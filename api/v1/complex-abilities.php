@@ -39,7 +39,7 @@ function applicationComplexAbilityInteger(mixed $value, int $minimum, int $maxim
 
 // Public durable result only: this never rolls dice, charges resources or
 // applies damage. Keep private thresholds and armour in the attack receipt.
-function applicationComplexAbilityAttackResult(array $attack): array
+function applicationComplexAbilityAttackResult(array $attack, bool $includeEchoes = true): array
 {
     $status = (string) ($attack['status'] ?? 'pending');
     $result = [
@@ -55,6 +55,10 @@ function applicationComplexAbilityAttackResult(array $attack): array
     if ($status === 'pending') $result['validationKind'] = substr((string) ($attack['validationKind'] ?? 'damage'), 0, 40);
     if (is_array($attack['hit'] ?? null)) $result['hit'] = publicOnlineAttackRoll($attack['hit']);
     if (is_array($attack['opposition'] ?? null)) $result['opposition'] = publicOnlineAttackRoll($attack['opposition'], false, 'opposition');
+    if ($includeEchoes && !empty($attack['echoAttacks']) && is_array($attack['echoAttacks'])) {
+        $result['echoAttacks'] = array_map(static fn(array $echo): array => applicationComplexAbilityAttackResult($echo, false),
+            array_values(array_filter(array_slice($attack['echoAttacks'], 0, 100), 'is_array')));
+    }
     return $result;
 }
 

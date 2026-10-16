@@ -1,6 +1,25 @@
 <?php
 declare(strict_types=1);
 
+$moveDb=fixture();$moveDb->put('scene-index',['order'=>['scene-one']]);
+requireTactical(runCommand($moveDb,'item.template.create',['requestId'=>'move-template-native-0001','template'=>['id'=>'move-letter','kind'=>'letter','name'=>'Lettre à déplacer']],true)->status===200,'Movement fixture creates a letter');
+$moveLocation=['kind'=>'ground','sceneId'=>'scene-one','layerId'=>'ground','x'=>20,'y'=>50];
+requireTactical(runCommand($moveDb,'item.spawn',['requestId'=>'move-spawn-native-0001','itemId'=>'move-copy','templateId'=>'move-letter','location'=>$moveLocation],true)->status===200,'Movement fixture creates one ground copy');
+$moveArgs=['requestId'=>'move-native-00000001','itemId'=>'move-copy','expectedItemRevision'=>1,'sceneId'=>'scene-one','layerId'=>'ground','location'=>[...$moveLocation,'x'=>21]];
+requireTactical(runCommand($moveDb,'item.move',$moveArgs,false,'account-player',true)->status===403,'Permanent administrator in player mode cannot move ground items');
+requireTactical(runCommand($moveDb,'item.move',[...$moveArgs,'requestId'=>'move-wrong-layer-0001','layerId'=>'upper'],true)->status===409,'Stale layer rejects ground movement');
+requireTactical(runCommand($moveDb,'item.move',[...$moveArgs,'requestId'=>'move-invalid-point-001','location'=>[...$moveLocation,'x'=>101]],true)->status===400,'Out-of-map movement rejects without changing an item');
+$moveBefore=$moveDb->payload('items');
+requireTactical(runCommand($moveDb,'item.move',$moveArgs,true)->status===200,'Effective MJ can move a ground object without a character token');
+$moveRevision=$moveDb->revision;
+requireTactical(runCommand($moveDb,'item.move',$moveArgs,true)->body['deduplicated']===true&&$moveDb->revision===$moveRevision,'Ground movement has a persistent idempotent receipt');
+requireTactical($moveDb->payload('items')['templates']===$moveBefore['templates']&&count($moveDb->payload('items')['instances'])===1&&$moveDb->payload('items')['instances'][0]['revision']===2,'Movement preserves its document and unique instance');
+$movePickup=['requestId'=>'move-pickup-native-0001','itemId'=>'move-copy','expectedItemRevision'=>2,'characterId'=>'character-player','sceneId'=>'scene-one','tokenId'=>'token-player'];
+requireTactical(runCommand($moveDb,'item.pickup',$movePickup)->status===200,'The moved copy is still picked up by its player');
+requireTactical(runCommand($moveDb,'item.move',[...$moveArgs,'requestId'=>'move-stale-native-0001'],true)->status===409,'Stale movement cannot pull a copy out of its inventory');
+requireTactical(runCommand($moveDb,'item.move',[...$moveArgs,'requestId'=>'move-carried-native-001','expectedItemRevision'=>3],true)->status===409,'Even with a fresh revision, ground movement cannot take an inventory copy');
+requireTactical(runCommand($moveDb,'item.move',$moveArgs,true)->body['deduplicated']===true&&$moveDb->payload('items')['instances'][0]['location']['kind']==='inventory','Old acknowledged movement cannot undo a later pickup');
+
 $db = fixture();
 $db->put('scene-index', ['order' => ['scene-one']]);
 $db->put('character:character-receiver', ['id' => 'character-receiver', 'name' => 'Destinataire', 'ownerPlayerId' => 'account-receiver']);

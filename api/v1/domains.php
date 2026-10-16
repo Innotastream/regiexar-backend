@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/token-groups.php';
 require_once __DIR__ . '/strategy-break.php';
+require_once __DIR__ . '/table-tokens.php';
 require_once __DIR__ . '/token-pathfinding.php';
 require_once __DIR__ . '/complex-abilities.php';
 require_once __DIR__ . '/ability-effects.php';
@@ -485,7 +486,21 @@ function applicationWallMaskBytes(mixed $value): ?string
 
 function validApplicationWallState(mixed $value): bool
 {
-    return applicationWallMaskBytes($value) !== null;
+    return applicationWallMaskBytes($value) !== null
+        && (!array_key_exists('blockerMask', $value)
+            || applicationWallMaskBytes([...$value, 'mask' => $value['blockerMask']]) !== null);
+}
+
+// Movement only: never feed this combined mask into vision or lighting.
+function applicationMovementWalls(mixed $walls): mixed
+{
+    if (!is_array($walls) || empty($walls['blockerMask'])) return $walls;
+    $opaque = applicationWallMaskBytes($walls);
+    $blockers = applicationWallMaskBytes([...$walls, 'mask' => $walls['blockerMask']]);
+    if ($opaque === null || $blockers === null) return $walls;
+    $walls['mask'] = rtrim(strtr(base64_encode($opaque | $blockers), '+/', '-_'), '=');
+    unset($walls['blockerMask']);
+    return $walls;
 }
 
 function normalizeApplicationVisionSettings(mixed $value): array
@@ -743,6 +758,7 @@ function applicationResolveWallCollision(
     mixed $naturalHeight,
     bool $allowEscape = true
 ): array {
+    $rawWalls = applicationMovementWalls($rawWalls);
     if (!validApplicationWallState($rawWalls) || (string) ($rawWalls['mask'] ?? '') === '') {
         return ['x' => (float) $desired['x'], 'y' => (float) $desired['y'], 'blocked' => false];
     }
@@ -1966,7 +1982,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
     }
     foreach ($previous['pendingAttacks'] ?? [] as $attack) if (is_array($attack)) $attacks[$attack['id'] ?? ''] = $attack;
-    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion']));
+    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion'])||!empty($attack['echoDefinitions'])||!empty($attack['echoParentId']));
     $preserve = static function (mixed $attack) use ($attacks,$protected): mixed {
         if (!is_array($attack)) return $attack;
         if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
@@ -1974,7 +1990,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if ($protected($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
-        foreach(['deviceOrigin','projectileGate','conditionRider','riderApplied','infusion'] as $field)unset($attack[$field]);
+        foreach(['deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
         return $attack;
     };
     if (is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = array_map($preserve, $payload['pendingAttacks']);
@@ -2368,7 +2384,7 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
-    if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null);
+    if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }
     if (str_starts_with($key, 'character:') && $protectAgainstStaleEntityWrite && is_array($payload) && is_array($current['payload'] ?? null)) {
         $oldLore = $current['payload']['lore'] ?? '';
         if (array_key_exists('lore', $payload) && $payload['lore'] !== $oldLore) sendError(403, 'Le lore est en lecture seule.', 'readonly_character_lore');
@@ -2466,6 +2482,7 @@ function legacyStateToDomains(array $state): array
             'discordCapture' => is_array($state['discordCapture'] ?? null) ? $state['discordCapture'] : [],
             'tacticalSync' => tacticalSyncForDomain($rawTacticalSync),
             'strategyBreak' => normalizeApplicationStrategyBreak($state['strategyBreak'] ?? null),
+            'tableTokens' => normalizeApplicationTableTokens($state['tableTokens'] ?? null),
         ],
         'scene-index' => ['order' => []],
         'roster' => [
@@ -2677,6 +2694,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'discordCapture' => is_array($table['discordCapture'] ?? null) ? $table['discordCapture'] : [],
         'tacticalSync' => $tacticalSync,
         'strategyBreak' => normalizeApplicationStrategyBreak($table['strategyBreak'] ?? null),
+        'tableTokens' => normalizeApplicationTableTokens($table['tableTokens'] ?? null),
         'actionTimers' => is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [],
         'actionTimerTombstones' => is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
@@ -3346,7 +3364,7 @@ function restoreApplicationDomainHistory(PDO $connection): never
             sendError(404, 'Cette révision historique n’existe plus.', 'domain_history_missing');
         }
         $payload = jsonColumn($record['payload'] ?? null);
-        if ($key === 'table') $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null);
+        if ($key === 'table') { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }
         if ($key === 'activity') {
             $payload = preserveApplicationPendingAbilityValidation($payload, $current['payload'] ?? []);
             $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);

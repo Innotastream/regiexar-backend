@@ -54,7 +54,7 @@ function onlineDeviceContext(PDO $db,array &$records,array &$pending,array $iden
         'roll'=>static function(array &$state,?array $owner,array $token,string $statId,int $penalty,string $label)use($db,&$records,&$pending,$identity):array {
             if(($identity['mechanicsAutomatic']??false)&&!empty($owner['ownerPlayerId']))$identity=['id'=>$owner['ownerPlayerId'],'display_name'=>$owner['name'],'effective_mode'=>'player','permanent_role'=>'player'];
             onlineDeviceFlush($state,$records,$pending);$source=$owner&&($owner['unitKind']??'')!=='token'?synchronizeOnlineCharacterToken($token,$owner):$token;
-            $stat=applicationAbilityCastingStat($source['stats']??[],$statId);
+            $stat=applicationAbilityCastingStat(onlineEnhancedStatRows($db,$records,$pending,$source,(string)($state['activeSceneId']??'')),$statId);
             $threshold=$statId==='luck'?onlineCharacterLuckThreshold($db,$records,$pending,$owner['id']??''):($stat['value']??null);
             if($statId!=='luck'&&$threshold===null)dsError('La caractéristique de ce test est absente.');
             $rolled=onlineRollFormulaWithMode('1d100','normal',$threshold===null?null:(int)$threshold,$penalty,true);

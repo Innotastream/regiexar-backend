@@ -1169,6 +1169,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
                 }
             }
         }
+        if ($details && !$paused) {
+            $rows=applicationEnhancedStatRows($token,$fullState,(string)($fullState['activeSceneId']??''),unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??null):null);
+            if(array_filter($rows,static fn($row)=>!empty($row['timedBonus']))){$visible['stats']=$rows;$visible['statsIncludeActiveEffects']=true;}
+        }
         if (!$details) unset($visible['visionDistance'], $visible['darkVision']);
         if (is_array($token['resourcePulse'] ?? null)) {
             $visible['resourcePulse'] = array_intersect_key($token['resourcePulse'], array_fill_keys(['id', 'resource', 'delta', 'at'], true));
@@ -1243,6 +1247,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     }
     $revelations = array_column($fullState['rollRevelations'] ?? [], null, 'rollId');
     $revealedRolls = array_map(static function (array $roll) use ($revelations): array {
+        $roll=applicationForcePublicJoker($roll);
         $entry = $revelations[$roll['id'] ?? ''] ?? null;
         return $entry === null ? $roll : [...$roll, 'revealed' => true, 'gmRevealed' => true, 'revealedAt' => $entry['revealedAt']];
     }, $fullState['rolls'] ?? []);
@@ -1261,7 +1266,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         if (($roll['gmRevealed'] ?? false) === true) {
             $rollScene = (string) ($roll['mapEvent']['sceneId'] ?? $roll['sourceSceneId'] ?? '');
             $broadcastScene = (string) ($paused ? ($fullState['tacticalSync']['publishedActiveScene']['id'] ?? '') : ($fullState['activeSceneId'] ?? $fullState['activeScene']['id'] ?? ''));
-            if ($rollScene !== '' && $rollScene !== $broadcastScene) { unset($rolls[$rollIndex]); continue; }
+            if (($roll['outcome']['joker']??false)!==true && $rollScene !== '' && $rollScene !== $broadcastScene) { unset($rolls[$rollIndex]); continue; }
             $rolls[$rollIndex] = onlinePublicRevealedRoll($roll);
             continue;
         }
@@ -1476,6 +1481,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     }
     return [
         'strategyBreak' => applicationStrategyBreakProjection($fullState['strategyBreak'] ?? null),
+        'tableTokens' => applicationTableTokensProjection($fullState['tableTokens'] ?? null, $identity),
         'schemaVersion' => $fullState['schemaVersion'] ?? 1,
         'revision' => $fullState['revision'] ?? 0,
         'updatedAt' => $fullState['updatedAt'] ?? null,
@@ -3528,7 +3534,7 @@ function onlinePendingAttackParties(PDO $connection, array &$records, array $att
         || (!$areaAttack && $targetController === (string) ($attack['accountId'] ?? ''))) {
         rejectOnlineCommand($connection, 409, 'L’attaquant et la cible ne sont plus adversaires.', 'attack_parties_changed');
     }
-    if (!$areaAttack && (!is_numeric($source['hp'] ?? null) || (float) $source['hp'] <= 0 || onlineTokenIsDead($source, $sourceController !== ''))) {
+    if (!$areaAttack && empty($attack['echoParentId']) && (!is_numeric($source['hp'] ?? null) || (float) $source['hp'] <= 0 || onlineTokenIsDead($source, $sourceController !== ''))) {
         rejectOnlineCommand($connection, 409, 'L’attaquant est KO ou mort. Le MJ doit annuler cette attaque.', 'attack_source_defeated');
     }
     if (($attack['attackerRole'] ?? 'player') !== 'gm' && $sceneId === onlineActiveSceneId(applicationDomainPayload($records, 'table'))) {
@@ -4075,6 +4081,7 @@ function publicOnlineAttackResult(array $attack, bool $hitDetailsVisible = false
         $public['appliedDamage'] = max(0, onlineResourceNumber($attack['appliedDamage'] ?? 0));
     }
     if (isset($attack['resolvedAt'])) $public['resolvedAt'] = $attack['resolvedAt'];
+    if (!empty($attack['echoAttacks'])) $public['echoAttacks'] = array_map(static fn(array $echo): array => publicOnlineAttackResult($echo, $hitDetailsVisible, false), $attack['echoAttacks']);
     return $public;
 }
 
@@ -4699,7 +4706,9 @@ function onlineAttackRollBundle(array $attack): array
     $oppositionRoll = onlineStoredAttackRoll($attack, 'opposition');
     $damageRoll = onlineStoredAttackRoll($attack, 'damage');
     $effectRoll = ($attack['attackKind'] ?? '') === 'ability' ? $damageRoll : null;
-    $rolls = applicationUniqueRolls([$castRoll, $hitRoll, $oppositionRoll, $damageRoll]);
+    $echoRolls = [];
+    foreach ($attack['echoAttacks'] ?? [] as $echo) $echoRolls = [...$echoRolls, ...onlineAttackRollBundle($echo)['rolls']];
+    $rolls = applicationUniqueRolls([$castRoll, $hitRoll, $oppositionRoll, $damageRoll, ...$echoRolls]);
     return [
         'roll' => $effectRoll ?? $castRoll ?? $hitRoll ?? $oppositionRoll ?? $damageRoll,
         'castRoll' => $castRoll,
@@ -4723,6 +4732,8 @@ function onlineAttackResponseRollFields(array $attack, bool $isGm, bool $hitDeta
     $hitRoll = $project($bundle['hitRoll'], 'hit', $hitDetailsVisible);
     $oppositionRoll = $project($bundle['oppositionRoll'], 'opposition', $oppositionDetailsVisible);
     $damageRoll = $project($bundle['damageRoll'], 'damage', false);
+    $echoRolls = [];
+    foreach ($attack['echoAttacks'] ?? [] as $echo) $echoRolls = [...$echoRolls, ...onlineAttackResponseRollFields($echo, false, $hitDetailsVisible)['rolls']];
     $effectRoll = ($attack['attackKind'] ?? '') === 'ability' ? $damageRoll : null;
     return [
         'roll' => $effectRoll ?? $castRoll ?? $hitRoll ?? $oppositionRoll ?? $damageRoll,
@@ -4731,7 +4742,7 @@ function onlineAttackResponseRollFields(array $attack, bool $isGm, bool $hitDeta
         'oppositionRoll' => $oppositionRoll,
         'effectRoll' => $effectRoll,
         'damageRoll' => $damageRoll,
-        'rolls' => applicationUniqueRolls([$castRoll, $hitRoll, $oppositionRoll, $damageRoll]),
+        'rolls' => applicationUniqueRolls([$castRoll, $hitRoll, $oppositionRoll, $damageRoll, ...$echoRolls]),
     ];
 }
 
@@ -5272,15 +5283,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
 
-        if ($isGm && $command !== 'strategy-break' && !in_array(
+        if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if ($command === 'strategy-break') {
+        if ($command === 'table-tokens') {
+            $result = onlineTableTokensCommand($connection, $records, $pending, $table, $identity, $arguments);
+            $commandActionAlreadyLogged = true;
+        } elseif ($command === 'strategy-break') {
             $result = onlineStrategyBreakCommand($connection, $records, $pending, $table, $identity, $arguments);
             $commandActionAlreadyLogged = true;
         } elseif ($command === 'luck.reset') {
@@ -5293,7 +5307,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -5733,7 +5747,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $mapKey = 'map:' . $moveSceneId;
             $records = array_replace($records, applicationDomainRecords($connection, [$tokenKey, $initiativeKey, $mapKey]));
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
-            if ($token !== [] && !onlineTokenOnActiveLayer($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur le niveau actif.', 'stale_token_layer');
+            if (!$isGm && $token !== [] && !onlineTokenOnActiveLayer($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur le niveau actif.', 'stale_token_layer');
             if (!empty($arguments['layerId']) && $arguments['layerId'] !== onlineTokenLayerId($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Le pion a changé de niveau pendant le déplacement.', 'stale_token_layer');
             if (!empty($token['mountedOnTokenId'])) rejectOnlineCommand($connection, 409, 'Descendez de la monture avant de déplacer le cavalier.', 'rider_mounted');
             $records = onlineSceneTokenRecords($connection, $moveSceneId, $records);
@@ -5766,6 +5780,11 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 'y' => max(0.0, min(100.0, is_finite($y) ? $y : 50.0)),
             ];
             $map = applicationDomainPayload($records, $mapKey);
+            // MJ inspection can use a different floor without changing the broadcast.
+            if ($isGm) {
+                $moveLayerId = onlineTokenLayerId($token, $map);
+                $map = array_replace($map, $map['layers'][$moveLayerId] ?? [], ['activeLayerId' => $moveLayerId]);
+            }
             $records = onlineSceneTokenRecords($connection, $moveSceneId, $records);
             $sceneTokens = [];
             foreach ($records as $recordKey => $_record) {
@@ -6505,7 +6524,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($castingPlan !== null) {
                     $abilityRequestSignature = applicationAbilityRequestSignature('token.attack', $sceneId, $arguments, $hasCastingCheck);
                 }
-                $stats = is_array($source['stats'] ?? null) ? $source['stats'] : [];
+                $stats = onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId);
                 if (($custom['customStat'] ?? false) === true) $stats = [['id' => 'custom', 'label' => $custom['statLabel'], 'value' => $custom['threshold']]];
                 $statIndex = findEntryIndex($stats, $castingPlan !== null ? $castingPlan['statId'] : (($custom['customStat'] ?? false) === true ? 'custom' : (string) ($arguments['statId'] ?? '')));
                 if ($hasCastingCheck && ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null))) {
@@ -6831,6 +6850,15 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if (($attack['status'] ?? '') === 'applied') {
                     onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $attack);
                 }
+                foreach ($areaAttackResults as $i => $areaResult) {
+                    foreach (($pending['activity']['payload']['attackReceipts'] ?? []) as $receipt) {
+                        if (($receipt['attack']['id'] ?? '') !== $areaResult['id']) continue;
+                        $areaEchoResult = onlineApplyAttackEchoes($connection, $records, $pending, $receipt['attack']);
+                        $areaAttackResults[$i] = $isGm ? $areaEchoResult : publicOnlineAttackResult($areaEchoResult, true, false);
+                        break;
+                    }
+                }
+                $attack = onlineApplyAttackEchoes($connection, $records, $pending, $attack);
                 $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack, true, false);
                 if ($areaAttackResults !== []) $result['areaAttacks'] = $areaAttackResults;
                 $responseRolls = onlineAttackResponseRollFields($attack, $isGm, true, false);
@@ -6979,7 +7007,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     if ($targetKo) {
                         $attack['opposition'] = ['requestId' => $requestId, 'requestSignature' => $oppositionRequestSignature, 'accountId' => $accountId, 'skipped' => true, 'reason' => $decision === 'skip' ? 'gm-disallowed' : 'target-ko', 'rolledByGm' => $isGm];
                     } else {
-                        $stats = is_array($target['stats'] ?? null) ? $target['stats'] : [];
+                        $stats = onlineEnhancedStatRows($connection,$records,$pending,$target,$sceneId);
                         $requestedDefenseStatId = $attack['defenseStatId'] ?? $defenseAbility['statId'] ?? (string) ($arguments['statId'] ?? '');
                         $resolvedDefenseStat = !empty($attack['defenseStatId']) ? applicationAbilityCastingStat($stats, (string) $requestedDefenseStatId) : null;
                         $statIndex = findEntryIndex($stats, (string) ($resolvedDefenseStat['id'] ?? $requestedDefenseStatId));
@@ -7155,6 +7183,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
                         ], $attack);
                     }
+                    $attack = onlineApplyAttackEchoes($connection, $records, $pending, $attack);
                     $result['attack'] = $isGm ? $attack : publicOnlineAttackResult($attack, false, true);
                     $result = [...$result, ...onlineAttackResponseRollFields($attack, $isGm, false, true)];
                 }
@@ -7274,6 +7303,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
                 ], $attack);
             }
+            if ($decision === 'approve') $attack = onlineApplyAttackEchoes($connection, $records, $pending, $attack, true);
             $result['attack'] = $attack;
             $result = [...$result, ...onlineAttackResponseRollFields($attack, true, true, true)];
         } elseif ($command === 'ping') {
@@ -7430,7 +7460,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $label = 'Chance';
                 $formula = '1d100';
             } elseif ($kind === 'stat') {
-                $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
+                $stats = onlineEnhancedStatRows($connection,$records,$pending,$token,$sceneId);
                 $statIndex = findEntryIndex($stats, (string) ($arguments['statId'] ?? ''));
                 if ($statIndex < 0 || !is_numeric($stats[$statIndex]['value'] ?? null)) {
                     rejectOnlineCommand($connection, 404, 'Cette statistique n’existe plus sur le token.', 'token_stat_missing');

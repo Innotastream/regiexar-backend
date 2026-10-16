@@ -94,8 +94,10 @@ jobs:
           php tests/pending-ability-domain-contract.php
           php tests/attack-enhancements-contract.php
           php tests/attack-enhancements-lifecycle.php
+          php tests/attack-echoes-lifecycle.php
           php tests/special-success-contract.php
           php tests/strategy-break-contract.php
+          php tests/table-comfort-contract.php
       - name: Real SQL media concurrency and heartbeat
         env:
           XAR_TEST_MYSQL_ALLOW_LOCAL: '1'

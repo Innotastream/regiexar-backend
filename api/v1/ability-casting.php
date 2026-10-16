@@ -194,7 +194,9 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
         $source['mana'] = $station['mana']; $source['maxMana'] = max($source['maxMana'] ?? 0, $station['mana']);
     }
     try {
-        $plan = applicationAbilityCastingPlan($ability, $source, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId);
+        $statRecords=[];
+        $statSource=[...$source,'stats'=>onlineEnhancedStatRows($connection,$statRecords,[],$source,$sceneId,$activity)];
+        $plan = applicationAbilityCastingPlan($ability, $statSource, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId);
         if ($stationIndex !== null) $plan['manaProviderDeviceId'] = $station['id'];
         return $plan;
     }
@@ -253,6 +255,7 @@ function onlineAbilityRollVisibility(array $roll, array $source, array $identity
 }
 
 function onlineAbilityRollBundle(array $cast, ?array $effectRoll = null): array {
+    if(is_array($cast['roll']??null))$cast['roll']=applicationForcePublicJoker($cast['roll']);
     $castRoll = is_array($cast['roll'] ?? null) ? $cast['roll'] : null;
     $rolls = applicationUniqueRolls([$castRoll, $effectRoll]);
     return [
@@ -388,7 +391,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     unset($cast['pendingValidation']);
     if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null)
         applicationActivateAttackEnhancement($activity, ['id' => $plan['abilityId'], 'name' => $plan['label'], 'attackEnhancement' => $plan['attackEnhancement']],
-            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18));
+            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null);
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $cast['success'] ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];

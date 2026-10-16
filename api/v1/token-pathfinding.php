@@ -44,6 +44,7 @@ function onlineVisiblePathPointTester(?array $fog, array $vision): Closure
 // cell on each row is equivalent to scanning every cell in the footprint.
 function applicationPathPositionValidator(array $walls, float $size, float $naturalWidth, float $naturalHeight): Closure
 {
+    $walls = applicationMovementWalls($walls);
     $bytes = applicationWallMaskBytes($walls); $rows = [];
     $width = (int) $walls['width']; $height = (int) $walls['height'];
     if ($bytes !== null) for ($i = 0, $length = strlen($bytes); $i < $length; $i++) {
@@ -74,6 +75,7 @@ function applicationPathPositionValidator(array $walls, float $size, float $natu
 // waypoint chain, and no destination adjustment into another room.
 function findApplicationVisibleTokenPath(array $walls, array $origin, array $goal, float $tokenSize, float $naturalWidth, float $naturalHeight, Closure $visible, int $maximumVisited = 65536): array
 {
+    $walls = applicationMovementWalls($walls);
     $deadline = hrtime(true) + 125000000;
     $failed = static fn (string $reason): array => [...$origin, 'blocked' => true, 'path' => [], 'reason' => $reason];
     foreach ([$origin['x'], $origin['y'], $goal['x'], $goal['y']] as $value) if (!is_numeric($value) || !is_finite((float) $value) || $value < 0 || $value > 100) return $failed('invalid-position');

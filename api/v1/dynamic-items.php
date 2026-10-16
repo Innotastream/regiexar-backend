@@ -192,6 +192,16 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
     if ($index === false) itemFailure('Objet introuvable.', 404);
     $item = $items['instances'][$index];
     if ($item['revision'] !== ($args['expectedItemRevision'] ?? null)) itemFailure('Cet objet a changé de place. L’inventaire a été actualisé.', 409);
+    if ($command === 'item.move') {
+        if (!$isGm) itemFailure('Le déplacement des objets posés est réservé au MJ.', 403);
+        foreach ($state['devices']['devices'] ?? [] as $device) if (($device['itemId'] ?? '') === $item['id']) itemFailure('Utilisez les actions du dispositif pour le déplacer.', 409);
+        if ($item['location']['kind'] !== 'ground' || $item['location']['sceneId'] !== ($args['sceneId'] ?? '') || $item['location']['layerId'] !== ($args['layerId'] ?? '')
+            || !in_array($args['sceneId'] ?? '', array_column($state['scenes'] ?? [], 'id'), true)) itemFailure('Cet objet n’est plus sur ce niveau.', 409);
+        $location = $args['location'] ?? [];
+        if (!is_array($location) || ($location['kind'] ?? '') !== 'ground' || ($location['sceneId'] ?? '') !== $args['sceneId'] || ($location['layerId'] ?? '') !== $args['layerId']) itemFailure('Choisissez une position sur le même niveau.');
+        $item['location'] = $location; $item['revision']++; $items['instances'][$index] = $item;
+        return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
+    }
     $template=$items['templates'][array_search($item['templateId'],array_column($items['templates'],'id'),true)];
     if(!$isGm&&itemPermissions($template)['boundToCarrier']&&in_array($command,['item.drop','item.transfer'],true))itemFailure('Cet objet est lié à son porteur. Seul le MJ peut le déplacer.',403);
     if(!$isGm&&in_array($command,['item.pickup','item.transfer','item.destroy'],true)&&!itemPermissions($template)[substr($command,5)])itemFailure('Le MJ n’autorise pas cette action sur cet objet.',403);

@@ -54,6 +54,7 @@ function onlinePublicRevealedRoll(array $roll): array {
     $public = publicOnlineAttackRoll($roll, false, ($roll['mapEvent']['kind'] ?? '') === 'damage' ? 'damage' : 'roll');
     unset($public['sourceTokenId'], $public['sourceSceneId'], $public['statId'], $public['statLabel']);
     if (isset($public['mapEvent'])) foreach (['tokenId', 'anchorTokenId', 'sourceTokenId', 'targetTokenId', 'attackId'] as $key) unset($public['mapEvent'][$key]);
+    if(($roll['outcome']['joker']??false)===true && isset($public['mapEvent']))unset($public['mapEvent']['sceneId'],$public['mapEvent']['layerId']);
     return [...$public, 'visibility' => 'public', 'revealed' => true, 'gmRevealed' => true, 'revealedAt' => $roll['revealedAt'] ?? ''];
 }
 

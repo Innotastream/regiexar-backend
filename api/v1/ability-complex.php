@@ -44,6 +44,7 @@ function onlineComplexAbilitySceneTokens(
         if (!$isGm && onlineTokenControllerIdFromRecords($connection, $records, $token) !== $accountId
             && !onlineAttackTargetVisible($connection, $records, $map, $token, $accountId, $sceneId)) continue;
         $token['controllerAccountId'] = onlineTokenControllerIdFromRecords($connection, $records, $token);
+        $token['stats']=onlineEnhancedStatRows($connection,$records,[],$token,$sceneId);
         $tokens[] = $token;
     }
     return $tokens;
@@ -147,6 +148,8 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         'visibility' => $isGm && !onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId) ? 'gm' : 'public',
         'attackName' => substr($execution['abilityName'] . ' · ' . ($option['label'] ?? 'Charge'), 0, 120),
         'attackKind' => 'ability', 'attackId' => $execution['abilityId'], 'counterExecutionId' => $execution['id'],
+        ...(!empty($execution['echoParentId']) ? ['echoParentId' => $execution['echoParentId']] : []),
+        ...(!empty($execution['echoParentId']) && !empty($execution['echoAreaRadiusCells']) ? ['areaRadiusCells' => $execution['echoAreaRadiusCells']] : []),
         'opposed' => ($use['opposed'] ?? false) === true,
         'defenderAccountId' => $target !== [] ? onlineTokenControllerIdFromRecords($connection, $records, $target) : '',
         'damageFormula' => $use['effect']['formula'], 'damageType' => $use['effect']['damageType'], 'damageRollMode' => 'normal', 'damagePercent' => 100,
@@ -174,7 +177,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         $attack['damageRoll'] = onlineRollEntry($identity, $rolled, $attack['attackName'] . ' · Dégâts', $attack['sourceName']);
         $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
         if ($damage['finalDamage'] <= 0) $attack['status'] = 'blocked';
-        elseif (($initiative['active'] ?? false) === true) {
+        elseif (($initiative['active'] ?? false) === true || !empty($execution['echoParentId']) && !empty($execution['echoApproved'])) {
             $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, $damage['finalDamage'], true, [...$damage, 'damageType' => $attack['damageType']]);
             $attack = onlineRecordAttackGuard($attack, $health);
             $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
@@ -201,7 +204,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
         'detail' => $attack['status'] === 'awaiting-opposition' ? 'Orbe consommé · jet de défense demandé' : onlineAttackHistoryDetail($attack)]);
     if ($attack['status'] === 'applied') onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $attack);
-    return $attack;
+    return onlineApplyAttackEchoes($connection, $records, $pending, $attack);
 }
 
 function onlineUseComplexAbility(
@@ -327,6 +330,14 @@ function onlineUseComplexAbility(
             'detail' => ($cast['manaSpent'] ?? 0) . ' mana · ' . ($cast['hpSpent'] ?? 0) . ' PV · +' . ($cast['fatigueGained'] ?? 0) . ' fatigue',
         ]);
         $bundle = onlineAbilityRollBundle($cast);
+        $firstStep = $ability['workflow']['steps'][0];
+        if (empty($cast['success']) && $firstStep['type'] === 'attack-chain' && !empty($firstStep['firstGateAtCast']) && !empty($arguments['targetTokenId'])) {
+            $context = ['id'=>'cast-'.$requestId,'revision'=>0,'sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map),
+                'sourceTokenId'=>$source['id'],'abilityId'=>$ability['id'],'abilityName'=>$ability['name'],'workflow'=>$ability['workflow'],'currentStepIndex'=>0,'stepStates'=>[]];
+            $failed = [...$context,'revision'=>1,'stepStates'=>[$firstStep['id']=>['plan'=>['targetTokenId'=>$arguments['targetTokenId']],
+                'rolls'=>[[...($cast['roll']??[]),'rawD100'=>$cast['outcome']['raw'],'success'=>false,'outcomeDetails'=>[...$cast['outcome'],'requiresGmValidation'=>false]]]]]];
+            $bundle['rolls'] = [...$bundle['rolls'], ...onlineFailedChainEchoes($connection,$records,$pending,$context,$failed,'prepare-chain',$identity,$isGm)];
+        }
         onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
         $result = ['effect' => 'complex', 'castSucceeded' => ($cast['success'] ?? false) === true, 'cast' => $cast,
             ...$bundle, 'execution' => $execution];
@@ -538,6 +549,7 @@ function onlineUseComplexAbility(
         unset($storedExecution);
         queueOnlineDomainUpsert($pending, $records, 'activity', $latestActivity);
     }
+    $responseRolls = [...$responseRolls, ...onlineFailedChainEchoes($connection, $records, $pending, $current, $next, $workflowAction, $identity, $isGm)];
     onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $responseRolls);
     $actionEntry = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
         'kind' => 'ability-workflow', 'characterName' => $next['sourceName'],

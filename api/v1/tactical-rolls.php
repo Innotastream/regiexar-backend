@@ -106,6 +106,7 @@ function applicationRollPresentation(array $roll): array {
 }
 
 function applicationRollActivityFields(array $roll): array {
+    $roll=applicationForcePublicJoker($roll);
     $presentation = applicationRollPresentation($roll);
     $lines = [];
     foreach ($presentation['calculations'] as $calculation) {
@@ -131,7 +132,7 @@ function applicationUniqueRolls(array $candidates): array {
             : 'value:' . hash('sha256', serialize($candidate));
         if (isset($seen[$fingerprint])) continue;
         $seen[$fingerprint] = true;
-        $rolls[] = $candidate;
+        $rolls[] = applicationForcePublicJoker($candidate);
     }
     return $rolls;
 }
@@ -304,7 +305,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     } else {
         $source = synchronizeOnlineCharacterToken(['characterId' => $characterId], $source);
     }
-    try { $spec = applicationTacticalRollSpecification($source, $arguments); }
+    try { $spec = applicationTacticalRollSpecification([...$source,'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
@@ -329,6 +330,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         $roll['visibility'] = 'gm';
         $roll['revealed'] = false;
     }
+    $roll=applicationForcePublicJoker($roll);
     $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);

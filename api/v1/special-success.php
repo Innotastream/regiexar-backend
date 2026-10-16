@@ -48,3 +48,8 @@ function onlineConsumeSpecialSuccess(PDO $connection,array &$records,array &$pen
     }
     return applicationSpecialSuccessRoll();
 }
+
+function applicationForcePublicJoker(array $roll): array {
+    if (($roll['outcome']['joker']??false)===true||($roll['joker']??false)===true) { $roll['visibility']='public';$roll['revealed']=true;$roll['gmRevealed']=true; }
+    return $roll;
+}

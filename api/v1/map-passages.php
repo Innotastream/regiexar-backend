@@ -11,6 +11,24 @@ function passageNameLength(string $value):int {
     if(preg_match_all('/./us',$value,$matches)===false)return PHP_INT_MAX;
     $length=0;foreach($matches[0] as $character)$length+=strlen($character)===4?2:1;return $length;
 }
+function passageArrivalValidator(array $map,array $start):Closure {
+    $walls=applicationMovementWalls($map['walls']??[]);$fog=applicationActiveMapFogState($map);
+    $masks=[];
+    if(($walls['mask']??'')!==''&&($bytes=applicationWallMaskBytes($walls))!==null)$masks[]=[$walls,$bytes];
+    if(($fog['enabled']??false)&&($fog['mask']??'')!==''&&($bytes=applicationFogMaskBytes($fog))!==null)$masks[]=[$fog,$bytes];
+    $width=max($walls['width']??1,$fog['width']??1);$height=max($walls['height']??1,$fog['height']??1);
+    return static function(array $point) use($start,$masks,$width,$height):bool {
+        $steps=max(1,(int)ceil(max(abs($point['x']-$start['x'])*$width,abs($point['y']-$start['y'])*$height)/100*2));
+        for($i=0;$i<=$steps;$i++){
+            $x=$start['x']+($point['x']-$start['x'])*$i/$steps;$y=$start['y']+($point['y']-$start['y'])*$i/$steps;
+            foreach($masks as [$mask,$bytes]){
+                $column=(int)round(max(0,min(100,$x))/100*($mask['width']-1));$row=(int)round(max(0,min(100,$y))/100*($mask['height']-1));
+                if(applicationMaskBit($bytes,$row*$mask['width']+$column))return false;
+            }
+        }
+        return true;
+    };
+}
 function normalizePassages(mixed $value):array {
     if($value===null)return [];
     if(!is_array($value)||!array_is_list($value)||count($value)>80)passageFailure('Le registre des passages est invalide.',400);
@@ -121,12 +139,13 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if(($target['destination']['sceneId']??'')!==$sceneId||($target['destination']['passageId']??'')!==$entry['id'])passageFailure('Cette liaison a changé. Actualisez le passage.');
         if($targetScene!==$sceneId&&array_intersect($travelerIds,array_column($targetMap['tokens']??[],'id')))passageFailure('La scène de destination possède déjà un pion avec cette identité.');
         if($targetScene!==$sceneId&&count($targetMap['tokens']??[])+count($travelers)>2000)passageFailure('La scène de destination n’a pas assez de places pour la monture et ses cavaliers.',429);
-        $destination=array_replace($targetMap,$targetMap['layers'][$target['layerId']]??[]);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
+        $destination=array_replace($targetMap,$targetMap['layers'][$target['layerId']]??[],['activeLayerId'=>$target['layerId']]);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
         $fog=applicationActiveMapFogState([...$targetMap,'activeLayerId'=>$target['layerId']]);
         $occupied=array_values(array_filter($targetMap['tokens']??[],static fn($other)=>$other['id']!==$token['id']&&empty($other['hidden'])&&empty($other['mountedOnTokenId'])&&!applicationFogCoversPoint($fog,$other['x'],$other['y'])&&($other['layerId']??'ground')===$target['layerId']));
         // Expand to neighbouring cells while keeping a direct, wall-free arrival.
-        $position=nearestOnlineGroupPosition($desired,$token,$destination,$occupied,$target,0,null,true,(float)($destination['gridSize']??50));
-        if(!$position)passageFailure('Aucune place libre et accessible autour de l’arrivée.');
+        $arrivalToken=[...$token,'size'=>max(array_map(static fn(array $unit):float=>(float)($unit['size']??40),$travelers))];
+        $position=nearestOnlineGroupPosition($desired,$arrivalToken,$destination,$occupied,$target,0,passageArrivalValidator($destination,$target),true,(float)($destination['gridSize']??50));
+        if(!$position)passageFailure('Aucune place libre accessible sans traverser un mur, un bloqueur ou le brouillard autour de l’arrivée. Le pion reste au départ.');
         $leaderId=$token['id'];$movedAt=$context['now']??(int)round(microtime(true)*1000);
         foreach($travelers as $traveler){
         $index=array_search($traveler['id'],array_column($map['tokens'],'id'),true);

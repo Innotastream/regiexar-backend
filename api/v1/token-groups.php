@@ -84,7 +84,7 @@ function onlineGroupTranslation(array $tokens, float $dx, float $dy, array $map)
 
 function onlineGroupPositionValidator(array $map): Closure
 {
-    $walls = $map['walls'] ?? null;
+    $walls = applicationMovementWalls($map['walls'] ?? null);
     $bytes = validApplicationWallState($walls) && ($walls['mask'] ?? '') !== '' ? applicationWallMaskBytes($walls) : null;
     $width = (float) ($map['naturalWidth'] ?? 1600);
     $height = (float) ($map['naturalHeight'] ?? 900);

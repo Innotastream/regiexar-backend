@@ -64,13 +64,15 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         catch (RuntimeException $error) { rejectOnlineCommand($connection, 409, $error->getMessage(), 'form_conflict'); }
         if ($formPlan['deduplicated']) return ['effect' => 'metamorphosis', 'activeCharacterId' => $formPlan['activeCharacterId'], 'deduplicated' => true];
     } elseif (!in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
-        if (($ability['effect'] ?? '') !== 'healing') rejectOnlineCommand($connection, 404, 'Cette capacité de soin n’existe plus.', 'healing_ability_missing');
+        if (!in_array($ability['effect'] ?? '', ['healing', 'enhancement'], true)) rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus.', 'healing_ability_missing');
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
-        if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403, 'La cible du soin n’est pas visible.', 'healing_target_hidden');
+        if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403,
+            $ability['effect'] === 'enhancement' ? 'Le bénéficiaire du buff n’est plus visible. Rouvrez la capacité.' : 'La cible du soin n’est pas visible.', 'healing_target_hidden');
     }
     if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    if (($ability['effect'] ?? '') === 'enhancement') $plan['enhancementRecipient'] = $target;
     $sourceVisibleToPlayers = $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
     $cast = $continuation['cast'] ?? ($returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character, $sourceVisibleToPlayers, (string) ($source['id'] ?? '')));
     if ($isGm && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {
@@ -121,6 +123,10 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $result['summonedTokenId'] ?? $source['id'], 'onHitConditions' => $ability['onHitConditions'] ?? [],
         ]);
+    } elseif ($cast['success'] && ($ability['effect'] ?? '') === 'enhancement') {
+        $result['targetTokenId'] = $target['id'];
+        applyOnlineAttackConditions($connection, $records, $pending, [
+            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $target['id'], 'onHitConditions' => $ability['onHitConditions'] ?? []]);
     } elseif ($cast['success']) {
         $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
         onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);
