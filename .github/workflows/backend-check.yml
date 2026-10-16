@@ -59,7 +59,9 @@ jobs:
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php
       - name: Infusions, devices and individual consent
-        run: php tests/device-native-contract.php
+        run: |
+          php tests/device-native-contract.php
+          php tests/device-recovery-contract.php
       - name: Unit inventories, independent clones and linked passages
         run: |
           php tests/unit-inventory-contract.php

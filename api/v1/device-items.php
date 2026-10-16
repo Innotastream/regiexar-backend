@@ -3,7 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/dynamic-items.php';
 
-function physicalDevice(array $device):bool { return in_array($device['definition']['kind']??'', ['battery','launcher'],true); }
+function physicalDevice(array $device):bool { return in_array($device['definition']['kind']??'', ['battery','launcher','beam'],true); }
 function ensureDeviceItems(array &$state,callable $id):void {
     $state['items']=normalizeItemStore($state['items']??null);
     foreach($state['devices']['devices']??[] as $index=>$entry) {
@@ -31,9 +31,15 @@ function synchronizeDeviceItemLocations(array &$state,string $itemId,array $cont
     if(!$item)return;
     foreach($state['devices']['devices']??[] as $index=>$entry)if(($entry['itemId']??'')===$itemId&&physicalDevice($entry)){
         $device=&$state['devices']['devices'][$index];
-        if(!$device['definition']['canPack']&&$item['location']['kind']==='inventory')itemFailure('Ce dispositif ne peut pas être récupéré.',409);
+        if($device['definition']['kind']==='beam'&&!in_array($device['status'],['active','inventory','packed'],true))itemFailure('Ce rayon a déjà été déclenché. Utilisez sa compétence après le repos requis.',409);
+        if(($device['definition']['canPack']??true)===false&&$item['location']['kind']==='inventory')itemFailure('Ce dispositif ne peut pas être récupéré.',409);
         if($item['location']['kind']==='inventory'){$device['status']='inventory';$device['ownerUnitId']=$item['location']['characterId'];}
         elseif($item['location']['kind']==='ground'){
+            if($device['definition']['kind']==='beam'){
+                $mark=$device['mark']??null;
+                if(!is_array($mark)||!is_numeric($mark['x']??null)||!is_numeric($mark['y']??null)||!is_finite((float)$mark['x'])||!is_finite((float)$mark['y'])||$mark['x']<0||$mark['x']>100||$mark['y']<0||$mark['y']>100||($mark['x']==$item['location']['x']&&$mark['y']==$item['location']['y']))itemFailure('Choisissez une marque distincte du dispositif avec « Gérer le dispositif », puis « Poser ».',400);
+                $device['elapsedTurns']=0;$device['elapsedTicks']=0;
+            }
             $device=array_replace($device,$item['location'],['status'=>'active']);unset($device['kind']);
             if(!empty($context['unitId']))$device['ownerUnitId']=$context['unitId'];
             if(!empty($context['tokenId']))$device['sourceTokenId']=$context['tokenId'];

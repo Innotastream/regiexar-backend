@@ -1421,7 +1421,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     $pendingMapAttacks = [];
     $visibleAttackTokenIds = array_keys($clearlyVisibleIds);
     $visibleDevices=publicDeviceStore($fullState['devices']??dsEmpty(),$streamPov?null:['id'=>$accountId],$characters,['sceneId'=>$visibleSceneId,'layerId'=>$visibleLayerId,'paused'=>$paused,'items'=>$fullState['items']??[],'tokens'=>$map['tokens'],'visibleTokenIds'=>$visibleAttackTokenIds],static fn($location)=>!$strictPointIsHidden($location['x'],$location['y']));
-    foreach($visibleDevices['devices'] as $device)if(!in_array($device['status'],['inventory','awaiting-launch'],true))$visibleAttackTokenIds[]=$device['id'];
+    foreach($visibleDevices['devices'] as $device)if(empty($device['controlOnly'])&&!in_array($device['status'],['inventory','awaiting-launch'],true))$visibleAttackTokenIds[]=$device['id'];
     foreach (is_array($fullState['pendingAttacks'] ?? null) ? $fullState['pendingAttacks'] : [] as $mapAttack) {
         if (!is_array($mapAttack) || ($mapAttack['visibility'] ?? 'public') === 'gm' || !in_array($mapAttack['status'] ?? '', ['awaiting-opposition', 'pending'], true)
             || (string) ($mapAttack['sceneId'] ?? '') !== $visibleSceneId
@@ -6286,7 +6286,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $source = applicationDomainPayload($records, $sourceKey);
                 $target = applicationDomainPayload($records, $targetKey);
-                $map = applicationDomainPayload($records, $mapKey);
+                $map = $isGm && $mechanicsApplied !== null ? $mechanicsApplied['state']['map'] : applicationDomainPayload($records, $mapKey);
                 if (($source !== [] && !onlineTokenOnActiveLayer($source, $map)) || ($target !== [] && !onlineTokenOnActiveLayer($target, $map))) {
                     rejectOnlineCommand($connection, 409, 'L’attaquant et la cible doivent être sur le niveau actif.', 'stale_token_layer');
                 }
@@ -6555,7 +6555,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($castingPlan === null && $chainGate === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
                 if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
                 if(!empty($infusion['payment'])&&$infusion['refundOnMiss']&&!($hitOutcome['success']??false))onlineDeviceRefund($connection,$records,$pending,$infusion['payment']);
-                $projectileGate=($hitOutcome['success']??false)?onlineDeviceProjectile($connection,$records,$pending,$identity,$source,$target,($mechanicsDefinition['projectile']??false)===true,(int)($castingPlan['fatigueCost']??0)):['percent'=>100,'checks'=>[],'pending'=>false];
+                $projectileGate=($hitOutcome['success']??false)?onlineDeviceProjectile($connection,$records,$pending,$identity,$source,$target,($mechanicsDefinition['projectile']??false)===true,(int)($castingPlan['fatigueCost']??0),$sceneId):['percent'=>100,'checks'=>[],'pending'=>false];
                 $damagePercent=(int)round($damagePercent*$projectileGate['percent']/100);$activity=$pending['activity']['payload']??$activity;
                 $statLabel = $hasCastingCheck ? substr(trim((string) ($stats[$statIndex]['label'] ?? 'Statistique')), 0, 120) : 'Sans jet';
                 $hitRoll = ($hitOutcome['automatic'] ?? false) === true ? null : onlineRollEntry($identity, $hitRolled, $attackName . ' · ' . $statLabel, (string) ($source['name'] ?? 'Token'), $hitOutcome);
