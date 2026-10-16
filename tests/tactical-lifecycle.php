@@ -723,9 +723,9 @@ $patched = playerCharacterPatch(['conditions'=>['Mort'], 'resources'=>['hp'=>1,'
 requireTactical($patched['healthOverride'] === 'dead' && $patched['conditions'] === ['Empoisonné'], 'A player patch preserves the legacy MJ death override.');
 requireTactical($patched['resources']['hp'] === -26 && $patched['resources']['mana'] === 0, 'Player patches preserve signed HP and nonnegative mana.');
 // Legacy maps without fog must work through both movement visibility callers.
-foreach (['absent'=>['gridSize'=>50], 'null'=>['gridSize'=>50,'fog'=>null]] as $fogCase=>$fogMap) {
+foreach (['absent'=>['gridSize'=>50], 'null'=>['gridSize'=>50,'fog'=>null], 'unpainted-floor'=>['gridSize'=>50,'activeLayerId'=>'ground','layers'=>['ground'=>[],'upper'=>['fog'=>['version'=>1,'enabled'=>true,'width'=>32,'height'=>32,'mask'=>'']]]]] as $fogCase=>$fogMap) {
     $vision = applicationComputeVisionMask(applicationActiveMapOcclusionState($fogMap), [], 50);
-    requireTactical(applicationActiveMapFogState($fogMap) === null && is_array($vision)
+    requireTactical(($fogCase === 'unpainted-floor' ? applicationActiveMapFogState($fogMap)['mask'] === '' : applicationActiveMapFogState($fogMap) === null) && is_array($vision)
         && onlineVisiblePathPointTester(null, $vision)(25.0, 50.0), $fogCase . ': no fog is distinct from the always-array computed vision.');
     foreach ([false,true] as $fogGm) {
         $db=fixture();$db->put('map:scene-one',$fogMap);$db->put('initiative:scene-one',['active'=>false]);
@@ -740,12 +740,12 @@ foreach (['absent'=>['gridSize'=>50], 'null'=>['gridSize'=>50,'fog'=>null]] as $
     $character=$db->payload('character:character-player');$character['resources']['hp']=0;$db->put('character:character-player',$character);
     $response=runCommand($db,'token.attack',['sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','requestId'=>'no-fog-attack-'.$fogCase.'-0001']);
     requireTactical($response->status===409 && ($response->body['code']??'')==='attack_source_defeated',
-        $fogCase . ': attack visibility accepts the absent fog and reaches the authoritative KO guard.');
+        $fogCase . ': attack visibility accepts the absent fog and reaches the authoritative KO guard: '.$response->getMessage());
 }
 $protectedFog=['version'=>1,'enabled'=>true,'width'=>32,'height'=>32,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",128)),'+/','-_'),'=')];
 requireTactical(!onlineVisiblePathPointTester([...$protectedFog,'mask'=>'!invalid!'],['enabled'=>false])(25.0,50.0), 'Enabled malformed fog still fails closed.');
 requireTactical(!onlineVisiblePathPointTester(null,$protectedFog)(25.0,50.0), 'Absent fog does not disable active vision.');
-foreach (['active fog'=>['fog'=>$protectedFog], 'new upper floor'=>['activeLayerId'=>'upper','layers'=>['ground'=>['fog'=>$protectedFog],'upper'=>[]]]] as $fogCase=>$fogMap) {
+foreach (['active fog'=>['fog'=>$protectedFog], 'painted upper floor'=>['activeLayerId'=>'upper','layers'=>['ground'=>['fog'=>$protectedFog],'upper'=>['fog'=>[...$protectedFog,'enabled'=>false]]]]] as $fogCase=>$fogMap) {
     $db=fixture();$db->put('map:scene-one',$fogMap);$db->put('initiative:scene-one',['active'=>false]);
     foreach (['token-player','token-monster'] as $fogTokenId) {
         $fogToken=$db->payload('token:scene-one:'.$fogTokenId);$fogToken['layerId']=$fogMap['activeLayerId']??'ground';$db->put('token:scene-one:'.$fogTokenId,$fogToken);

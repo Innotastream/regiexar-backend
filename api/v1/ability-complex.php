@@ -302,6 +302,7 @@ function onlineUseComplexAbility(
             return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.complex', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, [], $receiptContext);
         }
         $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity, true, $continuation === null);
+        if ($continuation !== null && is_array($cast['outcome'] ?? null)) $cast['outcome']['requiresGmValidation'] = false;
         $execution = null;
         if (($cast['success'] ?? false) === true) {
             try {

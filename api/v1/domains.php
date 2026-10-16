@@ -357,12 +357,7 @@ function applicationActiveMapFogState(array $map): mixed
         $dimensions = applicationRasterDimensions($activeLayer['naturalWidth'] ?? ($map['naturalWidth'] ?? 1600), $activeLayer['naturalHeight'] ?? ($map['naturalHeight'] ?? 900));
         $fog = ['version' => XAR_FOG_MASK_VERSION, 'enabled' => false, ...$dimensions, 'mask' => ''];
     }
-    if (!$fog['enabled'] && $fog['mask'] === '') {
-        $bits = $fog['width'] * $fog['height'];
-        $bytes = str_repeat("\xff", (int) ceil($bits / 8));
-        if ($bits % 8 !== 0) $bytes[strlen($bytes) - 1] = chr((1 << ($bits % 8)) - 1);
-        $fog['mask'] = rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
-    }
+    // Keep intentional painted fog only. The vision mask hides unseen areas independently.
     $fog['enabled'] = true;
     return $fog;
 }
@@ -408,6 +403,7 @@ function validApplicationMapLights(mixed $value): bool
                 && (!is_int($light['visionDistance']) || $light['visionDistance'] < 1 || $light['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE))
             || (array_key_exists('enabled', $light) && !is_bool($light['enabled']))
             || (array_key_exists('visibleFromAfar', $light) && !is_bool($light['visibleFromAfar']))
+            || (array_key_exists('iconHidden', $light) && !is_bool($light['iconHidden']))
             || (array_key_exists('portable', $light) && !is_bool($light['portable']))
             || (array_key_exists('carrierTokenId', $light)
                 && !validApplicationDomainIdentifier($light['carrierTokenId'], 80, true))
@@ -433,6 +429,7 @@ function normalizeApplicationMapLights(mixed $value): array
         'visionDistance' => $light['visionDistance'] ?? XAR_VISION_DEFAULT_DISTANCE,
         'enabled' => $light['enabled'] ?? true,
         'visibleFromAfar' => $light['visibleFromAfar'] ?? false,
+        'iconHidden' => $light['iconHidden'] ?? false,
         'portable' => $light['portable'] ?? false,
         'carrierTokenId' => ($light['portable'] ?? false) === true ? ($light['carrierTokenId'] ?? null) : null,
         'color' => strtolower((string) ($light['color'] ?? XAR_MAP_LIGHT_DEFAULT_COLOR)),

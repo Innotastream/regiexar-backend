@@ -7,6 +7,7 @@ require_once __DIR__ . "/ongoing-effects.php";
 require_once __DIR__ . '/device-runtime.php';
 require_once __DIR__ . '/luck-reset.php';
 require_once __DIR__ . '/special-success.php';
+require_once __DIR__ . '/light-glow.php';
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
@@ -1163,6 +1164,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
                 && (!$active || $movementTokenId === $activeTokenId || $temporaryMovementAllowed || ($movementOverrides[$movementTokenId] ?? false) === true),
         ];
         if ($details) {
+            $moraleEntity=unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??[]):$token;
+            if(array_key_exists('morale',$moraleEntity)) { $visible['morale']=trim((string)$moraleEntity['morale'])?:'Normal'; $visible['moraleExtremes']=normalizeOnlineMoraleExtremes($moraleEntity['moraleExtremes']??[]); }
             foreach (['hp', 'maxHp', 'mana', 'maxMana', 'fatigue', 'damageDice', 'damageType', 'weaponAttacks', 'hitThreshold', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'resourcePulse'] as $key) {
                 if (array_key_exists($key, $token)) {
                     $visible[$key] = $token[$key];
@@ -1308,6 +1311,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'shared' => $vision['shared'] && !$viewerIsIsolated,
     ];
     $map['visionMask'] = $visionMask;
+    $map['lightGlow'] = applicationLightGlow($occlusion, $visionMask, $map['gridSize'] ?? 50);
     $map['lightingMode'] = $occlusion['lightingMode'];
     unset($initiative['movementOverrides']);
     $map['tokens'] = $tokens;
@@ -5285,7 +5289,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5307,7 +5311,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -6386,8 +6390,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     }
                     if ($step['type'] === 'attack-chain' && ($step['resolutionMode'] ?? '') === 'batch') {
                         $chainDefinition = $step;
-                        $successfulGates = array_values(array_filter($stepState['rolls'] ?? [], static fn(array $entry): bool => ($entry['success'] ?? false) === true));
-                        $chainGate = $successfulGates[count($stepState['attacks'] ?? [])] ?? null;
+                        $chainGate = applicationChainAttackGate($step, $stepState);
                         if (($stepState['batchReady'] ?? false) !== true || !is_array($chainGate)
                             || ($arguments['attackKind'] ?? 'weapon') !== ($stepState['plan']['attackKind'] ?? 'weapon')
                             || normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0) !== 0
@@ -8124,6 +8127,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'layerId' => (string) ($projectedMap['activeLayerId'] ?? 'ground'),
                     'visionMask' => is_array($projectedMap['visionMask'] ?? null) ? $projectedMap['visionMask'] : [],
                     'lights' => is_array($projectedMap['lights'] ?? null) ? $projectedMap['lights'] : [],
+                    'lightGlow' => $projectedMap['lightGlow'] ?? null,
                 ];
             }
         }

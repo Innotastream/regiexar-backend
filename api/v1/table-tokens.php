@@ -5,7 +5,7 @@ function normalizeApplicationTableTokens(mixed $value): array {
     $value=is_array($value)?$value:[];
     $integer=static fn($n,$fallback,$min=0,$max=100)=>is_int($n)?max($min,min($max,$n)):$fallback;
     $state=['revision'=>$integer($value['revision']??null,0,0,PHP_INT_MAX),'pools'=>[],'requests'=>[],'events'=>[]];
-    foreach(['gm','players'] as $side){$pool=$value['pools'][$side]??[];$min=$integer($pool['min']??null,0);$max=max($min,$integer($pool['max']??null,6));$state['pools'][$side]=['min'=>$min,'max'=>$max,'current'=>$integer($pool['current']??null,$max,$min,$max)];}
+    foreach(['gm','players'] as $side){$pool=$value['pools'][$side]??[];$max=$integer($pool['max']??null,6);$state['pools'][$side]=['max'=>$max,'current'=>$integer($pool['current']??null,$max,0,$max)];}
     foreach(array_slice(is_array($value['requests']??null)?$value['requests']:[],-100) as $r)if(is_array($r)&&preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($r['id']??''))===1&&is_string($r['accountId']??null)&&is_int($r['createdAt']??null))$state['requests'][]=['id'=>$r['id'],'accountId'=>$r['accountId'],'name'=>applicationTableTokenName($r['name']??'Joueur'),'createdAt'=>$r['createdAt']];
     foreach(array_slice(is_array($value['events']??null)?$value['events']:[],-32) as $e)if(is_array($e)&&preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($e['id']??''))===1&&in_array($e['side']??'', ['gm','players'],true)&&is_int($e['at']??null))$state['events'][]=['id'=>$e['id'],'side'=>$e['side'],'at'=>$e['at']];
     return $state;
@@ -24,13 +24,13 @@ function applicationChangeTableTokens(mixed $value,array $args,array $identity,i
     $state['requests']=array_values(array_filter($state['requests'],static fn($r)=>$now-$r['createdAt']<600000));
     $consume=static function($side)use(&$state,$args,$now,$fail):void {
         if(!in_array($side,['gm','players'],true))$fail('Réserve inconnue.',400);
-        if($state['pools'][$side]['current']<=$state['pools'][$side]['min'])$fail('Cette réserve a atteint son minimum. Aucun jeton disponible.');
+        if($state['pools'][$side]['current']<=0)$fail('Aucun jeton disponible dans cette réserve.');
         $state['pools'][$side]['current']--;$state['events'][]=['id'=>$args['requestId'],'side'=>$side,'at'=>$now];$state['events']=array_slice($state['events'],-32);
     };
     $action=$args['action']??'';
     if($action==='request'){
         if($gm)$fail('Le MJ peut utiliser directement un jeton.',400);
-        if($state['pools']['players']['current']<=$state['pools']['players']['min'])$fail('Aucun jeton joueur disponible.');
+        if($state['pools']['players']['current']<=0)$fail('Aucun jeton joueur disponible.');
         foreach($state['requests'] as $r)if($r['accountId']===$identity['id'])$fail('Votre demande de jeton attend déjà le MJ.');
         if(count($state['requests'])>=100)$fail('Trop de demandes en attente.',429);
         $state['requests'][]=['id'=>$args['requestId'],'accountId'=>$identity['id'],'name'=>applicationTableTokenName($identity['display_name']??'Joueur'),'createdAt'=>$now];
@@ -45,9 +45,9 @@ function applicationChangeTableTokens(mixed $value,array $args,array $identity,i
     }elseif($action==='configure'){
         if(!$gm)$fail('Seul le MJ règle les réserves.',403);
         if(($args['expectedRevision']??null)!==$state['revision'])$fail('Les réserves ont changé. Rouvrez les réglages.');
-        foreach(['gm','players'] as $side){$pool=$args['pools'][$side]??[];foreach(['min','max','current'] as $key)if(!is_int($pool[$key]??null)||$pool[$key]<0||$pool[$key]>100)$fail('Chaque réserve doit respecter 0 ≤ minimum ≤ actuel ≤ maximum ≤ 100.',400);
-            if($pool['min']>$pool['current']||$pool['current']>$pool['max'])$fail('Chaque réserve doit respecter 0 ≤ minimum ≤ actuel ≤ maximum ≤ 100.',400);
-            $state['pools'][$side]=['min'=>$pool['min'],'max'=>$pool['max'],'current'=>$pool['current']];}
+        foreach(['gm','players'] as $side){$pool=$args['pools'][$side]??[];foreach(['max','current'] as $key)if(!is_int($pool[$key]??null)||$pool[$key]<0||$pool[$key]>100)$fail('Chaque réserve doit respecter 0 ≤ actuel ≤ maximum ≤ 100.',400);
+            if($pool['current']>$pool['max'])$fail('Chaque réserve doit respecter 0 ≤ actuel ≤ maximum ≤ 100.',400);
+            $state['pools'][$side]=['max'=>$pool['max'],'current'=>$pool['current']];}
     }else $fail('Action de jeton inconnue.',400);
     $state['revision']++;return $state;
 }

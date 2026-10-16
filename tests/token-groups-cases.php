@@ -167,7 +167,7 @@ $plan=planApplicationTokenLayers($closeMap,$floorRequest);
 requireTactical($plan[0]['x']==40 && $plan[1]['x']==45 && !$plan[1]['relocated'], 'A close group keeps its partial overlap during a floor transfer.');
 foreach (['hidden','fog'] as $concealment) {
     $map=$closeMap;$map['tokens']=[['id'=>'a','x'=>40,'y'=>50,'size'=>30,'layerId'=>'ground'],['id'=>'obstacle','x'=>50,'y'=>50,'size'=>220,'layerId'=>'ground','hidden'=>$concealment==='hidden']];
-    $fog=['enabled'=>$concealment==='fog','width'=>512,'height'=>512,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",32768)),'+/','-_'),'=')];
+    $fog=['version'=>1,'enabled'=>$concealment==='fog','width'=>512,'height'=>512,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",32768)),'+/','-_'),'=')];
     $map['fog']=$fog;
     $plan=planApplicationTokenGroupTransform($map,['tokenIds'=>['a'],'layerId'=>'ground','base'=>['a'=>['x'=>40,'y'=>50]],'dx'=>10,'dy'=>0]);
     requireTactical($plan[0]['x']==50 && $plan[0]['y']==50 && !$plan[0]['relocated'], 'A '.$concealment.' neighbour never repels a group.');

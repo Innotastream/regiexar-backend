@@ -1,3 +1,9 @@
+# Backend 0.18.42 — client exact 3.6.2
+
+Build client-3-6-2-morale-items-fog-20261016-1. Projections du moral, PV privés des objets, bibliothèque de modèles, enchaînements critiques configurables, lueurs sans dévoilement et activation du brouillard sans remplissage automatique. Aucun changement de schéma SQL. La connexion exige la version 3.6.2. Les preuves externes établissent séparément CI et déploiement.
+
+## Historique
+
 # Backend 0.18.41 — client exact 3.6.1
 
 Build `client-3-6-1-table-tokens-passages-comfort-20261016-1`. Commandes atomiques de jetons communs et de déplacement d’objets posés, frappes rémanentes, bonus temporaires, Jokers publics et passages respectant murs, brouillard et bloqueurs. Aucun changement de schéma SQL. Les anciens clients sont refusés ; seule la 3.6.1 franchit le verrou de connexion. Les preuves externes établissent séparément CI et déploiement.

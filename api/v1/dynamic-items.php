@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/item-physical.php';
 
 function itemFailure(string $message, int $status = 400): never { throw new RuntimeException($message, $status); }
 function itemId(mixed $value): bool { return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,180}$/D', $value) === 1; }
@@ -23,11 +24,14 @@ function itemImage(mixed $value): string {
 function normalizeItemTemplate(array $value): array {
     if (!itemId($value['id'] ?? null) || !in_array($value['kind'] ?? '', ['letter', 'book', 'potion', 'object'], true)) itemFailure('Le modèle d’objet est invalide.');
     $name = trim(itemText($value['name'] ?? '', 120));
+    if (array_key_exists('maxHp', $value) && !itemPermissions($value)['destroy']) itemFailure('Activez le droit Détruire avant d’ajouter des PV à l’objet.');
     if ($name === '') itemFailure('Donnez un nom à l’objet.');
     $image = itemImage($value['image'] ?? '');
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image];
     if(array_key_exists('permissions',$value))$result['permissions']=normalizeItemPermissions($value['permissions']);
+    if (array_key_exists('size', $value)) $result['size'] = normalizeItemSize($value['size']);
+    if (array_key_exists('maxHp', $value)) $result['maxHp'] = normalizeItemMaxHp($value['maxHp']);
     if (array_key_exists('sourceAbilityId', $value) || array_key_exists('creatorCharacterId', $value)) {
         if (!itemId($value['sourceAbilityId'] ?? null) || !itemId($value['creatorCharacterId'] ?? null)) itemFailure('Le lien de l’objet à sa compétence est invalide.');
         $result['sourceAbilityId'] = $value['sourceAbilityId'];
@@ -107,7 +111,13 @@ function normalizeItemStore(?array $value): array {
             && isset($location['x'], $location['y']) && (is_int($location['x']) || is_float($location['x'])) && (is_int($location['y']) || is_float($location['y']))
             && is_finite((float)$location['x']) && is_finite((float)$location['y']) && $location['x'] >= 0 && $location['x'] <= 100 && $location['y'] >= 0 && $location['y'] <= 100) $clean = ['kind' => 'ground', 'sceneId' => $location['sceneId'], 'layerId' => $location['layerId'], 'x' => $location['x'], 'y' => $location['y']];
         else itemFailure('L’emplacement d’un objet est invalide.');
-        $instances[] = ['id' => $item['id'], 'templateId' => $item['templateId'], 'revision' => $item['revision'], 'location' => $clean];
+        $normalized = ['id' => $item['id'], 'templateId' => $item['templateId'], 'revision' => $item['revision'], 'location' => $clean];
+        if (array_key_exists('size', $item)) $normalized['size'] = normalizeItemSize($item['size']);
+        if (array_key_exists('health', $item)) {
+            $normalized['health'] = normalizeItemHealth($item['health']);
+            if ($normalized['health']['current'] === 0 && !in_array($clean['kind'], ['destroyed','consumed'], true)) itemFailure('Un objet à 0 PV doit être détruit.');
+        }
+        $instances[] = $normalized;
     }
     return ['version' => 1, 'templates' => $templates, 'instances' => $instances];
 }
@@ -170,7 +180,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $previous=$items['templates'][$index];
         if(!empty($previous['sourceAbilityId']))itemFailure('Ce modèle est géré par sa compétence.',409);
         if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$previous)itemFailure('Ce modèle a été modifié par un autre MJ. Rouvrez-le avant de continuer.',409);
-        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','permissions'],true));
+        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','permissions','size','maxHp'],true));
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
         $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
         $template=normalizeItemTemplate($editable);$items['templates'][$index]=$template;
@@ -184,6 +194,9 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if (($location['kind'] ?? '') === 'inventory') $character($location['characterId'] ?? null);
         elseif (($location['kind'] ?? '') !== 'ground' || !in_array($location['sceneId'] ?? '', array_column($state['scenes'] ?? [], 'id'), true)) itemFailure('Choisissez un inventaire ou une scène existante.');
         $item = ['id' => $args['itemId'], 'templateId' => $args['templateId'], 'revision' => 1, 'location' => $location];
+        $model = $items['templates'][array_search($args['templateId'], array_column($items['templates'], 'id'), true)];
+        if (isset($model['size'])) $item['size'] = $model['size'];
+        if (isset($model['maxHp'])) $item['health'] = ['current' => $model['maxHp'], 'max' => $model['maxHp']];
         $items['instances'][] = $item;
         if ($location['kind'] === 'inventory') rememberLinkedItemStock($items, $character($location['characterId']), $item['templateId']);
         return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
@@ -203,6 +216,25 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
     }
     $template=$items['templates'][array_search($item['templateId'],array_column($items['templates'],'id'),true)];
+    if ($command === 'item.configure') {
+        if (!$isGm) itemFailure('La taille et les PV des objets sont réservés au MJ.', 403);
+        foreach ($state['devices']['devices'] ?? [] as $device) if (($device['itemId'] ?? '') === $item['id']) itemFailure('Utilisez les réglages du dispositif.', 409);
+        if (!in_array($item['location']['kind'], ['ground','inventory'], true)) itemFailure('Cet exemplaire a déjà été utilisé ou détruit.', 409);
+        if (array_key_exists('size', $args)) $item['size'] = normalizeItemSize($args['size']);
+        if (array_key_exists('health', $args)) {
+            if ($args['health'] === null) unset($item['health']);
+            else {
+                if (!itemPermissions($template)['destroy']) itemFailure('Activez le droit Détruire avant d’ajouter des PV à l’objet.', 409);
+                $item['health'] = normalizeItemHealth($args['health']);
+                if ($item['health']['current'] === 0) {
+                    if ($item['location']['kind'] === 'inventory') rememberLinkedItemStock($items, $character($item['location']['characterId']), $item['templateId']);
+                    $item['location'] = ['kind' => 'destroyed'];
+                }
+            }
+        }
+        $item['revision']++; $items['instances'][$index] = $item;
+        return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
+    }
     if(!$isGm&&itemPermissions($template)['boundToCarrier']&&in_array($command,['item.drop','item.transfer'],true))itemFailure('Cet objet est lié à son porteur. Seul le MJ peut le déplacer.',403);
     if(!$isGm&&in_array($command,['item.pickup','item.transfer','item.destroy'],true)&&!itemPermissions($template)[substr($command,5)])itemFailure('Le MJ n’autorise pas cette action sur cet objet.',403);
     if($command==='item.destroy'){
@@ -218,7 +250,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
                 if(!itemWithinReach($item['location'],$token,$state['map']))itemFailure('Approchez votre pion de l’objet pour le détruire.',403);
             }
         }else itemFailure('Cet exemplaire a déjà été utilisé ou détruit.',409);
-        $item['location']=['kind'=>'destroyed'];$item['revision']++;$items['instances'][$index]=$item;
+        $item['location']=['kind'=>'destroyed'];if(isset($item['health']))$item['health']['current']=0;$item['revision']++;$items['instances'][$index]=$item;
         return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item]];
     }
     $patch = null;
@@ -320,9 +352,9 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
     $templates = [];
     foreach ($store['templates'] ?? [] as $template) if (isset($ids[$template['id']])) {
         $mayRead=itemPermissions($template)['read']&&(isset($ownIds[$template['id']])||($template['permissions']['read']??false)===true);
-        $templates[]=$mayRead?$template:array_intersect_key($template,array_fill_keys(['id','name','kind','image','permissions'],true));
+        $templates[]=$mayRead?publicItemPhysical($template):array_intersect_key($template,array_fill_keys(['id','name','kind','image','permissions','size'],true));
     }
-    return ['version' => 1, 'templates' => $templates, 'instances' => $instances];
+    return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances)];
 }
 
 function onlineItemCommand(PDO $connection, array &$records, array &$pending, array $table, array $identity, string $command, array $args, bool $isGm): array {
@@ -331,7 +363,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     if (!is_string($requestId) || preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Référence d’objet invalide.', 'invalid_item_request');
     $signature = hash('sha256', json_encode(canonicalApplicationDomainValue(['command' => $command, 'arguments' => $args]), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     $context = onlinePersistentCommandReceipt($connection, $records, 'item-command', $requestId, $identity['id'], $signature, 'item');
-    if (is_array($context['receipt'] ?? null)) return [...$context['receipt']['result'], 'deduplicated' => true];
+    if (is_array($context['receipt'] ?? null)) return [...($isGm ? $context['receipt']['result'] : publicItemCommandResult($context['receipt']['result'])), 'deduplicated' => true];
     $records = array_replace($records, applicationDomainRecords($connection, ['items', 'devices', 'scene-index']), applicationDomainRecordsByPrefix($connection, 'character:'));
     $sceneId = $isGm && itemId($args['sceneId'] ?? null) ? $args['sceneId'] : onlineActiveSceneId($table);
     $records = array_replace($records, applicationDomainRecords($connection, ['map:' . $sceneId,'initiative:'.$sceneId]));
@@ -371,6 +403,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
         }
     }
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
+    if (!$isGm) $result = publicItemCommandResult($result);
     onlineStorePersistentCommandReceipt($records, $pending, $context, 'item-command', $requestId, $identity['id'], 'item-' . $requestId, 'items', $signature, $result);
     return $result;
 }

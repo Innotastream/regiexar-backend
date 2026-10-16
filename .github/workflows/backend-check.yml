@@ -43,6 +43,7 @@ jobs:
       - name: Domain backward compatibility
         run: |
           php tests/dynamic-items-contract.php
+          php tests/item-physical-cases.php
           php -n tests/dynamic-items-contract.php
           php tests/domain-backward-compatibility.php
       - name: Exact current-version login policy
@@ -64,9 +65,11 @@ jobs:
           php tests/unit-inventory-contract.php
           php tests/map-passages-contract.php
           php tests/fog-sight-contract.php
+          php tests/light-glow-contract.php
       - name: Complex multi-step ability lifecycle
         run: |
           php tests/complex-abilities-contract.php
+          php tests/complex-chain-critical-cases.php
           php tests/native-abilities-contract.php
           php tests/allocated-attacks-contract.php
           php tests/counter-defense-contract.php
@@ -98,6 +101,7 @@ jobs:
           php tests/special-success-contract.php
           php tests/strategy-break-contract.php
           php tests/table-comfort-contract.php
+          php tests/morale-summary-contract.php
       - name: Real SQL media concurrency and heartbeat
         env:
           XAR_TEST_MYSQL_ALLOW_LOCAL: '1'

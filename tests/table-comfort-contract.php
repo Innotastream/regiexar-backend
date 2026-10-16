@@ -17,7 +17,9 @@ requireTactical(runCommand($db,'table-tokens',$use,true,'account-gm')->body['ded
 $current=$db->payload('table')['tableTokens'];
 $configure=['action'=>'configure','requestId'=>'table-gm-config-00001','expectedRevision'=>$current['revision'],'pools'=>['gm'=>['min'=>2,'max'=>8,'current'=>2],'players'=>['min'=>0,'max'=>0,'current'=>0]]];
 requireTactical(runCommand($db,'table-tokens',$configure,true,'account-gm')->status===200,'Configure bounds');
-requireTactical(runCommand($db,'table-tokens',[...$use,'requestId'=>'table-gm-empty-000001'],true,'account-gm')->status===409,'Minimum enforced');
+requireTactical(!isset($db->payload('table')['tableTokens']['pools']['gm']['min']), 'Legacy minimum ignored');
+for($i=1;$i>=0;$i--){requireTactical(runCommand($db,'table-tokens',[...$use,'requestId'=>'table-gm-last-token-'. $i],true,'account-gm')->status===200,'Spending down to zero');requireTactical($db->payload('table')['tableTokens']['pools']['gm']['current']===$i,'Exact remaining stock');}
+requireTactical(runCommand($db,'table-tokens',[...$use,'requestId'=>'table-gm-empty-000001'],true,'account-gm')->status===409,'Zero enforced');
 
 // A private MJ view uses the token's actual level without publishing that view.
 $db=fixture();$token=$db->payload('token:scene-one:token-player');$token['layerId']='upper';$db->put('token:scene-one:token-player',$token);

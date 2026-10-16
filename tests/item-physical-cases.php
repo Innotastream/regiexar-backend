@@ -1,0 +1,23 @@
+<?php
+declare(strict_types=1);
+require __DIR__ . '/tactical-lifecycle.php';
+$db=fixture();$db->put('scene-index',['order'=>['scene-one']]);$template=['id'=>'physical-object','name'=>'Mur fictif','kind'=>'object','size'=>1500,'maxHp'=>40,'permissions'=>['destroy'=>true,'read'=>true]];
+$command=static fn($name,$args,$gm=true)=>runCommand($db,$name,['requestId'=>'physical-'.bin2hex(random_bytes(8)),...$args],$gm,$gm?'account-gm':'account-player');
+requireTactical($command('item.template.create',['template'=>$template])->status===200,'Create oversized object');
+requireTactical($command('item.spawn',['templateId'=>$template['id'],'itemId'=>'physical-copy','location'=>['kind'=>'inventory','characterId'=>'character-player']])->status===200,'Spawn full health');
+$item=$db->payload('items')['instances'][0];requireTactical($item['health']===['current'=>40,'max'=>40] && $item['size']===1500,'Size and HP persist');
+$args=['itemId'=>$item['id'],'expectedItemRevision'=>1,'health'=>['current'=>8,'max'=>40],'size'=>20];
+requireTactical($command('item.configure',$args,false)->status===403,'No player health/size writes');
+requireTactical($command('item.configure',$args)->status===200,'MJ edits only this instance');
+requireTactical($command('item.configure',$args)->status===409,'Stale HP edits rejected');
+$projected=publicItemStore($db->payload('items'),[$db->payload('character:character-player')],['id'=>'account-player'],[],fn()=>true);
+requireTactical(!isset($projected['templates'][0]['maxHp'],$projected['instances'][0]['health']) && !array_key_exists('maxHp',$projected['templates'][0]) && !array_key_exists('health',$projected['instances'][0]),'No private HP in player projection');
+$destroy=$command('item.destroy',['itemId'=>$item['id'],'expectedItemRevision'=>2,'characterId'=>'character-player'],false);
+requireTactical($destroy->status===200 && !isset($destroy->body['item']['health']),'Manual inventory destruction never exposes HP');
+requireTactical($db->payload('items')['instances'][0]['health']['current']===0,'Destroyed instance has zero HP');
+$spawn=$command('item.spawn',['templateId'=>$template['id'],'itemId'=>'physical-second','location'=>['kind'=>'ground','sceneId'=>'scene-one','layerId'=>'ground','x'=>50,'y'=>50]]);requireTactical($spawn->status===200,'Second spawn: '.$spawn->getMessage());
+$zero=['itemId'=>'physical-second','expectedItemRevision'=>1,'health'=>['current'=>0,'max'=>40],'requestId'=>'physical-zero-replay'];
+$zeroResult=$command('item.configure',$zero);requireTactical($zeroResult->status===200,'Zero destruction: '.$zeroResult->getMessage());requireTactical($command('item.configure',$zero)->body['deduplicated'],'Zero destruction idempotent');
+requireTactical($db->payload('items')['instances'][1]['location']['kind']==='destroyed','Zero removes object from map');
+requireTactical($command('item.configure',['itemId'=>'physical-second','expectedItemRevision'=>2,'health'=>['current'=>40,'max'=>40]])->status===409,'No resurrection');
+fwrite(STDOUT,"Objets PHP : grande taille, PV privés, droits et destruction vérifiés.\n");

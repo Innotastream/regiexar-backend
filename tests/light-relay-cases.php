@@ -71,7 +71,7 @@ $view = publicPlayerState($state, ['id' => 'account-player', 'display_name' => '
 requireTactical(array_column($view['map']['lights'], 'id') === ['a', 'b', 'off']
     && ($view['map']['lights'][2]['enabled'] ?? true) === false,
     'Visible torches remain on the map when extinguished, without relaying vision.');
-requireTactical(array_keys($view['map']['lights'][1]) === ['id', 'name', 'x', 'y', 'visionDistance', 'enabled', 'visibleFromAfar', 'portable', 'carrierTokenId', 'color', 'icon'], 'Light projection contains only the eleven safe public settings, including distant visibility.');
+requireTactical(array_keys($view['map']['lights'][1]) === ['id', 'name', 'x', 'y', 'visionDistance', 'enabled', 'visibleFromAfar', 'iconHidden', 'portable', 'carrierTokenId', 'color', 'icon'], 'Light projection contains only the twelve safe public settings, including distant visibility and icon masking.');
 requireTactical(array_column(array_values(array_filter($view['map']['tokens'],
     static fn (array $token): bool => ($token['dimSilhouette'] ?? false) !== true)), 'id') === ['observer', 'relay-visible']
     && array_column($view['rolls'], 'id') === ['visible-roll'],

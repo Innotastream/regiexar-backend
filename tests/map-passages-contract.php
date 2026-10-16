@@ -78,7 +78,7 @@ requireTactical(separateOnlineTokenPosition($moving,$desired,[...$spacingMap,'fo
 requireTactical(separateOnlineTokenPosition($moving,$desired,$spacingMap,[$moving,[...$other,'hidden'=>true]])===$desired,'An explicitly hidden token cannot push another unit');$spacingChecks++;
 $carriedLightChecks=0;
 foreach(['one','two'] as $destinationScene)foreach([false,true] as $legacy){
-    $light=['id'=>'carried-flame','name'=>'Flamme portée','x'=>21,'y'=>20,'visionDistance'=>9,'color'=>'#12ab34','icon'=>'flame','enabled'=>true,'portable'=>true,'visibleFromAfar'=>true,'carrierTokenId'=>'unit'];
+    $light=['id'=>'carried-flame','name'=>'Flamme portée','x'=>21,'y'=>20,'visionDistance'=>9,'color'=>'#12ab34','icon'=>'flame','enabled'=>true,'portable'=>true,'visibleFromAfar'=>true,'iconHidden'=>true,'carrierTokenId'=>'unit'];
     $map=['activeLayerId'=>'ground','naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50,'lights'=>[$light],'tokens'=>[['id'=>'unit','name'=>'Unité','x'=>21,'y'=>20,'size'=>40,'hp'=>100,'maxHp'=>100,'layerId'=>'ground','controllerPlayerId'=>'player']],
         'layers'=>['ground'=>['naturalWidth'=>1000,'naturalHeight'=>1000,'lights'=>[$light]],'upper'=>['naturalWidth'=>1000,'naturalHeight'=>1000,'lights'=>[]]]];
     $otherMap=$map;$otherMap['tokens']=[];$otherMap['lights']=[];$otherMap['layers']['ground']['lights']=[];
@@ -88,7 +88,7 @@ foreach(['one','two'] as $destinationScene)foreach([false,true] as $legacy){
     $travel=applicationApplyPassageCommand($created['state'],['id'=>'player','role'=>'player'],'passage.use',['sceneId'=>'one','passageId'=>'a','expectedRevision'=>1,'tokenId'=>'unit','expectedX'=>21,'expectedY'=>20]);
     $arrivedMap=$destinationScene==='one'?$travel['state']['map']:$travel['state']['scenes'][1]['combat']['map'];
     $lights=applicationMapLightsForLayer($arrivedMap,'upper',$arrivedMap['tokens']);
-    requireTactical(count($lights)===1&&$lights[0]['id']==='carried-flame'&&$lights[0]['carrierTokenId']==='unit'&&$lights[0]['color']==='#12ab34'&&$lights[0]['visionDistance']===9&&$lights[0]['visibleFromAfar']===true,'Carried light identity and settings survive portals, including legacy maps');$carriedLightChecks++;
+    requireTactical(count($lights)===1&&$lights[0]['id']==='carried-flame'&&$lights[0]['carrierTokenId']==='unit'&&$lights[0]['color']==='#12ab34'&&$lights[0]['visionDistance']===9&&$lights[0]['visibleFromAfar']===true&&$lights[0]['iconHidden']===true,'Carried light identity and settings survive portals, including legacy maps');$carriedLightChecks++;
     requireTactical($travel['state']['activeSceneId']==='one'&&$travel['state']['map']['activeLayerId']==='ground','Carried light transfer does not change the broadcast');$carriedLightChecks++;
 }
 $exitSpacingChecks=0;

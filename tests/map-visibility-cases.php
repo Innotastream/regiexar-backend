@@ -23,11 +23,11 @@ requireTactical(array_column($visibilityView['map']['tokens'], 'id') === ['obser
 $visibilityState['map']['layers']['ground']['vision']['enabled'] = false;
 $visibilityState['map']['layers']['ground']['fog']['enabled'] = true;
 foreach ([0, 10, 50, 99, 100] as $point) {
-    requireTactical(applicationFogCoversPoint(applicationActiveMapFogState($visibilityState['map']), $point, $point), 'A pristine upper floor starts fully concealed when fog is active downstairs.');
+    requireTactical(!applicationFogCoversPoint(applicationActiveMapFogState($visibilityState['map']), $point, $point), 'A pristine upper floor stays unpainted when fog is active downstairs.');
 }
 requireTactical(applicationActiveMapOcclusionState($visibilityState['map'])['fog'] === applicationActiveMapFogState($visibilityState['map']), 'Vision relays and public fog use the same protected mask.');
 $visibilityView = publicPlayerState($visibilityState, $visibilityIdentity, []);
-requireTactical(array_column($visibilityView['map']['tokens'], 'id') === ['observer'] && array_column($visibilityView['mapPings'], 'id') === ['secret-ping'], 'Fog conceals public tokens while signaling pings and preserving the owner token.');
+requireTactical(array_column($visibilityView['map']['tokens'], 'id') === ['observer', 'secret'] && array_column($visibilityView['mapPings'], 'id') === ['secret-ping'], 'An empty painted mask with vision off does not conceal tokens.');
 $visibilityState['map']['layers']['upper']['fog']['enabled'] = true;
 requireTactical(!applicationFogCoversPoint(applicationActiveMapFogState($visibilityState['map']), 50, 50), 'An intentionally revealed upper-floor mask is preserved.');
 $visibilityState['map']['layers']['ground']['fog']['enabled'] = false;

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/complex-movement.php';
 require_once __DIR__ . '/special-success.php';
+require_once __DIR__ . '/complex-chain-critical.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -85,6 +86,7 @@ function applicationComplexAbilityUpdateAttackResult(array $executions, array $a
             unset($target);
         }
         unset($state);
+        if ($changed) applicationSettleRejectedChainCritical($execution, $now ?? (int) floor(microtime(true) * 1000));
         if ($changed && $updateRevision) { $execution['revision'] = (int) $execution['revision'] + 1; $execution['updatedAt'] = $now ?? (int) floor(microtime(true) * 1000); }
     }
     unset($execution);
@@ -359,6 +361,7 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
             $step['damageComponents'] = $step['damageMode'] === 'configured' ? applicationDamageComponents($raw['damageComponents'] ?? []) : [];
             $step['allowOpposition'] = ($raw['allowOpposition'] ?? true) !== false;
             $step['firstGateAtCast'] = ($raw['firstGateAtCast'] ?? false) === true;
+            if (($raw['criticalSuccessCompletesChain'] ?? false) === true) $step['criticalSuccessCompletesChain'] = true;
         } elseif ($type === 'allocated-attacks') {
             $requested = applicationComplexAbilityIdentifier($raw['sourceStepId'] ?? '');
             $step['sourceStepId'] = in_array($requested, $targetSteps, true) ? $requested : ($targetSteps[count($targetSteps) - 1] ?? '');
@@ -459,6 +462,8 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         }
         if ($step['type'] === 'attack-chain' && $step['firstGateAtCast'] && ($index !== 0 || !$step['stopOnFailure']))
             return 'Le premier jet au lancement demande une chaîne en première étape avec arrêt à l’échec.';
+        if ($step['type'] === 'attack-chain' && ($step['criticalSuccessCompletesChain'] ?? false) && $step['resolutionMode'] !== 'batch')
+            return 'Le critique qui autorise toute la chaîne exige le mode automatique.';
         if ($step['type'] === 'attack-chain' && $step['damageMode'] === 'configured' && ($step['resolutionMode'] !== 'batch'
             || $step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? [])))
             return 'La série de l’étape ' . ($index + 1) . ' exige le mode automatique et des composantes de dégâts valides.';
@@ -732,7 +737,7 @@ function applicationComplexAbilityPrepareChainBatch(array &$execution, array $st
 {
     $baseThreshold = applicationComplexAbilityTokenThreshold($source, ['thresholdMode' => 'stat', 'targetStatId' => $step['statId']]);
     $successes = count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? false) === true));
-    while (count($state['rolls']) < $step['count'] && count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? true) === false)) === 0) {
+    while (count($state['rolls']) < $step['count'] && count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? true) === false)) === 0 && applicationChainCritical($step, $state) === null) {
         $modifier = -min(100, $successes * $step['penaltyPerSuccess']);
         $rolled = $roll('1d100', normalizeOnlineRollMode($rollMode), true);
         $raw = $rolled['rawD100'] ?? $rolled['total'] ?? null;
@@ -746,7 +751,7 @@ function applicationComplexAbilityPrepareChainBatch(array &$execution, array $st
             'detail' => $raw . ' · seuil ' . $baseThreshold . ($modifier ? ' ' . $modifier : '') . ' → ' . $outcome['threshold']], $now);
         if ($outcome['success']) $successes++;
     }
-    $state['batchReady'] = true; $state['queuedAttackCount'] = $successes;
+    $state['batchReady'] = true; $state['queuedAttackCount'] = applicationChainCritical($step, $state) !== null ? $step['count'] : $successes;
     $state['gateFailure'] = count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? true) === false)) > 0;
     $state['awaitingAttack'] = $successes > 0; $state['gateAt'] = $now;
     if ($successes === 0) applicationComplexAbilityFinishChainBatch($execution, $step, $state, $now);
@@ -1519,6 +1524,7 @@ function applyApplicationComplexAbilityCommand(
             if ($step['resolutionMode'] === 'batch') {
                 if (!$state['awaitingAttack']) applicationComplexAbilityFinishChainBatch($execution, $step, $state, $now);
             } elseif (count($state['attacks']) >= $step['count']) applicationComplexAbilityFinishStep($execution, $state, $now);
+            applicationSettleRejectedChainCritical($execution, $now);
         } elseif ($step['type'] === 'allocated-attacks' && $action === 'prepare-target') {
             if (($state['pendingTargetTokenId'] ?? '') !== '') applicationComplexAbilityFail('Terminez l’attaque courante avant de choisir une nouvelle cible.', 'complex_ability_attack_pending');
             applicationComplexAbilityInitializeAllocatedTargets($execution, $step, $state, $tokens);
