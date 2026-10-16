@@ -63,6 +63,7 @@ jobs:
         run: |
           php tests/unit-inventory-contract.php
           php tests/map-passages-contract.php
+          php tests/fog-sight-contract.php
       - name: Complex multi-step ability lifecycle
         run: |
           php tests/complex-abilities-contract.php
@@ -91,6 +92,10 @@ jobs:
           php tests/ongoing-effects-contract.php
           php tests/ability-validation-contract.php
           php tests/pending-ability-domain-contract.php
+          php tests/attack-enhancements-contract.php
+          php tests/attack-enhancements-lifecycle.php
+          php tests/special-success-contract.php
+          php tests/strategy-break-contract.php
       - name: Real SQL media concurrency and heartbeat
         env:
           XAR_TEST_MYSQL_ALLOW_LOCAL: '1'

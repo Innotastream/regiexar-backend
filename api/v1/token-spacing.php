@@ -2,8 +2,10 @@
 declare(strict_types=1);
 function separateOnlineTokenPosition(array $token,array $desired,array $map,array $tokens,?Closure $visible=null):array {
     $layerId=onlineTokenLayerId($token,$map);$level=array_replace($map,$map['layers'][$layerId]??[]);$width=(float)($level['naturalWidth']??1600)?:1600;$height=(float)($level['naturalHeight']??900)?:900;
-    $others=array_values(array_filter($tokens,static fn($other)=>$other['id']!==$token['id']&&empty($other['mountedOnTokenId'])&&onlineTokenLayerId($other,$map)===$layerId&&($visible===null||empty($other['hidden'])&&$visible($other['x'],$other['y']))));
-    $overlaps=false;foreach($others as $other)if(hypot(($desired['x']-$other['x'])*$width/100,($desired['y']-$other['y'])*$height/100)<(onlineGroupTokenSize($token)+onlineGroupTokenSize($other))/2+4){$overlaps=true;break;}
+    $fog=applicationActiveMapFogState([...$map,'activeLayerId'=>$layerId]);
+    $others=array_values(array_filter($tokens,static fn($other)=>$other['id']!==$token['id']&&empty($other['mountedOnTokenId'])&&empty($other['hidden'])&&onlineTokenLayerId($other,$map)===$layerId&&!applicationFogCoversPoint($fog,$other['x'],$other['y'])&&($visible===null||$visible($other['x'],$other['y']))));
+    // Keep close or partially overlapping portraits; separate only complete covers.
+    $overlaps=false;foreach($others as $other)if(hypot(($desired['x']-$other['x'])*$width/100,($desired['y']-$other['y'])*$height/100)<=abs(onlineGroupTokenSize($token)-onlineGroupTokenSize($other))/2){$overlaps=true;break;}
     if(!$overlaps)return $desired;
     $allowed=$visible?static function($point)use($visible,$desired,$width,$height):bool{
         if(!$visible($point['x'],$point['y']))return false;

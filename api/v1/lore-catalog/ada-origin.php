@@ -1,836 +1,829 @@
 <?php
 declare(strict_types=1);
-// Requested narrative only; no account, character identifier or private sheet.
+// Public narrative requested by the owner; provenance in provenance-20261016.json.
 return <<<'ADA_ORIGIN_TEXT'
-# Ada de Kasillon
+# Origine — Ada de Kasillon
 
-## Récit des origines
+Récit des origines
 
-### La prison dorée
+Par Innota
 
-Ada était née sur l’archipel de Kasillon, cent quarante et un ans plus tôt, au cours d’une phase de renouvellement. Ces rares périodes ouvraient, pour une décennie, le droit de donner naissance. Elles permettaient aussi aux plus anciens de partir en paix, s’ils le désiraient. Entre deux renouvellements, la bénédiction d’immortalité perpétuait une société dont les visages changeaient aussi peu que les habitudes.
+Sur l’archipel de Kasillon, Ada grandit dans une paix qui lui semblait immobile. Entre l’ombre de sa sœur Yuhra, les secrets d’une bibliothèque et un don qui donnait corps à ses dessins, elle chercha une place qui lui appartienne — jusqu’à ce qu’une attaque la condamne à un sommeil dont elle ignorait la fin.
 
-Issue d’une lignée modeste, Ada avait grandi avec sa sœur Yuhra dans le confort de la capitale, qui portait le même nom que l’archipel. Son enfance ressemblait à celle des autres enfants de sa caste : quelques amis de son âge, au milieu d’adultes dont la maturité ne se lisait pas sur les traits. Il fallait les entendre parler, connaître leur histoire, pour deviner les années qui les séparaient.
+### Repères
 
-Kasillon pouvait passer pour un paradis. La criminalité y était presque inexistante ; on racontait que le dernier criminel croupissait encore dans les geôles de la capitale, deux siècles après son incarcération. Aux yeux des peuples extérieurs, une telle paix devait sembler inconcevable.
+Origine : Archipel de Kasillon
+Maison : Mante
+Sœur aînée : Yuhra
+Don : Création par le dessin
 
-Ada, pourtant, s’y sentait de moins en moins à sa place. À mesure qu’elle grandissait, la sécurité de son enfance prenait les contours d’une prison dorée. Les mêmes enseignements, les mêmes attentes, les mêmes avenirs déjà tracés. On ne lui demandait guère d’imaginer ce qui aurait pu être différent. Sa créativité trouvait peu d’écho dans un monde satisfait de ce qu’il était.
+### I — La prison dorée
 
-Rêveuse, elle traversait les classes de répartition avec des résultats inégaux. Quelques matières lui réussissaient, mais rien qui retînt vraiment l’attention des superviseurs. Ses cahiers se couvraient de dessins pendant que les cours se poursuivaient. Elle avait parfois l’impression d’être un élément parmi d’autres, destiné à prendre sa place sans jamais laisser de trace.
+Ada était née sur l’archipel de Kasillon cent quarante et un ans auparavant, durant une phase de renouvellement. Ces périodes rares ouvraient, pour une décennie, le droit aux naissances. Elles permettaient aussi aux plus anciens de partir en paix, lorsque tel était leur désir. Le reste du temps, la bénédiction d’immortalité veillait sur les habitants de l’archipel, et les générations se côtoyaient sans que les visages disent toujours à quelle époque elles appartenaient.
 
-À la maison, Yuhra occupait presque toutes les conversations.
+La famille Mante était de condition modeste, mais Ada et sa sœur aînée, Yuhra, avaient grandi dans le confort de la capitale, qui portait le même nom que l’archipel. Leur enfance avait ressemblé à celle des autres enfants de leur caste : quelques camarades du même âge, beaucoup d’adultes dont la jeunesse apparente cachait une longue expérience, et un monde assez paisible pour que l’on y oublie de craindre le lendemain.
 
-Ses parents avaient toujours glorifié le régime de la famille Râ. Ils trouvaient désormais dans les réussites de leur aînée une nouvelle raison de s’en réjouir. Plus âgée de quelques années seulement, Yuhra obtenait des notes dignes d’un génie, notamment en architecture tellurique, une matière qu’Ada détestait. Les calculs que l’une semblait comprendre d’instinct devenaient, pour l’autre, une succession de signes qu’elle finissait par ne plus regarder.
+On racontait que le dernier criminel de Kasillon croupissait encore au fond des geôles de la capitale, deux siècles après son emprisonnement. Ada avait entendu cette histoire si souvent qu’elle ne savait plus de qui elle la tenait. Elle résumait bien ce que les habitants pensaient de leur cité. Au-delà des mers, ceux qui en entendaient parler pouvaient imaginer un lieu idyllique, préservé de tout ce qui rendait la vie incertaine ailleurs.
 
-Puis un représentant vint annoncer aux parents de Yuhra son intention de la faire entrer comme apprentie dans l’équipe d’ingénierie de la tour d’or.
+La paix y était réelle. Pourtant, à mesure qu’Ada grandissait, elle avait commencé à en sentir le poids.
 
-Ada assista à la scène depuis l’entrebâillement de sa porte. Elle entendit les félicitations, vit la joie sur leurs visages. Ils parlaient déjà d’un avenir dans les hautes sphères. Personne ne songea à l’appeler.
+Les choses demeuraient à leur place. Les voies à suivre semblaient connues longtemps avant que l’on ait envie de les choisir. La créativité n’était ni encouragée ni particulièrement estimée, et une idée nouvelle risquait surtout de passer pour une distraction. Ada regardait les tours, les rues, les visages familiers ; elle cherchait quelque chose qui lui donnerait envie de s’y attarder. Elle finissait toujours par retrouver la même impression : celle d’habiter une prison dorée dont personne, autour d’elle, ne voyait les murs.
 
-Elle resta derrière la porte.
+Dans les classes de répartition, son esprit s’évadait facilement. Ses résultats restaient mitigés, avec quelques exceptions qui ne suffisaient pas à retenir l’attention des superviseurs. Ses cahiers se couvraient de dessins là où l’on attendait des notes. Elle essayait parfois de s’intéresser à ce qu’on lui enseignait, puis un visage, une forme ou une scène prenait corps au bord de la page, et la leçon s’éloignait de nouveau.
 
-Peut-être s’étaient-ils habitués à son absence. Peut-être était-il devenu naturel qu’elle ne participe plus à ces instants où la famille se réjouissait. Cette pensée lui fit plus de mal qu’elle n’aurait su l’expliquer.
+Yuhra, elle, comprenait. Quelques années séparaient les deux sœurs, et Ada avait l’impression que cet écart s’agrandissait à chaque résultat annoncé. Les notes de son aînée étaient celles d’un génie, particulièrement en architecture tellurique, une matière qu’Ada détestait. Yuhra savait retenir des calculs qui lui paraissaient absurdes, saisir des mécanismes dont elle ne distinguait même pas l’utilité. Leurs parents s’émerveillaient de cette facilité. Fervents admirateurs du régime de la famille Râ, ils voyaient déjà leur fille entrer dans les hautes sphères de Kasillon.
 
-Quelques jours plus tard, elle préféra éviter un cours. En chemin, elle croisa Nael, lui aussi absent. Son ami était malade depuis quelque temps, chose si rare à Kasillon qu’on en parlait avec gêne, quand on en parlait encore.
+Un représentant vint un jour confirmer cet avenir. Il souhaitait faire introniser Yuhra comme apprentie dans l’équipe d’ingénierie de la tour d’or.
 
-Il lui adressa la parole avant qu’elle ait trouvé quoi lui dire.
+Ada avait regardé la scène par l’entrebâillement de sa porte. Elle entendait la joie de ses parents, voyait la place qu’ils réservaient au visiteur et à sa sœur. Elle n’était pas avec eux. Personne ne semblait s’étonner de son absence.
 
-« Hé, à force, ils vont vraiment te taper sur les doigts, tu sais ! »
+Elle resta un moment derrière la porte, sans savoir si elle attendait qu’on l’appelle. Peut-être cette mise à l’écart était-elle devenue si naturelle qu’ils ne la remarquaient plus. Elle-même avait presque cessé de la contester. Ce qui lui faisait mal, ce jour-là, était la facilité avec laquelle la vie de la famille continuait sans elle.
 
-Son sourire s’atténua lorsqu’il la regarda de plus près.
+Quelques jours plus tard, elle sécha un cours après une remontrance de son professeur : il lui reprochait de dessiner davantage qu’elle ne travaillait ses leçons. C’est ainsi qu’elle croisa Nael.
 
-« Tu n’as pas l’air dans ton assiette. Tout va bien ? »
+Lui aussi était absent. Il était malade depuis quelque temps, chose assez rare à Kasillon pour que l’on préfère en parler à demi-mot. Ada savait qu’il recevait des traitements. Elle savait aussi qu’ils n’avaient pas empêché son état de s’aggraver depuis près d’un an.
 
-Nael avait toujours eu cette facilité à lire dans les autres. Ada aurait voulu répondre sans l’inquiéter, mais les mots lui échappèrent.
+Nael fut le premier à lui adresser la parole.
 
-« Oui… Enfin, je ne sais pas. Plus le temps passe, moins je me sens à ma place. Est-ce que je suis normale ? Est-ce que c’est moi qui suis différente ? »
+— Hé… À force, ils vont vraiment te taper sur les doigts, tu sais !
 
-Il la laissa terminer, puis lui demanda :
+Il essaya de sourire, puis l’observa plus attentivement.
 
-« Tu te rappelles quand on traînait près des entrées de canalisation, avec les autres ? »
+— Tu n’as pas l’air dans ton assiette. Tout va bien ?
 
-Elle chercha un instant dans ses souvenirs.
+Il avait toujours eu cette façon de voir ce qu’elle aurait voulu cacher. Ada baissa un instant les yeux.
 
-« Oui… Pourquoi ? »
+— Oui… Enfin, je ne sais pas. Je n’arrive à rien. Tout me semble ennuyeux, comme si la créativité n’avait aucune valeur ici. Est-ce que c’est moi qui suis différente ?
 
-Nael leva les yeux avec un léger sourire.
+La question lui avait échappé avec une inquiétude qu’elle aurait préféré retenir. Nael ne chercha pas à lui répondre tout de suite.
 
-« À cette époque, c’était toi qui nous menais à la baguette. Tu voulais toujours découvrir quelque chose, partir à l’aventure. Qu’est-ce qui a changé ? »
+— Ada… Tu te rappelles quand on traînait près des entrées de canalisation, avec les autres ?
 
-Des images lui revinrent : les passages qu’ils guettaient, leur curiosité, cette impatience de voir ce qui se trouvait un peu plus loin.
+Elle fouilla un instant dans ses souvenirs.
 
-« C’était il y a longtemps. Aujourd’hui, plus rien ne change. Tout semble figé. Il n’y a rien à découvrir, rien à inventer… Tout le monde me regarde avec cet air de déception, de pitié. Même mes parents… »
+— Hm… Oui ?
 
-Sa voix se serra. Sans s’en rendre compte, elle avait ramené ses bras contre elle ; son regard cherchait autour d’eux un endroit où se poser. Nael mit une main sur son épaule. Ce simple contact suffit à interrompre les pensées qui l’entraînaient.
+Nael leva les yeux vers le ciel. Un sourire léger lui revint.
 
-« J’ai compris, dit-il doucement. Je sais ce qu’il te manque. C’est du rêve. »
+— À cette époque, c’était toi qui nous menais à la baguette. Tu voulais toujours aller voir plus loin, découvrir quelque chose. Tu n’en avais jamais assez. Et c’est même toi qui avais dessiné la bouche du monstre sur la grille des égouts. Je me rappelle en avoir fait un cauchemar !
 
-Ada le regarda. Elle aurait pu discuter chacun de ses mots, chercher ce qu’il n’avait pas compris. Elle n’en eut pas envie.
+Il sourit en se remémorant ce souvenir d’enfance.
 
-« C’était ton anniversaire il y a trois jours, non ? reprit-il. Tu pensais que j’avais oublié ? »
+— Alors, est-ce que quelque chose a changé ? Je ne pense pas… On s’est juste rendu compte de ce que signifie vieillir. Mais ton talent est unique, et au moins, tu en as un.
 
-Il n’avait aucun présent avec lui. Il se pencha seulement pour la prendre dans ses bras.
+Des images lui revinrent : leur petit groupe, les passages qu’ils avaient voulu explorer, cette certitude enfantine qu’un détour pouvait suffire à trouver une aventure. Le souvenir de la grille peinte lui arracha un sourire à l’ironie de Nael.
 
-« Bon anniversaire, Ada. »
+— C’était il y a longtemps… Aujourd’hui, tout semble figé dans le temps. Il n’y a rien à découvrir, rien à inventer. Tout le monde me regarde avec cet air de déception. Mes parents, Yuhra… J’ai l’impression que personne ne m’attend.
 
-Elle resta surprise un instant, puis se laissa aller contre lui. Nael était le seul à avoir évoqué cette date. La tradition était peu suivie à Kasillon, mais qu’il s’en souvînt comptait pour elle bien davantage qu’elle ne l’aurait admis.
+Nael posa une main sur son épaule. Elle tourna de nouveau les yeux vers lui.
 
-Lorsqu’il se détacha, sa fatigue reparut.
+— J’ai compris, dit-il doucement. Je crois que je sais ce qu’il te manque. Du rêve. Mais qui d’autre que toi a la capacité de faire rêver les autres ?
 
-« Je dois rentrer avant que mes parents s’inquiètent. Bonne journée, Ada. »
+Ada resta un instant silencieuse. Si ce monde lui interdisait de rêver, pouvait-elle, à son tour, faire rêver le monde ? Nael reprit avant qu’elle ait trouvé les mots pour lui répondre.
 
-Elle lui fit un petit signe de la main. Nael s’éloigna d’un pas mal assuré. Depuis un an, son état empirait ; les traitements ne semblaient pas y changer grand-chose. Ada le regarda jusqu’à ce qu’il disparaisse, encore réchauffée par son étreinte, inquiète de le voir si fragile.
+— C’était ton anniversaire il y a trois jours, non ? Tu pensais que j’avais oublié, hein ?
 
-### Les ouvrages oubliés
+Il n’avait aucun paquet à lui tendre. Il se pencha légèrement vers elle et la prit dans ses bras.
 
-Elle se dirigea vers la bibliothèque.
+— Bon anniversaire, Ada.
 
-Ce n’était pas sa première escapade. Elle savait qu’il fallait entrer sans attirer l’attention des gardes, sous peine d’être aussitôt renvoyée en cours, puis trouver un rayon assez peu fréquenté pour y rester tranquille. Ce jour-là, elle choisit les ouvrages de santé, d’hygiène et de psychologie.
+Elle resta surprise, puis se laissa aller contre lui. À Kasillon, les anniversaires étaient peu célébrés. Elle n’avait donc pas attendu grand-chose, et pourtant, jusqu’à cet instant, personne n’en avait fait mention. La chaleur de Nael et la sincérité de son étreinte lui suffisaient. Elle n’aurait pas su demander un autre présent.
 
-Psychose et Troubles Sociaux. Le titre lui parut déjà trop ennuyeux.
+— Je dois rentrer avant que mes parents s’inquiètent, finit-il par dire. Bonne journée, Ada.
 
-La Théorie des micro-organismes. Trop long, trop compliqué.
+Elle lui adressa un petit signe de la main. En le regardant s’éloigner, elle remarqua de nouveau sa démarche difficile. Il faisait attention à chacun de ses pas. Elle attendit un peu, comme si le regarder plus longtemps pouvait l’aider, puis prit la direction de la bibliothèque.
 
-Elle allait poursuivre lorsqu’elle aperçut un livre dissimulé derrière les autres. Sa couverture était particulièrement soignée. La fin de tous nos maux.
+Ce n’était pas la première fois qu’elle s’y réfugiait pendant les cours. Il fallait d’abord entrer quand aucun garde ne regardait, sous peine d’être renvoyée aussitôt à l’école. Ensuite, elle choisissait un rayon peu fréquenté, un endroit où elle pourrait rester sans attirer l’attention.
 
-Pourquoi pas ?
+Ce jour-là, elle se glissa du côté des ouvrages de santé, d’hygiène et de psychologie.
 
-Elle l’ouvrit et découvrit des sujets très différents. Un chapitre décrivait les maladies communes à des époques révolues ou chez d’autres peuples ; un autre expliquait comment un corps pouvait souffrir d’un esprit qui n’était plus sain.
+Psychose et troubles sociaux. Le titre lui parut trop rébarbatif.
 
-Des notes avaient été glissées entre les pages. La première était presque délabrée. Son papier ordinaire avait vieilli plus vite que le livre qui la protégeait.
+La Théorie des micro-organismes. Elle parcourut quelques lignes avant de le remettre en place : trop long, trop compliqué.
 
-« À toi qui lis ceci : penses-tu que notre monde soit un paradis ?
+Puis elle aperçut, derrière l’un de ces volumes, un livre plus soigneusement décoré. Il semblait avoir été oublié là, dissimulé plutôt que rangé. La Fin de tous nos maux. Elle le tira à elle. Pourquoi pas ?
 
-Si ta réponse est oui, passe ton chemin.
+L’ouvrage traitait de plusieurs sujets. Certains chapitres décrivaient des maladies connues à des époques révolues ou chez d’autres peuples. Un autre expliquait qu’un corps ne pouvait rester sain si l’esprit lui-même ne l’était pas. Ada s’y attarda, avant de remarquer les feuillets glissés entre les pages.
+
+La première note était ancienne, presque délabrée. Son papier ordinaire avait vieilli bien plus vite que le livre qui l’abritait.
+
+« À toi qui lis ces mots : penses-tu que notre monde soit un paradis ?
+
+Si ta réponse est oui, tu devrais passer ton chemin.
 
 Sinon, faisons plus ample connaissance… Ce soir, peut-être. »
 
-L’auteur signait d’un nom qui ne lui disait rien : Ancolie.
+L’auteur avait signé d’un nom inhabituel : Ancolie. Un post-scriptum précisait : « Retrouvons-nous aux Mille et Une Merveilles. »
 
-Un post-scriptum ajoutait :
+Ada relut le nom du rendez-vous. Il ne lui évoquait rien. Elle garda cependant le feuillet et poursuivit sa lecture. Quelques pages plus loin, un passage la troubla davantage.
 
-« Retrouvons-nous aux Mille et une merveilles. »
+« Bien que la plupart des maladies aient été vaincues à la suite de la bénédiction des trois oracles, certaines conditions génomiques propres aux individus paraissent entrer en contradiction avec celle-ci, d’une manière que nous ne parvenons pas à expliquer.
 
-Ada essaya de situer cet endroit. Elle n’y parvint pas. Elle conserva pourtant la note et reprit sa lecture, jusqu’à tomber sur un passage qui la retint tout entière.
+Les maux dégénératifs tels que la Retricite, le Diphusospinal ou le mal des clématites ne sont que les faces d’une même pièce. Aucun n’est traitable. Je crains qu’ils ne le deviennent jamais tant que la bénédiction durera. Les décennies me donneront peut-être tort. »
 
-« Bien que la plupart des maladies aient été vaincues grâce à la bénédiction des trois oracles, certaines conditions génomiques propres aux individus semblent entrer en contradiction avec celle-ci, d’une manière que nous ne parvenons pas à expliquer.
+Elle avait déjà entendu certains de ces termes. En cours, probablement. Elle aurait voulu retrouver la leçon, une explication, n’importe quel souvenir plus précis. Il ne lui revenait que l’image de ses cahiers, remplis de créations au lieu des notes qui lui auraient été utiles à cet instant.
 
-Les maux dégénératifs tels que la Retricite, le Diphusospinal ou le mal des clématites ne sont que les faces d’une même pièce. Aucun n’est traitable. Je crains qu’aucun ne le devienne tant que la bénédiction durera. Les décennies me donneront peut-être tort… »
+Un bruit, à l’extrémité du rayon, la fit refermer précipitamment le livre.
 
-Elle avait déjà entendu certains de ces termes. Où ? Elle chercha, agacée de ne retrouver qu’une impression vague. Si elle avait mieux écouté en cours, si ses cahiers avaient contenu un peu moins de dessins et un peu plus de notes…
+— Jeune fille ! N’êtes-vous pas censée être en cours ?
 
-Un bruit dans le rayon voisin la fit refermer le livre.
+Un vieux bibliothécaire la regardait. Ada sentit le feuillet qu’elle avait conservé et le glissa plus profondément dans sa poche.
 
-« Jeune fille ! N’êtes-vous pas censée être en cours ? »
+— Je… Nous sommes en congé aujourd’hui.
 
-Un vieux bibliothécaire venait de la découvrir.
+L’homme prit un air circonspect. Puis son regard tomba sur le livre.
 
-« Je… Nous sommes en congé aujourd’hui. »
+— Qu’est-ce que… Où avez-vous trouvé ça ?
 
-Il la considéra d’un air circonspect, puis baissa les yeux sur le volume qu’elle tenait.
+Il le lui arracha des mains avant qu’elle ait le temps de répondre. L’agacement avait disparu de son visage, remplacé par une inquiétude mêlée de stupeur.
 
-Son expression changea brusquement.
+— Vous ne l’avez pas lu, n’est-ce pas ?
 
-« Qu’est-ce que… Où avez-vous trouvé ça ? »
+Quelque chose, dans sa voix, lui conseilla de se taire. Ada serra la note à travers le tissu de sa poche.
 
-Il lui arracha le livre. Ada le regarda, déconcertée par cette inquiétude soudaine.
+— Non… Je n’ai pas eu le temps.
 
-« Vous ne l’avez pas lu, n’est-ce pas ? »
+Le bibliothécaire parut se détendre.
 
-Elle sentit la note dans sa poche et la serra entre ses doigts.
+— Bien… Bien. Quant à vous, je vais contacter les superviseurs pour savoir ce qu’il en est réellement de cette histoire de congé.
 
-« Non. Je n’ai pas eu le temps. »
+Elle se leva et fit mine de le suivre. Au détour d’une allée, elle changea brusquement de direction et gagna la sortie. Le vieil homme ne put la retenir.
 
-Le vieil homme parut se détendre.
+Elle s’éloigna rapidement, avec la certitude que la prochaine visite serait moins simple. Désormais, il connaissait son visage.
 
-« Bien… Bien. Quant à vous, je vais contacter les superviseurs. Nous verrons ce qu’il en est, de cette histoire de congé. »
+### II — Ce que Yuhra voyait
 
-Ada se leva et fit mine de le suivre. Au premier tournant, elle changea de direction et quitta précipitamment la bibliothèque. Elle l’avait semé, mais il connaissait désormais son visage.
+Ada attendit encore une heure avant de rentrer, afin que son retour coïncide avec la fin habituelle des cours. En franchissant la porte, elle reçut les salutations vagues de ses parents. Rien qui appelle une réponse longue, rien qui lui donne envie de raconter sa journée.
 
-Une heure plus tard, elle rentra chez elle, à l’heure habituelle de la fin des cours. Ses parents lui adressèrent de vagues salutations. Elle gagna sa chambre, s’allongea et fixa le plafond. Une petite fissure s’y dessinait, la même depuis son enfance ; elle lui sembla avoir gagné quelques centimètres.
+Elle gagna sa chambre et s’allongea sur le lit. Au plafond, une petite fissure semblait s’être étendue de quelques centimètres depuis son enfance. Elle la suivit des yeux. À force de regarder, ses pensées se défirent et elle s’endormit sans s’en apercevoir.
 
-Elle s’endormit sans l’avoir voulu.
+Dans son rêve, elle se trouvait au milieu d’une foule. Elle ne connaissait aucun de ces gens ; aucun ne portait de visage. Tous avançaient de part et d’autre, la bousculaient et poursuivaient leur chemin. Leurs conversations se mêlaient en un brouhaha dont elle ne distinguait pas un seul mot. Plus elle cherchait quelqu’un qui la verrait, plus le bruit envahissait ses oreilles.
 
-Dans son rêve, elle se retrouvait au milieu d’une foule. Les gens passaient de part et d’autre, la bousculaient sans la regarder. Aucun n’avait de visage. Leurs conversations formaient un brouhaha dont elle ne comprenait pas un mot, de plus en plus proche, de plus en plus envahissant.
+— Je vous déteste !
 
-« Je vous déteste ! »
+La foule s’immobilisa.
 
-La foule se figea. Toutes les têtes se tournèrent vers elle. Les paroles devinrent des murmures, et ces figures sans traits semblaient la juger.
+Toutes ces têtes sans traits s’étaient tournées vers elle. Ada sentait leur attention, leur jugement, sans trouver de regard à soutenir. Les conversations avaient laissé place à des murmures insaisissables.
 
-Un tintement la réveilla.
+Un tintement la tira brusquement du sommeil. Quelqu’un venait de sonner à la porte.
 
-Quelqu’un venait d’arriver. Elle s’approcha de la porte de sa chambre et y colla l’oreille. Elle ne saisit que quelques fragments : sa fille, plusieurs absences, une raison… Puis des pas se rapprochèrent.
+Elle se leva et colla l’oreille contre celle de sa chambre. Des voix lui parvenaient, étouffées. Elle saisit quelques mots : « fille », « depuis plusieurs », « raison ». Le reste lui échappa.
 
-Elle retourna vite à son lit.
+Quelques minutes plus tard, des pas approchèrent. Ada retourna rapidement s’asseoir sur son lit. La porte s’ouvrit presque aussitôt sur ses parents.
 
-Ses parents entrèrent presque aussitôt.
+— Ada, il faut qu’on parle.
 
-« Ada, il faut qu’on parle. »
+Son père avait pris la parole. Sa voix portait une amertume lasse, comme si la conversation était déjà une déception avant d’avoir commencé. Ada se redressa.
 
-La voix de son père portait une amertume lasse. Elle se redressa.
+— Un de tes professeurs vient de nous prévenir de tes absences répétées. Explique-nous.
 
-« Un de tes professeurs vient de nous avertir de tes absences répétées. Explique-nous. »
+Elle les regarda. Ils étaient là, enfin, à attendre quelque chose d’elle. Elle aurait préféré que leur attention arrive autrement.
 
-Ils se tenaient là, à attendre une réponse. Depuis combien de temps n’avaient-ils pas cherché à savoir ce qu’elle ressentait ?
-
-« Je ne me sens pas bien. Pas à ma place. Rien de ce que j’apprends là-bas ne m’intéresse. »
+— Je ne me sens pas bien. Je ne me sens pas à ma place. Rien de ce que j’apprends là-bas ne m’intéresse. J’aspire à mon propre rêve.
 
 Ses parents échangèrent un regard.
 
-« Ce n’est pas une raison, répondit son père. Tes résultats sont médiocres, et nous ne t’en avons jamais tenu rigueur. Mais que tes actes nous portent préjudice, c’est autre chose. »
+— Ce n’est pas une raison, répondit son père. Tes résultats sont médiocres, et nous ne t’en avons jamais tenu rigueur. Mais que tes actes nous portent préjudice, c’est autre chose.
 
-Sa mère intervint :
+Sa mère intervint à son tour.
 
-« Si seulement tu pouvais prendre exemple sur Yuhra… »
+— Si seulement tu pouvais prendre exemple sur Yuhra…
 
-La colère revint d’un coup.
+Ada sentit la colère remonter avant même d’avoir choisi ses mots.
 
-« Toujours. Encore une fois, vous n’avez que son nom à la bouche ! Est-ce que vous pouvez me voir comme je suis ? »
+— Toujours… Encore une fois, vous n’avez que son nom à la bouche. Est-ce que vous pouvez me voir comme je suis ?
 
-Ils parurent surpris de l’entendre crier.
+Elle avait élevé la voix. Ses parents restèrent un instant surpris.
 
-« Il suffit ! lança son père. Ce n’est pas du haut de ta crise d’adolescence que tu feras la loi dans cette famille. Tu nous crois aveugles ? »
+— Il suffit ! reprit son père. Ce n’est pas du haut de ta crise d’adolescence que tu feras la loi dans cette famille ! Tu penses que nous sommes aveugles ?
 
-Vous l’êtes.
+Vous l’êtes. La réponse se pressait derrière ses lèvres. Elle la retint, sans cesser de le regarder.
 
-Les mots se pressaient contre ses lèvres. Elle les retint.
+— À partir de demain, tu iras en cours sans faute. Je ne veux plus avoir à te le redire. Quand tu auras décidé d’apprendre ce qui doit l’être, nous discuterons de tes états d’âme.
 
-« À partir de demain, tu iras en cours, sans faute. Je ne veux plus avoir à te le redire. Quand tu auras décidé d’apprendre ce qui doit l’être, nous discuterons de tes états d’âme. »
+Il quitta la pièce. Sa mère le suivit quelques secondes plus tard, après avoir adressé à Ada un regard mélancolique. Pendant un bref instant, ce visage lui parut s’effacer comme ceux de son rêve.
 
-Il quitta la pièce. Sa mère le suivit quelques secondes plus tard, non sans adresser à Ada un regard mélancolique. L’espace d’un instant, son visage sembla s’effacer, comme ceux du rêve.
+Elle resta immobile après leur départ. La colère ne la quittait pas, mais elle n’avait plus personne à qui la dire.
 
-Ada resta immobile jusqu’à ce que la porte s’ouvre de nouveau.
+La porte s’ouvrit de nouveau. Yuhra entra avec précaution, comme un chat dans une pièce où il n’aurait pas dû se trouver, et referma derrière elle.
 
-Yuhra se glissa à l’intérieur avec la précaution d’un chat entrant dans une pièce interdite, puis referma derrière elle.
+— J’ai entendu… Ça va, petite sœur ?
 
-« J’ai entendu… Ça va, petite sœur ? »
+Ada lui répondit d’un regard vide.
 
-Ada la regarda sans expression.
+— Laisse-moi.
 
-« Laisse-moi. »
+Yuhra vint pourtant s’asseoir au bord du lit, à côté d’elle. Elle garda le silence quelques secondes.
 
-Yuhra vint s’asseoir au bord du lit. Pendant quelques secondes, elle ne dit rien.
+— Tu sais, j’aurais bien aimé avoir quelques années de moins. On aurait pu aller en cours toutes les deux.
 
-« Tu sais, j’aurais bien aimé avoir quelques années de moins. On aurait pu aller en cours toutes les deux. »
+Ada releva les yeux. Elle ne savait pas si cette proposition la blessait davantage par sa naïveté ou par la tendresse qu’elle contenait.
 
-Ada releva les yeux, partagée entre la colère et l’incompréhension.
-
-« Pour que tu m’effaces encore plus ? Père et mère ne jurent déjà que par toi. Le génie qui comprend tout, à qui tout sourit… La fierté de la famille Mante. Et moi, je n’en suis que la honte. »
+— Pour que tu m’effaces encore plus ? Père et mère ne jurent déjà que par toi. Le génie qui comprend tout, à qui tout réussit… La fierté de la famille Mante. Et moi, je n’en suis que l’ombre.
 
 Yuhra resta sidérée.
 
-« Je… Je ne savais pas que tu le ressentais à ce point. »
+— Je… Je ne savais pas que tu le ressentais à ce point.
 
-Elle prit un dessin accroché au mur, près du lit. Ada les y avait représentées toutes les deux, plus jeunes.
+Elle tendit la main vers un dessin accroché au mur, près du lit. Ada y avait représenté les deux sœurs, plus jeunes. Yuhra le regarda un moment avant de reprendre.
 
-« Même à cet âge, tu dessinais déjà si bien. Je n’aurais pas su en faire la moitié. Depuis que je suis entrée en cours, beaucoup de choses me paraissent limpides. Et quand je ne comprends pas, il me suffit souvent d’y consacrer du temps. Mais le dessin… Certaines choses restent hors de ma portée. »
+— Même à cet âge-là, tu dessinais déjà si bien. Je n’ai jamais réussi à en faire la moitié. Depuis que je suis entrée en cours, les choses me semblent assez limpides. Et quand je ne comprends pas, il me suffit souvent d’y consacrer du temps. Mais le dessin… Certaines choses restent hors de ma portée.
 
-« La bonne affaire, coupa Ada. Ça n’a aucune utilité ici. Toi, tu retiens des calculs quantiques, tu sais déjà réparer des canaliseurs telluriques. Et moi, je sais dessiner… »
+— La bonne affaire. Personne n’y prête attention. Toi, tu retiens des calculs quantiques, tu sais déjà réparer des canaliseurs telluriques… Mais vous savez quoi ? Je m’en fous de ce que vous pensez. Mes aspirations n’appartiennent qu’à moi.
 
-Elle eut un rire bref, nerveux, qui ne trompa personne.
+Les mots sortirent d’un trait. Ada avait enfin dit ce qu’elle retenait. Yuhra posa doucement le portrait.
 
-« Écoute-moi, Ada. Certaines personnes ont des capacités que d’autres n’ont pas. Certaines travaillent dur, d’autres y arrivent d’instinct. Les gens nous jugeront toujours à partir de ce qu’ils comprennent de nous. Mais je sais que ta créativité est unique. »
+— Écoute-moi, Ada. Certaines personnes ont des capacités que d’autres n’ont pas. Elles travaillent dur ou y arrivent d’instinct ; les gens les jugent quand même d’après ce qu’ils comprennent d’elles. Moi, je sais que ta créativité est quelque chose d’unique. Tu as raison de croire en toi. N’écoute pas papa ou maman : ils ne voient que ce qu’on leur a appris à regarder. Moi, je crois en toi. Et dans ce monde où rien ne change, peut-être que tu pourrais être l’encre qui repeint la monotonie.
 
-Yuhra regarda le dessin avant de le reposer.
+Elle déposa sur le lit une boîte longue et assez fine. Ada la regarda, encore étonnée par ce qu’elle venait d’entendre. Depuis Nael, personne ne l’avait ainsi soutenue dans son rêve.
 
-« Dans ce monde où rien ne change, peut-être pourrais-tu être cette encre qui repeint la monotonie. »
+— Je… Merci. J’ai besoin de me reposer…
 
-Elle posa sur le lit une boîte longue et mince.
+Son aînée se leva. La culpabilité se lisait sur son visage, mêlée à l’impression de ne pas pouvoir changer ce qui se passait. Elle n’essaya pas de prolonger la conversation.
 
-Ada détourna les yeux.
+— Prends ton temps… Et bon anniversaire, en retard. Je t’aime, petite sœur.
 
-« Je ne veux pas discuter, Yuhra. Je me demande si je ne vous déteste pas tous. »
+Elle quitta la chambre avec un sourire léger.
 
-Sa sœur se leva, blessée et coupable à la fois.
+Ada fixa la boîte, la posa sur sa table de chevet et se recoucha. Emportée par la fatigue du moment, elle remit son ouverture au lendemain. Elle passa une grande partie de la nuit à chercher le sommeil, avec les mots de sa sœur mêlés à ceux de leurs parents.
 
-« Prends ton temps… Et bon anniversaire en retard. Je t’aime, petite sœur. »
+Le lendemain, un tintement la réveilla. Quelqu’un sortait. Ce devait être Yuhra : son apprentissage commençait ce matin-là, et elle ne rentrerait pas avant le mois suivant.
 
-Elle lui adressa un sourire triste, puis sortit.
+En se redressant, Ada retrouva la boîte sur sa table de chevet. Cette fois, elle se décida à la prendre. Elle était étonnamment légère. À l’intérieur, un voile protégeait le cadeau.
 
-Ada fixa la boîte. En se recouchant, elle la fit tomber au sol et n’essaya pas de la ramasser.
+Ada l’écarta.
 
-Cette nuit-là, le sommeil tarda à venir.
+Une plume cristalline, ambrée, reposait dans l’écrin. À côté, un encrier contenait quelque chose qui ressemblait davantage à un nuage brillant qu’à un liquide. Elle resta penchée sur l’ensemble, étonnée par sa finesse. Un tel objet avait dû coûter une fortune.
 
-### La plume de Yuhra
-
-Le lendemain, un tintement tira Ada du sommeil. Quelqu’un quittait la maison. Ce devait être Yuhra : son apprentissage commençait ce matin-là, et elle ne rentrerait pas avant le mois suivant.
-
-En se redressant, Ada aperçut la boîte au pied de son lit.
-
-Elle finit par la ramasser. Malgré sa longueur, elle pesait peu. Un voile en recouvrait le contenu ; elle le souleva et découvrit une magnifique plume cristalline aux teintes ambrées, accompagnée d’un encrier. À l’intérieur, l’encre ressemblait davantage à un nuage lumineux qu’à un liquide.
-
-Un tel objet avait dû coûter une fortune.
-
-Elle trouva aussi un mot.
+Yuhra avait joint un mot.
 
 « Chère petite sœur,
 
-J’espère que cette plume t’offrira la possibilité de graver dans la mémoire de tous celle que tu es au fond de toi.
+J’espère que cette plume te permettra de graver dans la mémoire de tous celle que tu es au fond de toi.
 
-P.-S. : Je me suis permis d’enchanter l’encrier. Tu ne risques pas de le renverser, comme ça. S’il est vide, n’importe quel liquide que tu y incorporeras deviendra de l’encre, sauf l’huile de poisson… et l’acide. C’est compliqué à expliquer.
+P.-S. : Je me suis permis d’enchanter l’encrier. Tu ne risques pas de le renverser. Quand il sera vide, n’importe quel liquide que tu y verseras deviendra de l’encre, sauf l’huile de poisson… et l’acide. C’est compliqué à expliquer.
 
-Yuhra. »
+Yuhra »
 
-Ada relut les dernières lignes, puis prit la plume.
+Ada souleva la plume. Une sensation difficile à nommer l’envahit : un peu de joie, de l’appréhension, surtout cette envie de découvrir qu’elle avait connue enfant. Elle fit tourner délicatement le cristal entre ses doigts. Sa sœur avait pensé à ce qu’elle aimait. Malgré les mots de la veille, elle avait pris le temps de préparer cela pour elle.
 
-Une sensation familière lui traversa le ventre : de la joie, un peu d’appréhension, cette curiosité qu’elle éprouvait enfant devant une chose inconnue. Elle resta un moment à contempler les reflets ambrés entre ses doigts.
+— Merci…
 
-« Merci… »
+Il n’y avait personne pour l’entendre.
 
-Le mot s’échappa dans la chambre vide.
-
-Elle dessina une nuée de lucioles. Le trait était si fin, si précis, qu’elle se mit à imaginer leur mouvement. Elle suivait déjà les petites lumières dans sa pensée. Elle ferma les yeux et se laissa absorber par la scène.
+Son premier dessin fut une nuée de lucioles. Le trait était si fin, si précis, qu’elle s’attarda sur chaque petite forme avec l’impression qu’elles pouvaient bouger. Elle imagina leurs lumières, leur vol au-dessus de la page. Peu à peu, elle se laissa absorber par la scène et ferma les yeux.
 
 Une lueur jaune traversa ses paupières.
 
-Lorsqu’elle les rouvrit, une luciole montait dans sa chambre. Elle la regarda tournoyer, s’élever encore, puis disparaître par une fissure.
+Ada les rouvrit. Une luciole montait lentement au milieu de la chambre. Elle tourna un instant dans l’air, puis disparut par une fissure.
 
-Ada resta sans bouger. Avait-elle vraiment vu cela ? Était-ce encore un reste de rêve ?
+Ada ne bougea pas. Elle regarda l’endroit où la lumière s’était effacée, puis le dessin devant elle. Avait-elle vraiment vu cela ? Son imagination s’était-elle prolongée alors qu’elle ouvrait les yeux ? Elle resta sans réponse jusqu’à ce que les bruits de la rue lui rappellent l’heure.
 
-Les bruits de la rue lui rappelèrent l’heure. Il fallait aller en cours.
+Il fallait aller en cours.
 
-Elle dessina toute la journée, comme elle en avait l’habitude. Pourtant, aucune de ses nouvelles créations ne lui parut aussi vivante que les lucioles du matin. Les jours suivants, elle recommença, chercha ce qu’elle avait fait de différent, sans parvenir à retrouver cette sensation.
+Elle dessina toute la journée, comme elle en avait l’habitude. Rien, sur ces nouvelles pages, ne lui parut aussi vivant que la nuée du matin. Durant les jours qui suivirent, elle recommença, chercha à retrouver cette sensation, et attendit la réouverture de la bibliothèque.
 
-À la réouverture de la bibliothèque, elle s’y précipita dès la fin des cours. Il ne restait qu’une heure avant la fermeture.
+### III — Les mots cachés
 
-Le vieux bibliothécaire la reconnut aussitôt.
+Quand elle put enfin y retourner, il ne restait qu’une heure avant la fermeture. Ada s’empressa de rejoindre le bibliothécaire. C’était le vieil homme de sa précédente visite.
 
-« Toi ! La petite fuyarde. J’ai contacté l’école… »
+— Je te reconnais, petite fuyarde ! J’ai contacté l’éco…
 
-« Je sais ! Tout est rentré dans l’ordre. Je cherche un livre. »
+— Je sais ! le coupa-t-elle. Tout est rentré dans l’ordre. Je cherche un livre.
 
-Il la regarda, mécontent d’avoir été interrompu.
+Il la considéra un moment.
 
-« Les jeunes… Et quel livre, donc ? »
+— Hm… Les jeunes… Et donc ?
 
 Ada choisit ses mots.
 
-« Un ouvrage sur la magie et… l’art. »
+— Un ouvrage sur la magie et… l’art ?
 
-Il parut perplexe.
+Le bibliothécaire parut perplexe.
 
-« Il y a les sortilèges de création à partir de l’argile et de ses dérivés. »
+— Voyons. Il y a un livre sur les sortilèges de création à partir de l’argile et de ses dérivés.
 
-« Non. Je cherche plutôt quelque chose sur le dessin. »
+— Non. Je cherche plutôt quelque chose sur le dessin.
 
-Le vieil homme chercha encore.
+— Je n’ai rien de… Attends. Un ouvrage semble correspondre, même s’il ne me dit rien. Mille et Une Merveilles. Deuxième étage, quatorzième rangée, cinquième rayon à gauche.
 
-« Je n’ai rien de… Attendez. Un titre semble correspondre, mais il ne me dit rien. Mille et une merveilles. Deuxième étage, quatorzième rangée, cinquième rayon à gauche. »
+Ada sentit son attention se resserrer sur le titre. Le rendez-vous de la note. Le nom qu’elle n’avait pas su reconnaître.
 
-Ada sentit son attention se fixer sur ces mots.
+— Merci !
 
-La note du livre de médecine.
+Elle partit sans attendre d’autre commentaire.
 
-« Merci ! »
+À l’endroit indiqué, aucun dos de livre ne portait ce titre. Elle vérifia le rayon, puis retira le volume qui occupait la place attendue. L’ouvrage était derrière, caché comme l’avait été celui de médecine.
 
-Elle partit avant qu’il puisse la retenir.
+Qui pouvait s’amuser à dissimuler ces livres ? Elle pensa à l’inquiétude du bibliothécaire et ouvrit celui-ci avec plus de précaution.
 
-### Mille et une merveilles
+Mille et Une Merveilles rassemblait des poèmes, mêlés à des rapports sur la faune et la flore d’autres pays. Au fil des pages, quelqu’un semblait vivre les aventures dont Ada manquait : découvrir des lieux inconnus, observer des êtres qu’elle n’avait jamais rencontrés, trouver des mots pour les raconter. Elle feuilleta rapidement, puis ralentit. Elle aurait voulu prendre le temps de tout lire.
 
-À l’endroit indiqué, aucun livre ne portait ce titre. Ada vérifia le rayon, retira le volume qui occupait la place attendue et découvrit enfin celui qu’elle cherchait, caché derrière les autres.
+Au milieu du livre, le récit s’interrompait. Une nouvelle note reposait à cet endroit. Le papier avait vieilli autant que celui trouvé dans l’ouvrage de médecine, mais l’écriture était différente.
 
-Comme La fin de tous nos maux.
-
-Qui avait pu dissimuler ces ouvrages, et pourquoi ?
-
-Les premières pages formaient un recueil de poésie mêlé à des descriptions de la faune et de la flore d’autres pays. Une personne y racontait ses découvertes. Ada feuilleta le livre de plus en plus vite, attirée par ces paysages étrangers et par cette vie qui semblait pleine d’aventures.
-
-Au milieu du volume, le récit s’arrêtait.
-
-Une seconde note attendait là. Elle était aussi ancienne que la première, mais l’écriture différait.
-
-« Nos échanges ne m’ont jamais laissé de marbre. Ce monde auquel tu aspires, ces poésies, je les veux miennes aussi.
+« Nos échanges me touchent toujours. Ce monde auquel tu aspires, ces poésies… Je les veux miens, moi aussi.
 
 Puissent-ils comprendre notre choix. Retrouvons-nous ce soir encore. »
 
-La signature était celle de Clématite.
+Le mot était signé Clématite.
 
-Ada passa doucement les doigts sur le bord du papier. Quelque chose s’était joué entre ces pages. Elle n’en connaissait ni les personnes ni l’issue, mais leurs mots étaient restés là, à attendre.
+Ada demeura un instant sur ces lignes. Il y avait eu ici une conversation, un désir partagé, un choix dont elle ne connaissait ni la nature ni l’issue. Elle avait l’impression de surprendre les dernières paroles de personnes parties longtemps avant elle.
 
-Elle poursuivit sa lecture.
+Le chapitre suivant regroupait des formules. Quelqu’un avait corrigé celles du livre, ajouté des calculs, couvert certains passages d’annotations. Ada reconnut l’écriture de la première note : celle d’Ancolie, semblait-il.
 
-Le chapitre suivant regroupait des formules. Certaines avaient été corrigées ; des notes les recouvraient, ajoutaient des signes, reprenaient des calculs. Elle reconnut l’écriture d’Ancolie.
+Elle choisit une instruction qui n’avait pas été modifiée. Sur une page restée vierge, elle dessina une fleur au crayon, en suivant les gestes indiqués. La forme parut presque s’animer. Puis l’encre se mit à couler, les traits se confondirent et le dessin se défit jusqu’à ne plus ressembler à rien.
 
-Elle essaya d’abord de suivre une instruction qui n’avait pas été modifiée. Sur une page vide, elle traça une fleur avec son crayon. La forme sembla frémir. Puis l’encre se mit à couler et les traits se défirent, jusqu’à ne laisser qu’une tache indistincte.
+Ada regarda la page, déçue, mais assez intriguée pour vouloir recommencer.
 
-« Je vais prendre ça chez moi… »
+— Je vais prendre ça chez moi…
 
-En redescendant, elle aperçut le bibliothécaire, occupé avec quelqu’un. Elle l’évita et quitta les lieux avec le livre. À sa connaissance, personne ne l’avait vue l’emporter.
+Elle redescendit avec le livre. Le bibliothécaire était occupé auprès de quelqu’un ; elle évita son regard et gagna la sortie. Personne ne semblait l’avoir vue emporter l’ouvrage.
 
-Sur le chemin, elle retrouva Nael.
+Sur le chemin du retour, elle aperçut Nael assis au bord d’un bâtiment. Il fixait le ciel nuageux. Son immobilité l’inquiéta avant même qu’il tourne la tête.
 
-Il était assis au bord d’un bâtiment, le regard levé vers le ciel nuageux. Son visage s’était creusé ; il avait maigri depuis leur dernière rencontre.
+— Nael ! Tout va bien ?
 
-« Nael ! Tout va bien ? »
+Il esquissa un sourire forcé.
 
-Il tourna la tête et lui adressa un sourire forcé.
+— Ça me fait plaisir de te voir… En ce moment, c’est compliqué. Je ne peux plus beaucoup m’éloigner. Je n’arrive plus à dormir… ni à manger.
 
-« Ça me fait plaisir de te voir… En ce moment, c’est compliqué. Je ne peux plus m’éloigner. Je n’arrive plus à dormir, ni à manger. »
+Il avait maigri. Les contours de son visage paraissaient plus creusés, et lorsqu’il bougea la main, sa manche laissa entrevoir des marques sombres à son poignet.
 
-Ada aperçut des marques sombres sur son poignet, au bord de sa manche.
+— Nael, qu’est-ce que c’est que ces marques ?
 
-« Qu’est-ce que c’est ? »
+Il rabattit aussitôt le tissu.
 
-Il tira aussitôt le tissu pour les cacher.
+— J’ai entendu mon père parler au médecin, la semaine dernière. Il a parlé d’un mal ancien. On doit m’emmener quelque part à partir de demain. Mais… j’ai peur.
 
-« J’ai entendu mon père parler avec le médecin, la semaine dernière. Il a parlé d’un mal ancien. À partir de demain, on doit m’emmener quelque part. Mais… »
+Ada n’avait pas de réponse à lui offrir. Elle s’approcha et le prit dans ses bras, à son tour, avec l’espoir de lui rendre un peu de la chaleur qu’il lui avait donnée. Elle sentit combien il était devenu fragile.
 
-Son regard quitta le sien.
+— Je serai là quand tu reviendras. Et on ira encore observer les hautes sphères depuis les toits. Promis.
 
-« J’ai peur. »
+Nael sembla s’accrocher à cette image. Un peu d’espoir passa sur son visage.
 
-Ada le prit dans ses bras. Elle aurait voulu lui rendre la chaleur qu’il lui avait offerte, lui donner quelque chose auquel se raccrocher.
+— Oui… Promis.
 
-« Je serai là quand tu reviendras. Et on ira encore observer les hautes sphères depuis les toits. Promis. »
+Une voix masculine les appela, derrière eux.
 
-Un peu d’espoir passa sur son visage.
+— Nael !
 
-« Oui… Promis. »
+Il se détacha doucement d’Ada.
 
-Une voix masculine les appela derrière eux.
+— C’est mon père. Il me cherche, je dois rentrer. À bientôt, Ada.
 
-« Nael ! »
+Il avait prononcé ces derniers mots sans parvenir à leur donner beaucoup de conviction. Elle le regarda rejoindre son père, le livre serré contre elle, puis reprit le chemin de la maison.
 
-Il se dégagea doucement.
+Elle rentra pensive et gagna directement sa chambre. La promesse faite à Nael restait dans son esprit ; le livre aussi. Elle l’ouvrit avec le besoin d’en apprendre davantage, de faire quelque chose qui ne se réduise pas à attendre.
 
-« C’est mon père. Je dois rentrer. À bientôt, Ada. »
+Cette fois, elle utilisa la plume offerte par Yuhra. Elle reprit minutieusement les incantations et les paramètres indiqués, puis dessina une fleur.
 
-Elle voulut croire à cet à bientôt. Lui-même semblait avoir du mal à le prononcer.
+La forme s’anima. Ada approcha sa main, presque sans oser la refermer, et souleva la création hors de la page.
 
-Ada rentra pensive. Une fois dans sa chambre, elle reprit le livre et sa plume. Elle suivit les incantations avec soin, vérifia les paramètres, puis dessina une nouvelle fleur.
+Elle y était arrivée.
 
-Cette fois, elle put la prendre dans sa main.
+La joie ne dura pas longtemps sans laisser place aux questions. Au toucher, la fleur avait la texture d’un papier froissé. Ses pétales, sa tige, tout ce qu’elle avait voulu rendre délicat gardait cette même matière. Après quelques instants, le dessin vivant se noircit et redevint de l’encre.
 
-Elle l’avait fait.
+Ada essaya encore, observa le même phénomène, puis se pencha sur les annotations d’Ancolie. Les calculs étaient complexes. Elle en suivait certaines lignes, perdait le fil, revenait au début. Rien ne s’éclaircissait.
 
-La joie dura assez pour qu’elle la regarde de près. Au toucher, la fleur avait la texture d’un papier froissé. Peu après, elle noircit, se déforma et redevint de l’encre.
+— Je n’y comprends rien…
 
-Ada recommença. Quelle que fût la forme dessinée, la même sensation revenait sous ses doigts ; la création finissait toujours par se défaire.
+Pour la première fois depuis longtemps, cet aveu lui donna envie d’apprendre.
 
-Elle se pencha sur les annotations d’Ancolie. Des calculs complexes couraient autour des formules d’origine. Elle essaya de les suivre et dut bientôt s’arrêter.
+### IV — Un don sous silence
 
-« Je n’y comprends rien… »
+Le lendemain, Ada ne laissa pas son regard se perdre aussi facilement pendant les cours. Elle écouta, essaya de retenir, posa des questions. Les connaissances qu’elle avait jusque-là délaissées avaient soudain un usage : elles pouvaient l’aider à comprendre le livre, à donner une forme plus durable à ce qu’elle dessinait.
 
-Pour la première fois, cette difficulté lui donna envie d’apprendre.
+Son professeur, qui avait fini par l’abandonner à ses occupations, fut surpris de cette assiduité. Ada voyait bien qu’il n’attendait plus certaines de ses questions. Elle les posait quand même. Il lui manquait trop de choses pour que la gêne l’arrête.
 
-Le lendemain, en classe, elle écouta. Elle posa des questions. Le professeur, qui avait fini par la laisser à ses dessins, la regarda avec surprise lorsqu’elle demanda une explication supplémentaire. Elle avait trouvé une raison de s’intéresser aux signes et aux règles qu’elle négligeait jusque-là.
+Le rattrapage fut difficile. Quelques journées attentives ne pouvaient effacer tout ce qu’elle avait laissé passer, et ses nuits s’allongèrent au-dessus de ses cahiers. Pourtant, elle avait enfin une raison d’y revenir. À chaque notion comprise, une petite partie des annotations devenait moins étrangère.
 
-Rattraper son retard ne fut pas simple. Les nuits s’allongèrent, occupées de notes recopiées, d’essais et de corrections. Après quelques jours, les annotations lui paraissaient encore obscures, mais elle distinguait enfin des éléments qu’elle pouvait comprendre.
+Elle accusa encore du retard, mais les formules ne lui parurent bientôt plus entièrement hors de portée. Elle mêla ses connaissances nouvelles aux algorithmes qu’elle comprenait à moitié, testa, corrigea au hasard, puis fit renaître la fleur.
 
-Elle combina ses nouvelles connaissances avec des tentatives plus incertaines. Elle reprit les formules algorithmiques, essaya des variations dont elle ne maîtrisait pas encore tout le sens, puis fit renaître la fleur.
+Cette fois, le changement fut immédiat au toucher. Ada sentit le velours des pétales. Les épines de la tige auraient pu faire saigner ses doigts. Elle déplaça doucement la fleur dans sa paume, étonnée par cette présence si convaincante.
 
-Sous ses doigts, les pétales étaient doux comme du velours. Les épines de la tige auraient pu la faire saigner.
+Après quelques instants, elle disparut. Elle ne s’était pas défaite en encre : elle s’était simplement volatilisée.
 
-Elle la contempla jusqu’à ce qu’elle disparaisse.
+— Ça doit avoir un rapport avec ces calculs…
 
-Cette fois, aucune encre ne resta sur sa main.
+Elle retourna aux notes, partagée entre la satisfaction d’avoir avancé et l’impatience de comprendre le reste.
 
-« Ça doit avoir un rapport avec ces calculs… »
+Le jour suivant, le professeur principal annonça une nouvelle qui troubla la classe.
 
-### Les leçons du professeur Dols
+— Chers élèves, nous avons reçu une directive des hautes sphères. Le département scientifique recherche de jeunes gens prometteurs. Trois places nous sont attribuées ; deux d’entre vous ont déjà été choisis. La dernière reviendra à celui ou celle qui saura se démarquer.
 
-Le jour suivant, le professeur principal leur annonça qu’une directive venait des hautes sphères. Le département scientifique cherchait de jeunes gens prometteurs. Trois places avaient été attribuées à leur école ; deux candidats étaient déjà retenus.
+Il laissa aux élèves le temps de mesurer l’annonce.
 
-« La dernière place reviendra à celui ou celle qui saura se démarquer. Voyez-y l’opportunité d’une vie. Une fois votre formation terminée, votre rôle et votre voie auront peu de chances de changer. »
+— Voyez-y l’opportunité d’une vie. Une fois sortis d’ici, votre rôle et votre voie auront peu de chances de changer. Sachez toutefois que cette responsabilité imposera certains sacrifices, notamment des déplacements outre-mer. Je vous souhaite bonne chance.
 
-Il les regarda avant d’ajouter :
+Les noms des deux élèves sélectionnés ne faisaient guère de doute. Ce qui retint surtout l’attention fut la fin de l’annonce. Quitter Kasillon inquiétait la plupart d’entre eux. Ada sentit, au contraire, quelque chose s’ouvrir à cette idée.
 
-« Cette responsabilité exigera toutefois certains sacrifices, notamment des déplacements outre-mer. Je vous souhaite bonne chance. »
+La journée reprit son cours. Elle essaya de suivre les leçons, mais plusieurs questions revenaient sans cesse. Où était Nael ? Qui avait écrit les notes ? Devait-elle tenter sa chance ? Était-elle si différente des autres ? Elle ne trouvait pas de réponse qui les apaise toutes.
 
-Ada devinait, comme les autres, qui étaient les deux élèves choisis. Autour d’elle, l’idée de quitter Kasillon semblait surtout inquiéter. Elle resta, au contraire, attentive à cette possibilité.
+Le soir, elle alla voir le professeur Dols. Il s’était réjoui de son implication nouvelle et ne fut pas surpris qu’elle revienne lui parler.
 
-Les cours reprirent. Ses pensées revenaient tour à tour à Nael, aux notes cachées dans les livres, à cette dernière place. Était-ce une chance qu’elle devait saisir ? Qu’aurait-elle à montrer ? Et où son ami avait-il été emmené ?
+— Je voudrais vous montrer quelque chose.
 
-Le soir, elle alla trouver le professeur Dols. Depuis qu’elle participait davantage, il accueillait volontiers ses questions.
+Dols prit un air intrigué.
 
-« Je voudrais vous montrer quelque chose. »
+Ada s’installa et peignit un cristal aux couleurs de l’arc-en-ciel, en récitant silencieusement les incantations. Elle concentra son attention sur les paramètres qu’elle avait réussi à comprendre. Quelques instants plus tard, le dessin prit vie.
 
-Il attendit, intrigué.
+Elle posa le cristal sur la table.
 
-Ada récita silencieusement les incantations en dessinant un cristal arc-en-ciel. Quelques instants plus tard, elle posa sur la table l’objet qu’elle venait de créer.
+Le professeur le regarda avec stupeur, puis le souleva. Ses doigts suivirent les ondulations lisses de la surface. Ada observa son visage, attentive à chaque changement d’expression. Au bout d’une trentaine de secondes, la création s’évapora dans un léger courant d’air.
 
-Dols le prit avec précaution. Ses doigts suivirent les ondulations de sa surface, lisse et douce. Il le regarda sous plusieurs angles, jusqu’à ce que le cristal s’évapore dans un léger courant d’air, une trentaine de secondes après son apparition.
+— Stupéfiant… Ce n’est pas de la graphomancie. De la pictomancie ? Pourtant, cela semble différent. Où as-tu appris ça ?
 
-« Stupéfiant… Ce n’est pas de la graphomancie. De la pictomancie, peut-être ? Pourtant, cela semble différent. Où as-tu appris ça ? »
+Ada sentit un peu de fierté la gagner. Elle n’avait pas souvent entendu ce ton lorsqu’on parlait de quelque chose qu’elle avait fait.
 
-Ada sentit une fierté nouvelle, encore timide.
+— Dans un ouvrage. Mais certaines choses m’échappent encore. Je voulais vous demander de m’aider à comprendre quelques détails.
 
-« Dans un ouvrage. Mais certaines choses m’échappent. Je voudrais que vous m’aidiez à résoudre quelques détails. »
+Dols, étonné par sa demande, accepta rapidement. Ada déposa devant lui les calculs qu’elle avait recopiés. À leur vue, le professeur parut se figer un bref instant.
 
-Surpris par la demande, Dols accepta. Elle lui présenta les calculs qu’elle avait recopiés.
+— C’est complexe, dit-il enfin. Je comprends ces calculs et je pourrais les reproduire, mais je ne vois pas l’utilité de certaines variables.
 
-Il s’immobilisa un bref instant en les découvrant, puis les examina.
+Ils passèrent une partie de la soirée à faire des essais. Ada s’occupait des gestes et du dessin ; Dols travaillait sur la théorie, traduisant les algorithmes dans un langage qu’elle pouvait saisir. Elle écoutait avec une attention qu’aucune leçon n’avait encore su lui demander. Ce qu’il expliquait devenait presque aussitôt quelque chose qu’elle pouvait essayer.
 
-« C’est complexe. Je les comprends, et les reproduire serait tout à fait envisageable. En revanche, je ne vois pas l’utilité de certaines variables. »
+Trois jours de cours du soir supplémentaires leur permirent d’aller plus loin. Cette fois, ils allaient tenter une créature.
 
-Ils passèrent une partie de la soirée à faire des essais. Ada dessinait et mettait les formules en pratique ; Dols les reprenait, les expliquait, traduisait les algorithmes en un langage qu’elle pouvait suivre. Elle lui montrait ce qu’elle ressentait lors de la création, il cherchait comment le relier aux calculs.
+— Tu es prête ? demanda Dols. C’est une première. Si cela se passe mal, je la révoquerai.
 
-Trois jours de cours du soir supplémentaires les conduisirent à une nouvelle tentative.
+Il se tint prêt à lancer un contre-sort. Ada prit une longue inspiration, puis commença. Sur la feuille, elle avait dessiné un Tangri, une sorte de tigre des îles. Les runes se déplacèrent autour de sa forme, et quelque chose s’extirpa peu à peu de la page.
 
-« Tu es prête ? Ce sera la première fois avec une créature. Si quelque chose se passe mal, je la révoquerai. »
+Un chat apparut.
 
-Dols se tint prêt à lancer un contre-sort.
+Un chat qui semblait parfaitement vivant. Dols eut un bref rire de surprise.
 
-Ada inspira profondément. Sur la feuille, elle avait dessiné un Tangri, une sorte de tigre des îles. Les runes se mirent à bouger. Une forme s’extirpa du dessin, prit du volume, puis se posa devant eux.
+— Le format de la feuille a visiblement son importance… Mais nous y sommes.
 
-Un chat.
+Ils regardèrent l’animal découvrir la pièce. Il s’intéressa au grelot d’une décoration murale et se mit à jouer avec lui. Puis il se détourna, ignora Dols et vint se blottir contre Ada, comme s’il la connaissait depuis longtemps.
 
-Un chat bien vivant, qui se mit aussitôt à découvrir la pièce.
+Elle baissa les yeux sur la petite forme et sentit quelque chose qu’elle n’avait pas su percevoir avec les créations précédentes.
 
-Dols eut un petit rire.
-
-« Le format de la feuille a son importance, visiblement. Mais nous y sommes. »
-
-Ils regardèrent l’animal jouer avec le grelot d’une décoration murale. Puis il revint vers Ada, ignora le professeur et se blottit contre elle avec une familiarité immédiate.
-
-Elle le caressa, attentive à une sensation qu’elle n’avait jamais éprouvée.
-
-« Je crois que j’ai compris, professeur. Ils sont comme une partie de moi, de mon esprit. Je me vois à travers lui. Il ne pense pas vraiment… Je le ressens comme ma propre extension. »
+— Je crois que j’ai compris, professeur. Ils sont comme une partie de moi, de mon esprit. Je me vois à travers lui. Il ne pense pas vraiment par lui-même… Je le sens comme une extension de moi.
 
 Dols prit des notes.
 
-« C’est fabuleux. D’autres ont peut-être accédé à ces connaissances avant toi, mais elles restent très peu documentées. Imagine ce que nous pourrions faire si nous pouvions invoquer toutes sortes de pièces, de formes, d’êtres… »
+— C’est fabuleux. D’autres ont peut-être accédé à ces connaissances avant toi, mais elles sont très peu documentées. Imagine ce que nous pourrions faire en invoquant toutes sortes de pièces, de formes ou d’êtres.
 
-Le chat disparut après deux longues minutes.
+Le chat disparut peu après, de la même façon que le cristal. Il était resté près de deux minutes. Ada garda un instant les mains dans la position où elle l’avait accueilli.
 
-Ada garda les mains dans la position où elle le tenait, puis releva les yeux vers son professeur.
-
-« Je vais te recommander pour le projet, si tu le souhaites. »
+— Je vais te recommander pour le projet, si tu le souhaites, ajouta Dols.
 
 Elle hésita.
 
-« Je… Je dois réfléchir. »
+— Je… Je dois réfléchir.
 
-Dols passa près d’elle et baissa la voix.
+Le professeur passa près d’elle et baissa la voix.
 
-« Quoi que tu décides, n’utilise pas cette capacité publiquement. La dernière personne qui s’y est intéressée de près a été bannie de nos terres. Je n’ose imaginer la réaction de la famille royale si elle était au courant. »
+— Quoi que tu fasses, n’utilise pas cette capacité en public. La dernière personne à s’y être intéressée de près a été bannie de nos terres. Je n’ose imaginer la réaction de la famille royale si elle l’apprenait.
 
-Ada le fixa.
+Ada resta un moment sans répondre. Elle venait de réussir. Elle avait retrouvé l’envie d’apprendre, travaillé jusqu’à comprendre ce qui lui semblait impossible, fait vivre un dessin sous les yeux de quelqu’un capable d’en voir l’intérêt. Et il lui demandait maintenant de le cacher.
 
-Elle venait enfin de trouver quelque chose qui lui appartenait. Elle avait passé des nuits à l’apprendre, accepté de se confronter à ce qu’elle ne comprenait pas. Et il fallait déjà le cacher ?
+Avait-il voulu la prévenir ou lui faire peur ? Elle ne savait plus comment recevoir sa proposition.
 
-« Pourquoi ? Pourquoi faut-il toujours que ce monde me pousse à abandonner ? »
+— Pourquoi ? Pourquoi faut-il toujours que ce monde me contraigne à abandonner ?
 
 Dols soupira.
 
-« Je ne veux pas que tu abandonnes. Mais je ne peux pas changer le passé. Beaucoup de choses se sont jouées dans l’ombre, il y a des décennies. Des parties de l’histoire qui ne figurent dans aucun manuel. Si tu veux vivre pleinement avec ton don, accepte ma proposition. Prends la soirée pour y réfléchir. »
+— Je ne veux pas que tu abandonnes. Mais je ne peux pas changer le passé. Beaucoup de choses se sont jouées dans l’ombre, il y a des décennies. Des pans entiers de l’histoire ne figurent dans aucun manuel. Si tu veux pouvoir vivre pleinement avec ton don, accepte ma proposition. Je te laisse la soirée pour y réfléchir.
 
-Ada rentra abattue. Elle avait réussi ce qu’elle espérait et découvrait, presque dans le même instant, qu’elle ne pourrait pas le faire librement. À quoi bon rester à Kasillon si elle devait encore renoncer à ce qui lui donnait envie d’avancer ?
+Ada rentra chez elle abattue. La réussite n’avait pas disparu, mais elle ne savait plus où la mettre. À quoi bon rester à Kasillon si elle devait y renoncer à ce qui lui avait enfin donné envie d’avancer ?
 
-### Le départ de Kasillon
+### V — Le quai sud
 
-En entrant chez elle, elle surprit ses parents en pleine discussion sur l’avenir de Yuhra. Il lui restait une semaine de stage avant de savoir si elle serait retenue.
+En entrant, Ada surprit ses parents en pleine conversation sur l’avenir de Yuhra. Il restait encore une semaine de stage à son aînée avant qu’elle sache si elle serait prise. Ils en parlaient avec cette attente heureuse qu’Ada avait si souvent entendue de l’autre côté d’une porte.
 
-Ada attendit un moment, puis se décida.
+Elle resta près d’eux, puis trouva le courage de les interrompre.
 
-« Papa… Maman… On m’a proposé quelque chose à l’école. »
+— Papa… Maman… On m’a proposé quelque chose à l’école.
 
-Ils se tournèrent vers elle, surpris d’être interrompus.
+Ils se tournèrent vers elle, étonnés d’avoir à quitter le sujet qui les occupait.
 
-« De quoi parles-tu ? »
+— De quoi parles-tu ?
 
-« C’est une sorte de projet. Le professeur Dols souhaite que j’y participe, mais je devrai probablement quitter… »
+Ada essaya de présenter les choses simplement. Elle aurait voulu arriver jusqu’à la partie qui l’inquiétait sans que sa voix se dérobe.
 
-« C’est fabuleux ! »
+— C’est une sorte de projet. Le professeur Dols souhaite que j’y participe, mais je devrai probablement quitt…
 
-Sa phrase se perdit sous leurs exclamations.
+— C’est fabuleux !
 
-« Qui aurait pensé qu’on te confierait un projet ? Viens, tu as bien mérité… »
+— Qui aurait pensé qu’on te confierait un projet !
 
-Ada les regarda parler. Ils se réjouissaient, et elle avait si souvent attendu de les voir fiers d’elle. Pourtant, ils n’avaient pas écouté la fin. Savaient-ils seulement ce que cette proposition pouvait impliquer ? Qu’elle risquait de partir, de quitter la maison ?
+— Allez, viens, tu as bien mérit…
 
-Leurs louanges devinrent des mots qu’elle ne suivait plus.
+Les louanges se superposèrent avant qu’elle ait pu finir. Ada entendait les mots, puis cessait de les comprendre. Leur joie aurait dû lui faire plaisir. Elle l’avait attendue assez longtemps pour savoir combien elle lui avait manqué. Pourtant, ils ne l’écoutaient toujours pas.
 
-Elle gagna sa chambre sans rien ajouter. Derrière elle, ses parents ne comprirent pas ce qui venait de se passer.
+Avait-elle seulement réussi à leur faire entendre qu’elle devrait peut-être quitter la maison ? S’en préoccuperaient-ils une fois leur enthousiasme passé ? Elle les regarda, incapable de reprendre au milieu de leurs exclamations, puis se dirigea vers sa chambre sans un mot. Derrière elle, ses parents ne comprenaient pas pourquoi elle partait.
 
 Cette nuit-là, elle prit sa décision.
 
-Puisque tout la poussait à partir, pourquoi lutter encore ?
+— Puisque tout me pousse à partir, à quoi bon lutter…
 
-Le lendemain, elle quitta sa chambre à l’aube. À la pause de midi, elle annonça au professeur Dols qu’elle acceptait de participer. Il en fut ravi.
+Elle n’avait pas trouvé de réponse aux questions qui l’habitaient. Elle savait seulement que rester ne lui en donnerait pas davantage. Il y avait, ailleurs, une place où son don pourrait servir. Dols lui avait proposé de la rejoindre. Pour la première fois, le départ était autre chose qu’une idée dessinée dans la marge d’un cahier.
 
-En fin de journée, il donna les résultats à la classe.
+À l’aube, elle quitta sa chambre et rejoignit sa classe. Pendant la pause de midi, elle annonça au professeur Dols qu’elle souhaitait participer. Il accueillit sa réponse avec plaisir.
 
-« Voilà un peu plus de deux semaines que j’observe vos résultats et, pour ceux qui se sont réellement investis, vos projets. L’élève qui rejoindra Vanil et Sorj sera Ada. »
+En fin de journée, il donna les résultats devant les élèves.
 
-Les chuchotements commencèrent aussitôt.
+— Voilà un peu plus de deux semaines que j’observe vos résultats et, pour ceux qui se sont réellement investis, vos projets. Celle qui rejoindra Vanil et Sorj sera Ada.
 
-Un élève leva la main.
+Des chuchotements parcoururent aussitôt la salle. Ada sentit les regards se tourner vers elle. Un élève leva la main.
 
-« Mais, professeur… Elle ne fait jamais rien ! »
+— Mais, professeur… Elle ne fait jamais rien !
 
-Dols ouvrit son bureau et en sortit une maquette de réacteur à cristal. L’objet était d’une complexité telle qu’aucun élève de l’école ne semblait en mesure de le réaliser.
+Dols ouvrit son bureau et en sortit une maquette de réacteur à cristal. L’objet était bien trop avancé pour que quelqu’un de l’école ait pu le réaliser. Il le posa de façon que la classe puisse le voir.
 
-« Et pourtant, voici ce qu’elle a fait. Je peux en témoigner. »
+— Et pourtant, voici ce qu’elle a fait. Je peux en témoigner.
 
-Ada resta silencieuse.
+Ada fixa la maquette. Le mensonge était si net qu’elle en resta presque aussi surprise que ses camarades. Elle n’avait rien construit de tout cela.
 
-Il mentait. Sans hésiter, devant toute la classe.
+Puis elle se rappela l’avertissement de Dols. Il n’avait pas exagéré le danger, semblait-il. Pour la faire entrer dans le projet, il avait préféré inventer une réussite que montrer la sienne. Son don était donc assez mal perçu pour qu’il faille cacher la vérité jusque dans cette salle de classe.
 
-Elle repensa à son avertissement. Fallait-il vraiment aller jusque-là pour dissimuler ce qu’elle savait faire ? Elle aurait voulu être reconnue pour son travail ; on lui prêtait celui d’un autre afin de lui ouvrir une porte.
+Elle ne protesta pas. Quelles que soient les raisons du professeur, le départ devenait possible.
 
-Elle n’intervint pas. La place lui était accordée. Pour l’instant, cela devait suffire.
+— Vous trois, poursuivit Dols, voici vos cartes. Retrouvez l’intendante Nicolino au quai sud à sept heures trente précises. C’est à elle que vous adresserez vos questions.
 
-Dols leur remit leurs cartes.
+Vanil et Sorj rentrèrent rapidement chez eux. Ada resta un peu après le départ des autres.
 
-« Vous trois, retrouvez l’intendante Nicolino au quai sud, à sept heures trente précises. Vous lui adresserez vos questions. »
+— Merci pour tout… J’aurais encore une question. Savez-vous où est Nael ?
 
-Vanil et Sorj se hâtèrent de rentrer chez eux. Ada resta encore un moment.
+Dols lui tournait le dos. Il referma lourdement le livre qu’il tenait, puis releva un peu la tête.
 
-« Merci pour tout… J’aurais une question. Savez-vous où est Nael ? »
+— Je suis navré… Certaines choses doivent rester hors de l’enceinte de Kasillon. Là où tu vas, tu comprendras.
 
-Le professeur, qui lui tournait le dos, referma lourdement le livre qu’il tenait. Il leva un peu la tête.
+Ada attendit une suite. Il n’en donna pas.
 
-« Je suis navré. Certaines choses doivent rester hors de l’enceinte de Kasillon. Là où tu vas… tu comprendras. »
+Elle quitta la classe avec cette réponse qui n’en était pas vraiment une. Depuis leur dernière rencontre, elle n’avait pas revu Nael. Elle lui avait promis de l’attendre, et elle allait partir sans savoir où on l’avait emmené.
 
-Elle n’obtint rien de plus.
+À la maison, elle aurait pu annoncer ce qui allait arriver. Elle n’en fit rien. Ses parents lui souriaient avec une aisance à laquelle elle n’était pas habituée. Ces visages lui paraissaient presque irréels, comme des formes dont elle ne reconnaissait pas les contours.
 
-En rentrant, Ada aurait pu annoncer à ses parents que son départ était décidé. Elle n’en fit rien. Leur sourire inhabituel lui paraissait presque étranger. Elle le reconnaissait mal sur ces visages qu’elle connaissait pourtant depuis toujours.
+Elle passa la soirée à préparer ses affaires. Puis elle partit assez tôt pour que tout le monde dorme encore.
 
-Elle passa la soirée à préparer ses affaires, puis partit tôt, alors que toute la maison dormait encore.
+Ses sacs étaient lourds. Elle les porta jusqu’au quai sud et arriva la première. Plusieurs navires militaires se trouvaient là, bien différents des images de voyage qui avaient traversé son esprit depuis l’annonce du projet. La nuit n’était pas tout à fait terminée. Au bord de l’eau, la brise lui parut plus fraîche que dans les rues de la capitale.
 
-Ses sacs étaient lourds. Elle les porta jusqu’au quai sud, où plusieurs navires militaires étaient amarrés. Elle fut la première arrivée.
+— Bonjour… Je cherche l’intendante Nicolino.
 
-« Bonjour… Je cherche l’intendante Nicolino. »
+Elle montra au garde la carte remise par Dols. Il l’examina et désigna un navire.
 
-Elle montra au garde la carte remise par Dols. Il lui désigna un navire.
+— Monte à bord et attends que les autres soient là. L’intendante viendra à votre rencontre.
 
-« Monte à bord et attends que les autres soient là. L’intendante viendra vous chercher. »
+Ada obéit. De là, elle vit Vanil et Sorj arriver l’un après l’autre, accompagnés de leurs parents. Il y eut des paroles, des regards, ces gestes ordinaires dont on entoure une séparation. Elle détourna un peu les yeux. Elle avait choisi de ne prévenir personne, mais la scène lui montrait malgré tout ce qu’elle n’avait pas eu.
 
-Ada obéit.
+— Bientôt, je serai celle qu’on appelle…
 
-Il faisait encore nuit. Une brise fraîche passait sur le ponton ; le jour ne tarderait plus à se lever. Vanil, puis Sorj arrivèrent avec leurs parents. Ada observa leurs derniers échanges, ces gestes familiers au moment de se séparer.
+Elle avait murmuré ces mots pour elle-même. Ils l’aidèrent à rester là, à ne pas se demander une fois de plus si elle faisait une erreur.
 
-Elle avait quitté la maison sans personne pour lui dire au revoir.
+Peu après, les trois élèves se retrouvèrent ensemble dans l’attente de l’intendante. Sorj finit par prendre la parole.
 
-Bientôt, se promit-elle, je serai celle qu’on appelle.
+— Tu sais, je m’attendais à n’importe qui sauf à toi. Mais ton prototype était impressionnant.
 
-Lorsqu’ils furent tous les trois réunis, Sorj lui adressa la parole.
+Ada sentit la gêne la saisir. Il la félicitait pour quelque chose qu’elle n’avait pas fait. Elle était sélectionnée comme eux, et pourtant elle se sentait encore intruse.
 
-« Tu sais, je m’attendais à tout le monde sauf à toi. Mais ton prototype était impressionnant. »
+— C’est… compliqué.
 
-Ada sentit de nouveau qu’elle occupait une place obtenue grâce à un travail qui n’était pas le sien.
+Sorj aurait peut-être voulu en savoir davantage. L’arrivée de Nicolino interrompit la conversation.
 
-« C’est… compliqué. »
+— Vous trois ! Cabine 5C !
 
-L’arrivée de Nicolino lui évita d’en dire davantage.
+Elle se tourna aussitôt vers un homme aux manières soignées, dont l’allure évoquait celle d’un soldat.
 
-« Vous trois ! Cabine 5C ! »
+— Instructeur en chef, où en sommes-nous du ravitaillement ?
 
-L’intendante se tourna aussitôt vers un homme à l’allure militaire, mais aux manières plus raffinées.
+— Tout est presque terminé. Nous attendons encore quelques civils du secteur industriel.
 
-« Instructeur en chef, où en sommes-nous du ravitaillement ? »
+Nicolino contint son impatience.
 
-« Tout est presque terminé. Nous attendons encore quelques civils du secteur industriel. »
+— Dès que ce sera terminé, départ immédiat.
 
-Elle retint un mouvement d’impatience.
+L’homme salua sa décision et repartit vers les autres personnes présentes. Ada, Vanil et Sorj gagnèrent rapidement la cabine indiquée.
 
-« Dès que ce sera fait, départ immédiat. »
+Trois chaises les attendaient, chacune devant une petite plaque de marbre qui faisait office de pupitre. Nicolino les rejoignit sans tarder. Après de brèves présentations, elle leur montra un organigramme : des noms à retenir, des grades, des abréviations militaires. Tout cela leur était étranger. Ada essaya de suivre, avec le sentiment que les règles changeaient plus vite qu’elle ne pouvait les apprendre.
 
-L’homme salua sa décision et s’éloigna. Ada, Vanil et Sorj se hâtèrent vers la cabine indiquée.
+Au milieu des explications, un choc fit tomber un crayon.
 
-Trois chaises les y attendaient, chacune précédée d’une petite plaque de marbre faisant office de pupitre. Nicolino les rejoignit rapidement. Après de brèves présentations, elle leur montra un organigramme, leur expliqua les noms à connaître, les grades et les abréviations militaires. Ils découvraient un ensemble de règles auquel leur vie à Kasillon ne les avait pas préparés.
+Les navires étaient partis.
 
-Au cours des explications, un choc fit tomber un crayon.
+Sur leur gauche, à travers la petite fenêtre, Kasillon s’éloignait. Tous les trois tournèrent la tête. La cité dorée semblait plus majestueuse encore lorsqu’on pouvait la voir dans son ensemble. Ada reconnut ce qui l’avait entourée toute sa vie, devenu soudain une image que le mouvement du navire emportait.
 
-Le navire avait quitté le quai.
+— Profitez-en, dit Nicolino. Vous ne la reverrez pas de sitôt.
 
-Ils regardèrent tous les trois par la petite fenêtre, sur leur gauche. Leur patrie s’éloignait. Vue dans son ensemble, la majestueuse cité dorée leur parut plus impressionnante encore.
+Elle reprit ses explications. Elles durèrent plusieurs heures. Au terme de cette première journée, les trois jeunes gens avaient reçu des accréditations particulières. Ada était enregistrée comme assistante en prototypage.
 
-« Profitez-en, dit Nicolino. Vous ne la reverrez pas de sitôt. »
+Le titre lui appartenait. Il restait à découvrir ce qu’on attendrait réellement d’elle.
 
-Puis elle reprit.
+### VI — La base souterraine
 
-Les explications durèrent plusieurs heures. Chacun reçut une accréditation particulière. Celle d’Ada portait la mention Assistante en prototypage.
+Le voyage dura plusieurs jours, avec une routine qui ne leur laissa guère le temps d’en faire une aventure. Petit déjeuner, instructions, déjeuner, nouvelles instructions, dîner, coucher. Les moments libres étaient rares et les interactions y restaient très limitées. Pour ceux qui ignoraient encore ce qui les attendait, ce rythme était difficile à soutenir.
 
-### Une vie sous la terre
+Ada apprenait les règles comme elle avait appris les calculs d’Ancolie : avec la conscience d’avoir besoin de les comprendre. Elle s’était imaginée partir ; elle n’avait pas su prévoir cette succession d’heures réglées par d’autres. Elle tint pourtant, comme Vanil et Sorj, jusqu’au jour du débarquement.
 
-Le voyage dura plusieurs jours, au rythme d’un emploi du temps qui ne leur laissait guère de répit : petit déjeuner, instructions, déjeuner, nouvelles instructions, dîner, coucher. Même durant les moments libres, les interactions sociales restaient limitées.
+Ils découvrirent une île verte et rocheuse, étendue à perte de vue. Une station dressée en son centre dominait les alentours.
 
-Ada avait voulu quitter l’immobilité de Kasillon. Elle découvrait une discipline dont elle ne connaissait encore ni le but exact ni les habitudes.
+La suite de la visite se fit vers le bas.
 
-Enfin, ils débarquèrent sur une île verte et rocheuse. Une station en occupait le centre, dominant le paysage.
+L’ascenseur descendit à une vitesse qui donna l’impression d’une chute interminable. Plus de dix minutes passèrent avant un freinage brutal. Vanil ne parvint pas à retenir son déjeuner.
 
-Ils entrèrent dans un ascenseur dont la descente sembla interminable. La cabine plongea pendant plus de dix minutes avant de freiner brutalement. Vanil ne réussit pas à retenir son déjeuner.
+Quand les portes s’ouvrirent, les trois nouveaux arrivants se trouvaient au cœur d’un souterrain qui ne ressemblait en rien aux infrastructures cristallines de Kasillon. Des alliages métalliques et des minéraux avancés remplaçaient les surfaces familières. Des mécanismes autonomes régissaient et entretenaient des installations dont ils ne comprenaient pas le fonctionnement. Ada regarda autour d’elle avec une attention inquiète. Même les choses immobiles paraissaient attendre un usage qu’elle ignorait.
 
-Lorsque les portes s’ouvrirent, l’endroit qu’ils découvrirent ne ressemblait en rien aux infrastructures cristallines de Kasillon. Des alliages métalliques et des minéraux avancés composaient les installations. Des mécanismes autonomes entretenaient et régulaient des dispositifs dont ils ne comprenaient pas le fonctionnement.
+Une jeune femme à lunettes vint les rejoindre. Son expression était plus accueillante que celles auxquelles ils s’étaient habitués pendant le voyage.
 
-Une jeune femme à lunettes vint les accueillir. Son expression bienveillante changeait de la réserve militaire qui les entourait depuis le départ.
+— Merci, intendante. Je prends le relais.
 
-« Merci, intendante. Je prends le relais. »
+Elle s’adressa aux trois élèves.
 
-Elle se tourna vers eux.
+— Vous pouvez m’appeler Mlle Rannie. Je serai votre superviseure ici. Suivez-moi.
 
-« Vous pouvez m’appeler Mademoiselle Rannie. Je serai votre superviseuse ici. Suivez-moi. »
+Sa démarche enjouée changeait des déplacements militaires qui les entouraient depuis le départ. Ada s’en aperçut immédiatement. Cette différence suffisait à lui donner envie de rester près d’elle.
 
-Elle avançait d’un pas enjoué. Devant une lourde porte métallique, ils découvrirent l’inscription Secteur R&D, Prototypage et Assemblage.
+Une lourde porte métallique s’ouvrit devant eux. Au-dessus, une inscription annonçait le secteur de recherche et développement, consacré aux prototypes et à l’assemblage.
 
-Vanil regarda la mention Assistant d’assemblage sur sa veste.
+Vanil regarda sa veste, sur laquelle figurait son nouveau titre : assistant d’assemblage.
 
-« C’est mon secteur. »
+— C’est mon secteur.
 
-Rannie sourit.
+Rannie sourit de les voir commencer à se repérer.
 
-« Oui ! Vous êtes ici chez vous. Vous verrez, les gens de ce secteur sont plus sympathiques que dans les zones militarisées. Nous venons presque tous du génie civil. »
+— Et oui ! Vous êtes chez vous, ici. Vous verrez : les gens de ce secteur sont plus sympathiques que ceux des zones militarisées. Nous venons presque tous du génie civil. Voici vos passes. Vos chambres sont au fond de ce couloir. Je vous souhaite une bonne intégration. Tout ce dont vous avez besoin pour commencer est consigné dans le prospectus d’arrivée, sur votre bureau.
 
-Elle leur remit leurs passes.
+Vanil et Sorj partirent vers leurs chambres. Ada resta encore près de la superviseure. Depuis le départ, les mots lui pesaient. Elle ne voulait pas laisser cette nouvelle vie commencer sous le mensonge de la maquette.
 
-« Vos chambres sont au fond de ce couloir. Tout ce que vous devez savoir est consigné dans le prospectus posé sur votre bureau. Bonne installation. »
+— Vous savez… Ce n’est pas moi qui l’ai construite.
 
-Vanil et Sorj se dirigèrent vers leurs chambres. Ada resta près d’elle, incapable d’emporter plus longtemps ce qui la pesait depuis l’annonce des résultats.
+Rannie garda le silence une seconde, puis éclata de rire. Ada ne sut d’abord comment prendre sa réaction.
 
-« Vous savez… Ce n’est pas moi qui ai construit la maquette. »
+— Ne t’inquiète pas. Je suis au courant pour ton don. Ton professeur m’a tout expliqué. Tu as ta place ici.
 
-Rannie la regarda une seconde, puis éclata de rire.
+Elle sortit de sa poche une lettre pliée. Même sans en voir le contenu, Ada comprit que Dols et Rannie avaient déjà échangé à son sujet.
 
-« Ne t’inquiète pas. Je suis au courant pour ton don. Ton professeur m’a tout expliqué. Tu as ta place ici. »
+Elle n’avait plus besoin de se défendre. Cette pensée lui procura un soulagement qu’elle n’aurait pas su formuler. Elle rejoignit sa chambre et s’y posa un moment, encore entourée de ses affaires, dans ce lieu où l’on semblait enfin savoir pourquoi elle était venue.
 
-Elle tira de sa poche une lettre pliée. Même sans en lire le contenu, Ada comprit que Dols avait déjà échangé avec elle.
+Quelques jours après son arrivée, Ada échangea avec des membres du pôle de bio-analyse. Il était question d’essais sur des cobayes humains : des personnes atteintes de maladies précises étaient transférées dans la base pour servir la recherche.
 
-Elle regagna sa chambre, rassurée. Pour une fois, elle n’aurait pas à soutenir le mensonge devant la personne chargée de l’encadrer.
+Elle repensa aussitôt à Nael. Il avait quitté Kasillon avant elle, et elle n’avait jamais reçu la moindre nouvelle de lui.
 
-Les semaines passèrent, puis les mois, puis les années.
+Quelques jours plus tard, elle finit par interroger Rannie, en qui elle avait confiance. La superviseure lui apprit que son ami avait vraisemblablement été euthanasié afin que l’analyse de ses cellules permette de rechercher un remède. Rannie désapprouvait cette pratique ; elle demeurait pourtant une scientifique et comprenait les enjeux des recherches menées ici.
 
-Ada trouva peu à peu sa place dans le secteur. Ses créations permettaient de tester des idées sans fabriquer d’abord chaque objet. Une pièce, une forme, un assemblage pouvaient être mis à l’épreuve avant que les équipes consacrent du temps à leur réalisation. Tous finirent par comprendre l’utilité de ses compétences.
+Le pôle était réservé à ceux qui y travaillaient. Ada n’avait de toute façon pas le droit d’y entrer.
 
-Son salaire s’accumulait sur un compte dont elle n’avait guère besoin dans la base. De temps en temps, on les autorisait à remonter pour passer quelques jours de congé sur l’île.
+La nouvelle la frappa comme un coup de poignard. Pendant quelques jours, elle demanda à être tenue à l’écart de tout cela.
 
-Elle avait désormais du travail qui l’intéressait, des questions auxquelles chercher des réponses, des découvertes à faire. Ce qui l’avait isolée à Kasillon lui permettait ici de participer.
+Puis elle rassembla dans son carnet tout ce qu’elle gardait de Nael. Elle repeignit son visage avec une précision qui défiait le souvenir, retrouva ses traits, son sourire et les détails qu’elle croyait avoir oubliés.
 
-Puis, au cours d’une journée semblable aux autres, l’alarme retentit.
+Son corps prit forme au-dessus de la page. Seule son apparence reprenait vie : une matérialisation éthérée de celui qu’elle avait connu.
 
-### Le silence de la capitale
+Il ouvrit la bouche, sans qu’aucun son en sorte. Sa main translucide vint caresser les cheveux d’Ada et les fit bouger lentement.
 
-Une voix projetée résonna dans toute la base.
+Ada regarda cette présence fragile. Elle comprenait à présent ce que son don pouvait retenir. Tant qu’elle vivrait, personne ne disparaîtrait complètement.
 
-« Alerte. Ceci n’est pas un exercice. Kasillon subit l’assaut d’une force inconnue. Le personnel militaire est réquisitionné et doit être prêt à embarquer dans le quart d’heure. Je répète : ceci n’est pas un exercice. »
+Les semaines passèrent. Puis les mois, et les années.
 
-Les couloirs se remplirent de pas. Des centaines de personnes se ruèrent vers l’ascenseur depuis les autres secteurs. Ada chercha le regard de Rannie. La tension se lisait jusque sur le visage de sa superviseuse.
+Ada découvrit un travail dans lequel son don trouvait une utilité concrète. Elle pouvait donner une forme provisoire à des idées, permettre qu’on les éprouve sans devoir construire chaque pièce au préalable. Les essais gagnaient un temps considérable. Peu à peu, les autres comprirent ce que ses compétences rendaient possible, et elle se mit à les employer au milieu d’eux avec une assurance nouvelle.
 
-Moins d’une heure plus tard, la base s’était vidée de la majeure partie de son personnel. Les navires avaient quitté l’île. Les civils du secteur d’Ada étaient restés, avec quelques rares militaires.
+Elle avait toujours aimé créer. Ici, ce qu’elle créait entrait dans une recherche, aidait quelqu’un à avancer, devenait le point de départ d’un autre essai. Les calculs ne restaient plus séparés du dessin ; ils lui permettaient de faire ce qu’elle imaginait. Ada avait quitté les cours en emportant encore beaucoup de questions. Elle trouvait désormais chaque jour de quoi nourrir sa curiosité.
 
-Les jours passèrent sans nouvelles de Kasillon ni de la flotte.
+Son salaire était versé sur un compte dont elle n’avait pratiquement aucun usage dans la base. De temps à autre, ils recevaient l’autorisation de remonter et de passer quelques jours de congé sur l’île. Le reste du temps, la vie suivait le rythme du secteur, avec les habitudes que les années avaient installées.
 
-Le calme avait d’abord quelque chose de reposant. Puis l’absence de nouvelles occupa les conversations, les silences, les moments où chacun attendait une réponse qui ne venait pas.
+Ada ignorait encore quelle journée briserait cette continuité. Elle n’aurait pas su la distinguer des autres avant que l’alarme retentisse.
 
-Quelques jours après l’alerte, l’alimentation sous-marine reliant la capitale à la base fut interrompue.
+### VII — La première alerte
 
-Les réserves autonomes prirent le relais. Pour que la consommation ne dépasse pas la capacité de recharge des conducteurs à cristaux, il fallut couper une partie des infrastructures. La base continua de fonctionner, amputée de certains de ses équipements.
+Le signal traversa toute la base. Une voix projetée dans les secteurs prit aussitôt le relais.
 
-Un après-midi, une alarme se déclencha près de l’ascenseur.
+— Alerte. Ceci n’est pas un exercice. Kasillon subit l’assaut d’une force inconnue. Le personnel militaire est réquisitionné et doit être prêt à embarquer dans le quart d’heure. Je répète : ceci n’est pas un exercice.
 
-Ada et Sorj étaient de garde. Devenu spécialiste des infrastructures mécanisées, Sorj se pencha sur le dispositif et pianota sur la console qui signalait l’erreur.
+La base trembla sous les pas des centaines de personnes qui se ruaient vers l’ascenseur depuis les autres secteurs. Ada regarda les mouvements autour d’elle, incapable de faire coïncider l’annonce avec la cité qu’elle connaissait. Kasillon était attaquée. Ce lieu où l’on racontait encore l’histoire d’un criminel emprisonné depuis deux siècles devait être défendu, maintenant, contre une force dont on ne savait rien.
 
-« C’est étrange. Quelqu’un semble être dans l’ascenseur, mais la cabine ne peut pas descendre à cause des restrictions énergétiques. »
+Même Rannie était tendue. Ada le voyait dans son visage et dans la façon dont elle suivait l’agitation autour d’elles.
 
-Il leva les yeux vers Ada.
+Moins d’une heure plus tard, les navires avaient déjà quitté l’île. La base s’était vidée de la plus grande partie de son personnel. Le secteur d’Ada et les autres civils étaient restés, avec quelques militaires seulement.
 
-« C’est sûrement quelqu’un qui vient nous chercher ! »
+Puis l’attente commença.
 
-Son enthousiasme lui rendit un peu d’espoir. Elle le regarda modifier le dispositif, chercher comment rétablir suffisamment d’énergie. Il réussit à dévier temporairement le flux vers la cage.
+Les jours passèrent sans nouvelles de la capitale ni des navires. L’agitation du départ avait laissé place à un calme inhabituel. Par moments, ce silence semblait presque agréable. Il devenait plus difficile à supporter dès qu’Ada se souvenait de sa raison.
 
-L’ascenseur commença sa descente.
+Elle n’avait aucun moyen de savoir ce qui se passait là-bas. La cité se présentait encore dans sa mémoire telle qu’elle l’avait vue depuis la cabine 5C, entière, dorée, s’éloignant lentement. Elle revenait aussi aux visages de ceux qu’elle avait laissés. À Yuhra, surtout. Puis elle reprenait le travail ou la tâche qui lui avait été confiée, parce que l’attente n’offrait rien d’autre à faire.
 
-Dix minutes.
+Quelques jours plus tard, l’alimentation sous-marine reliant la capitale à la base fut interrompue.
 
-Ils attendaient près des portes. Après tant de jours sans savoir ce qui se passait au-dehors, il leur semblait que tout allait enfin changer. Ada guettait les sons du mécanisme, le moment où la cabine s’arrêterait.
+Les réserves autonomes prirent le relais. Il fallut toutefois arrêter une partie des infrastructures : les conducteurs à cristaux ne pouvaient se recharger assez vite pour soutenir l’ensemble de la consommation. La base continua à fonctionner, mais certaines de ses possibilités disparurent derrière les restrictions énergétiques.
 
-La porte s’ouvrit lentement, dans sa condensation habituelle.
+Un après-midi, une alarme se déclencha au niveau de l’ascenseur. Sorj et Ada étaient de garde.
 
-Ce qui apparut derrière elle n’avait rien d’un secours.
+Avec les années, Sorj était devenu spécialiste des infrastructures mécanisées. Il se pencha sur le dispositif qui signalait l’erreur et pianota sur la console.
 
-### La dernière porte
+— C’est étrange. Quelqu’un semble être dans l’ascenseur, mais il ne peut pas descendre à cause des restrictions. C’est sûrement quelqu’un qui est venu nous chercher !
 
-La créature était noire comme la nuit. Son corps évoquait celui d’un homme rachitique, étiré jusqu’aux limites de ce qu’Ada pouvait concevoir. Ses yeux étaient blancs. Des dents longues et aiguisées emplissaient sa bouche, et ses doigts se terminaient en pointes semblables à des pieux.
+Son optimisme réchauffa un peu Ada. Elle se rapprocha, attentive à ce qu’il faisait. Depuis l’alerte, ils avaient attendu un signe. Le simple fait que quelqu’un se trouve là-haut pouvait enfin signifier qu’ils n’avaient pas été oubliés.
 
-Une main se glissa entre les battants. La chose força sans effort apparent cette porte conçue pour résister à plusieurs centaines de kilos.
+Sorj modifia le dispositif et agit sur le flux d’énergie qui traversait la console. Il trouva comment le détourner temporairement vers la cage de l’ascenseur.
 
-Sorj resta figé, pris entre l’effroi et l’incompréhension.
+La descente commença.
+
+Il leur fallait encore attendre une dizaine de minutes. Ada connaissait la durée du trajet ; elle l’avait vécue en arrivant. Pourtant, ces minutes lui parurent lentes. Elle regardait les indications, puis la porte. Quelqu’un approchait. Il apporterait peut-être des nouvelles, une explication, une façon de quitter la base.
+
+Elle resta près de Sorj jusqu’à l’arrêt de l’ascenseur.
+
+### VIII — Le temps immobile
+
+La porte s’ouvrit lentement, au milieu de la condensation habituelle.
+
+Ada chercha d’abord un visage. Ce qui apparut n’avait rien de quelqu’un venu les sauver.
+
+La créature était noire comme la nuit. Son corps élancé évoquait celui d’un homme rachitique que l’on aurait étiré jusqu’à sa limite. Des yeux blancs se détachaient de son visage. Ses dents étaient aiguisées comme des couteaux, et le bout de ses doigts ressemblait à des pieux.
+
+Une main sombre se posa sur la porte encore en mouvement. La créature la repoussa sans effort apparent, alors que le mécanisme devait résister à plusieurs centaines de kilos.
+
+Sorj resta figé. Ada vit sur son visage l’effroi et l’incompréhension, cette seconde pendant laquelle il essayait encore de reconnaître ce qui se tenait devant lui.
 
 L’autre main le faucha.
 
-Son corps, déchiré en plusieurs morceaux, tomba au sol. L’horreur resta fixée sur son visage. La créature se baissa, saisit un morceau et le porta à sa bouche.
+Son corps, fendu en plusieurs morceaux, tomba au sol. L’expression d’horreur ne quitta pas son visage. Ada n’eut pas le temps de comprendre le bruit qu’elle venait d’entendre. La créature s’emparait déjà d’une partie de lui pour la dévorer.
 
-Ada recula si brusquement qu’elle faillit tomber. Puis elle se mit à courir.
+Elle recula si brusquement qu’elle manqua de tomber. Puis elle se mit à courir en hurlant, droit vers son secteur, sans se retourner.
 
-Elle hurla tout le long du chemin vers son secteur, sans se retourner. Ce qu’elle venait de voir refusait de prendre place dans son esprit. Sorj parlait encore quelques secondes plus tôt. Il cherchait à les sauver. Cela devait être un cauchemar.
+Elle ne parvenait pas à accepter ce qu’elle avait vu. Quelques instants plus tôt, Sorj lui parlait encore. Il était penché sur la console, persuadé qu’on venait les chercher. La scène revenait au rythme de ses pas, mais son esprit se refusait à la tenir pour réelle. Cela devait être un cauchemar. Il fallait que ce soit un cauchemar.
 
-Elle tenta de déclencher l’alarme.
+Ada tenta de donner l’alarme.
 
-Rien.
+Rien ne se produisit.
 
-« Sorj… Qu’est-ce que tu as désactivé ? »
+— Sorj… Qu’est-ce que tu as désactivé ?
 
-Elle repartit vers les chambres et frappa à toutes les portes. Sa panique suffit à faire sortir les occupants. Très vite, quelques-uns allèrent chercher des armes de défense, des lames infusées, puis partirent à la recherche de la créature.
+Elle ne pouvait plus retourner lui demander. Cette pensée la frappa avec une violence qui lui coupa presque le souffle. Elle repartit vers les chambres et frappa à toutes les portes.
 
-Les autres se regroupèrent dans le petit secteur des prototypes et s’y enfermèrent.
+Les occupants sortirent rapidement. Sa panique était assez visible pour qu’on cesse de chercher une explication calme. Certains allèrent prendre les armes de défense disponibles, quelques lames infusées. Les plus vaillants se mirent à la recherche de la créature.
 
-Un quart d’heure plus tard, des pas lents résonnèrent dans le long couloir qui bordait les chambres.
+Ada resta avec les autres, enfermée dans le petit secteur des prototypes. Elle entendait encore son propre souffle. Personne n’avait beaucoup de moyens de savoir ce qui se passait dans les couloirs.
 
-Ada écoutait, incapable de détourner les yeux de la porte.
+Un quart d’heure plus tard, des pas lents résonnèrent dans le long passage qui bordait les chambres.
 
-Le mécanisme céda. Un morceau de pierre éclata ; les rouages furent enfoncés. La créature apparut dans l’ouverture, une moitié de corps entre les mains.
+Ils se rapprochaient.
 
-Elle ne portait aucune égratignure. Son sourire carnassier s’étirait jusqu’aux côtés de sa tête.
+Puis la porte céda d’une manière qui ne ressemblait pas à une ouverture. Un morceau de pierre éclata ; le mécanisme fut enfoncé. La créature entra avec la moitié d’un corps entre les mains.
 
-Elle passa près d’une personne sans la remarquer. Celle-ci se tenait dans une fumée glaciale, à une température inférieure à zéro. Ses mains commençaient à geler. La créature lui barrait le passage, et son corps répondait de moins en moins.
+Elle n’avait pas une égratignure. Sur son visage, la même bouche s’étirait en un sourire carnassier jusque sur les côtés de sa tête.
 
-Un petit cri lui échappa.
+Ada chercha où aller. Autour d’elle, les autres étaient pris dans la même peur. La créature avançait au milieu d’eux avec une force dont elle venait de voir ce qu’elle pouvait faire.
 
-La chose tourna la tête. Il lui fallut un moment pour repérer cette personne pourtant visible. Puis elle lui saisit le crâne et le brisa comme un vieux pot de terre glaise.
+Elle passa pourtant à côté de quelqu’un sans le remarquer.
 
-« Par ici, vite ! »
+Cette personne se tenait dans une fumée glacée, à température négative. Ses mains commençaient à geler. La présence de la créature lui barrait le passage et son corps répondait de plus en plus difficilement. Ada le voyait nettement ; la chose, elle, semblait ne pas le voir.
 
-Rannie prit la main d’Ada et l’entraîna vers le local de cryostase. Elles s’y enfermèrent, auprès de la machine sur laquelle elles travaillaient toutes les deux.
+Un petit cri de détresse lui échappa.
 
-Vanil n’arriva pas à temps. Ada l’aperçut de l’autre côté de la porte. Il tourna la tête, vit ce qui approchait et prit la fuite.
+La créature tourna la tête. Elle mit un moment à le repérer, bien qu’il soit à découvert. Puis sa main se referma sur son crâne et le brisa comme un vieux pot de terre glaise.
 
-La créature passa un instant devant la vitre, sans s’arrêter.
+— Par ici ! Vite !
 
-Rannie tendit une combinaison à Ada.
+Rannie saisit la main d’Ada. Elle l’entraîna vers le local de cryostase, où se trouvait la machine sur laquelle elles travaillaient toutes les deux.
 
-« Enfile ça. Il faut faire vite. »
+Elles se précipitèrent à l’intérieur et fermèrent.
 
-La petite plaque nominative portait encore le nom de Rannie.
+Vanil n’eut pas le temps de les rejoindre. Il resta de l’autre côté de la porte, tourna la tête et prit la fuite. La créature passa un bref instant devant la vitre sans s’arrêter.
 
-« Mais… Et toi ? »
+Ada regardait encore la porte lorsque Rannie lui tendit une combinaison.
 
-Sa superviseuse ne cessa pas de manipuler la console.
+— Enfile ça. Il faut faire vite.
 
-« Il faut être deux pour configurer tout cela, et je suis la seule à savoir le faire. Dépêche-toi d’entrer. Je me débrouillerai. »
+Une petite plaque nominative était visible sur le vêtement : Rannie.
 
-Ada enfila la combinaison et entra dans la cuve. Le liquide froid l’enveloppa ; elle peina à supporter son contact.
+— Mais… Et toi ?
 
-La fermeture commença.
+La superviseure ne cessa pas de manipuler la petite console. Elle répondit sans lever les mains de ses commandes.
 
-Dans le couloir, un hurlement retentit. Une voix qu’elles connaissaient toutes les deux.
+— Il faut être deux pour configurer cela, et je suis la seule qui sache le faire. Dépêche-toi d’entrer ! Je me débrouillerai.
 
-Ada chercha le visage de Rannie derrière la paroi.
+Ada aurait voulu retenir cette dernière phrase assez longtemps pour y croire. Il n’y avait pas de temps pour poser d’autres questions. Rannie lui indiquait la cuve, et les bruits du couloir rendaient chaque seconde plus courte.
 
-« J’espère que nous nous reverrons un jour, Ada. J’espère… »
+Elle entra.
 
-L’insonorisation de la cuve coupa le reste de sa phrase.
+Le liquide froid qui entoura son corps était à peine supportable. Elle se crispa dans la combinaison et chercha le visage de Rannie. La cuve commençait déjà à se refermer.
 
-Ada voyait encore Rannie terminer la procédure. À l’arrière de la cuve, le liquide se transforma en un nuage glacé. La combinaison réagit et lui injecta un mélange spécial par voie intraveineuse.
+Un hurlement résonna dans les couloirs. Une voix qu’elles connaissaient toutes les deux.
 
-Yuhra.
+Ada tourna les yeux vers la porte. Elle ne pouvait rien voir de ce qui se passait derrière. Rannie continuait la procédure.
 
-Nael. Ses parents. Les autres.
+— J’espère que nous nous reverrons un jour, Ada… J’espère…
 
-Est-ce qu’elle les reverrait ?
+L’insonorisation de la cuve lui coupa la voix.
 
-Sa peau devint bleue. Sa pensée ralentit, les formes autour d’elle se brouillèrent.
+Ada voyait encore la superviseure, mais ne l’entendait plus. Tout ce qui les entourait venait de s’éloigner sans avoir bougé. Ses pensées se heurtèrent à ce silence, aux gens qu’elle n’avait pas revus, à ceux qui étaient encore de l’autre côté.
 
-Bientôt, tout disparut.
+Yuhra… Tout le monde… Est-ce que je les reverrai ?
 
-### Une main dans le froid
+Rannie termina la procédure. Le liquide se retira vers l’arrière de la cuve et devint un nuage glacial. La combinaison réagit à son contact. Un mélange spécial se diffusa directement dans le corps d’Ada, par voie intraveineuse.
+
+Sa peau prit une teinte bleue.
+
+Elle essaya de garder les yeux ouverts. Le froid, la paroi devant elle, le visage de Rannie : les dernières choses qu’elle percevait se confondirent.
+
+Puis tout disparut.
 
 Le temps s’écoula.
 
-Puis, quelque part, un sas s’ouvrit dans un bruit de ventilation.
-
-Une personne reposait à l’intérieur, transie, inconsciente.
+Quelque part, un sas finit par s’ouvrir dans un bruit de ventilation. À l’intérieur reposait une personne inconsciente, transie de froid.
 
 L’aventurier qui se tenait devant l’ouverture la prit dans ses bras et l’emporta. Elle était si froide.
 
-Pourtant, un instant, sa petite main serra la sienne.
+Pourtant, un instant, la petite main d’Ada serra la sienne.
 ADA_ORIGIN_TEXT;

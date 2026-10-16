@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 const XAR_CHARACTER_LORE_MAX_BYTES = 200000;
-const XAR_ADA_LORE_IMPORT_KEY = 'ada-origin-20261005';
+const XAR_ADA_LORE_IMPORT_KEY = 'ada-origin-20261016';
 
 function normalizeOnlineCharacterLore(mixed $value): string
 {

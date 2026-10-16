@@ -207,8 +207,8 @@
     },
     {
       "name": "brouillard-interdit-relais",
-      "strictSha256": "95980dc0f0854a6fa39c0d6f584cafd751d0e886b341898c905454caaad80507",
-      "opacitySha256": "d4a2e1398cef41cf94d2ebd19d0e8bd9301e88d9ee5dfeb8bf3c01da801f1a91",
+      "strictSha256": "40e480682e2f8b32ab40c645f08604a9db4d8d304081e0b6c05fc8207c217254",
+      "opacitySha256": "2211c20bab9a28e13d1079ad5d10517942b0b98aab5c837b515159e2e6be0163",
       "origins": [
         {
           "x": 10,
@@ -236,6 +236,11 @@
       "points": [
         {
           "x": 55,
+          "y": 50,
+          "visible": false
+        },
+        {
+          "x": 24,
           "y": 50,
           "visible": false
         }

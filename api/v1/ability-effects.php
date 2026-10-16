@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/device-state.php';
+require_once __DIR__ . '/attack-enhancements.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -56,6 +57,8 @@ function applicationDamageAreaAffects(array $targeting, string $sourceId, string
     return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement'], true)
+        || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
     if (array_key_exists('noDefensePossible', $entry) && (!is_bool($entry['noDefensePossible'])
         || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
     if (!validApplicationAbilityCastingFields($entry)) return false;
@@ -95,6 +98,8 @@ function applicationAbilityEffectFields(array $entry): array {
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
+    if (in_array($effect, ['damage', 'healing', 'movement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
+        $conditions['attackEnhancement'] = applicationAttackEnhancement($entry['attackEnhancement']);
     if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
     if(($entry['useWeaponDamage']??false)===true) $conditions['useWeaponDamage']=true;
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
@@ -207,7 +212,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
             && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'damageComponents', 'damageOverTime', 'damageTargeting', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'attackEnhancement', 'damageComponents', 'damageOverTime', 'damageTargeting', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }
@@ -223,6 +228,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
     if ($key === 'activity') {
         // Periodic damage is server owned; an old or modified MJ snapshot cannot reset its counters.
         $payload['damageOverTime'] = is_array($previous['damageOverTime'] ?? null) ? $previous['damageOverTime'] : [];
+        $payload['attackEnhancements'] = is_array($previous['attackEnhancements'] ?? null) ? $previous['attackEnhancements'] : [];
         $payload['pendingDotResolutions'] = $previous['pendingDotResolutions'] ?? [];
         $payload['rollRevelations'] = $previous['rollRevelations'] ?? [];
         $removedGuards = [];
@@ -231,7 +237,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command'];
+        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;

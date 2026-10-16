@@ -1,3 +1,7 @@
+# Préparation locale backend 0.18.40 — client exact 3.6.0
+
+Build candidat `client-3-6-0-map-tools-objects-groups-candidate-20261015-1`. Brouillard opaque à la ligne de vue, lumières visibles de loin uniquement en ligne libre, transport des lumières entre scènes, placement sans répulsion par un pion caché, groupes de scènes et de bestiaire, passages masquables et objets illustrés avec droits de lecture, ramassage, transfert et destruction. Les commandes conservent les exemplaires, reçus, révisions et droits effectifs ; aucune migration SQL ni donnée réelle n’est modifiée. Aucun push, déploiement ou basculement public n’a été effectué pour ce candidat.
+
 # Candidat local backend 0.18.39 — unités et passages, client exact 3.5.11
 
 Build `client-3-5-11-unit-devices-passages-20261015-1`. Les ressources, stocks, armes et dispositifs suivent leur unité effective, y compris les clones indépendants. Seuls les nouveaux clones copient les exemplaires en inventaire, dans la transaction de création. Une station ou un lanceur est un objet unique, récupérable, transférable et déposable ; son propriétaire courant et son unité créatrice ont des rôles distincts. Le partage de projection respecte les droits et la visibilité.

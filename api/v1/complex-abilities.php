@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/complex-movement.php';
+require_once __DIR__ . '/special-success.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -603,7 +604,8 @@ function createApplicationComplexAbilityExecution(array $context): array
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
         ...(($ability['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
         'castGate' => ($cast['success'] ?? false) && is_array($cast['outcome'] ?? null) ? [
-            'formula' => '1d100', 'total' => (int) $cast['outcome']['raw'], 'threshold' => (int) $cast['outcome']['threshold'],
+            'formula' => ($cast['outcome']['joker'] ?? false) ? '1' : '1d100', 'total' => (int) ($cast['outcome']['result'] ?? $cast['outcome']['raw']), 'threshold' => (int) $cast['outcome']['threshold'],
+            'joker' => ($cast['outcome']['joker'] ?? false) === true,
             'success' => true, 'statId' => (string) $cast['statId'], 'outcomeDetails' => $cast['outcome'], 'rollId' => $cast['roll']['id'] ?? '',
             'roll' => is_array($cast['roll'] ?? null) ? $cast['roll'] : null,
         ] : null,
@@ -620,7 +622,8 @@ function createApplicationComplexAbilityExecution(array $context): array
     if (($first['firstGateAtCast'] ?? false) === true) {
         $outcome = $cast['outcome'];
         $execution['stepStates'][$first['id']]['rolls'][] = [
-            'formula' => '1d100', 'total' => (int) ($outcome['raw'] ?? 0), 'threshold' => (int) ($outcome['threshold'] ?? 1),
+            'formula' => ($outcome['joker'] ?? false) ? '1' : '1d100', 'total' => (int) ($outcome['result'] ?? $outcome['raw'] ?? 0), 'threshold' => (int) ($outcome['threshold'] ?? 1),
+            'joker' => ($outcome['joker'] ?? false) === true,
             'success' => true, 'outcome' => (string) ($outcome['code'] ?? 'success'),
             'outcomeDetails' => $outcome, 'rollId' => $cast['roll']['id'] ?? '',
             'breakdown' => applicationComplexAbilityText($cast['roll']['breakdown'] ?? '', 500, (string) ($outcome['raw'] ?? '')),
@@ -647,7 +650,8 @@ function applicationComplexAbilityGateRoll(array $gate, array $rolls = []): arra
     $raw = $gate['total'];
     return [
         'formula' => $recorded['formula'] ?? $gate['formula'] ?? '1d100',
-        'total' => $recorded['total'] ?? $raw, 'rawD100' => $raw,
+        'total' => $recorded['total'] ?? $raw, 'rawD100' => ($gate['outcomeDetails']['joker'] ?? $gate['joker'] ?? false) ? null : $raw,
+        'joker' => ($gate['outcomeDetails']['joker'] ?? $gate['joker'] ?? false) === true,
         'breakdown' => is_string($recorded['breakdown'] ?? null) ? $recorded['breakdown'] : '[' . $raw . ']',
         'rollMode' => $recorded['rollMode'] ?? 'normal', 'selectedIndex' => $recorded['selectedIndex'] ?? 0,
         ...(is_array($recorded['attempts'] ?? null) ? ['attempts' => $recorded['attempts']] : []),
@@ -728,9 +732,9 @@ function applicationComplexAbilityPrepareChainBatch(array &$execution, array $st
         $modifier = -min(100, $successes * $step['penaltyPerSuccess']);
         $rolled = $roll('1d100', normalizeOnlineRollMode($rollMode), true);
         $raw = $rolled['rawD100'] ?? $rolled['total'] ?? null;
-        $outcome = classifyOnlineD100Outcome($raw, $baseThreshold, $modifier, 0, true, true);
+        $outcome = ($rolled['joker'] ?? false) === true ? applicationSpecialSuccessOutcome($baseThreshold) : classifyOnlineD100Outcome($raw, $baseThreshold, $modifier, 0, true, true);
         if ($outcome === null) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
-        $state['rolls'][] = [...$rolled, 'formula' => '1d100', 'total' => (int) $raw, 'rawD100' => (int) $raw,
+        $state['rolls'][] = [...$rolled, 'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => (int) $raw, 'rawD100' => ($rolled['joker'] ?? false) ? null : (int) $raw,
             'threshold' => $outcome['threshold'], 'success' => $outcome['success'], 'outcome' => $outcome['code'],
             'outcomeDetails' => $outcome, 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $raw)];
         applicationComplexAbilityAppendEvent($execution, ['type' => 'roll', 'actorId' => $actorId, 'actorName' => $actorName,
@@ -1414,9 +1418,10 @@ function applyApplicationComplexAbilityCommand(
             $rolled = $roll($step['formula']);
             if (!is_array($rolled) || !is_numeric($rolled['total'] ?? null)) applicationComplexAbilityFail('Le résultat du dé est invalide.', 'complex_ability_roll_invalid', 500);
             $total = (int) $rolled['total'];
-            $result = ['formula' => $step['formula'], 'total' => $total,
+            $result = [...$rolled, 'formula' => ($rolled['joker'] ?? false) ? '1' : $step['formula'], 'total' => $total,
                 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total)];
-            if ($step['threshold'] !== null) $result += ['threshold' => $step['threshold'], 'success' => $total <= $step['threshold']];
+            if ($step['threshold'] !== null) $result += ['threshold' => $step['threshold'], 'success' => ($rolled['joker'] ?? false) === true || $total <= $step['threshold']];
+            if (($rolled['joker'] ?? false) === true) $result['outcomeDetails'] = applicationSpecialSuccessOutcome($step['threshold']);
             $state['rolls'][] = $result;
             applicationComplexAbilityAppendEvent($execution, ['type' => 'roll', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' · ' . $total,
@@ -1462,8 +1467,9 @@ function applyApplicationComplexAbilityCommand(
             $rolled = $roll('1d100');
             $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
-            $success = in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
-            $state['rolls'][] = ['formula' => '1d100', 'total' => $raw, 'threshold' => $threshold,
+            $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
+            $state['rolls'][] = [...$rolled, 'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => $raw, 'threshold' => $threshold,
+                'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null,
                 'success' => $success, 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $raw)];
             $state['awaitingAttack'] = $success;
             if ($success) $state['gateAt'] = $now;
@@ -1539,9 +1545,9 @@ function applyApplicationComplexAbilityCommand(
             $rolled = $roll('1d100');
             $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
-            $success = in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
+            $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
             $target =& $state['targets'][$targetIndex];
-            $target['awarenessRolls'][] = ['total' => $raw, 'success' => $success];
+            $target['awarenessRolls'][] = [...$rolled, 'total' => $raw, 'success' => $success, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null];
             $target['awarenessRolled'] = true;
             if ($success) $target['aware'] = true;
             $state['awaitingAwareness'] = false;
@@ -1584,13 +1590,15 @@ function applyApplicationComplexAbilityCommand(
             $token = applicationComplexAbilityTokenById($tokens, $target['tokenId']);
             if (!is_array($token)) applicationComplexAbilityFail('La cible n’est plus disponible.', 'complex_ability_target_missing', 404);
             $threshold = applicationComplexAbilityTokenThreshold($token, $step);
-            $rollMode = normalizeOnlineRollMode($command['rollMode'] ?? 'normal');
-            $rolled = $roll('1d100', $rollMode, true);
+            $requestedMode = normalizeOnlineRollMode($command['rollMode'] ?? 'normal');
+            $rolled = $roll('1d100', $requestedMode, true);
+            $rollMode = ($rolled['joker'] ?? false) ? 'normal' : $requestedMode;
             $total = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : null;
             if ($total === null || $total < 1 || $total > 100 || ($rollMode !== 'normal' && count($rolled['attempts'] ?? []) !== 2)) {
                 applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             }
-            $result = ['formula' => '1d100', 'total' => $total, 'threshold' => $threshold, 'success' => $total <= $threshold,
+            $result = ['joker' => ($rolled['joker'] ?? false) === true, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null,
+                'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => $total, 'threshold' => $threshold, 'success' => ($rolled['joker'] ?? false) === true || $total <= $threshold,
                 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total),
                 'rollMode' => $rollMode, 'selectedIndex' => $rolled['selectedIndex'] ?? 0,
                 'attempts' => $rolled['attempts'] ?? [['total' => $total, 'rawD100' => $total,

@@ -6,6 +6,7 @@ require_once __DIR__ . "/damage-guard.php";
 require_once __DIR__ . "/ongoing-effects.php";
 require_once __DIR__ . '/device-runtime.php';
 require_once __DIR__ . '/luck-reset.php';
+require_once __DIR__ . '/special-success.php';
 
 const XAR_CONNECTION_SECONDS = 45;
 const XAR_MEDIA_MAXIMUM_BYTES = 300 * 1024 * 1024;
@@ -1147,6 +1148,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'tacticalDetailsShared' => ($token['revealDetailsToPlayers'] ?? false) === true,
             'publicHealth' => onlineHealthState($token['hp'] ?? null, $token['maxHp'] ?? null, $allied, onlineManualDeath($token))['code'],
             'ownedByYou' => $owned,
+            ...($owned?['specialSuccessStock'=>normalizeSpecialSuccessStock($token['specialSuccessStock']??0)]:[]),
             ...($owned && trim((string) ($token['cloneSourceTokenId'] ?? '')) !== '' ? ['independentClone' => true] : []),
             'mountable' => ($token['mountable'] ?? false) === true,
             'mountControllable' => $effectiveControllerId === '' && ($token['mountControllable'] ?? false) === true,
@@ -1473,6 +1475,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         ];
     }
     return [
+        'strategyBreak' => applicationStrategyBreakProjection($fullState['strategyBreak'] ?? null),
         'schemaVersion' => $fullState['schemaVersion'] ?? 1,
         'revision' => $fullState['revision'] ?? 0,
         'updatedAt' => $fullState['updatedAt'] ?? null,
@@ -1502,6 +1505,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
         'damageOverTime' => $visibleDamageOverTime,
+        'attackEnhancements' => array_values(array_filter($fullState['attackEnhancements'] ?? [], static fn(array $effect): bool =>
+            ($effect['sceneId'] ?? '') === $visibleSceneId && (($visibleTokenDetails[$effect['targetTokenId'] ?? ''] ?? false) || isset($ownedVisibleIds[$effect['targetTokenId'] ?? ''])))),
         'nextAttackGuards' => array_values(array_map(static fn(array $guard): array => publicOnlineAttackProjectionFields($guard,
             ['id', 'sceneId', 'targetTokenId', 'label', 'percent', 'trigger', 'persistent']),
             array_filter($fullState['nextAttackGuards'] ?? [], static fn(array $guard): bool => ($guard['sceneId'] ?? '') === $visibleSceneId
@@ -2591,7 +2596,7 @@ function playerCharacterPatch(array $current, array $patch): array
         'name', 'surname', 'givenName', 'race', 'age', 'className', 'advancedClass', 'profession',
         'previousProfession', 'pronouns', 'portrait', 'color', 'resources', 'stats', 'temporaryStats', 'fatigue', 'morale',
         'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'visionDistance', 'darkVision', 'initiativeBonus', 'conditions', 'publicNotes', 'lore', 'armorText', 'hitThreshold', 'weaponText', 'weaponAttacks',
-        'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock',
+        'passives', 'skills', 'specialSkills', 'languages', 'inventory', 'personalAdvantageStock', 'specialSuccessStock',
         'shortcuts', 'abilities', 'linkedTokens', 'conditionImmunities',
     ];
     foreach ($allowed as $key) {
@@ -3809,6 +3814,7 @@ function onlineAttackRequestSignature(string $sceneId, array $arguments, ?bool $
         normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0),
         $usesHitOptions ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal') : 'normal',
         ($arguments['opposed'] ?? false) === true,
+        ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
         $kind === 'custom' ? onlineCanonicalRequestValue($arguments['customAttack'] ?? null) : null,
         ...(trim((string) ($arguments['complexExecutionId'] ?? '')) !== '' ? [trim((string) $arguments['complexExecutionId'])] : []),
         ...((array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
@@ -3891,6 +3897,7 @@ function onlineOppositionRequestSignature(string $attackId, array $arguments): s
         normalizeOnlineD100Modifier($arguments['modifier'] ?? 0),
         ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
         normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'),
+        ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
     ];
     if (trim((string) ($arguments['abilityId'] ?? '')) !== '' || trim((string) ($arguments['optionId'] ?? '')) !== '') {
         $signature[] = (string) ($arguments['abilityId'] ?? '');
@@ -4000,7 +4007,7 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
     if (is_array($source['outcome'] ?? null)) {
         $public['outcome'] = publicOnlineAttackProjectionFields($source['outcome'], [
             'raw', 'result', 'resultModifier', 'resultModifierApplied', 'resultCustomized', 'modifier', 'code', 'label', 'success',
-            'effect', 'immediate', 'automatic', 'breaksOpposition', 'requiresGmValidation',
+            'effect', 'immediate', 'automatic', 'breaksOpposition', 'requiresGmValidation', 'joker',
         ]);
         if ($detailsVisible) {
             $public['outcome'] += publicOnlineAttackProjectionFields($source['outcome'], ['baseThreshold', 'threshold', 'fatigue']);
@@ -4511,6 +4518,7 @@ function onlineRecordAttackGuard(array $attack, array $health): array
 
 function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pending, string $tokenKey, array $token, int $damage, bool $consumeAttackGuard = true, ?array $damageBasis = null): array
 {
+    $token = $pending[$tokenKey]['payload'] ?? $token;
     $character = null;
     $characterKey = '';
     $tokenSegments = explode(':', $tokenKey, 3);
@@ -4555,7 +4563,7 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
         $relatedRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
         $records = array_replace($records, $relatedRecords);
         foreach ($relatedRecords as $relatedTokenKey => $record) {
-            $related = applicationDomainPayload($records, $relatedTokenKey);
+            $related = $pending[$relatedTokenKey]['payload'] ?? applicationDomainPayload($records, $relatedTokenKey);
             if (($related['followCharacter'] ?? true) === false || trim((string) ($related['linkedTokenId'] ?? '')) !== '') continue;
             $related['hp'] = $current;
             $related['maxHp'] = $maximum;
@@ -4588,6 +4596,7 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
 function onlineOutcomeResultLabel(mixed $outcome, mixed $fallback = '—'): string
 {
     $outcome = is_array($outcome) ? $outcome : [];
+    if (($outcome['joker'] ?? false) === true) return 'Joker';
     $value = (string) ($outcome['result'] ?? $outcome['raw'] ?? $fallback);
     $adjustment = (int) ($outcome['resultModifier'] ?? 0);
     if ($adjustment !== 0 && ($outcome['resultModifierApplied'] ?? null) === false) {
@@ -5007,6 +5016,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (($token['followCharacter'] ?? true) === false) {
         return $token;
     }
+    if (unitUsesCharacterSheet($token)) $token['specialSuccessStock'] = normalizeSpecialSuccessStock($character['specialSuccessStock'] ?? 0);
     $token['healthOverride'] = onlineManualDeath($character) ? 'dead' : null;
     $token['conditions'] = normalizeOnlineConditions($character['conditions'] ?? []);
     $token['condition'] = implode(', ', $token['conditions']);
@@ -5111,6 +5121,7 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
 
 function applyOnlineD100ResultToRoll(array &$rolled, ?array $outcome): void
 {
+    if(($outcome['joker']??false)===true)return;
     if (($outcome['resultModifierApplied'] ?? null) !== false) return;
     $rolled['formula'] = '1d100';
     $rolled['total'] = $outcome['raw'];
@@ -5240,6 +5251,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
         }
         $table = applicationDomainPayload($records, 'table');
         $sceneId = onlineActiveSceneId($table);
+        foreach ([$arguments, is_array($arguments['command'] ?? null) ? $arguments['command'] : []] as $jokerArguments) {
+            if (array_key_exists('useJoker', $jokerArguments) && !is_bool($jokerArguments['useJoker'])) rejectOnlineCommand($connection, 400, 'Le choix du Joker doit être activé ou désactivé.', 'invalid_joker_choice');
+        }
+        if (!$isGm && $command !== 'ensure-player' && applicationStrategyBreakActive($table['strategyBreak'] ?? null)) rejectOnlineCommand($connection, 423, 'Point Strat en cours : les actions des joueurs sont en pause.', 'strategy_break_active');
         $pending = [];
         $result = [];
         $commandActionAlreadyLogged = false;
@@ -5257,15 +5272,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
 
-        if ($isGm && !in_array(
+        if ($isGm && $command !== 'strategy-break' && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if ($command === 'luck.reset') {
+        if ($command === 'strategy-break') {
+            $result = onlineStrategyBreakCommand($connection, $records, $pending, $table, $identity, $arguments);
+            $commandActionAlreadyLogged = true;
+        } elseif ($command === 'luck.reset') {
             $result = onlineResetCharacterLuck($connection, $records, $pending, $identity, $arguments, $sceneId);
             $commandActionAlreadyLogged = true;
         } elseif ($command === 'mechanics.command') {
@@ -5275,7 +5293,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.template.create', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume'], true)) {
+        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -5589,7 +5607,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
         } elseif (in_array($command, ['token.conditions.update', 'character.conditions.update'], true)) {
             if ($command === 'token.conditions.update' && !$isGm && ($table['tacticalSync']['paused'] ?? false) === true) rejectOnlineCommand($connection, 423, 'La table est temporairement verrouillée.', 'table_locked');
             $result = applyOnlineTokenConditionUpdate($connection, $records, $pending, $identity, $sceneId, $arguments, $isGm, $command === 'character.conditions.update');
-        } elseif (in_array($command,['passage.create','passage.edit','passage.link','passage.remove','passage.use'],true)) {
+        } elseif (in_array($command,['passage.create','passage.visibility','passage.edit','passage.link','passage.remove','passage.use'],true)) {
             $result=onlinePassageCommand($connection,$records,$pending,$identity,$command,$arguments);
             $commandActionAlreadyLogged=true;
         } elseif ($command === 'light.carry') {
@@ -6413,6 +6431,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $damageFormula = (string) $weapons[$weaponIndex]['formula'];
                     $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);
                     $weaponConditions = $weapons[$weaponIndex]['onHitConditions'] ?? [];
+                    $enhanced = applicationEnhancedBasicAttack($weapons[$weaponIndex], $source, $activity, $sceneId);
+                    $damageFormula = $enhanced['formula']; $damageType = $enhanced['damageType'];
+                    $damageComponents = $enhanced['damageComponents'] ?? [];
                 }
                 if ($complexExecutionId !== '') $weaponConditions = normalizeOnlineConditions([...$weaponConditions, ...($execution['onHitConditions'] ?? [])]);
                 $mechanicsDefinition = $chainDefinition === null ? ($attackKind==='ability' ? $abilities[$abilityIndex] : ($attackKind==='weapon' ? $weapons[$weaponIndex] : [])) : [];
@@ -6497,10 +6518,13 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $resultModifier = $hitModifierMode === 'result' ? $hitModifierValue : 0;
                 $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
+                $joker=applicationRequestsSpecialSuccess($arguments);
+                if($joker&&(!$hasCastingCheck||$chainGate!==null))rejectOnlineCommand($connection,409,'Ce jet est déjà résolu ou cette attaque ne demande aucun jet.','joker_roll_already_resolved');
+                if($joker)$hitFormula='1';
                 $hitRolled = $chainGate !== null ? applicationComplexAbilityGateRoll($chainGate, $activity['rolls'] ?? [])
-                    : ($hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement']);
+                    : ($joker?($castingPlan!==null?applicationSpecialSuccessRoll():onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId)):($hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement']));
                 $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true))
-                    : ($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]);
+                    : ($joker?applicationSpecialSuccessOutcome($threshold):($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]));
                 applyOnlineD100ResultToRoll($hitRolled, $hitOutcome);
                 if ($hasCastingCheck && $hitOutcome !== null) {
                     $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
@@ -6969,8 +6993,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
                         $rollMode = normalizeOnlineRollMode(!empty($attack['defenseStatId']) ? ($attack['defenseRollMode'] ?? 'normal') : ($arguments['rollMode'] ?? 'normal'));
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-                        $rolled = onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
-                        $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true);
+                        $joker=applicationRequestsSpecialSuccess($arguments);
+                        $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$target,$sceneId):onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
+                        $outcome = $joker?applicationSpecialSuccessOutcome($threshold):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true);
                         applyOnlineD100ResultToRoll($rolled, $outcome);
                         if ($outcome !== null) {
                             $fatigue = onlineStatFatigueDetails($target, (string) ($stats[$statIndex]['id'] ?? ''), $targetCharacter ?? null);
@@ -7322,9 +7347,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $result['ping'] = $ping;
         } elseif ($command === 'token.roll' && ($arguments['kind'] ?? '') === 'ability') {
             $result = onlineSimpleAbilityRoll($connection, $records, $pending, $table, $identity, $arguments, $isGm);
-        } elseif ($command === 'token.roll' && ($isGm || in_array($arguments['kind'] ?? '', ['custom-stat', 'custom-damage'], true))) {
-            if (!$isGm) rejectOnlineCommand($connection, 403, 'Ces jets tactiques personnalisés sont réservés au MJ.', 'gm_required');
-            $result = onlineGmTacticalRoll($connection, $records, $pending, $table, $identity, $arguments);
+        } elseif ($command === 'token.roll' && ($isGm || applicationRequestsSpecialSuccess($arguments) || in_array($arguments['kind'] ?? '', ['custom-stat', 'custom-damage'], true))) {
+            if (!$isGm && in_array($arguments['kind']??'',['custom-stat','custom-damage'],true)) rejectOnlineCommand($connection, 403, 'Ces jets tactiques personnalisés sont réservés au MJ.', 'gm_required');
+            $result = onlineGmTacticalRoll($connection, $records, $pending, $table, $identity, $arguments, true);
         } elseif ($command === 'token.roll') {
             $requestId = trim((string) ($arguments['requestId'] ?? ''));
             if ($requestId !== '' && preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
@@ -8606,6 +8631,8 @@ function onlineMediaStorageName(string $id, string $extension, array $identity):
 function uploadOnlineMedia(PDO $connection, array $configuration, bool $abilitySound = false): never
 {
     $identity = requireIdentity($connection);
+    if(str_starts_with(cleanMediaFilename((string)($_SERVER['HTTP_X_XAR_FILENAME']??'')),'item-docx-')
+        &&((string)$identity['effective_mode']!=='gm'||(string)$identity['permanent_role']!=='gm'))sendError(403,'Les illustrations de documents sont réservées au MJ.','gm_required');
     @set_time_limit(900);
     $rawContentType = strtolower(trim(explode(';', (string) ($_SERVER['CONTENT_TYPE'] ?? 'application/octet-stream'))[0]));
     $contentType = $abilitySound ? canonicalAbilitySoundContentType($rawContentType) : $rawContentType;

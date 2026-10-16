@@ -51,6 +51,8 @@ function onlineAssertAbilityValidationAvailable(PDO $connection, array $activity
 function onlineResumedAbilityPlan(array $saved, array $initiative, array $activity): array {
     $saved['usedRound'] = max(1, (int) ($initiative['round'] ?? 1));
     $saved['turnKey'] = applicationAbilityTurnKey($initiative);
+    $saved['enhancementInitiative'] = ['active' => ($initiative['active'] ?? false) === true,
+        'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)];
     $saved['useCount'] = 1;
     foreach ($activity['actionTimers'] ?? [] as $timer) {
         if (($timer['sceneId'] ?? '') === $saved['sceneId'] && ($timer['abilityId'] ?? '') === $saved['abilityId']

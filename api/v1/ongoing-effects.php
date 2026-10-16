@@ -101,7 +101,7 @@ function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pen
         return [...$receipt['result'], 'deduplicated' => true];
     }
     if (count($receipts) + count($activity['pendingAbilityCasts'] ?? []) >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité est plein.', 'effect_receipt_capacity');
-    $field = $resolve ? 'pendingDotResolutions' : ($kind === 'dot' ? 'damageOverTime' : ($kind === 'guard' ? 'nextAttackGuards' : ''));
+    $field = $resolve ? 'pendingDotResolutions' : ($kind === 'enhancement' ? 'attackEnhancements' : ($kind === 'dot' ? 'damageOverTime' : ($kind === 'guard' ? 'nextAttackGuards' : '')));
     if ($field === '' || ($resolve && !in_array($decision, ['roll', 'custom', 'skip'], true))) rejectOnlineCommand($connection, 400, 'Choix de résolution invalide.', 'effect_decision_invalid');
     $entries = $activity[$field] ?? [];
     $index = findEntryIndex($entries, $id);

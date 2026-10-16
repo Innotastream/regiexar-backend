@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/attack-enhancements.php';
+
+const PASSAGE_USE_RANGE_CELLS=2.5;
 
 function passageFailure(string $message,int $status=409):never {throw new RuntimeException($message,$status);}
 function passageId(mixed $id):bool {return is_string($id)&&preg_match('/^[A-Za-z0-9_-]{1,80}$/D',$id)===1;}
@@ -14,11 +17,11 @@ function normalizePassages(mixed $value):array {
     $ids=[];$result=[];
     foreach($value as $entry){
         if(!is_array($entry)||!passageId($entry['id']??null)||isset($ids[$entry['id']])||!is_int($entry['revision']??null)||$entry['revision']<1
-            ||!in_array($entry['kind']??'', ['door','portal','stairs'],true)||!in_array($entry['layerId']??'', ['basement','ground','upper'],true)
+            ||!in_array($entry['kind']??'', ['door','portal','stairs','walk'],true)||!in_array($entry['layerId']??'', ['basement','ground','upper'],true)
             ||!passageCoordinate($entry['x']??null)||!passageCoordinate($entry['y']??null)
-            ||!is_string($entry['name']??null)||trim($entry['name'])===''||passageNameLength($entry['name'])>120
+            ||!is_string($entry['name']??null)||trim($entry['name'])===''||passageNameLength($entry['name'])>120||array_key_exists('hidden',$entry)&&!is_bool($entry['hidden'])
             ||!empty($entry['destination'])&&(!is_array($entry['destination'])||!passageId($entry['destination']['sceneId']??null)||!passageId($entry['destination']['passageId']??null)))passageFailure('Un passage est invalide.',400);
-        $ids[$entry['id']]=true;$result[]=['id'=>$entry['id'],'revision'=>$entry['revision'],'name'=>trim($entry['name']),'kind'=>$entry['kind'],'layerId'=>$entry['layerId'],'x'=>$entry['x'],'y'=>$entry['y'],'destination'=>empty($entry['destination'])?null:array_intersect_key($entry['destination'],array_flip(['sceneId','passageId']))];
+        $ids[$entry['id']]=true;$result[]=['id'=>$entry['id'],'revision'=>$entry['revision'],'name'=>trim($entry['name']),'kind'=>$entry['kind'],'layerId'=>$entry['layerId'],'x'=>$entry['x'],'y'=>$entry['y'],'destination'=>empty($entry['destination'])?null:array_intersect_key($entry['destination'],array_flip(['sceneId','passageId'])),...(array_key_exists('hidden',$entry)?['hidden'=>$entry['hidden']]:[])];
     }return $result;
 }
 function &passageMap(array &$state,string $sceneId):array {
@@ -39,7 +42,7 @@ function detachPassage(array &$state,string $sceneId,array &$entry):void {
 }
 function passageWithinReach(array $token,array $entry,array $map):bool {
     $level=array_replace($map,$map['layers'][$entry['layerId']]??[]);
-    return ($token['layerId']??'ground')===$entry['layerId']&&dsDistance($token,$entry,$level)<=1.5;
+    return ($token['layerId']??'ground')===$entry['layerId']&&dsDistance($token,$entry,$level)<=PASSAGE_USE_RANGE_CELLS;
 }
 function passageDestinationLabel(array $state,array $entry):string {
     if(!$entry['destination'])return 'Sans liaison';
@@ -48,7 +51,7 @@ function passageDestinationLabel(array $state,array $entry):string {
     return $sceneName.' · '.(['basement'=>'Sous-sol','ground'=>'RDC','upper'=>'Étage'][$target['layerId']]).' · '.$target['name'];
 }
 function publicPassages(array $state,array $map,string $layerId,callable $visible):array {
-    $result=[];foreach(normalizePassages($map['passages']??null) as $entry)if($entry['layerId']===$layerId&&$visible($entry)){
+    $result=[];foreach(normalizePassages($map['passages']??null) as $entry)if(empty($entry['hidden'])&&$entry['layerId']===$layerId&&$visible($entry)){
         $destinationLayer=null;if($entry['destination'])try{$destinationLayer=passageEntry($state,$entry['destination'])['layerId'];}catch(RuntimeException $error){}
         $result[]=[...$entry,'destinationLabel'=>passageDestinationLabel($state,$entry),'destinationLayerId'=>$destinationLayer];
     }return $result;
@@ -56,6 +59,15 @@ function publicPassages(array $state,array $map,string $layerId,callable $visibl
 function applicationApplyPassageCommand(array $state,array $identity,string $command,array $args,array $context=[]):array {
     $isGm=($identity['role']??'')==='gm';
     if($command!=='passage.use'&&!$isGm)passageFailure('La gestion des passages est réservée au MJ.',403);
+    if($command==='passage.visibility'){
+        $map=&passageMap($state,(string)($args['sceneId']??''));
+        if(!in_array($args['layerId']??'', ['basement','ground','upper'],true)||!is_bool($args['hidden']??null)||!is_array($args['expectedPassages']??null))passageFailure('Le réglage des passages est invalide.',400);
+        $entries=array_values(array_filter(normalizePassages($map['passages']??null),static fn($entry)=>$entry['layerId']===$args['layerId']));
+        if(count($entries)!==count($args['expectedPassages']))passageFailure('Les passages ont changé. Rouvrez leur menu.');
+        foreach($entries as $entry){$matched=false;foreach($args['expectedPassages'] as $expected)if(($expected['id']??'')===$entry['id']&&($expected['revision']??0)===$entry['revision'])$matched=true;if(!$matched)passageFailure('Les passages ont changé. Rouvrez leur menu.');}
+        $map['passages']=array_map(static fn($entry)=>$entry['layerId']===$args['layerId']?[...$entry,'hidden'=>$args['hidden'],'revision'=>$entry['revision']+1]:$entry,normalizePassages($map['passages']??null));
+        return ['state'=>$state,'result'=>['hidden'=>$args['hidden'],'passageCount'=>count($entries)]];
+    }
     if($command==='passage.create'){
         if(!is_array($args['endpoints']??null)||count($args['endpoints'])!==2)passageFailure('Placez les deux extrémités du passage.',400);
         $references=[];
@@ -78,6 +90,7 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         $entry['destination']=['sceneId'=>$args['target']['sceneId'],'passageId'=>$target['id']];$target['destination']=['sceneId'=>$sceneId,'passageId'=>$entry['id']];$entry['revision']++;$target['revision']++;
     }elseif($command==='passage.remove'){$passageId=$entry['id'];detachPassage($state,$sceneId,$entry);unset($entry);$map['passages']=array_values(array_filter($map['passages'],static fn($other)=>$other['id']!==$passageId));return ['state'=>$state,'result'=>['passageId'=>$passageId]];}
     elseif($command==='passage.use'){
+        if(!$isGm&&!empty($entry['hidden']))passageFailure('Ce passage n’est pas visible.',403);
         if(!$isGm&&($state['tacticalSync']['paused']??false))passageFailure('La table est temporairement verrouillée par le MJ.',423);
         if(!$isGm&&($sceneId!==$state['activeSceneId']||$entry['layerId']!==($map['activeLayerId']??'ground')))passageFailure('Ce passage n’est plus sur la carte diffusée.');
         $index=array_search($args['tokenId']??'',array_column($map['tokens']??[],'id'),true);if($index===false)passageFailure('Ce pion n’existe plus.',404);$token=$map['tokens'][$index];
@@ -100,21 +113,32 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if($targetScene!==$sceneId&&count($targetMap['tokens']??[])>=2000)passageFailure('La scène de destination a atteint sa limite de pions.',429);
         if(!empty($token['mountedOnTokenId'])||array_filter($map['tokens'],static fn($other)=>($other['mountedOnTokenId']??'')===$token['id']))passageFailure('Détachez le pion de sa monture avant de changer de zone.');
         $destination=array_replace($targetMap,$targetMap['layers'][$target['layerId']]??[]);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
-        $occupied=array_values(array_filter($targetMap['tokens']??[],static fn($other)=>$other['id']!==$token['id']&&($other['layerId']??'ground')===$target['layerId']));
-        $position=nearestOnlineGroupPosition($desired,$token,$destination,$occupied,$target);
-        if(!$position||dsDistance([...$position,'layerId'=>$target['layerId']],$target,$destination)>2)passageFailure('Aucune place libre près de l’arrivée.');
+        $fog=applicationActiveMapFogState([...$targetMap,'activeLayerId'=>$target['layerId']]);
+        $occupied=array_values(array_filter($targetMap['tokens']??[],static fn($other)=>$other['id']!==$token['id']&&empty($other['hidden'])&&empty($other['mountedOnTokenId'])&&!applicationFogCoversPoint($fog,$other['x'],$other['y'])&&($other['layerId']??'ground')===$target['layerId']));
+        // Expand to neighbouring cells while keeping a direct, wall-free arrival.
+        $position=nearestOnlineGroupPosition($desired,$token,$destination,$occupied,$target,0,null,true,(float)($destination['gridSize']??50));
+        if(!$position)passageFailure('Aucune place libre et accessible autour de l’arrivée.');
         $token=array_replace($token,$position,['layerId'=>$target['layerId'],'targetTokenId'=>null,'_updatedAt'=>$context['now']??(int)round(microtime(true)*1000),'_movedAt'=>$context['now']??(int)round(microtime(true)*1000)]);
         foreach($map['tokens'] as &$other)if(($other['targetTokenId']??'')===$token['id']&&($other['layerId']??'ground')!==$token['layerId'])$other['targetTokenId']=null;unset($other);
         if($targetScene===$sceneId)$map['tokens'][$index]=$token;
         else {
             array_splice($map['tokens'],$index,1);$targetMap['tokens'][]=$token;
             foreach($map['tokens'] as &$other)if(($other['targetTokenId']??'')===$token['id'])$other['targetTokenId']=null;unset($other);
+            if(!isset($map['layers'][$map['activeLayerId']??'ground'])){
+                $carried=array_values(array_filter($map['lights']??[],static fn($light)=>($light['carrierTokenId']??null)===$token['id']));
+                $map['lights']=array_values(array_filter($map['lights']??[],static fn($light)=>($light['carrierTokenId']??null)!==$token['id']));
+                if($carried)$targetMap['layers'][$token['layerId']]['lights']=[...($targetMap['layers'][$token['layerId']]['lights']??[]),...array_map(static fn($light)=>[...$light,'x'=>$token['x'],'y'=>$token['y']],$carried)];
+            }
             foreach(array_keys($map['layers']??[]) as $layerId){
                 $lights=$map['layers'][$layerId]['lights']??[];$carried=array_values(array_filter($lights,static fn($light)=>($light['carrierTokenId']??'')===$token['id']));
                 if($carried){$map['layers'][$layerId]['lights']=array_values(array_filter($lights,static fn($light)=>($light['carrierTokenId']??'')!==$token['id']));$targetMap['layers'][$token['layerId']]['lights']=[...($targetMap['layers'][$token['layerId']]['lights']??[]),...array_map(static fn($light)=>array_replace($light,['x'=>$token['x'],'y'=>$token['y']]),$carried)];}
                 if($layerId===($map['activeLayerId']??'ground'))$map['lights']=$map['layers'][$layerId]['lights']??[];
             }
+            if(($targetMap['activeLayerId']??'ground')===$token['layerId'])$targetMap['lights']=$targetMap['layers'][$token['layerId']]['lights']??($targetMap['lights']??[]);
             foreach(array_keys($state['actionTimers']??[]) as $i)if($state['actionTimers'][$i]['sceneId']===$sceneId&&($state['actionTimers'][$i]['tokenId']??'')===$token['id'])$state['actionTimers'][$i]['sceneId']=$targetScene;
+            $destinationInitiative=$targetScene===$state['activeSceneId']?($state['initiative']??[]):[];
+            if($targetScene!==$state['activeSceneId'])foreach($state['scenes']??[] as $scene)if($scene['id']===$targetScene)$destinationInitiative=$scene['combat']['initiative']??[];
+            if(isset($state['attackEnhancements']))$state['attackEnhancements']=applicationTransferAttackEnhancements($state['attackEnhancements'],$token,$sceneId,$targetScene,$destinationInitiative);
         }
         foreach(array_keys($state['devices']['devices']??[]) as $i){$device=&$state['devices']['devices'][$i];if($device['sourceTokenId']===$token['id']&&$device['sceneId']===$sceneId&&$device['definition']['kind']==='dome'&&($device['mode']??'carried')!=='placed')$device=array_replace($device,['sceneId'=>$targetScene,'layerId'=>$token['layerId'],'x'=>$token['x'],'y'=>$token['y'],'revision'=>$device['revision']+1]);unset($device);}
         return ['state'=>$state,'result'=>['tokenId'=>$token['id'],'sourceSceneId'=>$sceneId,'sceneId'=>$targetScene,'layerId'=>$token['layerId'],'x'=>$token['x'],'y'=>$token['y'],'destinationLabel'=>passageDestinationLabel($state,$entry)]];

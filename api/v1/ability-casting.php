@@ -110,6 +110,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $simpleRoll && !$hasCastingCheck ? normalizeOnlineD100Modifier($arguments['modifier'] ?? 0) : 0,
         $attack ? normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0) : 0,
         $attack && ($arguments['opposed'] ?? false) === true,
+        ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
         ...($attack && (array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -162,6 +163,8 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         $statId = (string) $stat['id'];
     }
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
+        'attackEnhancement' => applicationAttackEnhancement($ability['attackEnhancement'] ?? null),
+        'enhancementInitiative' => ['active' => ($initiative['active'] ?? false) === true, 'combatId' => $combatId, 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)],
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
         'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost,
         'fatigueGained' => min($fatigueCost, 150 - normalizeApplicationFatigue($source['fatigue'] ?? null)['current']),
@@ -204,14 +207,16 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
 }
 
 function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null, ?array $character = null, bool $sourceVisibleToPlayers = false, string $sourceTokenId = ''): array {
+    $joker=applicationRequestsSpecialSuccess($arguments);
+    if($joker&&$plan['statId']==='')throw new RuntimeException('Cette capacité ne demande aucun jet à remplacer par un Joker.',409);
     if ($plan['statId'] === '') return ['success' => true, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null];
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
     $thresholdModifier = ($modifierMode === 'threshold' ? $modifierValue : 0) - ($plan['difficultyPenalty'] ?? 0);
     $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
-    $rolled = onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
-    $outcome = classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true);
+    $rolled = $joker?applicationSpecialSuccessRoll():onlineRollFormulaWithMode($formula, normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
+    $outcome = $joker?applicationSpecialSuccessOutcome($plan['threshold']):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true);
     applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null) {
         $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
@@ -298,6 +303,7 @@ function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true, bool $payCosts = true, bool $applyRecharge = true): array {
     $now = (int) floor(microtime(true) * 1000);
     if ($payCosts) {
+    if(($cast['outcome']['joker']??false)===true)onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$plan['sceneId']);
     onlineRecordCharacterLuckD100(
         $connection,
         $records,
@@ -380,6 +386,9 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0, 'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => 0, 'pendingValidation' => true];
     }
     unset($cast['pendingValidation']);
+    if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null)
+        applicationActivateAttackEnhancement($activity, ['id' => $plan['abilityId'], 'name' => $plan['label'], 'attackEnhancement' => $plan['attackEnhancement']],
+            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18));
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $cast['success'] ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];
@@ -483,7 +492,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if ($index < 0) rejectOnlineCommand($connection, 404, 'Cette compétence n’existe plus.', 'token_ability_missing');
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
-    if($continuation===null && (!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
+    if($continuation===null && (!empty($ability['attackEnhancement'])||!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
     $extended = ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);

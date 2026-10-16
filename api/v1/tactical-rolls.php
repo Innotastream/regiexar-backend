@@ -39,6 +39,7 @@ function onlineStatFatigueDetails(array $source, string $statId, ?array $charact
 }
 
 function applicationD100Comparison(array $outcome): string {
+    if(($outcome['joker']??false)===true)return 'Joker · réussite simple de valeur fixe 1';
     if (!is_numeric($outcome['raw'] ?? null) || !is_numeric($outcome['threshold'] ?? null)) return '';
     $raw = (int) $outcome['raw'];
     $resultModifier = (int) ($outcome['resultModifier'] ?? 0);
@@ -87,8 +88,8 @@ function applicationRollPresentation(array $roll): array {
         $value = $attempt['total'] ?? $roll['total'] ?? 0;
         $total = is_numeric($value) ? (string) (0 + $value) : '0';
         $calculations[] = [
-            'formula' => $formula,
-            'total' => $total,
+            'formula' => ($roll['outcome']['joker']??false)===true?'Joker':$formula,
+            'total' => ($roll['outcome']['joker']??false)===true?'réussite simple':$total,
             'ignored' => count($attempts) > 1 && $index !== $selectedIndex,
         ];
     }
@@ -167,18 +168,21 @@ function applicationTacticalRollSignature(string $sceneId, array $arguments): st
         ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
         onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind),
         is_string($arguments['visibility'] ?? null) ? $arguments['visibility'] : 'public',
+        ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
 function applicationTacticalRollSpecification(array $source, array $arguments): array {
     $kind = $arguments['kind'] ?? '';
-    if (!is_string($kind) || !in_array($kind, ['coin', 'stat', 'hit', 'luck', 'initiative', 'damage', 'custom', 'custom-stat', 'custom-damage'], true)) throw new RuntimeException('invalid_tactical_roll_kind');
+    if (!is_string($kind) || !in_array($kind, ['joker', 'coin', 'stat', 'hit', 'luck', 'initiative', 'damage', 'custom', 'custom-stat', 'custom-damage'], true)) throw new RuntimeException('invalid_tactical_roll_kind');
+    if(applicationRequestsSpecialSuccess($arguments)&&!in_array($kind,['joker','stat','hit','luck','custom-stat'],true))throw new RuntimeException('invalid_joker_roll_kind');
     if (array_key_exists('label', $arguments) && !validApplicationDomainText($arguments['label'], 120)) throw new RuntimeException('invalid_tactical_roll_label');
     if (array_key_exists('visibility', $arguments) && !in_array($arguments['visibility'], ['public', 'gm', 'queued'], true)) throw new RuntimeException('invalid_tactical_roll_visibility');
     $label = trim((string) ($arguments['label'] ?? ''));
     $formula = '1d100'; $threshold = null; $modifier = 0; $resultModifier = 0;
     $mode = onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind);
-    if ($kind === 'stat') {
+    if($kind==='joker'){$label='Réussite spéciale · Joker';$formula='1';}
+    elseif ($kind === 'stat') {
         $stat = applicationAbilityCastingStat($source['stats'] ?? [], (string) ($arguments['statId'] ?? ''));
         if (!is_array($stat) || !is_numeric($stat['value'] ?? null)) throw new RuntimeException('token_stat_missing');
         $threshold = max(0, min(100, (int) $stat['value']));
@@ -256,8 +260,9 @@ function applicationTacticalRollReceipt(array $activity, string $requestId, stri
     return null;
 }
 
-function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments): array {
-    if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm') rejectOnlineCommand($connection, 403, 'Ces jets tactiques sont réservés au MJ.', 'gm_required');
+function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $allowPlayerJoker=false): array {
+    $isGm=($identity['effective_mode']??'')==='gm'&&($identity['permanent_role']??'')==='gm';
+    if(!$isGm&&(!$allowPlayerJoker||!applicationRequestsSpecialSuccess($arguments)))rejectOnlineCommand($connection,403,'Ces jets tactiques sont réservés au MJ.','gm_required');
     $tokenId = (string) ($arguments['tokenId'] ?? ''); $characterId = (string) ($arguments['characterId'] ?? '');
     $sceneId = (string) ($arguments['sceneId'] ?? '');
     if ($tokenId !== '' && $sceneId === '') rejectOnlineCommand($connection, 409, 'La scène du jet est absente ; rouvrez la fiche.', 'tactical_roll_scene_required');
@@ -281,6 +286,11 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     if ($sceneId !== '' && applicationDomainPayload($records, 'scene:' . $sceneId) === []) rejectOnlineCommand($connection, 409, 'Cette scène n’existe plus.', 'stale_scene');
     $source = applicationDomainPayload($records, $sourceKey);
     if ($source === []) rejectOnlineCommand($connection, 404, 'La source du jet n’existe plus.', 'tactical_roll_source_missing');
+    if(!$isGm){
+        if($sceneId!==onlineActiveSceneId($table))rejectOnlineCommand($connection,409,'La scène a changé. Rouvrez le jet.','stale_scene');
+        if($tokenId!==''?(onlineTokenControllerIdFromRecords($connection,$records,$source)!==$accountId||!empty($source['hidden'])):($source['ownerPlayerId']??'')!==$accountId)
+            rejectOnlineCommand($connection,403,'Cette unité ne vous appartient pas.','joker_source_forbidden');
+    }
     if ($tokenId !== '') {
         $map = applicationDomainPayload($records, 'map:' . $sceneId);
         if (!onlineTokenOnActiveLayer($source, $map) || $arguments['layerId'] !== onlineTokenLayerId($source, $map)) rejectOnlineCommand($connection, 409, 'Ce pion a changé de niveau.', 'stale_token_layer');
@@ -296,10 +306,11 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     }
     try { $spec = applicationTacticalRollSpecification($source, $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
-    $rolled = onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
-    $outcome = $spec['threshold'] !== null
+    $joker=applicationRequestsSpecialSuccess($arguments);
+    $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
+    $outcome = $joker?applicationSpecialSuccessOutcome($spec['threshold']):($spec['threshold'] !== null
         ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat')
-        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId)) : null);
+        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId)) : null));
     applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {
@@ -313,6 +324,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     if ($tokenId !== '' && !in_array($spec['kind'], ['damage', 'custom-damage'], true)) $roll['mapEvent'] = ['kind' => 'roll', 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map), 'anchorTokenId' => $tokenId, 'tokenId' => $tokenId, 'value' => $outcome['result'] ?? $rolled['total'], 'label' => $spec['label'], 'tone' => $outcome['code'] ?? 'normal', 'diceAppearance' => $roll['diceAppearance']];
     $sourceVisibleToPlayers = $tokenId !== '' && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
     $roll = applicationTacticalRollVisibility($roll, $source, $spec['kind'], $spec['visibility'], $sourceVisibleToPlayers);
+    if(!$isGm){$roll['rollerRole']='player';$roll['visibility']='public';$roll['revealed']=true;}
     if ($sceneId !== '' && $sceneId !== onlineActiveSceneId($table)) {
         $roll['visibility'] = 'gm';
         $roll['revealed'] = false;

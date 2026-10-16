@@ -8,7 +8,15 @@ function loreCheck(bool $condition, string $message): void {
     echo 'PASS ' . $message . "\n";
 }
 $text = require __DIR__ . '/../api/v1/lore-catalog/ada-origin.php';
-loreCheck(strlen($text) > 40000 && str_contains($text, '### La prison dorée'), 'The complete requested narrative and chapters are present.');
+loreCheck(strlen($text) > 60000 && str_contains($text, '### I — La prison dorée'), 'The current Ada narrative and chapters are present.');
+$provenance = json_decode((string) file_get_contents(__DIR__ . '/../api/v1/lore-catalog/provenance-20261016.json'), true, 512, JSON_THROW_ON_ERROR);
+$sources = array_column($provenance['imports'], null, 'character');
+loreCheck(XAR_ADA_LORE_IMPORT_KEY === $sources['ada']['importKey'] && XAR_ADA_LORE_IMPORT_KEY !== $provenance['previousAdaImportKey'],
+    'Ada uses a new import receipt, so the previous import does not prevent the requested update.');
+loreCheck(hash('sha256', $text) === $sources['ada']['sha256'] && strlen($text) === $sources['ada']['bytes']
+    && preg_match_all('/^### [IVX]+ — /m', $text) === 8
+    && str_ends_with($text, 'Pourtant, un instant, la petite main d’Ada serra la sienne.'),
+    'The complete published Ada text, including all eight chapters and its ending, matches the recorded source.');
 loreCheck(normalizeOnlineCharacterLore("  été\r\n\0suite  ") === "été\nsuite", 'Plain text and accents normalize without losing paragraphs.');
 $oversizedRejected = false;
 try { normalizeOnlineCharacterLore(str_repeat('é', 100001)); } catch (RuntimeException $error) { $oversizedRejected = $error->getMessage() === 'character_lore_too_large'; }
@@ -37,8 +45,13 @@ loreCheck($patched['lore'] === $text && $patched['ownerPlayerId'] === 'fixture-o
 $visible = visibleCharacter($patched);
 loreCheck($visible['lore'] === $text && !isset($visible['secret']), 'The owner projection preserves the narrative and strips MJ secrets.');
 $catalog = siteCharacterLoreCatalog();
-loreCheck(array_column($catalog['imports'], 'character') === ['inho', 'hira', 'gohachu', 'krael', 'nedrezar', 'killgert'],
-    'The current public site supplies exactly the six other character lores.');
+loreCheck(array_column($catalog['imports'], 'character') === ['inho', 'hira', 'gohachu', 'krael', 'nedrezar', 'killgert', 'mania'],
+    'Mania is added after the six existing character imports.');
+$mania = $catalog['imports'][6];
+loreCheck($mania['sha256'] === $sources['mania']['sha256'] && strlen($mania['text']) === $sources['mania']['bytes']
+    && $mania['chapterCount'] === 8 && $mania['blockCount'] === 77 && preg_match_all('/^### [IVX]+ — /m', $mania['text']) === 8
+    && str_ends_with($mania['text'], 'Décline ton identité.'),
+    'Mania includes all eight chapters, dialogue attribution and the last paragraph from the published narrative.');
 foreach ($catalog['imports'] as $spec) {
     $source = array_replace($character, ['id' => 'fixture-' . $spec['character'], 'name' => $spec['names'][0], 'lore' => 'Ancien récit']);
     $key = 'character:' . $source['id'];

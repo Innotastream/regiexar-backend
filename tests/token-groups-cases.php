@@ -152,6 +152,37 @@ requireTactical($db->payload('token:scene-one:token-independent')['hp'] == 40, '
 $response = runCommand($db,'character.patch',['characterId'=>'character-player','patch'=>['resources'=>['hp'=>35,'maxHp'=>100,'mana'=>5,'maxMana'=>10]]]);
 requireTactical($response->status === 200 && $db->payload('token:scene-two:token-copy')['hp'] == 35 && $db->payload($cloneKey)['hp'] == 10, 'Player sheet changes synchronize all scenes while respecting the clone.');
 
+// Existing close formations and hidden neighbours follow the same spacing rule
+// as an individual move, including the destination of a floor transfer.
+$closeMap = ['viewLocked'=>true,'activeLayerId'=>'ground','naturalWidth'=>1000,'naturalHeight'=>1000,
+    'layers'=>['upper'=>['naturalWidth'=>1000,'naturalHeight'=>1000]],
+    'tokens'=>[['id'=>'a','x'=>40,'y'=>40,'size'=>80,'layerId'=>'ground'],['id'=>'b','x'=>45,'y'=>40,'size'=>80,'layerId'=>'ground']]];
+$closeRequest = ['tokenIds'=>['a','b'],'layerId'=>'ground','base'=>['a'=>['x'=>40,'y'=>40],'b'=>['x'=>45,'y'=>40]],'dx'=>10,'dy'=>0];
+foreach (['ground','upper'] as $targetLayer) {
+    $plan = planApplicationTokenGroupTransform($closeMap, [...$closeRequest,'targetLayerId'=>$targetLayer]);
+    requireTactical($plan[0]['x']==50 && $plan[1]['x']==55 && !$plan[0]['relocated'] && !$plan[1]['relocated'], 'A close group keeps its actual formation on '.$targetLayer.'.');
+}
+$floorRequest=['targetLayerId'=>'upper','tokens'=>$closeMap['tokens']];
+$plan=planApplicationTokenLayers($closeMap,$floorRequest);
+requireTactical($plan[0]['x']==40 && $plan[1]['x']==45 && !$plan[1]['relocated'], 'A close group keeps its partial overlap during a floor transfer.');
+foreach (['hidden','fog'] as $concealment) {
+    $map=$closeMap;$map['tokens']=[['id'=>'a','x'=>40,'y'=>50,'size'=>30,'layerId'=>'ground'],['id'=>'obstacle','x'=>50,'y'=>50,'size'=>220,'layerId'=>'ground','hidden'=>$concealment==='hidden']];
+    $fog=['enabled'=>$concealment==='fog','width'=>512,'height'=>512,'mask'=>rtrim(strtr(base64_encode(str_repeat("\xff",32768)),'+/','-_'),'=')];
+    $map['fog']=$fog;
+    $plan=planApplicationTokenGroupTransform($map,['tokenIds'=>['a'],'layerId'=>'ground','base'=>['a'=>['x'=>40,'y'=>50]],'dx'=>10,'dy'=>0]);
+    requireTactical($plan[0]['x']==50 && $plan[0]['y']==50 && !$plan[0]['relocated'], 'A '.$concealment.' neighbour never repels a group.');
+    $map['tokens'][0]['x']=50;$map['tokens'][1]['layerId']='upper';$map['layers']['upper']['fog']=$fog;
+    $plan=planApplicationTokenLayers($map,['targetLayerId'=>'upper','tokens'=>[$map['tokens'][0]]]);
+    requireTactical($plan[0]['x']==50 && $plan[0]['y']==50 && !$plan[0]['relocated'], 'A '.$concealment.' neighbour never repels a floor transfer.');
+}
+$closeMap['tokens'][0]['immovable']=true;
+foreach (['group','floor'] as $kind) {
+    $refused=false;
+    try { if($kind==='group')planApplicationTokenGroupTransform($closeMap,$closeRequest);else planApplicationTokenLayers($closeMap,$floorRequest); }
+    catch(DomainException $error){$refused=$error->getCode()===409;}
+    requireTactical($refused,'The native '.$kind.' authority refuses an immovable token atomically.');
+}
+
 // Geometric parity is shared with the JavaScript local authority, at 1/10000 percent.
 foreach (json_decode(file_get_contents(__DIR__ . '/token-group-geometry.json'), true, 512, JSON_THROW_ON_ERROR) as $case) {
     $result = planApplicationTokenGroupTransform($case['map'], $case['request']);

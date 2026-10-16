@@ -79,7 +79,9 @@ $map=['activeLayerId'=>'ground','naturalWidth'=>1000,'naturalHeight'=>1000,'laye
     ['id'=>'staying','x'=>50,'y'=>50,'size'=>50,'layerId'=>'upper'],
 ]];
 $placements=planApplicationTokenLayers($map,['targetLayerId'=>'upper','tokens'=>[['id'=>'moving','x'=>50,'y'=>50,'layerId'=>'basement'],['id'=>'staying','x'=>50,'y'=>50,'layerId'=>'upper']]]);
-requireTactical($placements[0]['relocated'] && !$placements[1]['relocated'] && hypot(($placements[0]['x']-50)*10,($placements[0]['y']-50)*10) >= 50.1, 'Transfer relocates beside an occupied destination and preserves the token already there.');
+requireTactical($placements[0]['relocated'] && !$placements[1]['relocated'] && hypot(($placements[0]['x']-50)*10,($placements[0]['y']-50)*10) > 0
+    && (float) $placements[1]['x'] === 50.0 && (float) $placements[1]['y'] === 50.0,
+    'Transfer prevents complete covering while allowing nearby tokens and preserving the token already there.');
 
 $db = fixture();$db->put('map:scene-one',['activeLayerId'=>'upper']);
 $initial=$db->domains;

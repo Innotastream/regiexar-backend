@@ -45,6 +45,9 @@ try {
         'Historical fixture exercises defaults that validation must not persist during a lore import.');
     $insert = $db->prepare('INSERT INTO application_domains VALUES (\'character:fixture-ada\',1,17,:payload,NULL,UTC_TIMESTAMP(3))');
     $insert->execute([':payload' => json_encode($before)]);
+    // The old receipt exists before the new import, as on an upgraded table.
+    $legacy = $db->prepare('INSERT INTO character_lore_imports (import_key,character_id,source_domain_revision,committed_global_revision,before_payload,lore_sha256) VALUES (:key,:id,1,1,:payload,:sha)');
+    $legacy->execute([':key' => 'ada-origin-20261005', ':id' => 'fixture-ada', ':payload' => json_encode($before), ':sha' => hash('sha256', 'Ancien récit')]);
     $db->exec("CREATE TRIGGER lore_failure BEFORE INSERT ON character_lore_imports FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='synthetic backup failure'");
     $failed = false; try { importAdaOriginLoreOnRead($db); } catch (Throwable) { $failed = true; }
     $record = applicationDomainRecords($db)['character:fixture-ada'];
@@ -79,7 +82,8 @@ try {
     $workers = []; sort($statuses);
     loreSqlCheck($statuses === ['already_applied','applied'], 'Two concurrent imports commit exactly one import and one backup.');
     $saved = applicationDomainRecords($db)['character:fixture-ada'];
-    $backup = $db->query('SELECT * FROM character_lore_imports')->fetch();
+    $backupQuery = $db->prepare('SELECT * FROM character_lore_imports WHERE import_key=:key');
+    $backupQuery->execute([':key' => XAR_ADA_LORE_IMPORT_KEY]); $backup = $backupQuery->fetch();
     loreSqlCheck($saved['payload']['resources']['hp'] === 5 && json_decode($backup['before_payload'], true) === $before
         && (int) $backup['source_domain_revision'] === 18 && (int) $backup['committed_global_revision'] === 102,
         'The import preserves concurrent resources and backs up the latest real revision.');
@@ -93,9 +97,12 @@ try {
     $db->prepare("UPDATE application_domains SET payload=:payload, revision=20 WHERE domain_key='character:fixture-ada'")->execute([':payload' => json_encode($modified)]);
     loreSqlCheck(importAdaOriginLoreOnRead($db)['status'] === 'already_applied'
         && applicationDomainRecords($db)['character:fixture-ada']['payload']['lore'] === $modified['lore']
-        && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === 1,
+        && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === 2,
         'Later user edits survive every repeated import request.');
-    $catalog = siteCharacterLoreCatalog(); $originals = [];
+    // A receipt for the earlier Ada version must coexist with the new import.
+    loreSqlCheck(XAR_ADA_LORE_IMPORT_KEY !== 'ada-origin-20261005' && characterLoreImportStatus($db, 'ada-origin-20261005')['applied']
+        && characterLoreImportStatus($db)['applied'], 'Previous and current Ada receipts and backups remain independent.');
+    $catalog = siteCharacterLoreCatalog(); $originals = []; $siteCount = count($catalog['imports']);
     foreach ($catalog['imports'] as $i => $spec) {
         $character = array_replace($before, ['id' => 'fixture-' . $spec['character'], 'name' => $spec['names'][0],
             'ownerPlayerId' => $i === 5 ? null : 'fixture-owner', 'lore' => 'Ancien récit de ' . $spec['character']]);
@@ -104,8 +111,8 @@ try {
             ':key' => 'character:' . $character['id'], ':payload' => json_encode($character)]);
     }
     $results = importSiteCharacterLoresOnRead($db);
-    loreSqlCheck(count($results) === 6 && count(array_filter($results, static fn ($value) => $value === 'applied')) === 6,
-        'All six existing site characters receive their complete stories through the real SQL writer.');
+    loreSqlCheck(count($results) === $siteCount && count(array_filter($results, static fn ($value) => $value === 'applied')) === $siteCount,
+        'All existing site characters, including Mania, receive their complete stories through the real SQL writer.');
     foreach ($catalog['imports'] as $spec) {
         $record = applicationDomainRecords($db)['character:fixture-' . $spec['character']];
         $expected = $originals[$spec['character']]; $expected['lore'] = $spec['text'];
@@ -121,11 +128,11 @@ try {
     $db->prepare("UPDATE application_domains SET payload=:payload WHERE domain_key='character:fixture-inho'")->execute([':payload' => json_encode($edited)]);
     $revision = domainClockRecord($db)['globalRevision']; $results = importSiteCharacterLoresOnRead($db);
     $status = siteCharacterLoreImportStatus($db, $results);
-    loreSqlCheck($status['expected'] === 6 && $status['applied'] === 6
-        && count(array_filter($results, static fn ($value) => $value === 'already_applied')) === 6
+    loreSqlCheck($status['expected'] === $siteCount && $status['applied'] === $siteCount
+        && count(array_filter($results, static fn ($value) => $value === 'already_applied')) === $siteCount
         && applicationDomainRecords($db)['character:fixture-inho']['payload']['lore'] === 'Texte édité ensuite'
         && domainClockRecord($db)['globalRevision'] === $revision
-        && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === 7,
+        && (int) $db->query('SELECT COUNT(*) FROM character_lore_imports')->fetchColumn() === $siteCount + 2,
         'Repeated health maintenance preserves all later edits, original backups and revisions.');
     echo "Local MySQL character lore integration passed.\n";
 } finally {

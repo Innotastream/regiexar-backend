@@ -43,3 +43,24 @@ $mediaState = ['characters' => [['id' => 'hero-doc', 'ownerPlayerId' => 'owner-d
     'instances' => [['id' => 'doc-one', 'templateId' => 'doc', 'revision' => 1, 'location' => ['kind' => 'inventory', 'characterId' => 'hero-doc']]]]];
 requireTactical(onlineMediaVisibleInPlayerState($mediaState, ['id' => 'owner-doc'], $mediaId), 'Native media authority includes illustrations from the current owned inventory');
 requireTactical(!onlineMediaVisibleInPlayerState($mediaState, ['id' => 'other-owner'], $mediaId), 'Native media authority refuses another player’s document illustrations');
+
+$db=fixture();$db->put('scene-index',['order'=>['scene-one']]);$db->put('map:scene-one',['activeLayerId'=>'ground','gridSize'=>50,'naturalWidth'=>1600,'naturalHeight'=>900,'vision'=>['enabled'=>false],'background'=>'/assets/regie-chamber_1f146e88.webp']);
+$db->put('scene:scene-one',['metadata'=>['id'=>'scene-one','name'=>'Scène de recette']]);$db->put('roster',['characterOrder'=>['character-player']]);
+$template=['id'=>'sealed-letter','name'=>'Lettre scellée','kind'=>'letter','permissions'=>['read'=>false,'pickup'=>false,'transfer'=>false,'destroy'=>false],'document'=>['title'=>'Piste secrète','blocks'=>[['type'=>'paragraph','text'=>'Texte réservé'],['type'=>'image','src'=>'/assets/lore/ada-origines.png']]]];
+requireTactical(runCommand($db,'item.template.create',['requestId'=>'private-letter-create-001','template'=>$template],true)->status===200,'MJ creates a document with explicit player rights');
+requireTactical(runCommand($db,'item.spawn',['requestId'=>'private-letter-spawn-001','templateId'=>$template['id'],'itemId'=>'sealed-copy','location'=>['kind'=>'ground','sceneId'=>'scene-one','layerId'=>'ground','x'=>20,'y'=>50]],true)->status===200,'The native dispatcher places the unique document copy');
+$args=['requestId'=>'private-letter-pickup-001','itemId'=>'sealed-copy','expectedItemRevision'=>1,'characterId'=>'character-player','sceneId'=>'scene-one','tokenId'=>'token-player'];
+requireTactical(runCommand($db,'item.pickup',$args)->status===403,'A player cannot bypass a forbidden pickup');
+requireTactical(runCommand($db,'item.destroy',[...$args,'requestId'=>'private-letter-destroy-001'])->status===403,'A player cannot bypass a forbidden destruction');
+$previous=$db->payload('items')['templates'][0];$edited=[...$previous,'permissions'=>['read'=>true,'pickup'=>true,'transfer'=>false,'destroy'=>true]];
+$update=['requestId'=>'private-letter-update-001','template'=>$edited,'expectedTemplate'=>$previous];
+requireTactical(runCommand($db,'item.template.update',$update)->status===403,'A permanent or ordinary player cannot edit the model');
+requireTactical(runCommand($db,'item.template.update',$update,true)->status===200,'The native dispatcher saves the edited model');
+$revision=$db->revision;requireTactical((runCommand($db,'item.template.update',$update,true)->body['deduplicated']??false)&&$db->revision===$revision,'Model update replays its durable receipt');
+requireTactical(runCommand($db,'item.template.update',[...$update,'requestId'=>'private-letter-update-002'],true)->status===409,'A concurrent model update refuses stale content');
+$public=publicPlayerState(domainsToApplicationState(applicationDomainRecords($db),0),['id'=>'account-player'],[]);
+requireTactical(str_contains(json_encode($public['items'],JSON_UNESCAPED_UNICODE), 'Texte réservé'),'An explicitly readable visible ground document reaches the player projection');
+$pickup=runCommand($db,'item.pickup',[...$args,'requestId'=>'private-letter-pickup-002']);requireTactical($pickup->status===200,'The newly authorized pickup moves the existing copy');
+$destroy=[...$args,'requestId'=>'private-letter-destroy-002','expectedItemRevision'=>2];$response=runCommand($db,'item.destroy',$destroy);
+requireTactical($response->status===200&&$db->payload('items')['instances'][0]['location']===['kind'=>'destroyed'],'Authorized destruction tombstones the native unique instance');
+$revision=$db->revision;requireTactical((runCommand($db,'item.destroy',$destroy)->body['deduplicated']??false)&&$db->revision===$revision,'Replayed destruction cannot change the item twice');

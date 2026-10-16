@@ -1,0 +1,44 @@
+{
+  "scope": "Public lore only. Existing sheet fields and original Ada DOCX illustration are preserved.",
+  "previousAdaImportKey": "ada-origin-20261005",
+  "imports": [
+    {
+      "character": "mania",
+      "names": [
+        "mania"
+      ],
+      "importKey": "site-lore-mania-20261016",
+      "sha256": "996b07ecbdb106f06130f0b9ed9afde761661a1ba2129b74b8619eae77287a4f",
+      "storyCount": 1,
+      "chapterCount": 8,
+      "blockCount": 77,
+      "source": {
+        "url": "https://www.xar-tsaroth.fr/#character-mania",
+        "retrievedAt": "2026-10-15T22:21:28.410Z",
+        "assetUrl": "https://www.xar-tsaroth.fr/_next/static/chunks/1i5bsqxdu05v3.js",
+        "assetSha256": "aa1fe62fe4b4d4ac149b34c95a309edb9859e6c092e30c80028b1f491041bbec"
+      },
+      "bytes": 24881,
+      "title": "La Fiole et les Ombres"
+    },
+    {
+      "character": "ada",
+      "names": [
+        "ada"
+      ],
+      "importKey": "ada-origin-20261016",
+      "sha256": "0061bc88386371af4e9be8a4fe778ef16aadae46dec11397e66f6117ffef752b",
+      "storyCount": 1,
+      "chapterCount": 8,
+      "blockCount": 390,
+      "source": {
+        "url": "https://www.xar-tsaroth.fr/#character-ada",
+        "retrievedAt": "2026-10-15T22:21:28.410Z",
+        "assetUrl": "https://www.xar-tsaroth.fr/_next/static/chunks/1i5bsqxdu05v3.js",
+        "assetSha256": "aa1fe62fe4b4d4ac149b34c95a309edb9859e6c092e30c80028b1f491041bbec"
+      },
+      "bytes": 61145,
+      "title": "Ada de Kasillon"
+    }
+  ]
+}

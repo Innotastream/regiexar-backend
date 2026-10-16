@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/token-groups.php';
+require_once __DIR__ . '/strategy-break.php';
 require_once __DIR__ . '/token-pathfinding.php';
 require_once __DIR__ . '/complex-abilities.php';
 require_once __DIR__ . '/ability-effects.php';
@@ -376,6 +377,19 @@ function applicationMapVisionSettings(array $map): array
     return normalizeApplicationVisionSettings($current);
 }
 
+function validApplicationCollectionGroups(mixed $value): bool
+{
+    if(!validApplicationDomainObjectList($value,100))return false;
+    $seen=[];$members=[];
+    foreach($value as $group){
+        $id=$group['id']??null;$name=$group['name']??null;
+        if(!validApplicationDomainIdentifier($id,80)||isset($seen[$id])||!is_string($name)||trim($name)===''||preg_match('/\A[^\x00]{1,80}\z/u',$name)!==1||!validApplicationDomainIdentifierList($group['entryIds']??null,1000))return false;
+        $seen[$id]=true;
+        foreach($group['entryIds'] as $member){if(isset($members[$member]))return false;$members[$member]=true;}
+    }
+    return true;
+}
+
 function validApplicationMapLights(mixed $value): bool
 {
     if (!validApplicationDomainObjectList($value, XAR_MAP_LIGHT_MAXIMUM)) return false;
@@ -392,6 +406,7 @@ function validApplicationMapLights(mixed $value): bool
             || (array_key_exists('visionDistance', $light)
                 && (!is_int($light['visionDistance']) || $light['visionDistance'] < 1 || $light['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE))
             || (array_key_exists('enabled', $light) && !is_bool($light['enabled']))
+            || (array_key_exists('visibleFromAfar', $light) && !is_bool($light['visibleFromAfar']))
             || (array_key_exists('portable', $light) && !is_bool($light['portable']))
             || (array_key_exists('carrierTokenId', $light)
                 && !validApplicationDomainIdentifier($light['carrierTokenId'], 80, true))
@@ -416,6 +431,7 @@ function normalizeApplicationMapLights(mixed $value): array
         'y' => (float) $light['y'],
         'visionDistance' => $light['visionDistance'] ?? XAR_VISION_DEFAULT_DISTANCE,
         'enabled' => $light['enabled'] ?? true,
+        'visibleFromAfar' => $light['visibleFromAfar'] ?? false,
         'portable' => $light['portable'] ?? false,
         'carrierTokenId' => ($light['portable'] ?? false) === true ? ($light['carrierTokenId'] ?? null) : null,
         'color' => strtolower((string) ($light['color'] ?? XAR_MAP_LIGHT_DEFAULT_COLOR)),
@@ -1108,14 +1124,36 @@ function applicationLightCenterBlocked(array $occlusion, array $light): bool
     return applicationMaskBit($bytes, $row * $walls['width'] + $column);
 }
 
+function applicationVisionWallsWithFog(array $occlusion): array
+{
+    $walls = $occlusion['walls']; $fog = $occlusion['fog'] ?? null;
+    if (!is_array($fog) || ($fog['enabled'] ?? false) !== true || ($fog['mask'] ?? '') === '') return $walls;
+    $painted = applicationFogMaskBytes($fog);
+    if ($painted === null) return $walls;
+    $width = $walls['width']; $height = $walls['height'];
+    $bytes = applicationWallMaskBytes($walls) ?? str_repeat("\0", (int) ceil($width * $height / 8));
+    if ($width === $fog['width'] && $height === $fog['height']) $bytes = $bytes | $painted;
+    else {
+        $columns = [];
+        for ($x = 0; $x < $width; $x++) $columns[] = (int) round($x / ($width - 1) * ($fog['width'] - 1));
+        for ($y = 0; $y < $height; $y++) {
+            $row = (int) round($y / ($height - 1) * ($fog['height'] - 1)) * $fog['width'];
+            for ($x = 0; $x < $width; $x++) if (applicationMaskBit($painted, $row + $columns[$x])) applicationSetMaskBit($bytes, $y * $width + $x, true);
+        }
+    }
+    $walls['mask'] = rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    return $walls;
+}
+
 function applicationResolveVisionRelays(array $occlusion, array $origins, mixed $gridSize): array
 {
+    $occlusion['walls'] = applicationVisionWallsWithFog($occlusion);
     $origins = applicationPreparedVisionOrigins($occlusion, $origins);
     $mask = applicationComputeBaseVisionMask($occlusion, $origins, $gridSize);
     // The halo detects an anonymous presence for every observer; only the
     // strict mask permits the full token and its sheet to be projected.
     $viewerSeesFade = $origins !== [];
-    $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => [], 'viewerSeesFade' => $viewerSeesFade];
+    $result = ['mask' => $mask, 'origins' => $origins, 'activatedLightIds' => [], 'viewerSeesFade' => $viewerSeesFade, 'sightWalls' => $occlusion['walls']];
     if (!$mask['enabled'] || $origins === []) return $result;
     $bytes = applicationWallMaskBytes($mask);
     if ($bytes === null) return $result;
@@ -1133,13 +1171,18 @@ function applicationResolveVisionRelays(array $occlusion, array $origins, mixed 
         }
     }
     // Hidden bits combine with AND: each new relay contributes exactly once.
+    $distantBytes = null;
+    if (array_filter($remaining,static fn(array $light):bool=>($light['visibleFromAfar']??false)===true)) {
+        $distance = (int) ceil(hypot((float)($occlusion['naturalWidth']??1600),(float)($occlusion['naturalHeight']??900))/max(12,(float)($gridSize?:50)))+1;
+        $distantBytes = applicationWallMaskBytes(applicationComputeBaseVisionMask($occlusion,$origins,$gridSize,$distance));
+    }
     // Initial token origins keep their own forty slots; lights never displace them.
     do {
         $changed = false;
         foreach ($remaining as $index => $light) {
             $column = (int) round($light['x'] / 100 * ($mask['width'] - 1));
             $row = (int) round($light['y'] / 100 * ($mask['height'] - 1));
-            $remotelyVisible = false;
+            $remotelyVisible = ($light['visibleFromAfar']??false) === true && $distantBytes !== null && !applicationMaskBit($distantBytes,$row*$mask['width']+$column);
             foreach ($remoteMasks as $remoteMask) {
                 $remoteBytes = applicationWallMaskBytes($remoteMask);
                 if ($remoteBytes !== null && !applicationMaskBit($remoteBytes, $row * $mask['width'] + $column)) {
@@ -1175,6 +1218,7 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
 function applicationComputeVisionRenderMask(array $occlusion, array $origins, mixed $gridSize): array
 {
     $resolved = applicationResolveVisionRelays($occlusion, $origins, $gridSize);
+    $sightOcclusion = [...$occlusion, 'walls' => $resolved['sightWalls']];
     $strict = $resolved['mask'];
     if (!$strict['enabled']) return $strict;
     $width = $strict['width']; $height = $strict['height'];
@@ -1194,7 +1238,7 @@ function applicationComputeVisionRenderMask(array $occlusion, array $origins, mi
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
         $originDistance = applicationOriginVisionDistance($origin, $vision);
         $fadeDistance = $environmentLighting ? applicationVisionFadeDistance($originDistance) : 6;
-        $extended = applicationComputeBaseVisionMask($occlusion, [$origin], $grid, $fadeDistance);
+        $extended = applicationComputeBaseVisionMask($sightOcclusion, [$origin], $grid, $fadeDistance);
         $extendedBytes = applicationWallMaskBytes($extended);
         if ($extendedBytes === null) continue;
         if (($resolved['viewerSeesFade'] ?? false) === true) $tokenBytes = $tokenBytes & $extendedBytes;
@@ -1371,6 +1415,7 @@ function validApplicationTokenDomain(array $payload): bool
             || !in_array($payload['frameVariant'], ['player', 'creature', 'elite', 'boss', 'apostle'], true))) {
         return false;
     }
+    if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     foreach (['hp', 'maxHp', 'mana', 'maxMana', 'initiativeBonus'] as $key) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key])) {
             return false;
@@ -1554,6 +1599,10 @@ function validApplicationRollDomain(array $payload): bool
         return true;
     }
     $outcome = $payload['outcome'];
+    if(is_array($outcome)&&($outcome['joker']??false)===true)return ($outcome['raw']??null)===null&&($outcome['result']??null)===1
+        &&($outcome['code']??'')==='success'&&($outcome['success']??false)===true&&($outcome['effect']??false)===true
+        &&empty($outcome['automatic'])&&empty($outcome['breaksOpposition'])&&empty($outcome['requiresGmValidation'])
+        &&($payload['formula']??'')==='1'&&($payload['total']??null)===1&&$rollMode==='normal';
     return is_array($outcome)
         && validApplicationDomainNumber($outcome['raw'] ?? null, 1, 100)
         && (!array_key_exists('baseThreshold', $outcome) || $outcome['baseThreshold'] === null || validApplicationDomainNumber($outcome['baseThreshold'], 0, 100))
@@ -1630,6 +1679,7 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     if (array_key_exists('lore', $payload) && !validApplicationDomainText($payload['lore'], 200000)) return false;
     if (array_key_exists('morale', $payload) && !validApplicationDomainText($payload['morale'], 1000)) return false;
     if (array_key_exists('moraleExtremes', $payload)) {
@@ -2031,6 +2081,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['pendingDotResolutions'] ?? [], XAR_PENDING_DOT_RESOLUTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['rollRevelations'] ?? [], 500)
             || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [], 100)
+            || !validApplicationDomainObjectList($payload['attackEnhancements'] ?? [], 100)
             || !validApplicationDomainObjectList($payload['nextAttackGuards'] ?? [], 60)
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
             || !validApplicationDomainObjectList($payload['restEvents'] ?? [], 10)
@@ -2041,6 +2092,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
     }
     if ($key === 'library'
         && (!validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)
+            || !validApplicationCollectionGroups($payload['sceneGroups'] ?? [])
+            || !validApplicationCollectionGroups($payload['tokenLibraryGroups'] ?? [])
             || !validApplicationMapEffectPresets($payload['mapEffectPresets'] ?? []))) {
         sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
@@ -2315,6 +2368,7 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
+    if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null);
     if (str_starts_with($key, 'character:') && $protectAgainstStaleEntityWrite && is_array($payload) && is_array($current['payload'] ?? null)) {
         $oldLore = $current['payload']['lore'] ?? '';
         if (array_key_exists('lore', $payload) && $payload['lore'] !== $oldLore) sendError(403, 'Le lore est en lecture seule.', 'readonly_character_lore');
@@ -2411,6 +2465,7 @@ function legacyStateToDomains(array $state): array
             'activeSceneId' => $activeSceneId !== '' ? $activeSceneId : null,
             'discordCapture' => is_array($state['discordCapture'] ?? null) ? $state['discordCapture'] : [],
             'tacticalSync' => tacticalSyncForDomain($rawTacticalSync),
+            'strategyBreak' => normalizeApplicationStrategyBreak($state['strategyBreak'] ?? null),
         ],
         'scene-index' => ['order' => []],
         'roster' => [
@@ -2436,6 +2491,7 @@ function legacyStateToDomains(array $state): array
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
             'damageOverTime' => is_array($state['damageOverTime'] ?? null) ? $state['damageOverTime'] : [],
+            'attackEnhancements' => is_array($state['attackEnhancements'] ?? null) ? $state['attackEnhancements'] : [],
             'pendingDotResolutions' => is_array($state['pendingDotResolutions'] ?? null) ? $state['pendingDotResolutions'] : [],
             'rollRevelations' => is_array($state['rollRevelations'] ?? null) ? $state['rollRevelations'] : [],
             'nextAttackGuards' => is_array($state['nextAttackGuards'] ?? null) ? $state['nextAttackGuards'] : [],
@@ -2447,6 +2503,8 @@ function legacyStateToDomains(array $state): array
         ],
         'library' => [
             'tokenLibrary' => is_array($state['tokenLibrary'] ?? null) ? $state['tokenLibrary'] : [],
+            ...(!empty($state['sceneGroups'])?['sceneGroups'=>$state['sceneGroups']]:[]),
+            ...(!empty($state['tokenLibraryGroups'])?['tokenLibraryGroups'=>$state['tokenLibraryGroups']]:[]),
             'mapEffectPresets' => is_array($state['mapEffectPresets'] ?? null) ? $state['mapEffectPresets'] : [],
         ],
         'audio' => [
@@ -2618,6 +2676,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'initiative' => is_array($combat['initiative'] ?? null) ? $combat['initiative'] : [],
         'discordCapture' => is_array($table['discordCapture'] ?? null) ? $table['discordCapture'] : [],
         'tacticalSync' => $tacticalSync,
+        'strategyBreak' => normalizeApplicationStrategyBreak($table['strategyBreak'] ?? null),
         'actionTimers' => is_array($activity['actionTimers'] ?? null) ? $activity['actionTimers'] : [],
         'actionTimerTombstones' => is_array($activity['actionTimerTombstones'] ?? null) ? $activity['actionTimerTombstones'] : [],
         'mapPings' => is_array($activity['mapPings'] ?? null) ? $activity['mapPings'] : [],
@@ -2628,6 +2687,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => applicationComplexAbilityResultsFromReceipts(normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []), $activity['attackReceipts'] ?? []),
         'damageOverTime' => is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [],
+        'attackEnhancements' => is_array($activity['attackEnhancements'] ?? null) ? $activity['attackEnhancements'] : [],
         'pendingDotResolutions' => is_array($activity['pendingDotResolutions'] ?? null) ? $activity['pendingDotResolutions'] : [],
         'rollRevelations' => is_array($activity['rollRevelations'] ?? null) ? $activity['rollRevelations'] : [],
         'nextAttackGuards' => is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
@@ -2635,6 +2695,8 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
+        'sceneGroups' => is_array($library['sceneGroups'] ?? null) ? $library['sceneGroups'] : [],
+        'tokenLibraryGroups' => is_array($library['tokenLibraryGroups'] ?? null) ? $library['tokenLibraryGroups'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],
         'shortcuts' => is_array($activity['shortcuts'] ?? null) ? $activity['shortcuts'] : [],
         'rolls' => is_array($activity['rolls'] ?? null) ? $activity['rolls'] : [],
@@ -2916,6 +2978,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     sendJson(200, [
         'ok' => true,
         'architecture' => 'revisioned-domains',
+        'serverNow' => (int) floor(microtime(true) * 1000),
         // The response uses this server's supported session contract. The clock
         // records the last persisted write and may still name an older session.
         // domainClockRecord already rejects future schemas before this read.
@@ -2951,6 +3014,12 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     $dots = is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [];
+    foreach ($pending as $key => $change) {
+        if (!str_starts_with((string) $key, 'initiative:') || ($change['operation'] ?? '') !== 'upsert') continue;
+        $activity['attackEnhancements'] = applicationAdvanceAttackEnhancements($activity['attackEnhancements'] ?? [],
+            substr((string) $key, strlen('initiative:')), $change['current']['payload'] ?? [], $change['payload'] ?? []);
+    }
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     if ($endedScenes !== []) {
         onlineCaptureEndedDots($connection, $records, $pending, $activity, $endedScenes);
         $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
@@ -3277,6 +3346,7 @@ function restoreApplicationDomainHistory(PDO $connection): never
             sendError(404, 'Cette révision historique n’existe plus.', 'domain_history_missing');
         }
         $payload = jsonColumn($record['payload'] ?? null);
+        if ($key === 'table') $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null);
         if ($key === 'activity') {
             $payload = preserveApplicationPendingAbilityValidation($payload, $current['payload'] ?? []);
             $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);

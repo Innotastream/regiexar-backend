@@ -355,6 +355,11 @@ function onlineUseComplexAbility(
         $participantTokenId = (string) ($currentStepState['pendingTargetTokenId'] ?? '');
     }
     $sceneId = (string) ($current['sceneId'] ?? '');
+    $workflowCommand = is_array($arguments['command'] ?? null) ? $arguments['command'] : [];
+    $useJoker = applicationRequestsSpecialSuccess($workflowCommand);
+    if ($useJoker && !applicationComplexStepAllowsSpecialSuccess($currentStep ?? [], $workflowAction)) rejectOnlineCommand($connection, 409, 'Le Joker remplace uniquement un jet de réussite de cette étape.', 'joker_step_invalid');
+    $jokerRollCount = $workflowCommand['jokerRollCount'] ?? null;
+    if (array_key_exists('jokerRollCount', $workflowCommand) && (!$useJoker || ($currentStep['resolutionMode'] ?? '') !== 'batch' || $workflowAction !== 'prepare-chain' || !is_int($jokerRollCount) || $jokerRollCount < 1 || $jokerRollCount > $currentStep['count'])) rejectOnlineCommand($connection, 400, 'Le nombre de Jokers de cette série est invalide.', 'joker_count_invalid');
     $map = applicationDomainPayload($records, 'map:' . $sceneId);
     if ($workflowAction !== 'cancel') {
         if ($sceneId !== onlineActiveSceneId($table)
@@ -390,8 +395,11 @@ function onlineUseComplexAbility(
                     && (($current['combatId'] ?? '') === '' || ($current['combatId'] ?? '') === ($initiative['combatId'] ?? '')),
                 'currentTokenId' => (string) ($initiative['order'][$initiative['currentIndex'] ?? 0] ?? ''),
                 'turnKey' => $sceneId . ':' . (string) ($initiative['combatId'] ?? '') . ':' . (string) ($initiative['turnSerial'] ?? 0),
-                'roll' => static function (string $formula, string $mode = 'normal', bool $d100RollUnder = false) use (&$generatedRolls): array {
-                    $rolled = onlineRollFormulaWithMode($formula, $mode, null, 0, $d100RollUnder);
+                'roll' => static function (string $formula, string $mode = 'normal', bool $d100RollUnder = false) use (&$generatedRolls, $useJoker, $jokerRollCount, $participantTokenId, $current, $sceneId, $connection, &$records, &$pending): array {
+                    $sourceKey = onlineTokenDomainKey($sceneId, $participantTokenId ?: $current['sourceTokenId']);
+                    $jokerSource = $pending[$sourceKey]['payload'] ?? applicationDomainPayload($records, $sourceKey);
+                    $joker = $useJoker && ($jokerRollCount === null || count(array_filter($generatedRolls, static fn($roll) => ($roll['joker'] ?? false) === true)) < $jokerRollCount);
+                    $rolled = $joker ? onlineConsumeSpecialSuccess($connection, $records, $pending, $jokerSource, $sceneId) : onlineRollFormulaWithMode($formula, $mode, null, 0, $d100RollUnder);
                     $generatedRolls[] = $rolled;
                     return $rolled;
                 },
@@ -489,9 +497,9 @@ function onlineUseComplexAbility(
     $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''));
     $responseRolls = [];
     $stepTitle = (string) ($current['workflow']['steps'][$current['currentStepIndex'] ?? -1]['title'] ?? 'Étape');
-    $rollSubject = $workflowAction === 'awareness-roll' && $participantTokenId !== ''
+    $rollSubject = in_array($workflowAction, ['awareness-roll', 'defense-roll'], true) && $participantTokenId !== ''
         ? applicationComplexAbilityTokenById($tokens, $participantTokenId) : $source;
-    $rollSubjectName = $workflowAction === 'awareness-roll' && is_array($rollSubject)
+    $rollSubjectName = in_array($workflowAction, ['awareness-roll', 'defense-roll'], true) && is_array($rollSubject)
         ? (string) ($rollSubject['name'] ?? 'Cible') : $next['sourceName'];
     $newStep = $next['workflow']['steps'][$next['currentStepIndex'] ?? -1] ?? null;
     $startAwareness = $workflowAction === 'select-targets' && ($newStep['type'] ?? '') === 'allocated-attacks'
@@ -504,7 +512,10 @@ function onlineUseComplexAbility(
             : $rollSubject;
         $subjectName = $startAwareness ? (string) ($subject['name'] ?? 'Cible') : $rollSubjectName;
         $gate = $batch ? $next['stepStates'][$currentStep['id']]['rolls'][$gateOffset + $rollIndex] : null;
-        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . ($startAwareness ? 'Vigilance' : $stepTitle), $subjectName, $gate['outcomeDetails'] ?? null);
+        $roll = onlineRollEntry($identity, $rolled, $next['abilityName'] . ' · ' . ($startAwareness ? 'Vigilance' : $stepTitle), $subjectName, $gate['outcomeDetails'] ?? (($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome() : null));
+        if (($rolled['joker'] ?? false) === true && !$batch) $roll['mapEvent'] = ['kind' => 'roll', 'label' => 'Réussite spéciale · Joker', 'value' => 1,
+            'sceneId' => $sceneId, 'layerId' => $next['layerId'], 'tokenId' => $participantTokenId ?: $next['sourceTokenId'],
+            'anchorTokenId' => $participantTokenId ?: $next['sourceTokenId'], 'diceAppearance' => onlineDiceAppearance($subject ?? $source, !$isGm), 'tone' => 'success'];
         if ($batch) {
             $next['stepStates'][$currentStep['id']]['rolls'][$gateOffset + $rollIndex]['rollId'] = $roll['id'];
             $roll['diceAppearance'] = onlineDiceAppearance($source, trim((string) ($source['controllerPlayerId'] ?? '')) !== '');

@@ -96,26 +96,26 @@ function onlineGroupPositionValidator(array $map): Closure
     };
 }
 
-function onlineGroupPositionIsFree(array $point, array $token, float $width, float $height, array $occupied, Closure $wallFree, float $padding = 0): bool
+function onlineGroupPositionIsFree(array $point, array $token, float $width, float $height, array $occupied, Closure $wallFree, float $padding = 0, bool $completeCoverOnly = false): bool
 {
     $radius = onlineGroupTokenSize($token) / 2 + $padding / 2;
     if ($point['x'] * $width / 100 < $radius || $point['x'] * $width / 100 > $width - $radius
         || $point['y'] * $height / 100 < $radius || $point['y'] * $height / 100 > $height - $radius || !$wallFree($point, [...$token,'size'=>onlineGroupTokenSize($token)+$padding])) return false;
     foreach ($occupied as $other) {
-        if (hypot(($point['x'] - $other['x']) * $width / 100, ($point['y'] - $other['y']) * $height / 100)
-            < $radius + onlineGroupTokenSize($other) / 2 + $padding / 2 + 0.1) return false;
+        $distance=hypot(($point['x']-$other['x'])*$width/100,($point['y']-$other['y'])*$height/100);
+        if($completeCoverOnly?$distance<=abs(onlineGroupTokenSize($token)-onlineGroupTokenSize($other))/2:$distance<$radius+onlineGroupTokenSize($other)/2+$padding/2+0.1)return false;
     }
     return true;
 }
 
-function nearestOnlineGroupPosition(array $desired, array $token, array $map, array $occupied = [], ?array $start = null, float $padding = 0, ?Closure $allowed = null): ?array
+function nearestOnlineGroupPosition(array $desired, array $token, array $map, array $occupied = [], ?array $start = null, float $padding = 0, ?Closure $allowed = null, bool $completeCoverOnly = false, float $searchStep = 0): ?array
 {
     $width = (float) ($map['naturalWidth'] ?? 1600) ?: 1600.0;
     $height = (float) ($map['naturalHeight'] ?? 900) ?: 900.0;
-    $step = max(1.0, min($width / 511, $height / 511));
+    $step = max(1.0, $searchStep ?: min($width / 511, $height / 511));
     $wallFree = onlineGroupPositionValidator($map);
-    $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map, $padding, $allowed): bool {
-        if ($allowed!==null&&!$allowed($point)||!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree,$padding)) return false;
+    $valid = static function (array $point) use ($width, $height, $wallFree, $occupied, $token, $start, $map, $padding, $allowed,$completeCoverOnly): bool {
+        if ($allowed!==null&&!$allowed($point)||!onlineGroupPositionIsFree($point, $token, $width, $height, $occupied, $wallFree,$padding,$completeCoverOnly)) return false;
         if ($start === null) return true;
         $resolved = applicationResolveWallCollision($map['walls'] ?? null, $start, $point, $token['size'] ?? 40, $width, $height, true);
         return !$resolved['blocked'] && abs($resolved['x'] - $point['x']) < 0.000001 && abs($resolved['y'] - $point['y']) < 0.000001;
@@ -156,6 +156,7 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
     foreach ($ids as $id) {
         $token = $index[$id] ?? null; $base = $request['base'][$id] ?? null;
         if ($token === null || !onlineTokenOnActiveLayer($token, $map) || !is_array($base)) throw new DomainException('La sélection a changé.', 409);
+        if (($token['immovable'] ?? false) === true) throw new DomainException('Un pion sélectionné est inamovible.', 409);
         foreach (['x', 'y'] as $key) if ((!is_int($base[$key] ?? null) && !is_float($base[$key] ?? null)) || !is_finite((float) $base[$key]) || (($request['rebasePositions'] ?? false) !== true && abs((float) ($token[$key] ?? 50) - $base[$key]) > 0.000001)) throw new DomainException('Un pion a changé de position.', 409);
         $tokens[] = $token;
     }
@@ -164,21 +165,23 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
     $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
     $wallFree = onlineGroupPositionValidator($destination);
     $delta = onlineGroupTranslation($tokens, (float) $request['dx'], (float) $request['dy'], $destination);
-    $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $t): bool => !in_array($t['id'], $ids, true) && onlineTokenLayerId($t, $map) === $targetLayerId));
+    $fog = applicationActiveMapFogState([...$map, 'activeLayerId' => $targetLayerId]);
+    $blocksPlacement = static fn (array $token): bool => empty($token['hidden']) && empty($token['mountedOnTokenId']) && !applicationFogCoversPoint($fog, $token['x'], $token['y']);
+    $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $t): bool => !in_array($t['id'], $ids, true) && onlineTokenLayerId($t, $map) === $targetLayerId && $blocksPlacement($t)));
     $placements = []; $blocked = [];
     foreach ($tokens as $token) {
         $desired = ['x' => round($token['x'] + $delta['x'], 4), 'y' => round($token['y'] + $delta['y'], 4)];
         // MJ-only placement ignores the path, never a wall at the destination.
-        if (onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree)) {
+        if (onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree, 0, true)) {
             $placements[$token['id']] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayerId, 'relocated' => false];
-            $occupied[] = array_replace($token, $desired);
+            if ($blocksPlacement(array_replace($token, $desired))) $occupied[] = array_replace($token, $desired);
         } else $blocked[] = [$token, $desired];
     }
     foreach ($blocked as [$token, $desired]) {
-        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied);
+        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied, null, 0, null, true);
         if ($position === null) throw new DomainException('Aucune place libre et accessible près du groupe. Aucun pion n’a été déplacé.', 409);
         $placements[$token['id']] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayerId, 'relocated' => true];
-        $occupied[] = array_replace($token, $position);
+        if ($blocksPlacement(array_replace($token, $position))) $occupied[] = array_replace($token, $position);
     }
     return array_map(static fn (string $id): array => $placements[$id], $ids);
 }
@@ -224,6 +227,7 @@ function planApplicationTokenLayers(array $map, array $arguments): array
         $ids[$id] = true;
         $token = $index[$id] ?? null;
         if ($token === null || onlineTokenLayerId($token, $map) !== $request['layerId']) throw new DomainException('Un pion a changé de niveau.', 409);
+        if (($token['immovable'] ?? false) === true) throw new DomainException('Un pion sélectionné est inamovible.', 409);
         foreach (['x', 'y'] as $axis) {
             if ((!is_int($request[$axis] ?? null) && !is_float($request[$axis] ?? null)) || !is_finite((float) $request[$axis]) || $request[$axis] < 0 || $request[$axis] > 100) throw new DomainException('Position de départ invalide.', 400);
             if (($arguments['rebasePositions'] ?? false) !== true && abs((float) ($token[$axis] ?? 50) - $request[$axis]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
@@ -232,7 +236,9 @@ function planApplicationTokenLayers(array $map, array $arguments): array
     $destination = $map['layers'][$targetLayer] ?? ($targetLayer === onlineTokenLayerId([], $map) ? $map : []);
     $destination['naturalWidth'] = (float) ($destination['naturalWidth'] ?? 1600) ?: 1600.0;
     $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
-    $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $token): bool => onlineTokenLayerId($token, $map) === $targetLayer));
+    $fog = applicationActiveMapFogState([...$map, 'activeLayerId' => $targetLayer]);
+    $blocksPlacement = static fn (array $token): bool => empty($token['hidden']) && empty($token['mountedOnTokenId']) && !applicationFogCoversPoint($fog, $token['x'], $token['y']);
+    $occupied = array_values(array_filter($map['tokens'] ?? [], static fn (array $token): bool => onlineTokenLayerId($token, $map) === $targetLayer && $blocksPlacement($token)));
     $placements = [];
     foreach ($requests as $request) {
         $token = $index[$request['id']];
@@ -241,10 +247,10 @@ function planApplicationTokenLayers(array $map, array $arguments): array
             $placements[] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayer, 'relocated' => false];
             continue;
         }
-        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied);
+        $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied, null, 0, null, true);
         if ($position === null) throw new DomainException('Aucune place libre près du groupe. Aucun pion n’a changé de niveau.', 409);
         $placements[] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayer, 'relocated' => abs($position['x'] - $desired['x']) > 0.000001 || abs($position['y'] - $desired['y']) > 0.000001];
-        $occupied[] = array_replace($token, $position);
+        if ($blocksPlacement(array_replace($token, $position))) $occupied[] = array_replace($token, $position);
     }
     return $placements;
 }
