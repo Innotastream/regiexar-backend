@@ -94,9 +94,18 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if(!$isGm&&($state['tacticalSync']['paused']??false))passageFailure('La table est temporairement verrouillée par le MJ.',423);
         if(!$isGm&&($sceneId!==$state['activeSceneId']||$entry['layerId']!==($map['activeLayerId']??'ground')))passageFailure('Ce passage n’est plus sur la carte diffusée.');
         $index=array_search($args['tokenId']??'',array_column($map['tokens']??[],'id'),true);if($index===false)passageFailure('Ce pion n’existe plus.',404);$token=$map['tokens'][$index];
-        $controller=$token['controllerPlayerId']??'';if(unitUsesCharacterSheet($token))foreach($state['characters']??[] as $sheet)if($sheet['id']===$token['characterId'])$controller=$sheet['ownerPlayerId']??$controller;
-        if(isset($context['controller']))$controller=($context['controller'])($token);
-        if(!$isGm&&$controller!==$identity['id'])passageFailure('Ce pion ne vous appartient pas.',403);
+        $controllerOf=static function(array $unit)use($state,$context):string{
+            if(isset($context['controller']))return (string)($context['controller'])($unit);
+            $controller=$unit['controllerPlayerId']??'';if(unitUsesCharacterSheet($unit))foreach($state['characters']??[] as $sheet)if($sheet['id']===$unit['characterId'])$controller=$sheet['ownerPlayerId']??$controller;
+            return (string)$controller;
+        };
+        $owner=$controllerOf($token);$pilot=$owner!==''?null:onlineMountPilot($map['tokens'],$token);$controller=$pilot!==null?$controllerOf($pilot):$owner;
+        if(!$isGm&&($controller!==$identity['id']||!empty($token['hidden'])))passageFailure('Vous ne pouvez pas faire traverser ce pion.',403);
+        if(!empty($token['mountedOnTokenId']))passageFailure('Empruntez le passage avec la monture : ses cavaliers la suivent sans descendre.');
+        $travelers=[$token,...onlineMountedRiders($map['tokens'],$token)];$travelerIds=array_column($travelers,'id');
+        foreach($travelers as $traveler)if(($traveler['layerId']??'ground')!==($token['layerId']??'ground'))passageFailure('Les cavaliers de cette monture ont changé. Actualisez son menu.');
+        foreach($map['tokens'] as $other)if(!empty($other['mountedOnTokenId'])&&$other['mountedOnTokenId']!==$token['id']&&in_array($other['mountedOnTokenId'],$travelerIds,true))passageFailure('Les cavaliers de cette monture ont changé. Actualisez son menu.');
+        foreach(array_slice($travelers,1) as $traveler)if(!empty($traveler['immovable']))passageFailure('Un cavalier est inamovible : la traversée de la monture est bloquée.');
         if(!$isGm)foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['blocksMovement']&&($condition['remainingTurns']??1)>0&&($condition['targetTokenId']===$token['id']||unitUsesCharacterSheet($token)&&($condition['targetCharacterId']??'')===$token['characterId']))passageFailure('Ce pion est immobilisé jusqu’à la fin de son effet.',423);
         if(!empty($token['immovable'])||($token['healthOverride']??'')==='dead'||($token['maxHp']??0)>0&&($token['hp']??0)<=0)passageFailure('Ce pion ne peut pas emprunter le passage.');
         if((float)$token['x']!==(float)($args['expectedX']??-1)||(float)$token['y']!==(float)($args['expectedY']??-1))passageFailure('Ce pion s’est déplacé. Actualisez son menu.');
@@ -105,20 +114,23 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if(!onlineDeviceDirect($token,$entry,$level))passageFailure('Un mur empêche d’atteindre ce passage.');
         if(!$isGm&&isset($context['visible'])&&!($context['visible'])($entry))passageFailure('Ce passage n’est pas visible.',403);
         $initiative=$sceneId===$state['activeSceneId']?($state['initiative']??[]):[];
-        if(!$isGm&&($initiative['active']??false)&&($initiative['order'][$initiative['currentIndex']??0]??'')!==$token['id'])passageFailure('Attendez le tour de ce pion.',403);
+        if(!$isGm&&($initiative['active']??false)&&($initiative['order'][$initiative['currentIndex']??0]??'')!==$token['id']&&($pilot===null||($initiative['order'][$initiative['currentIndex']??0]??'')!==$pilot['id'])
+            &&($initiative['movementOverrides'][$token['id']]??false)!==true&&($pilot===null||($initiative['movementOverrides'][$pilot['id']]??false)!==true))passageFailure('Attendez le tour de ce pion ou de son pilote.',403);
         if(!$entry['destination'])passageFailure('Le MJ doit relier ce passage avant de l’utiliser.');
         $target=&passageEntry($state,$entry['destination']);$targetScene=$entry['destination']['sceneId'];$targetMap=&passageMap($state,$targetScene);
         if(($target['destination']['sceneId']??'')!==$sceneId||($target['destination']['passageId']??'')!==$entry['id'])passageFailure('Cette liaison a changé. Actualisez le passage.');
-        if($targetScene!==$sceneId&&in_array($token['id'],array_column($targetMap['tokens']??[],'id'),true))passageFailure('La scène de destination possède déjà un pion avec cette identité.');
-        if($targetScene!==$sceneId&&count($targetMap['tokens']??[])>=2000)passageFailure('La scène de destination a atteint sa limite de pions.',429);
-        if(!empty($token['mountedOnTokenId'])||array_filter($map['tokens'],static fn($other)=>($other['mountedOnTokenId']??'')===$token['id']))passageFailure('Détachez le pion de sa monture avant de changer de zone.');
+        if($targetScene!==$sceneId&&array_intersect($travelerIds,array_column($targetMap['tokens']??[],'id')))passageFailure('La scène de destination possède déjà un pion avec cette identité.');
+        if($targetScene!==$sceneId&&count($targetMap['tokens']??[])+count($travelers)>2000)passageFailure('La scène de destination n’a pas assez de places pour la monture et ses cavaliers.',429);
         $destination=array_replace($targetMap,$targetMap['layers'][$target['layerId']]??[]);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
         $fog=applicationActiveMapFogState([...$targetMap,'activeLayerId'=>$target['layerId']]);
         $occupied=array_values(array_filter($targetMap['tokens']??[],static fn($other)=>$other['id']!==$token['id']&&empty($other['hidden'])&&empty($other['mountedOnTokenId'])&&!applicationFogCoversPoint($fog,$other['x'],$other['y'])&&($other['layerId']??'ground')===$target['layerId']));
         // Expand to neighbouring cells while keeping a direct, wall-free arrival.
         $position=nearestOnlineGroupPosition($desired,$token,$destination,$occupied,$target,0,null,true,(float)($destination['gridSize']??50));
         if(!$position)passageFailure('Aucune place libre et accessible autour de l’arrivée.');
-        $token=array_replace($token,$position,['layerId'=>$target['layerId'],'targetTokenId'=>null,'_updatedAt'=>$context['now']??(int)round(microtime(true)*1000),'_movedAt'=>$context['now']??(int)round(microtime(true)*1000)]);
+        $leaderId=$token['id'];$movedAt=$context['now']??(int)round(microtime(true)*1000);
+        foreach($travelers as $traveler){
+        $index=array_search($traveler['id'],array_column($map['tokens'],'id'),true);
+        $token=array_replace($traveler,$position,['layerId'=>$target['layerId'],'targetTokenId'=>null,'_updatedAt'=>$movedAt,'_movedAt'=>$movedAt]);
         foreach($map['tokens'] as &$other)if(($other['targetTokenId']??'')===$token['id']&&($other['layerId']??'ground')!==$token['layerId'])$other['targetTokenId']=null;unset($other);
         if($targetScene===$sceneId)$map['tokens'][$index]=$token;
         else {
@@ -141,7 +153,8 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
             if(isset($state['attackEnhancements']))$state['attackEnhancements']=applicationTransferAttackEnhancements($state['attackEnhancements'],$token,$sceneId,$targetScene,$destinationInitiative);
         }
         foreach(array_keys($state['devices']['devices']??[]) as $i){$device=&$state['devices']['devices'][$i];if($device['sourceTokenId']===$token['id']&&$device['sceneId']===$sceneId&&$device['definition']['kind']==='dome'&&($device['mode']??'carried')!=='placed')$device=array_replace($device,['sceneId'=>$targetScene,'layerId'=>$token['layerId'],'x'=>$token['x'],'y'=>$token['y'],'revision'=>$device['revision']+1]);unset($device);}
-        return ['state'=>$state,'result'=>['tokenId'=>$token['id'],'sourceSceneId'=>$sceneId,'sceneId'=>$targetScene,'layerId'=>$token['layerId'],'x'=>$token['x'],'y'=>$token['y'],'destinationLabel'=>passageDestinationLabel($state,$entry)]];
+        }
+        return ['state'=>$state,'result'=>['tokenId'=>$leaderId,'riderCount'=>count($travelers)-1,'sourceSceneId'=>$sceneId,'sceneId'=>$targetScene,'layerId'=>$target['layerId'],'x'=>$position['x'],'y'=>$position['y'],'destinationLabel'=>passageDestinationLabel($state,$entry)]];
     }else passageFailure('Action de passage inconnue.',400);
     return ['state'=>$state,'result'=>['passageId'=>$entry['id']]];
 }

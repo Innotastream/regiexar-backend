@@ -132,4 +132,70 @@ foreach(['scene-one','scene-two'] as $targetScene)foreach([false,true] as $edge)
     requireTactical($expanded&&$convoy->payload('table')['activeSceneId']==='scene-one'&&$convoy->payload('map:scene-one')['activeLayerId']==='ground','The arrival expands beyond two cells without changing the broadcast');
 }
 
-echo json_encode(['ok'=>true,'passageChecks'=>17,'rangeChecks'=>$rangeChecks,'spacingChecks'=>$spacingChecks,'exitSpacingChecks'=>$exitSpacingChecks,'carriedLightChecks'=>$carriedLightChecks,'convoyTraversals'=>$convoyChecks]),"\n";
+function mountedPassageCase(string $targetScene='two',int $count=2):array {
+    $level=['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50,'lights'=>[]];
+    $mount=['id'=>'mount','name'=>'Monture fictive','x'=>21,'y'=>20,'size'=>100,'layerId'=>'ground','hp'=>80,'maxHp'=>100,'mana'=>55,'mountable'=>true,'mountControllable'=>true,'maxRiders'=>20];
+    $tokens=[$mount];for($i=0;$i<$count;$i++)$tokens[]=[...$mount,'id'=>'rider-'.$i,'name'=>'Cavalier '.$i,'size'=>40,'mountable'=>false,'controllerPlayerId'=>$i===0?'player':'other','mountedOnTokenId'=>'mount','mountedAt'=>100+$i,'mana'=>20+$i];
+    $lights=array_map(static fn($unit)=>['id'=>'light-'.$unit['id'],'name'=>'Lumière portée','x'=>21,'y'=>20,'carrierTokenId'=>$unit['id'],'enabled'=>true,'portable'=>true,'visibleFromAfar'=>true,'icon'=>'flame','color'=>'#ffac52','visionDistance'=>9],$tokens);
+    $map=[...$level,'tokens'=>$tokens,'activeLayerId'=>'ground','lights'=>$lights,'layers'=>['ground'=>[...$level,'lights'=>$lights],'upper'=>$level]];
+    $arrival=[...$map,'tokens'=>[],'lights'=>[],'layers'=>['ground'=>$level,'upper'=>$level]];
+    $state=['activeSceneId'=>'one','map'=>$map,'characters'=>[],'initiative'=>['active'=>true,'order'=>['rider-0'],'currentIndex'=>0],
+        'scenes'=>[['id'=>'one','name'=>'Départ','combat'=>['map'=>$map]],['id'=>'two','name'=>'Arrivée','combat'=>['map'=>$arrival]]],
+        'devices'=>['timedConditions'=>[],'devices'=>array_map(static fn($unit)=>['id'=>'dome-'.$unit['id'],'sceneId'=>'one','sourceTokenId'=>$unit['id'],'definition'=>['kind'=>'dome'],'mode'=>'carried','layerId'=>'ground','x'=>21,'y'=>20,'revision'=>4],$tokens)],
+        'actionTimers'=>array_map(static fn($unit)=>['id'=>'timer-'.$unit['id'],'sceneId'=>'one','tokenId'=>$unit['id'],'remainingRounds'=>3],$tokens),
+        'attackEnhancements'=>array_map(static fn($unit)=>['id'=>'buff-'.$unit['id'],'holder'=>applicationEnhancementHolder($unit),'sceneId'=>'one','targetTokenId'=>$unit['id'],'remainingTurns'=>3,'combatId'=>'old','lastTurnSerial'=>900],$tokens)];
+    return applicationApplyPassageCommand($state,['id'=>'gm','role'=>'gm'],'passage.create',['endpoints'=>[
+        ['sceneId'=>'one','id'=>'from','kind'=>'portal','name'=>'Départ','x'=>20,'y'=>20,'layerId'=>'ground'],
+        ['sceneId'=>$targetScene,'id'=>'to','kind'=>'portal','name'=>'Arrivée','x'=>70,'y'=>75,'layerId'=>'upper']]])['state'];
+}
+$mountedArgs=['sceneId'=>'one','passageId'=>'from','expectedRevision'=>1,'tokenId'=>'mount','expectedX'=>21,'expectedY'=>20];$mountedChecks=0;
+foreach(['one','two'] as $targetScene)foreach([1,2,20] as $count){
+    $case=mountedPassageCase($targetScene,$count);$before=$case;$result=applicationApplyPassageCommand($case,['id'=>'player','role'=>'player'],'passage.use',$mountedArgs);
+    $arrivedMap=passageMap($result['state'],$targetScene);$mount=$arrivedMap['tokens'][0];
+    requireTactical($case===$before&&$result['result']['tokenId']==='mount'&&$result['result']['riderCount']===$count,'Mounted traversal preserves its input and moves the complete party');
+    requireTactical(count($arrivedMap['tokens'])===$count+1&&$result['state']['activeSceneId']==='one'&&$result['state']['map']['activeLayerId']==='ground','Mounted traversal leaves the broadcast unchanged');
+    foreach($before['map']['tokens'] as $i=>$old){$unit=$arrivedMap['tokens'][$i];
+        requireTactical($unit['x']===$mount['x']&&$unit['y']===$mount['y']&&$unit['layerId']==='upper','Every rider arrives at the mount position');
+        foreach(['hp','maxHp','mana','mountedOnTokenId','mountedAt','controllerPlayerId'] as $field)requireTactical(($unit[$field]??null)===($old[$field]??null),'Resources, controller and mount attachment are preserved');
+    }
+    requireTactical(count(applicationMapLightsForLayer($arrivedMap,'upper',$arrivedMap['tokens']))===$count+1,'Every carried lamp follows its mount or rider');
+    foreach($result['state']['actionTimers'] as $timer)requireTactical($timer['sceneId']===$targetScene&&$timer['remainingRounds']===3,'Rider timers follow without a new turn');
+    foreach($result['state']['attackEnhancements'] as $buff)requireTactical($buff['sceneId']===$targetScene&&$buff['remainingTurns']===3,'Rider buffs follow without spending a turn');
+    foreach($result['state']['devices']['devices'] as $dome)requireTactical($dome['sceneId']===$targetScene&&$dome['layerId']==='upper'&&$dome['revision']===5,'Carried rider domes follow once');
+    $mountedChecks++;
+}
+foreach(['foreign','off-turn','empty-turn','not-controllable','owned-by-other','immovable-rider','duplicate-rider','capacity','wrong-level','nested','rider-alone'] as $failure){
+    $case=mountedPassageCase();$args=$mountedArgs;$actor=['id'=>'player','role'=>'player'];
+    if($failure==='foreign')$actor['id']='other';
+    if($failure==='off-turn')$case['initiative']['order']=['rider-1'];
+    if($failure==='empty-turn')$case['initiative']['order']=[];
+    if($failure==='not-controllable')$case['map']['tokens'][0]['mountControllable']=false;
+    if($failure==='owned-by-other')$case['map']['tokens'][0]['controllerPlayerId']='other';
+    if($failure==='immovable-rider')$case['map']['tokens'][1]['immovable']=true;
+    if($failure==='wrong-level')$case['map']['tokens'][1]['layerId']='upper';
+    if($failure==='duplicate-rider')$case['scenes'][1]['combat']['map']['tokens'][]=$case['map']['tokens'][1];
+    if($failure==='capacity')$case['scenes'][1]['combat']['map']['tokens']=array_map(static fn($i)=>['id'=>'other-'.$i,'hidden'=>true],range(0,1997));
+    if($failure==='nested')$case['map']['tokens'][]=[...$case['map']['tokens'][1],'id'=>'nested','mountedOnTokenId'=>'rider-0'];
+    if($failure==='rider-alone')$args['tokenId']='rider-0';
+    $before=$case;
+    try{applicationApplyPassageCommand($case,$actor,'passage.use',$args);throw new LogicException('Mounted traversal unexpectedly accepted '.$failure);}catch(RuntimeException $error){requireTactical(in_array($error->getCode(),[403,409,429],true),'Mounted traversal refuses '.$failure);}
+    requireTactical($case===$before,'A refused mounted crossing changes no unit or attachment');$mountedChecks++;
+}
+
+// Exercise the real command dispatcher, domain reconciliation and persisted receipt.
+$mountedDb=fixture();$case=mountedPassageCase();$case['map']['tokens'][1]['controllerPlayerId']='account-player';
+$case['activeSceneId']='scene-one';
+foreach($case['map']['passages'] as &$passage)if($passage['id']==='from')$passage['destination']['sceneId']='scene-two';unset($passage);
+$arrive=$case['scenes'][1]['combat']['map'];$arrive['passages'][0]['destination']['sceneId']='scene-one';
+$mountedDb->put('scene:scene-one',['metadata'=>['id'=>'scene-one','name'=>'Départ monté']]);$mountedDb->put('scene:scene-two',['metadata'=>['id'=>'scene-two','name'=>'Arrivée montée']]);
+$mountedDb->put('scene-index',['order'=>['scene-one','scene-two']]);$mountedDb->put('map:scene-one',$case['map']);$mountedDb->put('map:scene-two',$arrive);
+$mountedDb->put('initiative:scene-one',$case['initiative']);$mountedDb->put('token-index:scene-one',['order'=>['mount','rider-0','rider-1']]);$mountedDb->put('token-index:scene-two',['order'=>[]]);
+foreach($case['map']['tokens'] as $unit)$mountedDb->put('token:scene-one:'.$unit['id'],$unit);
+$nativeArgs=[...$mountedArgs,'sceneId'=>'scene-one','requestId'=>'mounted-native-travel-0001'];
+$arrived=runCommand($mountedDb,'passage.use',$nativeArgs);requireTactical($arrived->status===200&&$arrived->body['riderCount']===2,'Native pilot traversal commits both riders: '.json_encode($arrived->body));
+$after=$mountedDb->domains;
+for($retry=0;$retry<12;$retry++){$replay=runCommand($mountedDb,'passage.use',$nativeArgs);requireTactical($replay->status===200&&!empty($replay->body['deduplicated']),'Native mounted traversal replay is durable');}
+requireTactical($mountedDb->domains===$after,'Twelve native replays do not write duplicate units or lights');
+foreach(['mount','rider-0','rider-1'] as $id){$unit=$mountedDb->payload('token:scene-two:'.$id);requireTactical($unit!==[]&&$unit['layerId']==='upper'&&$mountedDb->payload('token:scene-one:'.$id)===[],'Native transfer removes the source copy atomically');if($id!=='mount')requireTactical($unit['mountedOnTokenId']==='mount','Domain reconciliation preserves the saddle attachment');}
+$mountedChecks++;
+echo json_encode(['ok'=>true,'passageChecks'=>17,'rangeChecks'=>$rangeChecks,'spacingChecks'=>$spacingChecks,'exitSpacingChecks'=>$exitSpacingChecks,'carriedLightChecks'=>$carriedLightChecks,'convoyTraversals'=>$convoyChecks,'mountedCases'=>$mountedChecks]),"\n";
