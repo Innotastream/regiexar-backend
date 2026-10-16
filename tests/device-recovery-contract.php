@@ -82,4 +82,16 @@ $beam=$beamDb->payload('devices')['devices'][dsDevice($beamDb->payload('devices'
 requireDevice(in_array($beam['status'],['spent','broken'],true),'Beam fires only after redeployment and the full turn');
 $item=$beamDb->payload('items')['instances'][dsIndex($beamDb->payload('items')['instances'],$beam['itemId'])];
 requireDevice($item['location']['kind']==='consumed','Used beam cannot be recycled into another free charged attack');
+$sizeDb=new MemoryConnection(array_map(static fn(array $entry):array=>$entry['payload'],$gmFixture->domains));$sizeDb->mediaObjects=$gmFixture->mediaObjects;
+$station=$sizeDb->payload('devices')['devices'][dsDevice($sizeDb->payload('devices'),$stationId)];$sizing=['requestId'=>'size-native-replay-0001','deviceId'=>$stationId,'expectedRevision'=>$station['revision'],'size'=>80];
+requireDevice(deviceCommand($sizeDb,'device.size',$sizing)->status===403,'A player cannot resize a device');
+foreach([0,9,10001,25.5,'40'] as $size)requireDevice(deviceCommand($sizeDb,'device.size',[...$sizing,'size'=>$size],$gm)->status===400,'Invalid device size rejected');
+$beforeItems=$sizeDb->payload('items');$beforeCharacter=$sizeDb->payload('character:character-player');
+requireDevice(deviceCommand($sizeDb,'device.size',$sizing,$gm)->status===200,'The MJ resizes the device through the native command');
+requireDevice(deviceCommand($sizeDb,'device.size',$sizing,$gm)->status===200,'Device size command replay is idempotent');
+$resized=$sizeDb->payload('devices')['devices'][dsDevice($sizeDb->payload('devices'),$stationId)];
+requireDevice($resized['size']===80&&$resized['revision']===$station['revision']+1,'One persisted size change only');
+requireDevice($resized['mana']===$station['mana']&&$resized['definition']===$station['definition']&&$sizeDb->payload('items')===$beforeItems&&$sizeDb->payload('character:character-player')===$beforeCharacter,'Visual size does not change reserve, reach, stock or character');
+requireDevice(deviceCommand($sizeDb,'device.size',[...$sizing,'requestId'=>'size-native-stale-0001','size'=>20],$gm)->status===409,'A stale size menu cannot overwrite a newer device');
+
 echo json_encode(['ok'=>true,'checks'=>$deviceChecks],JSON_UNESCAPED_UNICODE).PHP_EOL;

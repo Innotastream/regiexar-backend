@@ -76,6 +76,7 @@ function dsStore(mixed $value): array {
         dsDefinition($entry['definition']); $ids[$entry['id']]=true;
         if($entry['definition']['kind']==='dome'&&array_key_exists('mode',$entry)&&!in_array($entry['mode'],['carried','placed'],true))dsError('L’état du bouclier est invalide.');
         if(isset($entry['image'])&&$entry['image']!==''&&dsImage($entry['image'])==='')dsError('L’image du dispositif est invalide.',400);
+        if(array_key_exists('size',$entry))normalizeItemSize($entry['size']);
         if (isset($entry['mana'])) {if($entry['definition']['kind']==='beam'){if(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000)dsError('La réserve de ce rayon est invalide.');}else dsAmount($entry['mana']);}
     }
     return $value;
@@ -274,6 +275,11 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if($actor['role']!=='gm'&&($state['tacticalSync']['paused']??false))dsError('La table est temporairement verrouillée.',423);
         if(!is_string($args['image']??null)||$args['image']!==''&&dsImage($args['image'])==='')dsError('Importez une image du pion valide.',400);
         $device['image']=dsImage($args['image']);$device['revision']++;$result=['deviceId'=>$device['id'],'imageUpdated'=>true];
+    } elseif($command==='device.size') {
+        if($actor['role']!=='gm')dsError('La taille des dispositifs est réservée au MJ.',403);
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
+        $device['size']=normalizeItemSize($args['size']??null);$device['revision']++;$result=['deviceId'=>$device['id'],'size'=>$device['size']];
     } elseif($command==='device.pack'||$command==='device.place') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];$definition=dsDefinition($device['definition']);
         $itemIndex=dsIndex($state['items']['instances'],$device['itemId']??'');if($itemIndex<0)dsError('Cet objet n’existe plus.',404);
