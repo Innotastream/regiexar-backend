@@ -31,6 +31,7 @@ function normalizeItemTemplate(array $value): array {
     $image = itemImage($value['image'] ?? '');
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image];
+    if(array_key_exists('category',$value)){if(!in_array($value['category'],['ability','usable','reading','equipment','utility','quick'],true))itemFailure('La catégorie d’objet est invalide.');$result['category']=$value['category'];}
     if(isset($value['active']))$result['active']=normalizeActiveItem($value['active']);
     if(isset($value['equipment']))$result['equipment']=normalizeEquipment($value['equipment']);
     if(array_key_exists('permissions',$value))$result['permissions']=normalizeItemPermissions($value['permissions']);
@@ -185,7 +186,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         foreach($ids as $id)if(!itemId($id))itemFailure('Indiquez un nom et une quantité de 1 à 50.');
         if(count($items['templates'])>=200||count($items['instances'])+$quantity>2000)itemFailure('La collection d’objets est pleine.',429);
         if(in_array($args['templateId'],array_column($items['templates'],'id'),true)||array_intersect($ids,array_column($items['instances'],'id'))!==[])itemFailure('Cet ajout existe déjà.',409);
-        $template=['id'=>$args['templateId'],'kind'=>'object','name'=>$name,'description'=>itemText($args['description']??'',4000),'image'=>''];$items['templates'][]=$template;$created=[];
+        $template=['id'=>$args['templateId'],'kind'=>'object','name'=>$name,'description'=>itemText($args['description']??'',4000),'image'=>'','category'=>'quick'];$items['templates'][]=$template;$created=[];
         foreach($ids as $id)$created[]=['id'=>$id,'templateId'=>$template['id'],'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$unit['id']]];
         $items['instances']=[...$items['instances'],...$created];return ['items'=>$items,'result'=>['items'=>$created,'template'=>$template]];
     }
@@ -202,12 +203,23 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $index=array_search($args['template']['id']??'',array_column($items['templates'],'id'),true);
         if($index===false)itemFailure('Modèle d’objet introuvable.',404);
         $previous=$items['templates'][$index];
-        if(!empty($previous['sourceAbilityId']))itemFailure('Ce modèle est géré par sa compétence.',409);
         if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$previous)itemFailure('Ce modèle a été modifié par un autre MJ. Rouvrez-le avant de continuer.',409);
-        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','active','equipment','permissions','size','maxHp'],true));
+        if(!empty($previous['sourceAbilityId'])){
+            if(($args['appearanceOnly']??false)!==true)itemFailure('Ce modèle est géré par sa compétence. Seule son apparence peut être modifiée ici.',409);
+            $template=normalizeItemTemplate(array_replace($previous,array_intersect_key($args['template'],array_fill_keys(['name','description','image','category'],true))));$items['templates'][$index]=$template;return ['items'=>$items,'result'=>['template'=>$template]];
+        }
+        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','active','equipment','permissions','size','maxHp','category'],true));
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
         $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
-        $template=normalizeItemTemplate($editable);$items['templates'][$index]=$template;
+        $template=normalizeItemTemplate($editable);
+        if(($args['applyEquipmentToInstances']??false)===true){
+            $instances=array_filter($items['instances'],static fn($item)=>$item['templateId']===$previous['id']&&in_array($item['location']['kind'],['inventory','ground'],true));
+            $expected=$args['expectedInstanceRevisions']??null;
+            if(!is_array($expected)||count($expected)!==count($instances))itemFailure('Un exemplaire de ce modèle a changé. Rouvrez la bibliothèque avant d’appliquer les réglages à tous.',409);
+            foreach($instances as $item)if(($expected[$item['id']]??null)!==$item['revision'])itemFailure('Un exemplaire de ce modèle a changé. Rouvrez la bibliothèque avant d’appliquer les réglages à tous.',409);
+            foreach(array_keys($instances) as $ii){if(isset($template['equipment']))$items['instances'][$ii]['equipment']=$template['equipment'];else unset($items['instances'][$ii]['equipment']);$items['instances'][$ii]['revision']++;}
+        }
+        $items['templates'][$index]=$template;
         return ['items'=>$items,'result'=>['template'=>$template]];
     }
     if ($command === 'item.spawn') {
@@ -415,6 +427,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
         if(function_exists('assertPhysicalDeviceItemAction'))assertPhysicalDeviceItemAction($state,['id'=>$identity['id'],'role'=>$isGm?'gm':'player'],$command,$args,['direct'=>'onlineDeviceDirect']);
         $state=$applied['activeState']??$state;
         $state['items']=$applied['items'];reconcileEquipmentEnchantments($state);synchronizeDeviceItemLocations($state,(string)($args['itemId']??''),['unitId'=>$args['characterId']??'','tokenId'=>$args['tokenId']??'']);
+        if($command==='item.template.update')synchronizeDeviceTemplateAppearance($state,$applied['result']['template']);
     }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, in_array($error->getCode(), [400, 403, 404, 409, 423, 429], true) ? $error->getCode() : 400, $error->getMessage(), 'item_command_refused'); }
     queueOnlineDomainUpsert($pending, $records, 'items', $applied['items']);

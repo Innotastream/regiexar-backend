@@ -4,10 +4,18 @@ require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/dynamic-items.php';
 
 function physicalDevice(array $device):bool { return in_array($device['definition']['kind']??'', ['battery','launcher','beam'],true); }
+function synchronizeDeviceTemplateAppearance(array &$state,array $template):void {
+    $ids=[];foreach($state['items']['instances']??[] as $item)if($item['templateId']===$template['id'])$ids[$item['id']]=true;
+    foreach($state['devices']['devices']??[] as $index=>$entry)if(isset($ids[$entry['itemId']??''])){
+        $image=dsImage($template['image']??'');
+        if(!empty($template['image'])&&$image==='')itemFailure('Choisissez une image importée valide pour ce dispositif.',400);
+        if(($entry['image']??'')!==$image||$entry['name']!==$template['name']){$state['devices']['devices'][$index]['image']=$image;$state['devices']['devices'][$index]['name']=$template['name'];$state['devices']['devices'][$index]['revision']++;}
+    }
+}
 function ensureDeviceItems(array &$state,callable $id):void {
     $state['items']=normalizeItemStore($state['items']??null);
     foreach($state['devices']['devices']??[] as $index=>$entry) {
-        if(!physicalDevice($entry)||!in_array($entry['status'],['active','packed','inventory'],true))continue;
+        if(!physicalDevice($entry)||!in_array($entry['status'],['active','packed','inventory','detached','broken'],true))continue;
         $device=&$state['devices']['devices'][$index];
         if($device['status']==='packed')$device['status']='inventory';
         if(!empty($device['itemId'])&&in_array($device['itemId'],array_column($state['items']['instances'],'id'),true))continue;
@@ -20,7 +28,8 @@ function ensureDeviceItems(array &$state,callable $id):void {
             $state['items']['templates'][]=$template;
         }
         $device['itemId']=$id('item');$device['ownerUnitId']??=$device['creatorCharacterId'];
-        $location=$device['status']==='active'?['kind'=>'ground','sceneId'=>$device['sceneId'],'layerId'=>$device['layerId'],'x'=>$device['x'],'y'=>$device['y']]:['kind'=>'inventory','characterId'=>$device['ownerUnitId']];
+        $device['image']=$template['image']??'';$device['name']=$template['name'];
+        $location=in_array($device['status'],['active','detached','broken'],true)?['kind'=>'ground','sceneId'=>$device['sceneId'],'layerId'=>$device['layerId'],'x'=>$device['x'],'y'=>$device['y']]:['kind'=>'inventory','characterId'=>$device['ownerUnitId']];
         $state['items']['instances'][]=['id'=>$device['itemId'],'templateId'=>$template['id'],'revision'=>1,'location'=>$location];
         rememberLinkedItemStock($state['items'],unitById($state,$device['ownerUnitId'],false),$template['id']);
         unset($device);
@@ -31,6 +40,7 @@ function synchronizeDeviceItemLocations(array &$state,string $itemId,array $cont
     if(!$item)return;
     foreach($state['devices']['devices']??[] as $index=>$entry)if(($entry['itemId']??'')===$itemId&&physicalDevice($entry)){
         $device=&$state['devices']['devices'][$index];
+        if($item['location']['kind']==='inventory'&&$item['location']['characterId']!==$device['creatorCharacterId'])itemFailure('Ce dispositif est lié à son créateur et ne peut pas être donné à une autre unité.',403);
         if($device['definition']['kind']==='beam'&&!in_array($device['status'],['active','inventory','packed'],true))itemFailure('Ce rayon a déjà été déclenché. Utilisez sa compétence après le repos requis.',409);
         if(($device['definition']['canPack']??true)===false&&$item['location']['kind']==='inventory')itemFailure('Ce dispositif ne peut pas être récupéré.',409);
         if($item['location']['kind']==='inventory'){$device['status']='inventory';$device['ownerUnitId']=$item['location']['characterId'];}
@@ -58,7 +68,7 @@ function copyUnitInventory(array $state,array $source,array $target,callable $id
         $state['items']['instances'][]=$copy;$itemIds[]=$copy['id'];$itemMap[$item['id']]=$copy['id'];rememberLinkedItemStock($state['items'],$unit,$copy['templateId']);
         foreach($state['devices']['devices']??[] as $device)if(($device['itemId']??'')===$item['id']){
             if(count($state['devices']['devices'])>=1000)itemFailure('Le registre des dispositifs est plein.',429);
-            $state['devices']['devices'][]=[...$device,'id'=>$id('device'),'itemId'=>$copy['id'],'revision'=>1,'status'=>'inventory',
+            $state['devices']['devices'][]=[...$device,'id'=>$id('device'),'itemId'=>$copy['id'],'revision'=>1,'status'=>$device['status']==='broken'?'broken':'inventory',
                 'creatorCharacterId'=>$targetId,'ownerUnitId'=>$targetId,'operatorCharacterId'=>$targetId,'controllerAccountId'=>$target['controllerPlayerId']??'','sourceTokenId'=>'',
                 'sceneId'=>$state['activeSceneId'],'layerId'=>$target['layerId']??'ground','x'=>$target['x'],'y'=>$target['y']];break;
         }

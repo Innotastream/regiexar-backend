@@ -200,7 +200,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS, 'attack' => $attack];
     $activity['attackReceipts'] = $receipts;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'attack',
+    onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'attack', 'attackId'=>$attack['id'],
         'characterName' => $attack['sourceName'], 'targetName' => $attack['targetName'],
         'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
         'detail' => $attack['status'] === 'awaiting-opposition' ? 'Orbe consommé · jet de défense demandé' : onlineAttackHistoryDetail($attack)]);

@@ -513,6 +513,8 @@ $visibleNpcState = [
     'map' => ['tokens' => [[
         'id' => 'token-visible-npc',
         'name' => 'Créature visible',
+        'x' => 50,
+        'y' => 50,
         'hidden' => false,
         'controllerPlayerId' => null,
         'revealDetailsToPlayers' => false,
@@ -532,6 +534,8 @@ $visibleNpcState = [
     'mapPings' => [],
 ];
 $visibleNpcProjection = publicPlayerState($visibleNpcState, ['id' => 'account-player', 'display_name' => 'Joueur'], []);
+$incompleteNpcState=$visibleNpcState;unset($incompleteNpcState['map']['tokens'][0]['x']);
+requireDomainCompatibility((publicPlayerState($incompleteNpcState,['id'=>'account-player','display_name'=>'Joueur'],[])['map']['tokens']??[])===[],'Une ancienne créature sans position ne doit pas être révélée à une position inventée.');
 $visibleNpc = $visibleNpcProjection['map']['tokens'][0] ?? [];
 requireDomainCompatibility(
     ($visibleNpc['detailsVisible'] ?? true) === false

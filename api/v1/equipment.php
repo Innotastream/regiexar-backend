@@ -116,6 +116,14 @@ function requireEnchantedWeapon(array $state,array $recipient,string $itemId):ar
     foreach(enchantableWeapons($state,$recipient) as $item)if($item['id']===$itemId)return ['enchantedItemId'=>$item['id'],'enchantedItemName'=>$item['name']];
     equipmentFailure('Choisissez une arme fabriquée portée et utilisable par le bénéficiaire. Les armes naturelles et les projectiles sont exclus.');
 }
+function requireEnchantmentInstance(array $state,array $enchantment):array {
+    $item=null;foreach($state['items']['instances']??[] as $entry)if($entry['id']===($enchantment['enchantedItemId']??'')){$item=$entry;break;}
+    $template=[];foreach($state['items']['templates']??[] as $entry)if($entry['id']===($item['templateId']??'')){$template=$entry;break;}
+    $equipment=$item['equipment']??$template['equipment']??[];
+    if(!$item||in_array($item['location']['kind'],['destroyed','consumed'],true)||($equipment['kind']??'')!=='weapon'||($equipment['projectile']??false)===true)
+        equipmentFailure('L’arme choisie pour cet enchantement n’est plus disponible. Le MJ peut refuser la demande pour restituer son coût.');
+    return $enchantment;
+}
 function enchantmentOnUnit(array $effect,array $source,array $state):bool {
     foreach($state['items']['instances']??[] as $item)if($item['id']===($effect['enchantedItemId']??'')&&$item['location']['kind']==='inventory'&&$item['location']['characterId']===equipmentUnitId($source))return true;
     return false;
@@ -147,6 +155,7 @@ function onlineBreakAttackTorch(PDO $connection,array &$records,array &$pending,
     if(breakAttackTorch($state,$attack,$approved))queueOnlineDomainUpsert($pending,$records,'map:'.$sceneId,$state['map']);
 }
 function applyEquipmentCommand(array $state,array $items,array $identity,string $command,array $args,callable $owned):array {
+    if(in_array($command,['item.equipment.create','item.equipment.update'],true)&&($identity['role']??'')!=='gm')equipmentFailure('La création et la modification des équipements sont réservées au MJ. Vous pouvez ajouter un objet rapide.',403);
     $unit=$owned($args['characterId']??'');$unitId=$unit['id'];$previous=equipmentLoadout($items,$unitId);
     if($command==='item.equipment.create'){
         if(count($items['templates'])>=200||count($items['instances'])>=2000)equipmentFailure('La collection d’objets est pleine.',429);

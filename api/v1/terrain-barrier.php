@@ -5,7 +5,11 @@ function applicationTerrainBarrier(mixed $value): ?array {
         &&is_int($value['size']??null)&&$value['size']>=10&&$value['size']<=220?['version'=>1,'hp'=>$value['hp'],'size'=>$value['size']]:null;
 }
 function applicationTerrainBarrierActive(array $token): bool {return ($token['terrainBarrier']['version']??0)===1&&($token['hp']??0)>0&&($token['healthOverride']??'')!=='dead';}
+function applicationTerrainBarrierPositioned(array $token):bool {
+    foreach(['x','y'] as $key){$value=$token[$key]??null;if((!is_int($value)&&!is_float($value))||!is_finite((float)$value)||$value<0||$value>100)return false;}return true;
+}
 function applicationTerrainBarrierPointVisible(array $token,array $map,callable $visible):bool {
+    if(!applicationTerrainBarrierPositioned($token))return false;
     if($visible($token['x'],$token['y']))return true;if(!applicationTerrainBarrierActive($token))return false;
     $level=$map['layers'][$token['layerId']??$map['activeLayerId']??'ground']??$map;$rx=(($token['size']??40)/2+2)*100/($level['naturalWidth']??$map['naturalWidth']??1600);$ry=(($token['size']??40)/2+2)*100/($level['naturalHeight']??$map['naturalHeight']??900);
     for($i=0;$i<24;$i++){$a=$i*M_PI/12;$x=$token['x']+cos($a)*$rx;$y=$token['y']+sin($a)*$ry;if($x>=0&&$x<=100&&$y>=0&&$y<=100&&$visible($x,$y))return true;}return false;
@@ -15,7 +19,7 @@ function applicationTerrainBarrierWalls(array $walls,array $map): array {
     $nw=max(1,(float)($level['naturalWidth']??$map['naturalWidth']??1600));$nh=max(1,(float)($level['naturalHeight']??$map['naturalHeight']??900));
     $bytes=applicationWallMaskBytes($walls)??str_repeat("\0",(int)ceil($walls['width']*$walls['height']/8));$changed=false;
     foreach($map['tokens']??[] as $token){
-        if(!applicationTerrainBarrierActive($token)||($token['layerId']??'ground')!==$layer)continue;$changed=true;
+        if(!applicationTerrainBarrierActive($token)||!applicationTerrainBarrierPositioned($token)||($token['layerId']??'ground')!==$layer)continue;$changed=true;
         $cx=$token['x']/100*($walls['width']-1);$cy=$token['y']/100*($walls['height']-1);$rx=$token['size']/2/$nw*($walls['width']-1);$ry=$token['size']/2/$nh*($walls['height']-1);
         for($y=max(0,(int)floor($cy-$ry));$y<=min($walls['height']-1,(int)ceil($cy+$ry));$y++)for($x=max(0,(int)floor($cx-$rx));$x<=min($walls['width']-1,(int)ceil($cx+$rx));$x++)
             if((($x-$cx)/$rx)**2+(($y-$cy)/$ry)**2<=1)applicationSetMaskBit($bytes,$y*$walls['width']+$x,true);

@@ -24,7 +24,9 @@ if(($argv[1]??'')==='worker'){
   $db->beginTransaction();$clock=domainClockRecord($db,true);$records=applicationDomainRecords($db);$pending=[];
   if(isset($argv[3])){
    $command=json_decode($argv[3],true,512,JSON_THROW_ON_ERROR);
-   $applied=['result'=>onlineItemCommand($db,$records,$pending,applicationDomainPayload($records,'table'),$identity,$command['command'],['requestId'=>$argv[2],'characterId'=>'fixture-user-character',...$command['arguments']],false),'effects'=>[]];
+   $actor=!empty($command['gm'])?[...$identity,'permanent_role'=>'gm','effective_mode'=>'gm']:$identity;
+   $applied=($command['kind']??'')==='mechanics'?onlineDeviceCommands($db,$records,$pending,$actor,['command'=>$command['command'],'arguments'=>['requestId'=>$argv[2],'sceneId'=>'fixture-scene',...$command['arguments']]])
+    :['result'=>onlineItemCommand($db,$records,$pending,applicationDomainPayload($records,'table'),$actor,$command['command'],['requestId'=>$argv[2],'characterId'=>'fixture-user-character',...$command['arguments']],!empty($command['gm'])),'effects'=>[]];
   }else $applied=onlineDeviceCommands($db,$records,$pending,$identity,['command'=>'launcher.fire','arguments'=>['requestId'=>$argv[2],'sceneId'=>'fixture-scene','characterId'=>'fixture-user-character','sourceTokenId'=>'fixture-user-token','deviceId'=>'fixture-launcher','targetTokenId'=>'fixture-maker-token','statId'=>'character-stat-dexterity','mana'=>5,'opposed'=>false]]);
   $revision=$pending===[]?$clock['globalRevision']:persistDomainChangesInTransaction($db,$identity,$clock,array_values($pending));$db->commit();
   echo json_encode(['result'=>$applied['result'],'effects'=>$applied['effects'],'revision'=>$revision],JSON_UNESCAPED_UNICODE)."\n";
@@ -49,9 +51,9 @@ try{
  $user=[...$maker,'id'=>'fixture-user-character','ownerPlayerId'=>'fixture-user','name'=>'Utilisateur fictif','resources'=>['hp'=>50,'maxHp'=>50,'mana'=>9,'maxMana'=>100]];
  $asToken=static fn($character,$id,$x)=>['id'=>$id,'characterId'=>$character['id'],'followCharacter'=>true,'controllerPlayerId'=>$character['ownerPlayerId'],'name'=>$character['name'],'x'=>$x,'y'=>50,'layerId'=>'ground','hidden'=>false,...$character['resources']];
  $ability=['id'=>'fixture-install','name'=>'Lanceur de recette','effect'=>'device','formula'=>'0','manaCost'=>0,'device'=>dsDefinition(['kind'=>'launcher','ammoTemplateId'=>'fixture-bolt'])];
- $store=dsEmpty();$store['devices'][]=['id'=>'fixture-launcher','revision'=>1,'status'=>'active','creatorCharacterId'=>$maker['id'],'controllerAccountId'=>$maker['ownerPlayerId'],'sourceTokenId'=>'fixture-maker-token','abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'sceneId'=>'fixture-scene','layerId'=>'ground','x'=>50,'y'=>50,'definition'=>$ability['device']];
+ $store=dsEmpty();$store['devices'][]=['id'=>'fixture-launcher','revision'=>1,'status'=>'active','creatorCharacterId'=>$user['id'],'controllerAccountId'=>$user['ownerPlayerId'],'sourceTokenId'=>'fixture-user-token','abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'sceneId'=>'fixture-scene','layerId'=>'ground','x'=>50,'y'=>50,'definition'=>$ability['device']];
  $map=['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50,'activeLayerId'=>'ground','tokens'=>[$asToken($maker,'fixture-maker-token',1),$asToken($user,'fixture-user-token',55)]];
- $items=['version'=>1,'templates'=>[['id'=>'fixture-bolt','kind'=>'object','name'=>'Carreau fictif','description'=>'','image'=>'']],'instances'=>[]];for($i=1;$i<=20;$i++)$items['instances'][]=['id'=>'fixture-bolt-'.$i,'templateId'=>'fixture-bolt','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$maker['id']]];
+ $items=['version'=>1,'templates'=>[['id'=>'fixture-bolt','kind'=>'object','name'=>'Carreau fictif','description'=>'','image'=>'']],'instances'=>[]];for($i=1;$i<=20;$i++)$items['instances'][]=['id'=>'fixture-bolt-'.$i,'templateId'=>'fixture-bolt','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$user['id']]];
  $state=['schemaVersion'=>21,'session'=>['name'=>'Recette SQL isolée'],'activeSceneId'=>'fixture-scene','characters'=>[$maker,$user],'players'=>[],'scenes'=>[['id'=>'fixture-scene','name'=>'Recette SQL','combat'=>['map'=>$map,'initiative'=>['active'=>false,'round'=>1,'order'=>[],'currentIndex'=>0]]]],'map'=>$map,'initiative'=>['active'=>false,'round'=>1,'order'=>[],'currentIndex'=>0],'devices'=>$store,'items'=>$items,'actionTimers'=>[],'rolls'=>[]];
  foreach(legacyStateToDomains($state) as $key=>$payload)upsertApplicationDomain($db,$key,$payload,1,null);
  // Distinct competing requests cannot both spend the nine available mana.
@@ -61,7 +63,7 @@ try{
  $results=array_map('finishDeviceSqlWorker',$workers);$workers=[];$success=array_values(array_filter($results,static fn($result)=>isset($result['result'])));$errors=array_values(array_filter($results,static fn($result)=>isset($result['error'])));
  deviceSqlCheck(count($success)===1&&count($errors)===1&&$errors[0]['status']===409,'Only one competing five-mana shot succeeds; the other is refused. '.json_encode($results));
  $records=applicationDomainRecords($db);deviceSqlCheck(applicationDomainPayload($records,'character:fixture-user-character')['resources']['mana']==4,'The authoritative personal reserve contains exactly four mana.');
- deviceSqlCheck(count(array_filter(applicationDomainPayload($records,'items')['instances'],static fn($item)=>$item['location']['kind']==='inventory'))===19,'Exactly one of the creator’s twenty distant bolts is consumed.');
+ deviceSqlCheck(count(array_filter(applicationDomainPayload($records,'items')['instances'],static fn($item)=>$item['location']['kind']==='inventory'))===19,'Exactly one of the creator’s twenty bound bolts is consumed.');
  deviceSqlCheck($success[0]['effects'][0]['sourceCharacterId']===$user['id']&&$success[0]['effects'][0]['statId']==='character-stat-dexterity','The canonical firing effect belongs to the actual user and chosen statistic.');
  $history=$db->query("SELECT payload FROM application_domain_history WHERE domain_key='character:fixture-user-character' ORDER BY history_id LIMIT 1")->fetchColumn();deviceSqlCheck(json_decode($history,true)['resources']['mana']==9,'The history preimage preserves nine mana instead of the post-command balance.');
  // Restore this disposable fixture and race two identical persistent receipts.
@@ -105,6 +107,32 @@ try{
  $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'equipment-quick-same-0001',$quick),startDeviceSqlWorker($schema,'equipment-quick-same-0001',$quick)];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
  deviceSqlCheck(count(array_filter($results,static fn($r)=>isset($r['result'])))===2&&count(array_filter($results,static fn($r)=>$r['result']['deduplicated']??false))===1,'Concurrent quick-object retries share one persistent receipt. '.json_encode($results));
  $records=applicationDomainRecords(devicesSqlConnection($schema));$held=applicationDomainPayload($records,'items');deviceSqlCheck(count(array_filter($held['instances'],static fn($i)=>$i['templateId']==='sql-quick-model'))===2,'A fresh SQL connection sees exactly two requested objects, never four.');
+ // A forgotten apparatus survives removing its visual token and concurrent return.
+ $records=applicationDomainRecords($db);$devices=applicationDomainPayload($records,'devices');$di=dsDevice($devices,'fixture-launcher',false);
+ $machine=&$devices['devices'][$di];$machine['sceneId']='fixture-arrival';$machine['mana']=37;$machine['revision']++;$machineId=$machine['id'];$machineItemId=$machine['itemId'];$machineRevision=$machine['revision'];unset($machine);
+ $inventory=applicationDomainPayload($records,'items');$ii=dsIndex($inventory['instances'],$machineItemId);$inventory['instances'][$ii]['location']['sceneId']='fixture-arrival';
+ upsertApplicationDomain($db,'devices',$devices,30,null);upsertApplicationDomain($db,'items',$inventory,30,null);
+ $beforeCharacter=applicationDomainPayload($records,'character:fixture-user-character');$beforeCount=count($inventory['instances']);$beforeTable=applicationDomainPayload($records,'table');
+ $commands=[['kind'=>'mechanics','gm'=>true,'command'=>'device.remove-token','arguments'=>['deviceId'=>$machineId,'expectedRevision'=>$machineRevision]],
+   ['kind'=>'mechanics','gm'=>true,'command'=>'device.pack','arguments'=>['deviceId'=>$machineId,'expectedRevision'=>$machineRevision,'returnToCreator'=>true]]];
+ $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'machine-return-race-one-01',$commands[0]),startDeviceSqlWorker($schema,'machine-return-race-two-02',$commands[1])];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
+ deviceSqlCheck(count(array_filter($results,static fn($r)=>isset($r['result'])))===1&&count(array_filter($results,static fn($r)=>($r['status']??0)===409))===1,'Removing a forgotten token and returning it concurrently accepts exactly one revision.');
+ $records=applicationDomainRecords(devicesSqlConnection($schema));$devices=applicationDomainPayload($records,'devices');$machine=$devices['devices'][dsDevice($devices,$machineId,false)];
+ if($machine['status']==='detached'){
+   $return=['kind'=>'mechanics','gm'=>true,'command'=>'device.pack','arguments'=>['deviceId'=>$machineId,'expectedRevision'=>$machine['revision'],'returnToCreator'=>true]];
+   $worker=startDeviceSqlWorker($schema,'machine-return-after-remove-01',$return);fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);$returned=finishDeviceSqlWorker($worker);deviceSqlCheck(isset($returned['result']),'A fresh process returns the removed machine from the other scene.');
+ }
+ $records=applicationDomainRecords(devicesSqlConnection($schema));$machine=applicationDomainPayload($records,'devices')['devices'][dsDevice(applicationDomainPayload($records,'devices'),$machineId,false)];$inventory=applicationDomainPayload($records,'items');$physical=$inventory['instances'][dsIndex($inventory['instances'],$machineItemId)];
+ deviceSqlCheck($machine['status']==='inventory'&&$machine['itemId']===$machineItemId&&$machine['mana']===37&&$physical['location']===['kind'=>'inventory','characterId'=>'fixture-user-character'],'The same bound apparatus and reserve are durably returned without a token.');
+ deviceSqlCheck(count($inventory['instances'])===$beforeCount&&applicationDomainPayload($records,'character:fixture-user-character')===$beforeCharacter&&applicationDomainPayload($records,'table')===$beforeTable,'Return never creates stock, changes resources or switches the broadcast.');
+ // A global weapon edit and an item transfer must not silently overwrite each other.
+ $model=$inventory['templates'][dsIndex($inventory['templates'],'gear-sword')];$weapon=$inventory['instances'][dsIndex($inventory['instances'],'gear-sword')];
+ $global=['gm'=>true,'command'=>'item.template.update','arguments'=>['template'=>[...$model,'equipment'=>[...$model['equipment'],'formula'=>'1d40']],'expectedTemplate'=>$model,'applyEquipmentToInstances'=>true,'expectedInstanceRevisions'=>[$weapon['id']=>$weapon['revision']]]];
+ $transfer=['gm'=>true,'command'=>'item.transfer','arguments'=>['itemId'=>$weapon['id'],'expectedItemRevision'=>$weapon['revision'],'targetCharacterId'=>'fixture-maker-character']];
+ $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'global-library-race-one-01',$global),startDeviceSqlWorker($schema,'global-library-race-two-02',$transfer)];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
+ deviceSqlCheck(count(array_filter($results,static fn($r)=>isset($r['result'])))===1&&count(array_filter($results,static fn($r)=>($r['status']??0)===409))===1,'Global equipment edit and transfer serialize under the real clock; a stale snapshot rolls back completely.');
+ $records=applicationDomainRecords(devicesSqlConnection($schema));$held=applicationDomainPayload($records,'items');$actual=$held['instances'][dsIndex($held['instances'],$weapon['id'])];
+ deviceSqlCheck($actual['revision']===$weapon['revision']+1&&count($held['instances'])===count($inventory['instances'])&&applicationDomainPayload($records,'character:fixture-user-character')===$beforeCharacter,'The winner persists across SQL connections without a partial second mutation.');
  echo "Local MySQL device concurrency integration passed.\n";
 }finally{
  foreach($workers as [$process,$pipes]){foreach($pipes as $pipe)if(is_resource($pipe))fclose($pipe);if(is_resource($process)){proc_terminate($process);proc_close($process);}}

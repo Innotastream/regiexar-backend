@@ -88,6 +88,8 @@ jobs:
           php tests/weapon-targeting.php
           php tests/web-structures.php
           php tests/equipment-spirit-creatures.php
+          php tests/device-owner-return.php
+          php tests/inventory-library-global.php
       - name: Assistant classic abilities and repair
         run: php tests/ability-assistant-contract.php
       - name: Authoritative tactical rolls and audio loops

@@ -89,9 +89,10 @@ function dsStore(mixed $value): array {
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1
-            || !in_array($entry['status']??'', ['active','preparing','packed','inventory','awaiting-launch','spent','stopped','failed','broken','repaired'],true)
+            || !in_array($entry['status']??'', ['active','preparing','packed','inventory','awaiting-launch','spent','stopped','failed','broken','repaired','detached'],true)
             || empty($entry['creatorCharacterId']) || empty($entry['sceneId']) || !dsNumber($entry['x']??null) || !dsNumber($entry['y']??null)) dsError('Le registre des dispositifs est invalide.');
         dsDefinition($entry['definition']); $ids[$entry['id']]=true;
+        if($entry['status']==='detached'&&(!physicalDevice($entry)||!in_array($entry['detachedStatus']??'', ['active','broken'],true)))dsError('L’état du dispositif retiré est invalide.');
         if($entry['definition']['kind']==='dome'&&array_key_exists('mode',$entry)&&!in_array($entry['mode'],['carried','placed'],true))dsError('L’état du bouclier est invalide.');
         if(isset($entry['image'])&&$entry['image']!==''&&dsImage($entry['image'])==='')dsError('L’image du dispositif est invalide.',400);
         if(array_key_exists('size',$entry))normalizeItemSize($entry['size']);
@@ -189,7 +190,7 @@ function dsDomeMode(array $args,array $definition): string {
 function dsAssertDeploymentLimit(array $store,string $ownerId,array $ability):void {
     if(!in_array($ability['device']['kind']??'',['battery','launcher','dome','beam'],true))return;
     $maximum=dsInt($ability['device']['maximumInstances']??null,1,100,1);$count=0;
-    foreach($store['devices']??[] as $device)if($device['creatorCharacterId']===$ownerId&&$device['abilityId']===$ability['id']&&in_array($device['status'],['active','preparing','inventory','packed','broken'],true))$count++;
+    foreach($store['devices']??[] as $device)if($device['creatorCharacterId']===$ownerId&&$device['abilityId']===$ability['id']&&in_array($device['status'],['active','preparing','inventory','packed','broken','detached'],true))$count++;
     if($count>=$maximum)dsError('Cette compétence autorise '.$maximum.' machine'.($maximum>1?'s':'').' simultanée'.($maximum>1?'s':'').' par unité. Réutilisez les appareils existants, y compris ceux rangés ou en attente de réparation.');
 }
 function dsDeployment(array &$state,array &$store,array $actor,array $owner,array $token,array $ability,array $args,array $context): array {
@@ -219,9 +220,14 @@ function dsCanonical(mixed $value): mixed {
     foreach($value as $key=>$entry) $value[$key]=dsCanonical($entry); return $value;
 }
 function assertPhysicalDeviceItemAction(array $state,array $actor,string $command,array $args,array $context=[]):void {
-    if(!in_array($command,['item.drop','item.pickup'],true))return;
+    if($command==='item.spawn')foreach($state['devices']['devices']??[] as $entry)if(physicalDevice($entry))foreach($state['items']['instances']??[] as $item)if($item['id']===($entry['itemId']??'')&&$item['templateId']===($args['templateId']??''))dsError('Cette machine est gérée par sa compétence. Réutilisez son exemplaire existant.');
     $device=null;foreach($state['devices']['devices']??[] as $entry)if(($entry['itemId']??'')===($args['itemId']??'')&&physicalDevice($entry)){$device=$entry;break;}
-    if(!$device)return;if(($device['definition']['canPack']??true)===false)dsError('Ce dispositif ne peut pas être transporté.');
+    if(!$device)return;
+    if($command==='item.transfer')dsError('Ce dispositif est lié à son créateur et ne peut pas être donné à une autre unité.',403);
+    if(!in_array($command,['item.drop','item.pickup'],true))return;
+    if(($args['characterId']??'')!==$device['creatorCharacterId'])dsError('Seul le créateur peut transporter ce dispositif.',403);
+    if(in_array($device['status'],['detached','broken'],true))dsError('Ce pion a été retiré ou cet appareil doit être réparé. Le MJ peut le rendre à son créateur.');
+    if(($device['definition']['canPack']??true)===false)dsError('Ce dispositif ne peut pas être transporté.');
     $owner=ownedUnit($state,$actor,$args['characterId']??'');$token=dsToken($state,$owner,['sourceTokenId'=>$args['tokenId']??'']);dsTurn($state,$actor,$token);
     if($command==='item.pickup')dsInteraction($state,$actor,$token,$device,$context);
 }
@@ -342,11 +348,33 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
         if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
         $device['size']=normalizeItemSize($args['size']??null);$device['revision']++;$result=['deviceId'=>$device['id'],'size'=>$device['size']];
+    } elseif($command==='device.remove-token'||$command==='device.pack'&&($args['returnToCreator']??false)===true) {
+        if($actor['role']!=='gm')dsError('Seul le MJ peut retirer un pion de dispositif ou le rendre à distance.',403);
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
+        if(!physicalDevice($device)||($device['definition']['canPack']??true)===false)dsError('Ce dispositif ne peut pas être récupéré.',400);
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
+        $owner=unitById($state,$device['creatorCharacterId']);
+        $ii=dsIndex($state['items']['instances'],$device['itemId']??'');if($ii<0)dsError('L’exemplaire de ce dispositif est introuvable.',404);
+        $item=&$state['items']['instances'][$ii];
+        if($command==='device.remove-token'){
+            if(!in_array($device['status'],['active','broken'],true)||$item['location']['kind']!=='ground')dsError('Ce pion est déjà retiré de la carte.');
+            $device['detachedStatus']=$device['status'];$device['status']='detached';$device['revision']++;$item['revision']++;
+            $result=['deviceId'=>$device['id'],'tokenRemoved'=>true];
+        }else{
+            if(!in_array($device['status'],['active','detached','broken'],true)||$item['location']['kind']!=='ground')dsError('Ce dispositif est déjà rangé ou n’est plus récupérable.');
+            $broken=$device['status']==='broken'||($device['detachedStatus']??'')==='broken';
+            $item['location']=['kind'=>'inventory','characterId'=>$owner['id']];$item['revision']++;
+            $device['status']=$broken?'broken':'inventory';$device['ownerUnitId']=$owner['id'];$device['sourceTokenId']='';unset($device['detachedStatus']);$device['revision']++;
+            rememberLinkedItemStock($state['items'],$owner,$item['templateId']);
+            $result=['deviceId'=>$device['id'],'packed'=>true,'returnedToCreator'=>true];
+        }
+        unset($item,$device);
     } elseif($command==='device.pack'||$command==='device.place') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];$definition=dsDefinition($device['definition']);
         $itemIndex=dsIndex($state['items']['instances'],$device['itemId']??'');if($itemIndex<0)dsError('Cet objet n’existe plus.',404);
         $sourceIndex=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');
         $holder=$command==='device.place'?($state['items']['instances'][$itemIndex]['location']['characterId']??''):($sourceIndex>=0?unitIdForToken($state['map']['tokens'][$sourceIndex]):'');
+        if($holder!==''&&$holder!==$device['creatorCharacterId'])dsError('Seul le créateur peut transporter ce dispositif.',403);
         $owner=ownedUnit($state,$actor,$holder?:($device['ownerUnitId']??$device['creatorCharacterId']));$token=dsToken($state,$owner,$args);
         if(!in_array($definition['kind'],['battery','launcher','beam'],true)||!$definition['canPack'])dsError('Ce dispositif ne peut pas être replié.',400);
         if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
@@ -394,7 +422,9 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         dsResource($state,$owner,'mana',-$spent); $device['mana']+=$spent*$device['definition']['chargeRatio']; $device['revision']++; $result=['manaSpent'=>$spent,'batteryMana'=>$device['mana']];
     } elseif($command==='launcher.fire') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'')]; $owner=ownedUnit($state,$actor,$args['characterId']??''); $token=dsToken($state,$owner,$args);
-        if($device['definition']['kind']!=='launcher') dsError('Ce dispositif ne peut pas tirer.',400); dsTurn($state,$actor,$token); dsInteraction($state,$actor,$token,$device,$context);
+        if($device['definition']['kind']!=='launcher') dsError('Ce dispositif ne peut pas tirer.',400);
+        if($owner['id']!==$device['creatorCharacterId'])dsError('Ce lanceur est lié à son créateur. Une autre unité ne peut pas l’utiliser.',403);
+        dsTurn($state,$actor,$token); dsInteraction($state,$actor,$token,$device,$context);
         foreach($state['map']['tokens']??[] as $candidate)if(($candidate['id']??'')===($args['targetTokenId']??'')&&unitIdForToken($candidate)===$owner['id'])dsError('Le tireur ne peut pas se prendre pour cible avec le lanceur.',400);
         if(!in_array($args['statId']??'', $device['definition']['firingStats'],true)) dsError('Choisissez une statistique de tir valide.',400);
         $spent=dsAmount($args['mana']??null,$device['definition']['infusion']['minimumMana']); $ammo=-1;

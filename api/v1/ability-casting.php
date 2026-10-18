@@ -397,9 +397,17 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     }
     unset($cast['pendingValidation']);
     $countsUse=($cast['success']??false)||!empty($plan['manualD100'])&&($cast['outcome']['code']??'pending')!=='pending';
-    if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null)
+    if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null) {
         applicationActivateAttackEnhancement($activity, ['id' => $plan['abilityId'], 'name' => $plan['label'], 'attackEnhancement' => $plan['attackEnhancement']],
             $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null, $plan['enchantment']??[]);
+        if(($plan['attackEnhancement']['trigger']??'')==='enchanted-weapon'){
+            $equipmentState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$plan['sceneId']);
+            requireEnchantmentInstance($equipmentState,$plan['enchantment']??[]);
+            $equipmentState['attackEnhancements']=$activity['attackEnhancements'];
+            reconcileEquipmentEnchantments($equipmentState);
+            $activity['attackEnhancements']=$equipmentState['attackEnhancements'];
+        }
+    }
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $countsUse ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];

@@ -277,10 +277,11 @@ function onlineDeviceRider(PDO $db,array &$records,array &$pending,array $attack
 function publicDeviceStore(array $store,?array $identity,array $characters,array $context,callable $visible): array {
     $own=[];foreach($characters as $character)if(($character['ownerPlayerId']??'')===($identity['id']??null))$own[$character['id']]=true;
     foreach($context['tokens']??[] as $token)if(!empty($identity['id'])&&(($token['controllerPlayerId']??'')===$identity['id']||($token['ownedByYou']??false)))$own[unitIdForToken($token)]=true;
-    $items=[];foreach($context['items']['instances']??[] as $item)if($item['location']['kind']==='inventory'&&isset($own[$item['location']['characterId']]))$items[$item['id']]=true;
+    $items=[];$inventoryItems=[];foreach($context['items']['instances']??[] as $item)if($item['location']['kind']==='inventory'){$inventoryItems[$item['id']]=true;if(isset($own[$item['location']['characterId']]))$items[$item['id']]=true;}
     $devices=[];foreach($store['devices']??[] as $device) {
         if($device['definition']['kind']==='dome'&&($device['mode']??'carried')!=='placed'){$center=dsDeviceSource(['map'=>['tokens'=>$context['tokens']??[]]],$device);if(!$center||!in_array($center['id'],$context['visibleTokenIds']??[],true))continue;$device=array_replace($device,['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$center['layerId']??'ground','sourceTokenId'=>$center['id']]);}
-        if($device['status']==='packed'){if(!isset($own[$device['creatorCharacterId']]))continue;}
+        if($device['status']==='broken'&&in_array($device['definition']['kind'],['battery','launcher','beam'],true)&&isset($inventoryItems[$device['itemId']??''])){if(empty($identity['id'])||!isset($items[$device['itemId']]))continue;}
+        elseif(in_array($device['status'],['packed','detached'],true)){if(!isset($own[$device['creatorCharacterId']]))continue;}
         elseif(in_array($device['status'],['inventory','awaiting-launch'],true)){if(!isset($items[$device['itemId']]))continue;}
         elseif(($context['paused']??false)||$device['sceneId']!==$context['sceneId']||$device['layerId']!==$context['layerId']||!$visible($device))continue;
         $device['image']=dsImage(array_key_exists('image',$device)?$device['image']:($device['ability']['image']??''));

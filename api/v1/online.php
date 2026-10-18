@@ -4134,6 +4134,9 @@ function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pend
         : applicationDomainPayload($records, 'activity');
     $entries = array_values(array_filter(is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         static fn (mixed $entry): bool => is_array($entry) && ($entry['kind'] ?? '') !== 'movement'));
+    $originalIds=array_fill_keys(array_column(applicationDomainPayload($records,'activity')['playerActions']??[],'id'),true);
+    $groupId='';foreach($entries as $previousEntry)if(!isset($originalIds[$previousEntry['id']])&&!empty($previousEntry['groupId'])){$groupId=$previousEntry['groupId'];break;}
+    if($groupId==='')$groupId='group-'.randomToken(16);
     $entry = [
         'id' => 'action-' . randomToken(12),
         'kind' => substr((string) ($action['kind'] ?? 'action'), 0, 40),
@@ -4145,6 +4148,8 @@ function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pend
         'detail' => onlineUtf8ByteSlice((string) ($action['detail'] ?? ''), XAR_PLAYER_ACTION_DETAIL_MAXIMUM_BYTES),
         'sceneId' => substr($sceneId, 0, 80),
         'createdAt' => gmdate('c'),
+        'groupId'=>$groupId,
+        ...(!empty($action['attackId'])?['attackId'=>substr(preg_replace('/[^A-Za-z0-9_-]/','',(string)$action['attackId']),0,120)]:[]),
     ];
     if (is_array($action['operation'] ?? null)) {
         $entry['operation'] = $action['operation'];
@@ -6940,7 +6945,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $areaActivity = onlineMergeAttackActivityRolls($areaActivity, $areaAttack, applicationDomainPayload($records, 'initiative:' . (string) ($areaAttack['sceneId'] ?? '')));
                         queueOnlineDomainUpsert($pending, $records, 'activity', $areaActivity);
                         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
-                            'kind' => 'attack', 'characterName' => $attack['sourceName'], 'targetName' => $areaAttack['targetName'],
+                            'kind' => 'attack', 'attackId'=>$areaAttack['id'], 'characterName' => $attack['sourceName'], 'targetName' => $areaAttack['targetName'],
                             'summary' => $attack['sourceName'] . ' attaque ' . $areaAttack['targetName'] . ' avec ' . $attackName,
                             'detail' => onlineAttackHistoryDetail($areaAttack, false) . (count($weaponTargets)>1?' · frappe sur plusieurs cibles':' · zone de ' . $damageTargeting['radiusCells'] . ' cases'),
                         ]);
@@ -6966,7 +6971,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attack['status'] === 'awaiting-opposition') $attackActivityDetail .= ' · Jet d’opposition demandé';
                 if (($attack['validationKind'] ?? '') === 'outcome') $attackActivityDetail .= ' · validation MJ en attente';
                 $attackAction = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
-                    'kind' => 'attack',
+                    'kind' => 'attack', 'attackId'=>$attack['id'],
                     'characterName' => $attack['sourceName'],
                     'targetName' => $attack['targetName'],
                     'summary' => ($attack['areaAnchorOnly'] ?? false)
@@ -7084,7 +7089,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $activity['attackReceipts'] = $receipts;
                     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                     onlineAppendPlayerAction($connection, $records, $pending, $identity, $attackSceneId, [
-                        'kind' => 'opposition',
+                        'kind' => 'opposition', 'attackId'=>$attack['id'],
                         'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
                         'summary' => 'Opposition annulée pour ' . (string) ($attack['targetName'] ?? 'la cible'),
                         'detail' => (string) ($attack['sourceName'] ?? 'Attaquant') . ' · ' . (string) ($attack['attackName'] ?? 'Attaque'),
@@ -7298,7 +7303,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         : onlineAttackHistoryDetail($attack) . ' · ' . ($defenderWins ? 'attaque arrêtée' : 'attaque maintenue');
                     if ($immediateOutcome) $oppositionActivityDetail .= ' · résultat immédiat · validation MJ en attente';
                     onlineAppendPlayerAction($connection, $records, $pending, $identity, $attackSceneId, [
-                        'kind' => 'opposition',
+                        'kind' => 'opposition', 'attackId'=>$attack['id'],
                         'characterName' => (string) ($target['name'] ?? 'Défenseur'),
                         'targetName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
                         'summary' => $targetKo ? (string) ($target['name'] ?? 'Défenseur') . ($decision === 'skip' ? ' : opposition non autorisée par le MJ' : ' est KO : attaque sans opposition') : (string) ($target['name'] ?? 'Défenseur') . ' oppose ' . $statLabel . ' à ' . (string) ($attack['sourceName'] ?? 'Attaquant'),
@@ -7417,7 +7422,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (($attack['validationKind'] ?? '') === 'outcome') {
                 $remarkableLabel = (string) ($attack['opposition']['outcome']['label'] ?? $attack['hit']['outcome']['label'] ?? 'le résultat remarquable');
                 onlineAppendPlayerAction($connection, $records, $pending, $identity, (string) ($attack['sceneId'] ?? ''), [
-                    'kind' => 'attack',
+                    'kind' => 'attack', 'attackId'=>$attack['id'],
                     'characterName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
                     'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
                     'summary' => ($decision === 'approve' ? 'Le MJ valide ' : 'Le MJ refuse ') . $remarkableLabel,
