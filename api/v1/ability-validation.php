@@ -42,7 +42,7 @@ function onlineAssertAbilityValidationAvailable(PDO $connection, array $activity
     }
     // Reserve both the attempt receipt and its terminal decision before any
     // random outcome can distinguish ordinary and remarkable attempts.
-    if (!$forAttack && trim((string) ($ability['castingStatId'] ?? '')) !== '') {
+    if (!$forAttack && (trim((string) ($ability['castingStatId'] ?? '')) !== ''||!empty($ability['manualD100']))) {
         onlineAssertAbilityValidationCapacity($connection, $activity);
     }
 
@@ -50,6 +50,7 @@ function onlineAssertAbilityValidationAvailable(PDO $connection, array $activity
 
 function onlineResumedAbilityPlan(array $saved, array $initiative, array $activity): array {
     $saved['usedRound'] = max(1, (int) ($initiative['round'] ?? 1));
+    if(($initiative['active']??false)!==true){$saved['cooldownRounds']=0;$saved['reducedFailureEnabled']=false;}
     $saved['turnKey'] = applicationAbilityTurnKey($initiative);
     $saved['enhancementInitiative'] = ['active' => ($initiative['active'] ?? false) === true,
         'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)];
@@ -136,13 +137,56 @@ function onlineValidateAbilityContinuation(PDO $connection, array $records, arra
     return $rules;
 }
 
+function onlineRefundAbilityValidation(PDO $connection, array &$records, array &$pending, array $entry, array $identity): array {
+    $cast = $entry['cast']; $plan = $entry['_private']['plan'];
+    $refunded = ['mana' => 0, 'hp' => 0, 'fatigue' => 0];
+    $characterId = (string) ($entry['characterId'] ?? '');
+    $key = $characterId !== '' ? 'character:' . $characterId : onlineTokenDomainKey($entry['sceneId'], $entry['sourceTokenId']);
+    $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+    $mana = max(0, onlineResourceNumber($cast['manaSpent'] ?? 0)); $hp = max(0, (int) ($cast['hpSpent'] ?? 0));
+    $fatigue = max(0, onlineResourceNumber($cast['fatigueGained'] ?? 0));
+    $deviceId = (string) ($plan['manaProviderDeviceId'] ?? '');
+    if (($hp || $fatigue || ($mana && $deviceId === '')) && ($owner === [] || ($characterId === '' && unitUsesCharacterSheet($owner)))) {
+        rejectOnlineCommand($connection, 409, 'Le porteur qui a payé cette tentative n’existe plus ou a changé de fiche.', 'ability_refund_source_changed');
+    }
+    foreach (['mana' => $mana, 'hp' => $hp] as $resource => $amount) {
+        if ($amount === 0) continue;
+        if ($resource === 'mana' && $deviceId !== '') {
+            onlineDeviceRefund($connection, $records, $pending, ['kind' => 'battery', 'deviceId' => $deviceId, 'value' => $amount]);
+            $refunded['mana'] = $amount;
+        } else {
+            $adjusted = applyOnlineTokenResourceAdjustment($connection, $records, $pending, $entry['sceneId'], $entry['sourceTokenId'],
+                $resource, $amount, (string) $identity['id'], true, $characterId, true);
+            $refunded[$resource] = $adjusted['appliedDelta'];
+        }
+    }
+    if ($fatigue > 0) {
+        $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+        $before = normalizeApplicationFatigue($owner['fatigue'] ?? null)['current'];
+        $owner['fatigue'] = normalizeApplicationFatigue(['current' => $before - $fatigue]);
+        $refunded['fatigue'] = $before - $owner['fatigue']['current'];
+        $owner['_updatedAt'] = (int) floor(microtime(true) * 1000);
+        queueOnlineDomainUpsert($pending, $records, $key, $owner);
+        if ($characterId !== '') {
+            $related = applicationCharacterTokenDomainRecords($connection, $characterId);
+            $records = array_replace($records, $related);
+            foreach ($related as $tokenKey => $record) {
+                $token = $pending[$tokenKey]['payload'] ?? applicationDomainPayload($records, $tokenKey);
+                if (unitUsesCharacterSheet($token) && ($token['characterId'] ?? '') === $characterId)
+                    queueOnlineDomainUpsert($pending, $records, $tokenKey, synchronizeOnlineCharacterToken($token, $owner));
+            }
+        }
+    }
+    return $refunded;
+}
+
 function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $isGm): array {
     if (!$isGm) rejectOnlineCommand($connection, 403, 'La validation des capacités est réservée au MJ.', 'gm_required');
     $requestId = (string) ($arguments['requestId'] ?? ''); $validationId = (string) ($arguments['validationId'] ?? '');
     $decision = $arguments['decision'] ?? '';
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1 || !in_array($decision, ['approve', 'reject'], true)) rejectOnlineCommand($connection, 400, 'Référence ou décision de validation invalide.', 'invalid_ability_validation_request');
     if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) rejectOnlineCommand($connection, 400, 'Confirmez explicitement le résultat remarquable.', 'ability_validation_confirmation_required');
-    $signature = json_encode([$validationId, $decision, ($arguments['confirmed'] ?? false) === true], JSON_THROW_ON_ERROR);
+    $signature = json_encode([$validationId, $decision, ($arguments['confirmed'] ?? false) === true,...(isset($arguments['outcomeCode'])?[$arguments['outcomeCode']]:[])], JSON_THROW_ON_ERROR);
     $context = onlinePersistentCommandReceipt($connection, $records, 'ability-validation', $requestId, $identity['id'], $signature, 'ability_validation');
     if (is_array($context['receipt'] ?? null)) return [...$context['receipt']['result'], 'deduplicated' => true];
     $records = array_replace($records, applicationDomainRecords($connection));
@@ -152,6 +196,7 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
     $entry = $entries[$index]; $private = $entry['_private'];
     if ($decision === 'approve') {
         onlineValidateAbilityContinuation($connection, $records, $table, $entry);
+        if(!empty($entry['cast']['manualOutcome'])){if(!isset(applicationMessageOutcomes()[$arguments['outcomeCode']??'']))rejectOnlineCommand($connection,400,'Choisissez le résultat arbitré par le MJ.','manual_outcome_required');$entry['cast']['outcome']=applicationManualD100Outcome((int)$entry['cast']['outcome']['raw'],$arguments['outcomeCode']);$entry['cast']['success']=$entry['cast']['outcome']['success'];if(isset($entry['cast']['roll']))$entry['cast']['roll']['outcome']=$entry['cast']['outcome'];}
         $continuation = ['cast' => $entry['cast'], 'plan' => onlineResumedAbilityPlan($private['plan'], applicationDomainPayload($records, 'initiative:' . $entry['sceneId']), $activity)];
         $result = match ($entry['route']) {
             'ability.use' => onlineUseAbility($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),
@@ -159,8 +204,9 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
             'ability.complex' => onlineUseComplexAbility($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),
         };
     } else {
+        $refundedCosts = onlineRefundAbilityValidation($connection, $records, $pending, $entry, $identity);
         $result = ['effect' => $entry['effect'], 'cast' => $entry['cast'], 'castSucceeded' => false, 'validationRejected' => true,
-            'roll' => null, 'castRoll' => null, 'effectRoll' => null, 'rolls' => [], 'execution' => null, 'appliedDelta' => 0];
+            'refundedCosts' => $refundedCosts, 'roll' => null, 'castRoll' => null, 'effectRoll' => null, 'rolls' => [], 'execution' => null, 'appliedDelta' => 0];
     }
     $entry['status'] = $decision === 'approve' ? 'approved' : 'rejected'; $entry['resolvedAt'] = gmdate('c');
     $result = [...$result, 'pendingValidation' => false, 'validation' => publicOnlineAbilityValidation($entry, (string) $identity['id']), 'deduplicated' => false];

@@ -19,11 +19,12 @@ function unitById(array $state,string $id,bool $required=true):?array {
     if(!$matches){if($required)unitFailure('Cette unité n’existe plus.',404);return null;}
     $token=$matches[0]['token'];$resources=[];foreach(['hp','maxHp','mana','maxMana'] as $field)$resources[$field]=$token[$field]??0;
     return [...$token,'id'=>$id,'unitKind'=>'token','unitTokenId'=>$token['id'],'unitSceneId'=>$matches[0]['sceneId'],
-        'ownerPlayerId'=>$token['controllerPlayerId']??'','resources'=>$resources,'fatigue'=>$token['fatigue']??['current'=>0,'max'=>150]];
+        'ownerPlayerId'=>$token['controlEffect']['controllerId']??$token['controllerPlayerId']??'','resources'=>$resources,'fatigue'=>$token['fatigue']??['current'=>0,'max'=>150]];
 }
 function ownedUnit(array $state,array $identity,string $id):array {
     $unit=unitById($state,$id);
-    if(($identity['role']??'')!=='gm'&&($unit['ownerPlayerId']??'')!==($identity['id']??''))unitFailure('Cette unité ne vous appartient pas.',403);
+    $controlled=false;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===$id&&($t['controlEffect']['controllerId']??'')===($identity['id']??''))$controlled=true;
+    if(($identity['role']??'')!=='gm'&&($unit['ownerPlayerId']??'')!==($identity['id']??'')&&!$controlled)unitFailure('Cette unité ne vous appartient pas.',403);
     return [...$unit,'effectiveRole'=>$identity['role']??'player'];
 }
 function persistUnitResources(array &$state,array $unit):void {

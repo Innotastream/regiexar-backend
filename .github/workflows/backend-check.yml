@@ -62,6 +62,9 @@ jobs:
         run: |
           php tests/device-native-contract.php
           php tests/device-recovery-contract.php
+          php tests/tactical-special-effects.php
+          php tests/active-items-poisons.php
+          php tests/metamorphosis-duration.php
       - name: Unit inventories, independent clones and linked passages
         run: |
           php tests/unit-inventory-contract.php
@@ -75,6 +78,15 @@ jobs:
           php tests/native-abilities-contract.php
           php tests/allocated-attacks-contract.php
           php tests/counter-defense-contract.php
+      - name: Configurable abilities, round clocks, items and target geometry
+        run: |
+          php tests/ability-messages.php
+          php tests/combat-round-lifecycle.php
+          php tests/charge-ability.php
+          php tests/path-targeting.php
+          php tests/simple-weapon-intimidation.php
+          php tests/weapon-targeting.php
+          php tests/web-structures.php
       - name: Assistant classic abilities and repair
         run: php tests/ability-assistant-contract.php
       - name: Authoritative tactical rolls and audio loops

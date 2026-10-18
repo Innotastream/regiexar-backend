@@ -124,8 +124,12 @@ function fixture(): MemoryConnection
 {
     return new MemoryConnection([
         'table' => ['activeSceneId' => 'scene-one', 'tacticalSync' => ['paused' => false]],
-        'scene:scene-one' => ['id' => 'scene-one', 'name' => 'Scène diffusée'],
-        'map:scene-one' => ['gridSize' => 50],
+        'scene-index' => ['order'=>['scene-one','scene-two']],
+        'roster' => ['characterOrder'=>['character-player'],'players'=>[]],
+        'scene:scene-one' => ['metadata'=>['id' => 'scene-one', 'name' => 'Scène diffusée']],
+        'scene:scene-two' => ['metadata'=>['id' => 'scene-two', 'name' => 'Scène préparée']],
+        'map:scene-two' => ['gridSize'=>50,'naturalWidth'=>1600,'naturalHeight'=>900],
+        'map:scene-one' => ['gridSize' => 50, 'naturalWidth'=>1600, 'naturalHeight'=>900],
         'token-index:scene-one' => ['order' => ['token-player', 'token-monster', 'token-monster-two']],
         'initiative:scene-one' => ['active' => true, 'order' => ['token-monster', 'token-player'], 'currentIndex' => 0],
         'character:character-player' => ['id' => 'character-player', 'ownerPlayerId' => 'account-player', 'name' => 'Personnage', 'color' => '#22aa33', 'resources' => ['hp' => 10, 'maxHp' => 100, 'mana' => 5, 'maxMana' => 10], 'conditions' => [], 'stats' => ['force' => 50],
@@ -134,9 +138,9 @@ function fixture(): MemoryConnection
         'token:scene-one:token-player' => ['id' => 'token-player', 'characterId' => 'character-player', 'controllerPlayerId' => 'stale-controller', 'name' => 'Personnage', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi']],
-        'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 50, 'y' => 50,
+        'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 28.5, 'y' => 50,
             'stats' => [['id' => 'monster-force', 'label' => 'Force', 'value' => '70']], 'weaponAttacks' => [['id' => 'monster-claw', 'formula' => '1d6', 'damageType' => 'physical']]],
-        'token:scene-one:token-monster-two' => ['id' => 'token-monster-two', 'name' => 'Seconde créature', 'hp' => 35, 'maxHp' => 35, 'x' => 65, 'y' => 50,
+        'token:scene-one:token-monster-two' => ['id' => 'token-monster-two', 'name' => 'Seconde créature', 'hp' => 35, 'maxHp' => 35, 'x' => 28.75, 'y' => 50,
             'stats' => [['id' => 'monster-two-force', 'label' => 'Force', 'value' => '60']], 'weaponAttacks' => [['id' => 'monster-two-claw', 'formula' => '1d4', 'damageType' => 'physical']]],
         'activity' => ['actionTimers' => [], 'actionTimerTombstones' => [], 'mapPings' => [], 'shortcuts' => [], 'rolls' => [], 'playerActions' => [], 'pendingAttacks' => [], 'attackReceipts' => []],
     ]);
@@ -169,10 +173,12 @@ function deletionFixture(): MemoryConnection
     return $database;
 }
 
+if (defined('XAR_TACTICAL_FIXTURE_ONLY') && XAR_TACTICAL_FIXTURE_ONLY) return;
+
 // The GM can roll and attack on a prepared scene without publishing it to players.
 $prepared = fixture();
-$prepared->put('scene:scene-two', ['id' => 'scene-two', 'name' => 'Scène préparée']);
-$prepared->put('map:scene-two', ['activeLayerId' => 'ground', 'gridSize' => 50]);
+$prepared->put('scene:scene-two', ['metadata'=>['id' => 'scene-two', 'name' => 'Scène préparée']]);
+$prepared->put('map:scene-two', ['activeLayerId' => 'ground', 'gridSize' => 50, 'naturalWidth'=>1600, 'naturalHeight'=>900]);
 $prepared->put('initiative:scene-two', ['active' => false, 'order' => [], 'currentIndex' => 0]);
 $prepared->put('token:scene-two:token-monster', $prepared->payload('token:scene-one:token-monster'));
 $gmRoll = runCommand($prepared, 'token.roll', [
@@ -420,6 +426,7 @@ requireTactical(
 );
 $gmCharacterDatabase = fixture();
 $gmCharacterRevision = $gmCharacterDatabase->revision;
+$gmCharacterRoster = $gmCharacterDatabase->payload('roster');
 $gmCharacterCreate = runCommand($gmCharacterDatabase, 'character.create', ['requestId' => 'gm-character-create-request-01', 'character' => [
     'id' => 'character-created-by-gm',
     'name' => 'Interdit',
@@ -428,7 +435,7 @@ requireTactical(
     $gmCharacterCreate->status === 403
         && ($gmCharacterCreate->body['code'] ?? '') === 'player_mode_required'
         && $gmCharacterDatabase->revision === $gmCharacterRevision
-        && $gmCharacterDatabase->payload('roster') === []
+        && $gmCharacterDatabase->payload('roster') === $gmCharacterRoster
         && $gmCharacterDatabase->payload('character:character-created-by-gm') === [],
     'The player character creation route is refused while authenticated in GM mode.'
 );

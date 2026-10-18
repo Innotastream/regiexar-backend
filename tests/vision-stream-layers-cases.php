@@ -58,7 +58,7 @@ $db->rollBack();
 $db = fixture();
 $db->put('map:scene-one',['activeLayerId'=>'ground','viewLocked'=>false,'naturalWidth'=>1600,'naturalHeight'=>900]);
 $monster = $db->payload('token:scene-one:token-monster');$monster['layerId']='upper';$db->put('token:scene-one:token-monster',$monster);
-$request=['sceneId'=>'scene-one','targetLayerId'=>'basement','mapRevision'=>1,'tokens'=>[['id'=>'token-monster','x'=>50,'y'=>50,'layerId'=>'upper']]];
+$request=['sceneId'=>'scene-one','targetLayerId'=>'basement','mapRevision'=>1,'tokens'=>[['id'=>'token-monster','x'=>$monster['x'],'y'=>$monster['y'],'layerId'=>'upper']]];
 $initial=$db->domains;
 requireTactical(runCommand($db,'tokens.layers',$request)->status === 403 && $db->domains === $initial, 'Players cannot use the MJ quick layer command.');
 $response=runCommand($db,'tokens.layers',$request,true);

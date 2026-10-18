@@ -287,6 +287,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     if ($sceneId !== '' && applicationDomainPayload($records, 'scene:' . $sceneId) === []) rejectOnlineCommand($connection, 409, 'Cette scène n’existe plus.', 'stale_scene');
     $source = applicationDomainPayload($records, $sourceKey);
     if ($source === []) rejectOnlineCommand($connection, 404, 'La source du jet n’existe plus.', 'tactical_roll_source_missing');
+    if(applicationIsNonCombatant($source))rejectOnlineCommand($connection,403,'Cet élément fixe ne peut pas agir.','fixed_structure_cannot_act');
     if(!$isGm){
         if($sceneId!==onlineActiveSceneId($table))rejectOnlineCommand($connection,409,'La scène a changé. Rouvrez le jet.','stale_scene');
         if($tokenId!==''?(onlineTokenControllerIdFromRecords($connection,$records,$source)!==$accountId||!empty($source['hidden'])):($source['ownerPlayerId']??'')!==$accountId)

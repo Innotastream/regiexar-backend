@@ -1,0 +1,199 @@
+[
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "eye",
+    "name": "Œil suprême",
+    "effect": "movement",
+    "formula": "0",
+    "onHitConditions": [],
+    "tacticalEffect": {
+      "version": 1,
+      "kind": "control",
+      "turns": 1
+    },
+    "description": "En cas de réussite, contrôle le pion de la cible avec ses propres compétences, PV, mana et fatigue. Le contrôle expire après qu’elle a joué un tour complet. Hors combat, il reste jusqu’à révocation par le MJ."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "influence",
+    "name": "Manipulation d’esprit",
+    "effect": "movement",
+    "formula": "0",
+    "onHitConditions": [],
+    "conditionRider": {
+      "version": 1,
+      "label": "Influencé",
+      "turns": 3,
+      "resistance": false,
+      "blocksMovement": false,
+      "blocksActions": false
+    },
+    "description": "Vise une unité. En cas de réussite du lancement, elle reçoit l’état Influencé pendant trois de ses tours."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "mirror",
+    "name": "Supra-miroir",
+    "effect": "movement",
+    "formula": "0",
+    "tacticalEffect": {
+      "version": 1,
+      "kind": "appearance"
+    },
+    "description": "Prend l’image du pion de la cible jusqu’à révocation. Peut reprendre librement son image initiale. Un nouveau lancement permis par le MJ peut changer de cible sans remplacer l’image initiale conservée."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "reading",
+    "name": "Lecture prédatrice",
+    "effect": "movement",
+    "formula": "0",
+    "tacticalEffect": {
+      "version": 1,
+      "kind": "mark",
+      "attackBonus": 20,
+      "dodgeBonus": 20,
+      "trigger": "against-target"
+    },
+    "description": "Marque une cible. Contre cette unité seulement, améliore de 20 le résultat des jets d’attaque et des défenses avec Agilité. Le dé brut décide de la réussite, de l’échec et des critiques. Dure jusqu’à la fin du combat ; hors combat, jusqu’au retrait par le MJ."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "wall",
+    "name": "Mur de ronces",
+    "effect": "damage",
+    "formula": "1d30+10+1d10+10",
+    "damageComponents": [
+      {
+        "type": "magical",
+        "formula": "1d30+10"
+      },
+      {
+        "type": "ignore",
+        "formula": "1d10+10"
+      }
+    ],
+    "damageTargeting": {
+      "mode": "area",
+      "origin": "point",
+      "radiusCells": 5,
+      "affectCaster": true,
+      "affectAllies": true,
+      "affectEnemies": true
+    },
+    "terrainBarrier": {
+      "version": 1,
+      "hp": 75,
+      "size": 150
+    },
+    "damageOverTime": {
+      "label": "Poison · Mur de ronces",
+      "formula": "1d10+10",
+      "damageType": "ignore",
+      "turns": 3
+    },
+    "description": "Invoque un mur fixe, non contrôlable, de 75 PV sans réduction de dégâts, taille minimale 150. Il bloque le déplacement et la vue jusqu’à sa destruction. Le MJ choisit son image. Inflige les dégâts initiaux de la compétence puis un poison de 1d10+10 pendant 3 tours, à partir du prochain tour de chaque victime."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "entangle",
+    "name": "Enchevêtrement végétal",
+    "effect": "damage",
+    "formula": "0",
+    "damageComponents": [
+      {
+        "type": "physical",
+        "formula": "0"
+      }
+    ],
+    "onHitConditions": [],
+    "damageTargeting": {
+      "mode": "area",
+      "origin": "point",
+      "radiusCells": 2.5,
+      "affectCaster": true,
+      "affectAllies": true,
+      "affectEnemies": true,
+      "singleTargetHalfMana": true
+    },
+    "conditionRider": {
+      "version": 1,
+      "label": "Entravé",
+      "turns": 3,
+      "blocksMovement": true,
+      "blocksActions": false,
+      "escape": {
+        "statId": "character-stat-force",
+        "penalties": [
+          -20,
+          -10,
+          0
+        ]
+      }
+    },
+    "description": "Vise une zone au sol de 5 cases de diamètre. Les unités touchées sont entravées pendant 3 tours. Une tentative de Force à chaque tour permet de se libérer : −20, puis −10, puis sans malus. Peut viser une seule unité pour la moitié du coût en mana."
+  },
+  {
+    "castingStatId": "",
+    "manaCost": 0,
+    "hpCost": 0,
+    "fatigueCost": 0,
+    "cooldownRounds": 0,
+    "restRecharge": "none",
+    "reusableInTurn": true,
+    "id": "retreat",
+    "name": "Repli expéditif",
+    "effect": "complex",
+    "formula": "0",
+    "workflow": {
+      "version": 8,
+      "steps": [
+        {
+          "id": "repli-deplacement",
+          "type": "movement",
+          "title": "Effectuer le déplacement",
+          "description": "Déplacez le pion sur la carte, dans la limite de cinq cases, puis confirmez sa nouvelle position.",
+          "maximumMeters": 20,
+          "maximumCells": 5
+        }
+      ]
+    },
+    "description": "Ouvre un déplacement à effectuer et à confirmer sur la carte, limité à cinq cases. Le trajet respecte les murs et les autres règles de déplacement."
+  }
+]

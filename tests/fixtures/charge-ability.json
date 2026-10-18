@@ -1,0 +1,64 @@
+{
+  "id": "charge-fictive",
+  "name": "Assaut fictif",
+  "cooldownRounds": 0,
+  "castingStatId": "",
+  "effect": "complex",
+  "formula": "0",
+  "projectile": false,
+  "manaCost": 0,
+  "hpCost": 0,
+  "fatigueCost": 10,
+  "restRecharge": "short",
+  "usesPerRest": 1,
+  "reducedFailureCooldown": false,
+  "onHitConditions": [],
+  "workflow": {
+    "version": 8,
+    "steps": [
+      {
+        "id": "charge-target",
+        "type": "targets",
+        "title": "Choisir la cible finale",
+        "minTargets": 1,
+        "maxTargets": 1,
+        "allocationTotal": 0,
+        "rangeCells": 0,
+        "rangeMeters": 20
+      },
+      {
+        "id": "charge-movement",
+        "type": "movement",
+        "title": "Charger vers la cible",
+        "maximumMeters": 20,
+        "charge": {
+          "version": 1,
+          "targetStepId": "charge-target",
+          "statId": "character-stat-force",
+          "pathPenalty": 10,
+          "finalAttacks": 2,
+          "finalCondition": {
+            "version": 1,
+            "label": "Étourdi",
+            "turns": 1,
+            "trigger": "attempt",
+            "resistance": false,
+            "blocksMovement": true,
+            "blocksActions": true,
+            "expiry": "end-next-turn"
+          }
+        }
+      },
+      {
+        "id": "charge-strikes",
+        "type": "allocated-attacks",
+        "title": "Frappes de la charge",
+        "sourceStepId": "charge-movement",
+        "awarenessMode": "none",
+        "damageMode": "weapon",
+        "damagePercent": 100
+      }
+    ]
+  },
+  "description": "Charge en ligne droite vers une cible à 20 mètres maximum, avec l’arme principale de l’unité. Coûte 10 fatigue, une utilisation par repos court. Chaque unité traversée, alliée ou ennemie, subit une attaque dans l’ordre du trajet, avec −10 puis −20 puis −30… au seuil d’attaque. La cible finale reçoit deux attaques consécutives sans ce malus cumulatif. Elle est assommée (Étourdi) même si les deux frappes ratent, jusqu’à la fin de son prochain tour complet. Les murs, la visibilité et les attaques d’opportunité restent applicables."
+}

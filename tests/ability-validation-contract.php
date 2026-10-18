@@ -12,14 +12,26 @@ function validationFixture(string $effect = 'healing', bool $reduced = false): M
     $character['abilities'] = [$ability]; $db->put('character:character-player', $character);
     return $db;
 }
-function startValidation(string $route = 'ability.use', string $effect = 'healing', bool $success = true): array {
+function startValidation(string $route = 'ability.use', string $effect = 'healing', bool $success = true, bool $clone = false): array {
     // Exercise the production cryptographic dice without exposing a test override
     // in the command API. Fresh synthetic fixtures isolate every discarded cast.
     for ($i = 0; $i < 500; $i++) {
         $db = validationFixture($effect, !$success);
+        $sourceId = 'token-player';
+        if ($clone) {
+            $copy = runCommand($db, 'token.clone', ['requestId' => 'validation-clone-fixture', 'sceneId' => 'scene-one', 'tokenId' => $sourceId], true);
+            requireTactical($copy->status === 200, 'Clone creation succeeds.');
+            $sourceId = $copy->body['token']['id'];
+            $token = $db->payload('token:scene-one:' . $sourceId);
+            $token['mana'] = 20; $token['maxMana'] = 40; $token['hp'] = 60; $token['maxHp'] = 100;
+            $token['fatigue'] = ['current' => 149.5, 'max' => 150];
+            $db->put('token:scene-one:' . $sourceId, $token);
+        }
         $body = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'tokenId' => 'token-player',
             'targetTokenId' => $route === 'token.attack' ? 'token-monster' : 'token-player', 'abilityId' => 'ability-validate',
             'attackId' => 'ability-validate', 'attackKind' => 'ability', 'kind' => 'ability', 'action' => 'start', 'requestId' => 'validation-original-request'];
+        $body['sourceTokenId'] = $sourceId; $body['tokenId'] = $sourceId;
+        if ($route !== 'token.attack') $body['targetTokenId'] = $sourceId;
         $response = runCommand($db, $route, $body);
         if (!in_array($response->status, [200,202], true)) throw new RuntimeException('Launch failed: '.json_encode($response->body));
         $cast = $response->body['cast'] ?? null;
@@ -75,7 +87,20 @@ $character=$db->payload('character:character-player');$character['abilities'][0]
 $changed=validationResolve($db,$start->body);
 requireTactical($changed->status===409 && count($db->payload('activity')['pendingAbilityCasts'])===1 && $db->revision===$revision,'Changed ability cannot rewrite pending effect.');
 $refused=validationResolve($db,$start->body,'reject');
-requireTactical($refused->status===200 && $refused->body['validationRejected'] && $db->payload('activity')['pendingAbilityCasts']===[] && $db->payload('activity')['actionTimers']===[] && (float) $db->payload('character:character-player')['resources']['hp']===47.0,'Refusal clears pending without refund, effect or recharge.');
+requireTactical($refused->status===200 && $refused->body['validationRejected'] && $db->payload('activity')['pendingAbilityCasts']===[] && $db->payload('activity')['actionTimers']===[] && (float) $db->payload('character:character-player')['resources']['hp']===50.0,'Refusal refunds the attempt without effect or recharge.');
+
+[$db,$body,$start] = startValidation('ability.use','healing',false,true);
+$sourceKey = 'token:scene-one:' . $body['sourceTokenId'];
+$model = $db->payload('character:character-player');
+$paid = $db->payload($sourceKey);
+requireTactical($start->body['cast']['outcome']['code'] === 'critical-failure' && (float) $paid['mana'] === 18.0 && (float) $paid['hp'] === 57.0 && (float) $paid['fatigue']['current'] === 150.0, 'The critical failure pays only clone resources.');
+$rejected = validationResolve($db,$start->body,'reject');
+$restored = $db->payload($sourceKey);
+requireTactical($rejected->status === 200 && (float) $restored['mana'] === 20.0 && (float) $restored['hp'] === 60.0 && (float) $restored['fatigue']['current'] === 149.5, 'Refusing the critical failure restores the clone, including only the fatigue actually gained: ' . json_encode($rejected->body));
+requireTactical($db->payload('character:character-player') === $model && $db->payload('activity')['actionTimers'] === [], 'The model and recharge remain unchanged.');
+$revision = $db->revision;
+$replayed = validationResolve($db,$start->body,'reject');
+requireTactical($replayed->body['deduplicated'] && $db->revision === $revision && $db->payload($sourceKey) === $restored, 'Replaying refusal never refunds twice.');
 
 foreach (['token.roll'=>'damage','ability.complex'=>'complex'] as $route=>$effect) {
     [$db,$body,$start]=startValidation($route,$effect);
@@ -91,11 +116,16 @@ foreach (['token.roll'=>'damage','ability.complex'=>'complex'] as $route=>$effec
 requireTactical($start->body['attack']['status']==='pending' && isset($db->payload('activity')['pendingAttacks'][0]['deferredAbilityCast']) && $db->payload('activity')['actionTimers']===[],'Remarkable attack stores deferred recharge.');
 $targetBefore=$db->payload('token:scene-one:token-monster')['hp'];
 $resolved=runCommand($db,'token.attack.resolve',['attackId'=>$start->body['attack']['id'],'decision'=>'approve','confirmed'=>true],true,'account-gm');
-requireTactical($resolved->status===200 && count($db->payload('activity')['actionTimers'])===1 && (float) $db->payload('character:character-player')['resources']['mana']===3.0 && $db->payload('token:scene-one:token-monster')['hp']<$targetBefore,'Attack validation applies effect and recharge once without repaying.');
+requireTactical($resolved->status===200 && count($db->payload('activity')['actionTimers'])===1 && (float) $db->payload('character:character-player')['resources']['mana']===3.0 && $db->payload('token:scene-one:token-monster')['hp']<$targetBefore,'Attack validation applies effect and recharge once without repaying: '.json_encode(['status'=>$resolved->status,'timers'=>count($db->payload('activity')['actionTimers']),'mana'=>$db->payload('character:character-player')['resources']['mana'],'code'=>$resolved->body['code']??'']));
 
 
 $retry = runCommand($db, 'token.attack', $body);
 requireTactical(($retry->body['cast']['remainingRounds'] ?? 0) === 5 && !($retry->body['cast']['pendingValidation'] ?? false), 'Resolved attack returns its terminal recharge receipt.');
+
+[$endedDb,$endedBody,$endedStart]=startValidation('token.attack','damage');
+$endedClock=$endedDb->payload('initiative:scene-one');$endedClock['active']=false;$endedDb->put('initiative:scene-one',$endedClock);
+$endedResolved=runCommand($endedDb,'token.attack.resolve',['attackId'=>$endedStart->body['attack']['id'],'decision'=>'approve','confirmed'=>true],true,'account-gm');
+requireTactical($endedResolved->status===200&&($endedResolved->body['attack']['cast']['remainingRounds']??-1)===0&&$endedDb->payload('activity')['actionTimers']===[], 'Une validation après fin du combat applique les dégâts sans recréer de recharge en rounds.');
 
 [$db,$body,$start]=startValidation();
 $entry=$db->payload('activity')['pendingAbilityCasts'][0];

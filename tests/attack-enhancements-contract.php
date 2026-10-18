@@ -40,4 +40,31 @@ requireEnhancement(applicationEnhancedBasicAttack($weapon,$source,['attackEnhanc
 requireEnhancement(applicationAdvanceAttackEnhancements($activity['attackEnhancements'],'scene',$initiative,['active'=>false]) === [], 'End combat');
 $preserved = preserveApplicationAbilityExtensions('activity', ['attackEnhancements'=>[]], $activity);
 requireEnhancement($preserved['attackEnhancements'] === $activity['attackEnhancements'], 'Client cannot forge active effects');
+$visualAbility = [...$ability, 'image' => '/media/' . str_repeat('a', 24),
+    'attackEnhancement' => ['mode'=>'echo','formula'=>'1d40+6','allyFormula'=>'1d20+3','trigger'=>'melee-weapon','damageType'=>'magical','turns'=>5]];
+$beneficiary = ['id'=>'beneficiary','characterId'=>'ally','followCharacter'=>true];
+$visualState = ['activeSceneId'=>'scene','map'=>['tokens'=>[$source,$beneficiary]],
+    'characters'=>[['id'=>$source['characterId'],'abilities'=>[$visualAbility],'privateNotes'=>'SECRET']]];
+applicationActivateAttackEnhancement($visualState,$visualAbility,$source,'scene',$initiative,'visual-buff',$beneficiary);
+$beforeVisual = $visualState;
+$expectedVisual = [['id'=>'visual-buff','label'=>'Nom éditable','remainingTurns'=>5,'image'=>$visualAbility['image']]];
+requireEnhancement(applicationTokenBuffVisuals($beneficiary,$visualState,'scene') === $expectedVisual, 'Public visual descriptor excludes rules and private sheet data');
+requireEnhancement(applicationTokenBuffVisuals([...$beneficiary,'id'=>'linked-alias'],$visualState,'scene') === $expectedVisual, 'Linked alias shares its visual');
+requireEnhancement(applicationTokenBuffVisuals([...$beneficiary,'followCharacter'=>false],$visualState,'scene') === [], 'Independent clone does not inherit model visual');
+requireEnhancement(applicationTokenBuffVisuals([...$beneficiary,'dimSilhouette'=>true],$visualState,'scene') === [], 'Anonymous silhouette reveals no buff');
+requireEnhancement(applicationTokenBuffVisuals($beneficiary,$visualState,'elsewhere') === [], 'Visual stays in its scene');
+requireEnhancement($visualState === $beforeVisual, 'Visual lookup preserves active effect and duration');
+unset($visualState['attackEnhancements'][0]['abilityImage']);
+requireEnhancement(applicationTokenBuffVisuals($beneficiary,$visualState,'scene') === $expectedVisual, 'An existing active effect finds its skill icon');
+$visualState['attackEnhancements'][0]['abilityImage'] = 'javascript:alert(1)';
+requireEnhancement(applicationTokenBuffVisuals($beneficiary,$visualState,'scene')[0]['image'] === null, 'Unsafe icon reference rejected');
+$visualState['attackEnhancements'][0]['remainingTurns'] = 0;
+requireEnhancement(applicationTokenBuffVisuals($beneficiary,$visualState,'scene') === [], 'Expired effect loses visual');
+
+$normalAttack = ['id'=>'normal-attack','status'=>'pending','echoAttackContext'=>['weaponBased'=>true,'projectile'=>false]];
+$tampered = preserveApplicationPendingAbilityValidation(['pendingAttacks'=>[[...$normalAttack,'echoAttackContext'=>['weaponBased'=>false,'projectile'=>true]]]],['pendingAttacks'=>[$normalAttack]]);
+requireEnhancement($tampered['pendingAttacks'][0]['echoAttackContext'] === $normalAttack['echoAttackContext'], 'Attack origin remains authoritative');
+$removed = preserveApplicationPendingAbilityValidation(['pendingAttacks'=>[],'attackReceipts'=>[]],['pendingAttacks'=>[$normalAttack]]);
+requireEnhancement($removed['pendingAttacks'] === [], 'Origin metadata does not change ordinary queue retention');
+
 echo json_encode(['ok'=>true,'enhancementChecks'=>$checks,'replacement'=>$enhanced], JSON_UNESCAPED_UNICODE) . PHP_EOL;

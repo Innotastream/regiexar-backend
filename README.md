@@ -1,3 +1,7 @@
+# Backend 0.18.43 — client exact 3.6.3
+
+Build client-3-6-3-competences-portees-20261018-1. Autorité des compétences, unités indépendantes, effets temporaires, consommables, attaques multiples, distances depuis les bords et contacts pendant les déplacements. Aucun changement de schéma SQL. Le verrou candidat exige 3.6.3. Les preuves externes établissent séparément CI et déploiement.
+
 # Backend 0.18.42 — client exact 3.6.2
 
 Build client-3-6-2-morale-items-fog-20261016-1. Projections du moral, PV privés des objets, bibliothèque de modèles, enchaînements critiques configurables, lueurs sans dévoilement et activation du brouillard sans remplissage automatique. Aucun changement de schéma SQL. La connexion exige la version 3.6.2. Les preuves externes établissent séparément CI et déploiement.

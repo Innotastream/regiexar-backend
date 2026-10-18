@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+define('XAR_TACTICAL_FIXTURE_ONLY',true);
 require __DIR__ . '/tactical-lifecycle.php';
 
 function effectFixture(array $dots): MemoryConnection {
@@ -17,6 +18,13 @@ function endEffectCombat(MemoryConnection $db): array {
     foreach ($pending as $key => $change) $db->put($key, $change['payload']);
     return $db->payload('activity');
 }
+// Compatibility fixture for remainder choices stored by an older version.
+// New combat endings must never create these entries.
+function historicalRemainder(MemoryConnection $db): void {
+    $records=applicationDomainRecords($db);$pending=[];$activity=$db->payload('activity');
+    onlineCaptureEndedDots($db,$records,$pending,$activity,['scene-one'=>true]);
+    $activity['damageOverTime']=[];$db->put('activity',$activity);
+}
 $dot = ['id' => 'dot-contract-one', 'sceneId' => 'scene-one', 'targetTokenId' => 'token-monster', 'label' => 'Poison', 'formula' => '10', 'damageType' => 'ignore', 'remainingTurns' => 2];
 requireTactical(onlineRemainingDotFormula('1d10', 2) === '2d10' && onlineRemainingDotFormula('2d6+3-1d4', 3) === '6d6+9-3d4', 'Remaining dice and constants are multiplied');
 $db = effectFixture([$dot, [...$dot, 'id' => 'dot-contract-two']]);
@@ -26,16 +34,17 @@ requireTactical(runCommand($db, 'combat.effect.remove', $body, true, 'account-gm
 requireTactical(count($db->payload('activity')['damageOverTime']) === 1, 'Other DOT remains untouched');
 requireTactical(runCommand($db, 'combat.effect.remove', $body, true, 'account-gm')->body['deduplicated'] === true, 'Removal retry is idempotent');
 $activity = endEffectCombat($db);
-requireTactical($activity['damageOverTime'] === [] && count($activity['pendingDotResolutions']) === 1, 'Combat end removes active DOT and retains one pending choice');
+requireTactical($activity['damageOverTime'] === [] && $activity['pendingDotResolutions'] === [] && (int)$db->payload('token:scene-one:token-monster')['hp']===40, 'Combat end expires DOT without a remaining-damage prompt or HP change');
 $stale = preserveApplicationAbilityExtensions('activity', ['damageOverTime' => [$dot], 'pendingDotResolutions' => [], 'resourceReceipts' => []], $activity);
-requireTactical($stale['damageOverTime'] === [] && count($stale['pendingDotResolutions']) === 1 && count($stale['resourceReceipts']) === 1, 'Stale activity cannot restore removed DOT or erase pending choices and receipts');
+requireTactical($stale['damageOverTime'] === [] && $stale['pendingDotResolutions'] === [] && count($stale['resourceReceipts']) === 1, 'Stale activity cannot restore expired DOT or erase receipts');
+$db=effectFixture([[...$dot,'id'=>'dot-contract-two']]);historicalRemainder($db);
 $body = ['effectId' => 'dot-contract-two', 'decision' => 'roll', 'requestId' => 'resolve-effect-contract-0001'];
 $resolved = runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm');
 requireTactical($resolved->status === 200 && $resolved->body['roll']['formula'] === '20' && $resolved->body['appliedDamage'] === 20 && (int) $db->payload('token:scene-one:token-monster')['hp'] === 20, 'Calculated remainder applies once to current HP');
 requireTactical(runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm')->body['deduplicated'] === true && (int) $db->payload('token:scene-one:token-monster')['hp'] === 20, 'Damage retry never applies twice');
 requireTactical(runCommand($db, 'combat.dot.resolve', [...$body, 'decision' => 'custom', 'formula' => '7'], true, 'account-gm')->status === 409, 'Reusing an id for different damage is rejected');
 foreach (['custom', 'skip'] as $decision) {
-    $db = effectFixture([$dot]); endEffectCombat($db);
+    $db = effectFixture([$dot]); historicalRemainder($db);
     $response = runCommand($db, 'combat.dot.resolve', ['effectId' => $dot['id'], 'decision' => $decision, 'formula' => '7', 'requestId' => 'resolve-' . $decision . '-contract-0001'], true, 'account-gm');
     requireTactical($response->status === 200 && (int) $db->payload('token:scene-one:token-monster')['hp'] === ($decision === 'custom' ? 33 : 40) && $db->payload('activity')['pendingDotResolutions'] === [], 'Custom/skip resolves only the selected remainder');
 }
@@ -44,8 +53,8 @@ $target = $db->payload('token:scene-one:token-monster'); $target['hp'] = -1; $db
 requireTactical(endEffectCombat($db)['pendingDotResolutions'] === [], 'Dead creatures produce no remaining-damage prompt');
 $db = effectFixture([[...$dot, 'targetTokenId' => 'token-player']]);
 $character = $db->payload('character:character-player'); $character['resources']['hp'] = 0; $db->put('character:character-player', $character);
-requireTactical(count(endEffectCombat($db)['pendingDotResolutions']) === 1, 'A KO player remains alive and retains the choice');
-$db = effectFixture([$dot]); endEffectCombat($db);
+requireTactical(endEffectCombat($db)['pendingDotResolutions'] === [] && (int)$db->payload('character:character-player')['resources']['hp']===0, 'A KO player also loses round effects without receiving damage or healing');
+$db = effectFixture([$dot]); historicalRemainder($db);
 $target = $db->payload('token:scene-one:token-monster'); $target['characterId'] = 'character-player'; $db->put('token:scene-one:token-monster', $target);
 $response = runCommand($db, 'combat.dot.resolve', ['effectId' => $dot['id'], 'decision' => 'roll', 'requestId' => 'rebound-effect-contract-0001'], true, 'account-gm');
 requireTactical($response->status === 200 && $response->body['targetUnavailable'] === true && (int) $db->payload('character:character-player')['resources']['hp'] === 10, 'Rebinding a token never damages the replacement character');

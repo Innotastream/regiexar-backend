@@ -84,7 +84,7 @@ $initialHp = $db->payload('token:scene-one:token-player')['hp'];
 $request = groupArguments($db);
 $response = runCommand($db,'tokens.transform',$request,true);
 requireTactical($response->status === 200, 'The MJ can move a selected group.');
-requireTactical($db->payload('token:scene-one:token-player')['x'] == 25 && $db->payload('token:scene-one:token-monster')['x'] == 55, 'The group preserves its formation.');
+requireTactical($db->payload('token:scene-one:token-player')['x'] == $request['base']['token-player']['x']+5 && $db->payload('token:scene-one:token-monster')['x'] == $request['base']['token-monster']['x']+5, 'The group preserves its formation.');
 requireTactical($db->payload('token:scene-one:token-player')['hp'] === $initialHp, 'A positional command never rewrites HP from a stale snapshot.');
 $before = $db->domains; $revision = $db->revision;
 requireTactical(runCommand($db,'tokens.transform',$request,true,'second-gm')->status === 409 && $db->domains === $before && $db->revision === $revision, 'Two MJs using the same positions cannot move twice or partially.');

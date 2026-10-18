@@ -674,7 +674,7 @@ function applicationActiveMapOcclusionState(array $map, ?array $tokens = null): 
         $walls = emptyApplicationWallState($naturalWidth, $naturalHeight);
     }
     return [
-        'walls' => $walls,
+        'walls' => applicationTerrainBarrierWalls($walls,[...$map,'tokens'=>$tokens??$map['tokens']??[]]),
         'fog' => applicationActiveMapFogState($map),
         'lights' => applicationMapLightsForLayer($map, $activeLayerId, $tokens),
         'vision' => applicationMapVisionSettings($map),
@@ -1388,6 +1388,8 @@ function validApplicationWeaponAttacks(mixed $value): bool
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
             || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
+            || (array_key_exists('reach',$entry) && !in_array($entry['reach'],['melee','reach','ranged'],true))
+            || (array_key_exists('targetCount',$entry) && (!is_int($entry['targetCount']) || $entry['targetCount']<1 || $entry['targetCount']>20))
             || (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions']))) {
             return false;
         }
@@ -1397,6 +1399,10 @@ function validApplicationWeaponAttacks(mixed $value): bool
 
 function validApplicationTokenDomain(array $payload): bool
 {
+    if(isset($payload['terrainBarrier'])&&(!is_array($payload['terrainBarrier'])||($payload['terrainBarrier']['version']??0)!==1))return false;
+    if(isset($payload['fixedStructure'])&&(!is_array($payload['fixedStructure'])||($payload['fixedStructure']['version']??0)!==1))return false;
+    if(isset($payload['nonCombatant'])&&!is_bool($payload['nonCombatant']))return false;
+    if(array_key_exists('passiveAbilities',$payload)){try{applicationPassiveAbilities($payload['passiveAbilities']);}catch(RuntimeException){return false;}}
     if (array_key_exists('visionDistance', $payload) && (!is_int($payload['visionDistance']) || $payload['visionDistance'] < 1 || $payload['visionDistance'] > XAR_VISION_MAXIMUM_DISTANCE)) return false;
     if (array_key_exists('darkVision', $payload) && !validApplicationDarkVision($payload['darkVision'])) return false;
     if (!validApplicationDomainIdentifier($payload['id'] ?? null, 80)) {
@@ -1612,6 +1618,7 @@ function validApplicationRollDomain(array $payload): bool
         return true;
     }
     $outcome = $payload['outcome'];
+    if(is_array($outcome)&&($outcome['manual']??false)===true)return ($payload['formula']??'')==='1d100'&&$rollMode==='normal'&&validApplicationDomainNumber($outcome['raw']??null,1,100)&&($payload['total']??null)===($outcome['raw']??null)&&($outcome['result']??null)===($outcome['raw']??null)&&($outcome['modifier']??null)===0&&($outcome['resultModifier']??null)===0&&($outcome['effect']??null)===false&&in_array($outcome['code']??'',['pending',...array_keys(applicationMessageOutcomes())],true)&&($outcome['success']??null)===in_array($outcome['code'],['success','critical-success'],true);
     if(is_array($outcome)&&($outcome['joker']??false)===true)return ($outcome['raw']??null)===null&&($outcome['result']??null)===1
         &&($outcome['code']??'')==='success'&&($outcome['success']??false)===true&&($outcome['effect']??false)===true
         &&empty($outcome['automatic'])&&empty($outcome['breaksOpposition'])&&empty($outcome['requiresGmValidation'])
@@ -1692,8 +1699,10 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if(isset($payload['sheetKind'])&&!in_array($payload['sheetKind'],['notes','character'],true))return false;
     if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     if (array_key_exists('lore', $payload) && !validApplicationDomainText($payload['lore'], 200000)) return false;
+    if(array_key_exists('passiveAbilities',$payload)){try{applicationPassiveAbilities($payload['passiveAbilities']);}catch(RuntimeException){return false;}}
     if (array_key_exists('morale', $payload) && !validApplicationDomainText($payload['morale'], 1000)) return false;
     if (array_key_exists('moraleExtremes', $payload)) {
         $extremes = $payload['moraleExtremes'];
@@ -1979,7 +1988,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
     }
     foreach ($previous['pendingAttacks'] ?? [] as $attack) if (is_array($attack)) $attacks[$attack['id'] ?? ''] = $attack;
-    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion'])||!empty($attack['echoDefinitions'])||!empty($attack['echoParentId']));
+    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['targetRangeCells'])||!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion'])||!empty($attack['echoDefinitions'])||!empty($attack['echoParentId']));
     $preserve = static function (mixed $attack) use ($attacks,$protected): mixed {
         if (!is_array($attack)) return $attack;
         if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
@@ -1987,7 +1996,8 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if ($protected($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
-        foreach(['deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
+        foreach(['targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
+        if (!empty($old['echoAttackContext'])) $attack['echoAttackContext'] = $old['echoAttackContext'];
         return $attack;
     };
     if (is_array($payload['pendingAttacks'] ?? null)) $payload['pendingAttacks'] = array_map($preserve, $payload['pendingAttacks']);
@@ -2030,7 +2040,7 @@ function validApplicationAbilityCueEvents(mixed $events): bool
             || !is_int($event['createdAt'] ?? null) || !is_int($event['expiresAt'] ?? null)
             || $event['expiresAt'] <= $event['createdAt'] || $event['expiresAt'] - $event['createdAt'] > 30000
             || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
-            || !is_array($event['completionCue']['sound'] ?? null)) return false;
+            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message') return false;
         $seen[$id] = true;
     }
     return true;
@@ -2105,6 +2115,8 @@ function validatedDomainPayload(string $key, mixed $payload): array
     }
     if ($key === 'library'
         && (!validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)
+            || !validApplicationCollectionGroups($payload['characterGroups'] ?? [])
+            || !validApplicationDomainIdentifierList($payload['characterDirectoryOrder']??[],500,180)
             || !validApplicationCollectionGroups($payload['sceneGroups'] ?? [])
             || !validApplicationCollectionGroups($payload['tokenLibraryGroups'] ?? [])
             || !validApplicationMapEffectPresets($payload['mapEffectPresets'] ?? []))) {
@@ -2381,6 +2393,8 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
+    if($protectAgainstStaleEntityWrite&&str_starts_with($key,'token:')&&is_array($payload)&&empty($current['payload']['fixedStructure']))unset($payload['fixedStructure']);
+    if(str_starts_with($key,'token:')&&is_array($payload)){$payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload));foreach(['appearanceState','controlEffect','predatoryMarks'] as $field)if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];}
     if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }
     if (str_starts_with($key, 'character:') && $protectAgainstStaleEntityWrite && is_array($payload) && is_array($current['payload'] ?? null)) {
         $oldLore = $current['payload']['lore'] ?? '';
@@ -2517,6 +2531,8 @@ function legacyStateToDomains(array $state): array
         ],
         'library' => [
             'tokenLibrary' => is_array($state['tokenLibrary'] ?? null) ? $state['tokenLibrary'] : [],
+            ...(!empty($state['characterGroups'])?['characterGroups'=>$state['characterGroups']]:[]),
+            ...(!empty($state['characterDirectoryOrder'])?['characterDirectoryOrder'=>$state['characterDirectoryOrder']]:[]),
             ...(!empty($state['sceneGroups'])?['sceneGroups'=>$state['sceneGroups']]:[]),
             ...(!empty($state['tokenLibraryGroups'])?['tokenLibraryGroups'=>$state['tokenLibraryGroups']]:[]),
             'mapEffectPresets' => is_array($state['mapEffectPresets'] ?? null) ? $state['mapEffectPresets'] : [],
@@ -2710,6 +2726,8 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
+        'characterGroups'=>is_array($library['characterGroups']??null)?$library['characterGroups']:[],
+        'characterDirectoryOrder'=>is_array($library['characterDirectoryOrder']??null)?$library['characterDirectoryOrder']:[],
         'sceneGroups' => is_array($library['sceneGroups'] ?? null) ? $library['sceneGroups'] : [],
         'tokenLibraryGroups' => is_array($library['tokenLibraryGroups'] ?? null) ? $library['tokenLibraryGroups'] : [],
         'mapEffectPresets' => is_array($library['mapEffectPresets'] ?? null) ? $library['mapEffectPresets'] : [],
@@ -3036,7 +3054,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     }
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     if ($endedScenes !== []) {
-        onlineCaptureEndedDots($connection, $records, $pending, $activity, $endedScenes);
+        $activity['pendingDotResolutions']=array_values(array_filter($activity['pendingDotResolutions']??[],static fn($dot)=>!isset($endedScenes[(string)($dot['sceneId']??'')])));
         $guards = is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [];
         $liveGuards = array_values(array_filter($guards, static fn(mixed $guard): bool =>
             is_array($guard) && !isset($endedScenes[(string) ($guard['sceneId'] ?? '')])));
@@ -3060,7 +3078,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $characterKey = 'character:' . (string) ($target['characterId'] ?? '');
             $character = $pending[$characterKey]['payload'] ?? applicationDomainPayload($records, $characterKey);
             if ($character !== []) $target = synchronizeOnlineCharacterToken($target, $character);
-            if ($target === [] || onlineTokenIsDead($target, $controllerId !== '')) {
+            if ($target === [] || onlineTokenIsDead($target, $controllerId !== '') || applicationEffectFamily($dot)==='poison'&&applicationHasEffectImmunity($target,$activity,$sceneId,'poison')) {
                 $keep = false;
                 break;
             }
@@ -3160,6 +3178,7 @@ function patchApplicationDomains(PDO $connection): never
             }
             $pending[] = $prepared;
         }
+        applicationFilterPendingFixedInitiative($connection,$pending);
         if ($conflicts !== []) {
             $connection->rollBack();
             sendJson(409, [

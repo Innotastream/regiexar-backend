@@ -1,9 +1,13 @@
 <?php
 declare(strict_types=1);
+define('XAR_TACTICAL_FIXTURE_ONLY',true);
 require __DIR__ . '/tactical-lifecycle.php';
 
 function echoFixture(): MemoryConnection {
     $db = fixture();
+    $db->put('scene-index',['order'=>['scene-one']]);
+    $db->put('scene:scene-one',['metadata'=>['id'=>'scene-one','name'=>'Recette rémanente fictive']]);
+    $db->put('map:scene-one',['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50]);
     $character = $db->payload('character:character-player');
     $character['resources']['mana'] = $character['resources']['maxMana'] = 100;
     $character['stats']['force'] = 100; $character['specialSuccessStock'] = 20;
@@ -15,7 +19,7 @@ function echoFixture(): MemoryConnection {
             'attackEnhancement'=>['mode'=>'echo','formula'=>'1d40+6','allyFormula'=>'1d20+3','damageType'=>'magical','turns'=>5]],
         ['id'=>'spell','name'=>'Sort ordinaire','effect'=>'damage','formula'=>'7','damageType'=>'physical','castingStatId'=>'']];
     $db->put('character:character-player', $character);
-    $enemy = $db->payload('token:scene-one:token-monster');$enemy['hp']=$enemy['maxHp']=10000;$enemy['magicArmor']=50;
+    $enemy = $db->payload('token:scene-one:token-monster');$enemy['x']=25;$enemy['hp']=$enemy['maxHp']=10000;$enemy['magicArmor']=50;
     $db->put('token:scene-one:token-monster',$enemy);
     return $db;
 }
@@ -122,3 +126,23 @@ foreach([true,false] as $affectCaster) {
 }
 
 echo "attack-echoes-lifecycle: ok\n";
+
+// Restricted weapon echo: ordinary spells and projectiles do not trigger it.
+$db=echoFixture();
+$db->put('scene-index',['order'=>['scene-one']]);
+$db->put('scene:scene-one',['metadata'=>['id'=>'scene-one','name'=>'Scène fictive complète']]);
+$character=$db->payload('character:character-player');
+$character['abilities'][0]['attackEnhancement']['trigger']='melee-weapon';
+$character['abilities'][]=['id'=>'weapon-skill','name'=>'Compétence avec arme','effect'=>'damage','formula'=>'999','damageType'=>'physical','castingStatId'=>'','useWeaponDamage'=>true];
+$character['weaponText'].=' · Arc 1d4';
+$character['weaponAttacks'][]=['id'=>'weapon-2','formula'=>'1d4','damageType'=>'physical','projectile'=>true];
+$db->put('character:character-player',$character);echoCast($db);
+foreach([['weapon','weapon-1','',true],['ability','spell','',false],['ability','weapon-skill','weapon-1',true],['weapon','weapon-2','',false],['ability','weapon-skill','weapon-2',false]] as $case){
+    [$kind,$id,$weaponId,$expected]=$case;
+    $request=['requestId'=>'restricted-echo-'.bin2hex(random_bytes(12)),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>$kind,'attackId'=>$id,'statId'=>'character-stat-force',...($kind==='weapon'?['useJoker'=>true]:[]),...($weaponId!==''?['weaponAttackId'=>$weaponId]:[])];
+    $hp=$db->payload('token:scene-one:token-monster')['hp'];
+    $response=runCommand($db,'token.attack',$request);requireTactical($response->status===200,'Restricted attack: '.$response->getMessage());
+    $attack=echoReceipt($db,$request['requestId']);
+    requireTactical(count($attack['echoAttacks']??[])===($expected?1:0),'Only non-projectile weapon strikes trigger the configured echo: '.json_encode($case));
+    if($expected)requireTactical($hp-$db->payload('token:scene-one:token-monster')['hp']===$attack['appliedDamage']+$attack['echoAttacks'][0]['appliedDamage'],'Weapon and echo damage remain separate and additive');
+}

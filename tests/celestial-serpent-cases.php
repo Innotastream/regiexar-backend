@@ -8,16 +8,19 @@ $serpentAbility = ['id' => 'celestial-serpent', 'name' => 'Bottes du Serpent Cé
         ['id' => 'strikes', 'type' => 'allocated-attacks', 'sourceStepId' => 'targets', 'awarenessMode' => 'none', 'damageMode' => 'configured', 'hitMode' => 'automatic', 'statId' => 'character-stat-agility',
             'damageComponents' => [['type' => 'magical', 'formula' => '1d30+6', 'ignoreArmor' => true]], 'defenseStatId' => 'character-stat-agility', 'defenseRollMode' => 'disadvantage'],
     ]]];
+// Deliberately short range proves that the confirmed route, rather than its endpoint, is the origin of each strike.
+$serpentAbility['rangeCells']=1;
 $serpentDb = fixture();
 $sheet = $serpentDb->payload('character:character-player'); $sheet['stats']['agility'] = 75; $sheet['abilities'] = [$serpentAbility];
 $serpentDb->put('character:character-player', $sheet);
 $serpentDb->put('initiative:scene-one', ['active' => true, 'combatId' => 'serpent-combat', 'round' => 1, 'currentIndex' => 0, 'order' => ['token-player', 'token-monster']]);
 $serpentDb->put('map:scene-one', ['grid' => false, 'gridSize' => 50, 'naturalWidth' => 1000, 'naturalHeight' => 1000]);
 $foe = $serpentDb->payload('token:scene-one:token-monster');
-$foe = [...$foe, 'x' => 35, 'y' => 50, 'hp' => 1000, 'maxHp' => 1000, 'magicArmorCategory' => 'special', 'magicArmor' => 100,
+$foe = [...$foe, 'x' => 21, 'y' => 50, 'hp' => 1000, 'maxHp' => 1000, 'magicArmorCategory' => 'special', 'magicArmor' => 100,
     'stats' => [['id' => 'agility', 'label' => 'Agilité', 'value' => '60'], ['id' => 'force', 'label' => 'Force', 'value' => '0']]];
 requireTactical(validApplicationTokenDomain($foe), 'Serpent defense fixture is a valid persistent token.');
 $serpentDb->put('token:scene-one:token-monster', $foe);
+$serpentDb->put('token:scene-one:token-monster-two',[...$serpentDb->payload('token:scene-one:token-monster-two'),'x'=>65,'y'=>50]);
 $start = runCommand($serpentDb, 'ability.complex', ['action' => 'start', 'sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'abilityId' => $serpentAbility['id'], 'requestId' => 'serpent-start-request']);
 requireTactical($start->status === 200 && is_array($start->body['execution'] ?? null), 'Serpent starts without casting roll: ' . $start->getMessage());
 $serpentExecution = $start->body['execution'];
@@ -34,6 +37,9 @@ requireTactical($move->status === 200, 'Serpent accepts actual movement: ' . $mo
 $serpentExecution = $serpentDb->payload('activity')['abilityExecutions'][0];
 requireTactical(abs($serpentExecution['stepStates']['move']['distanceMeters'] - 16) < 1e-5, 'Movement persists cumulative route distance.');
 requireTactical($advanceSerpent(['action' => 'confirm-movement'])->status === 200, 'Moved token unlocks target selection.');
+$movedSource=$serpentDb->payload('token:scene-one:token-player');$targetStep=$serpentExecution['workflow']['steps'][1];$large=[...$foe,'id'=>'large-edge','x'=>40,'y'=>57.5,'size'=>110];
+requireTactical(applicationComplexAbilityTargetEligible($serpentExecution,$targetStep,$movedSource,$large,$serpentDb->payload('map:scene-one')),'A large token touching the path is eligible');
+requireTactical(!applicationComplexAbilityTargetEligible($serpentExecution,$targetStep,$movedSource,[...$large,'y'=>57.501,'conditions'=>['Cible']],$serpentDb->payload('map:scene-one')),'Cible cannot include a token outside the confirmed path');
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster-two', 'count' => 1]]])->status === 409, 'Enemy outside the actual path is refused.');
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster', 'count' => 2]]])->status === 400, 'One hit per selected enemy is enforced.');
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster', 'count' => 1]], 'attackPlan' => [['tokenId' => 'token-monster', 'attackId' => $serpentAbility['id'], 'statId' => 'character-stat-agility', 'opposed' => true]]])->status === 200, 'Serpent prepares fixed ability damage without a casting gate.');
@@ -41,6 +47,8 @@ requireTactical($advanceSerpent(['action' => 'prepare-target', 'targetTokenId' =
 $attackBody = ['sceneId' => 'scene-one', 'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster', 'attackKind' => 'ability', 'attackId' => $serpentAbility['id'], 'statId' => 'character-stat-agility', 'complexExecutionId' => $serpentExecution['id'], 'opposed' => true, 'requestId' => 'serpent-strike-request'];
 $attack = runCommand($serpentDb, 'token.attack', $attackBody);
 requireTactical($attack->status === 200 && $attack->body['attack']['status'] === 'awaiting-opposition', 'Serpent hit persists valid activity: ' . $attack->getMessage());
+$privateStrike=$serpentDb->payload('activity')['pendingAttacks'][0]??[];
+requireTactical(abs(($privateStrike['strikeSourcePosition']['x']??0)-21)<1e-5,'Attack remembers the contact point near the beginning of the path');
 requireTactical(($attack->body['attack']['hit']['outcome']['automatic'] ?? false) && ($attack->body['hitRoll'] ?? null) === null && count($serpentDb->payload('activity')['rolls'] ?? []) === 0, 'No synthetic ATK is stored or streamed.');
 requireTactical(runCommand($serpentDb, 'token.attack', $attackBody)->body['deduplicated'], 'Serpent hit receipt is idempotent.');
 $defense = runCommand($serpentDb, 'token.attack.oppose', ['attackId' => $attack->body['attack']['id'], 'requestId' => 'serpent-defense-request', 'decision' => 'roll', 'statId' => 'character-stat-force', 'rollMode' => 'normal'], true, 'account-gm');

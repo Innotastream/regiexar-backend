@@ -4,6 +4,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/../api/v1/domains.php';
 require_once __DIR__ . '/../api/v1/online.php';
 
+// Workflow-only cases use close fictional units on a calibrated map.
+function runComplexContractCommand(array $execution,array $command,array $context):array {
+    $context['map']??=['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50];
+    $context['tokens']=array_map(static fn($token)=>['x'=>50,'y'=>50,'size'=>40,...$token],$context['tokens']??[]);
+    return applyApplicationComplexAbilityCommand($execution,$command,$context);
+}
 function requireComplexAbility(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
 }
@@ -86,7 +92,7 @@ requireComplexAbility(!validApplicationAbilities([[
 
 $before = $execution;
 try {
-    applyApplicationComplexAbilityCommand($execution, ['action' => 'select-targets', 'expectedRevision' => 0], [
+    runComplexContractCommand($execution, ['action' => 'select-targets', 'expectedRevision' => 0], [
         'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1100,
     ]);
     throw new RuntimeException('A stale revision must fail.');
@@ -95,7 +101,7 @@ try {
 }
 requireComplexAbility($execution === $before, 'A refused command never mutates its input.');
 
-$execution = applyApplicationComplexAbilityCommand($execution, [
+$execution = runComplexContractCommand($execution, [
     'action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 3], ['tokenId' => 'target-b', 'count' => 2]],
 ], ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1200]);
@@ -103,7 +109,7 @@ requireComplexAbility($execution['currentStepIndex'] === 1 && count($execution['
     'Target validation initializes the following defense step for immediate participant access.');
 
 foreach (['advantage' => [0, 20, true], 'disadvantage' => [1, 80, false]] as $mode => [$selectedIndex, $total, $success]) {
-    $defended = applyApplicationComplexAbilityCommand($execution, [
+    $defended = runComplexContractCommand($execution, [
         'action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a', 'rollMode' => $mode,
     ], [
         'actor' => ['id' => 'player-a', 'name' => 'A', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1220,
@@ -122,7 +128,7 @@ foreach (['advantage' => [0, 20, true], 'disadvantage' => [1, 80, false]] as $mo
 }
 
 try {
-    applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a'], [
+    runComplexContractCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a'], [
         'actor' => ['id' => 'stranger', 'name' => 'Intrus', 'role' => 'player'], 'tokens' => $tokens,
         'roll' => static fn(string $formula): array => ['formula' => $formula, 'total' => 1, 'rawD100' => 1, 'breakdown' => '[1]'], 'now' => 1250,
     ]);
@@ -136,49 +142,49 @@ $roll = static function (string $formula) use (&$rolls): array {
     $value = array_shift($rolls);
     return ['formula' => $formula, 'total' => $value, 'rawD100' => $value, 'breakdown' => '[' . $value . ']'];
 };
-$execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a'], [
+$execution = runComplexContractCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target-a'], [
     'actor' => ['id' => 'player-a', 'name' => 'A', 'role' => 'player'], 'tokens' => $tokens, 'roll' => $roll, 'now' => 1300,
 ]);
 requireComplexAbility($execution['stepStates']['defenses']['targets'][0]['status'] === 'pending', 'A failed first defense keeps the same target active.');
-$execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 3, 'targetTokenId' => 'target-a'], [
+$execution = runComplexContractCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 3, 'targetTokenId' => 'target-a'], [
     'actor' => ['id' => 'player-a', 'name' => 'A', 'role' => 'player'], 'tokens' => $tokens, 'roll' => $roll, 'now' => 1400,
 ]);
 $first = $execution['stepStates']['defenses']['targets'][0];
 requireComplexAbility($first['parryFromAttack'] === 2 && $first['parryCount'] === 2,
     'The first success permits parrying the current attack and every remaining attack.');
-$execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 4, 'targetTokenId' => 'target-b'], [
+$execution = runComplexContractCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 4, 'targetTokenId' => 'target-b'], [
     'actor' => ['id' => 'player-b', 'name' => 'B', 'role' => 'player'], 'tokens' => $tokens, 'roll' => $roll, 'now' => 1500,
 ]);
 requireComplexAbility($execution['currentStepIndex'] === 2 && $execution['stepStates']['defenses']['status'] === 'completed',
     'Every target is resolved in order before the counter step.');
 
 for ($index = 0; $index < 3; $index += 1) {
-    $execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'counter-gain', 'expectedRevision' => 5 + $index], [
+    $execution = runComplexContractCommand($execution, ['action' => 'counter-gain', 'expectedRevision' => 5 + $index], [
         'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1600 + $index,
     ]);
 }
 requireComplexAbility($execution['stepStates']['orbs']['value'] === 3, 'The persistent counter reaches its exact maximum.');
 try {
-    applyApplicationComplexAbilityCommand($execution, ['action' => 'counter-gain', 'expectedRevision' => 8], [
+    runComplexContractCommand($execution, ['action' => 'counter-gain', 'expectedRevision' => 8], [
         'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1700,
     ]);
     throw new RuntimeException('A fourth orb must fail.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_counter_maximum', 'The maximum is explicit.');
 }
-$execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'counter-spend', 'expectedRevision' => 8, 'optionId' => 'burst'], [
+$execution = runComplexContractCommand($execution, ['action' => 'counter-spend', 'expectedRevision' => 8, 'optionId' => 'burst'], [
     'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1800,
 ]);
 $serialized = json_decode(json_encode($execution, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
 $resumed = normalizeApplicationComplexAbilityExecution($serialized);
 requireComplexAbility($resumed['stepStates']['orbs']['value'] === 2, 'Serialization preserves charges and step progress.');
-$cancelled = applyApplicationComplexAbilityCommand($resumed, ['action' => 'cancel', 'expectedRevision' => 9], [
+$cancelled = runComplexContractCommand($resumed, ['action' => 'cancel', 'expectedRevision' => 9], [
     'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 1900,
 ]);
 requireComplexAbility($cancelled['status'] === 'cancelled' && $cancelled['stepStates']['orbs']['value'] === 2,
     'Stopping midway is terminal without rolling back acquired state.');
 try {
-    applyApplicationComplexAbilityCommand($cancelled, ['action' => 'counter-gain', 'expectedRevision' => 10], [
+    runComplexContractCommand($cancelled, ['action' => 'counter-gain', 'expectedRevision' => 10], [
         'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 2000,
     ]);
     throw new RuntimeException('A terminal workflow must reject later commands.');
@@ -204,7 +210,7 @@ $markerExecution = createApplicationComplexAbilityExecution([
 ]);
 $markerContext = ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'],
     'tokens' => $markerTokens, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 1001];
-$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+$markerExecution = runComplexContractCommand($markerExecution,
     ['action' => 'counter-spend', 'expectedRevision' => 1, 'optionId' => 'mine'], $markerContext);
 $placed = applicationComplexAbilityPlacedMarkers([$markerExecution], 'scene-one', 'ground');
 requireComplexAbility(count($placed) === 1 && $placed[0]['x'] === 20.0 && $placed[0]['movable'] === false,
@@ -212,24 +218,24 @@ requireComplexAbility(count($placed) === 1 && $placed[0]['x'] === 20.0 && $place
 requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 3 && count($markerExecution['stepStates']['orbs']['deployments']) === 1,
     'A placed marker occupies one of the maximum slots without consuming the total.');
 try {
-    applyApplicationComplexAbilityCommand($markerExecution, ['action' => 'marker-move', 'expectedRevision' => 2,
+    runComplexContractCommand($markerExecution, ['action' => 'marker-move', 'expectedRevision' => 2,
         'markerId' => $placed[0]['id'], 'x' => 40, 'y' => 40], $markerContext);
     throw new RuntimeException('A fixed marker cannot move.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_marker_fixed', 'Immobility is configured per marker option.');
 }
-$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+$markerExecution = runComplexContractCommand($markerExecution,
     ['action' => 'marker-remove', 'expectedRevision' => 2, 'markerId' => $placed[0]['id']], $markerContext);
 requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 2
     && applicationComplexAbilityPlacedMarkers([$markerExecution]) === [], 'Owner deletion frees a slot.');
-$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+$markerExecution = runComplexContractCommand($markerExecution,
     ['action' => 'counter-spend', 'expectedRevision' => 3, 'optionId' => 'mobile'], $markerContext);
 $mobile = applicationComplexAbilityPlacedMarkers([$markerExecution])[0];
-$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+$markerExecution = runComplexContractCommand($markerExecution,
     ['action' => 'marker-move', 'expectedRevision' => 4, 'markerId' => $mobile['id'], 'x' => 45, 'y' => 60], $markerContext);
 requireComplexAbility(applicationComplexAbilityPlacedMarkers([$markerExecution])[0]['x'] === 45.0,
     'Another skill can configure a movable marker.');
-$markerExecution = applyApplicationComplexAbilityCommand($markerExecution,
+$markerExecution = runComplexContractCommand($markerExecution,
     ['action' => 'cancel', 'expectedRevision' => 5], $markerContext);
 requireComplexAbility($markerExecution['stepStates']['orbs']['value'] === 0
     && applicationComplexAbilityPlacedMarkers([$markerExecution]) === [], 'Stopping the skill clears markers and its counter.');
@@ -267,11 +273,11 @@ $conditional = createApplicationComplexAbilityExecution([
     'sourceName' => 'Arvin', 'controllerAccountId' => 'caster-player', 'controllerName' => 'Arvin',
     'ability' => $conditionAbility, 'now' => 3000,
 ]);
-$conditional = applyApplicationComplexAbilityCommand($conditional, [
+$conditional = runComplexContractCommand($conditional, [
     'action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 1], ['tokenId' => 'target-b', 'count' => 1]],
 ], ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3100]);
-$conditional = applyApplicationComplexAbilityCommand($conditional, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+$conditional = runComplexContractCommand($conditional, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
     'actor' => ['id' => 'gm-owner', 'name' => 'MJ', 'role' => 'gm'], 'tokens' => $tokens, 'now' => 3200,
 ]);
 requireComplexAbility($conditional['currentStepIndex'] === 2 && $conditional['stepStates']['half-life']['outcome'] === true,
@@ -307,12 +313,12 @@ $privateExecution = createApplicationComplexAbilityExecution([
     'sourceName' => 'Arvin', 'controllerAccountId' => 'caster-player', 'controllerName' => 'Arvin',
     'ability' => $privateAbility, 'now' => 3400,
 ]);
-$privateExecution = applyApplicationComplexAbilityCommand($privateExecution, [
+$privateExecution = runComplexContractCommand($privateExecution, [
     'action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-private', 'count' => 1]],
 ], ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3500]);
 try {
-    applyApplicationComplexAbilityCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+    runComplexContractCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
         'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $tokens, 'now' => 3600,
     ]);
     throw new RuntimeException('A player must not probe exact hostile health.');
@@ -322,7 +328,7 @@ try {
 }
 $sharedTokens = array_map(static fn(array $token): array => ($token['id'] ?? '') === 'target-private'
     ? [...$token, 'tacticalDetailsShared' => true] : $token, $tokens);
-$privateExecution = applyApplicationComplexAbilityCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
+$privateExecution = runComplexContractCommand($privateExecution, ['action' => 'evaluate-condition', 'expectedRevision' => 2], [
     'actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $sharedTokens, 'now' => 3700,
 ]);
 requireComplexAbility($privateExecution['stepStates']['half-life']['outcome'] === true,
@@ -348,11 +354,11 @@ $chain = createApplicationComplexAbilityExecution(['id' => 'execution-generic-ch
 $chainTokens = [[...$tokens[0], 'stats' => [['id' => 'character-stat-agility', 'label' => 'Agilité', 'value' => 70]]], ...array_slice($tokens, 1)];
 $chainContext = ['actor' => ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'], 'tokens' => $chainTokens, 'now' => 4100,
     'roll' => static fn(string $formula): array => ['formula' => $formula, 'rawD100' => 65, 'total' => 65, 'breakdown' => '65']];
-$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 1], $chainContext);
+$chain = runComplexContractCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 1], $chainContext);
 requireComplexAbility($chain['stepStates']['chain']['awaitingAttack'] === true
     && $chain['stepStates']['chain']['rolls'][0]['threshold'] === 70, 'The first check uses current Agility.');
 try {
-    applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 2], $chainContext);
+    runComplexContractCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 2], $chainContext);
     throw new RuntimeException('A second gate must wait for the actual attack.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_attack_pending', 'The pending attack blocks a new gate.');
@@ -361,10 +367,10 @@ $chain['stepStates']['chain']['attackRequestId'] = 'request-attack-123456';
 $attack = ['id' => 'attack-real', 'requestId' => 'request-attack-123456', 'attackKind' => 'weapon',
     'complexExecutionId' => $chain['id'], 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster', 'accountId' => 'caster-player',
     'targetTokenId' => 'target-a', 'targetName' => 'Cible A', 'status' => 'applied', 'createdAt' => 4101];
-$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+$chain = runComplexContractCommand($chain, ['action' => 'confirm-attack', 'expectedRevision' => 2,
     'attackRequestId' => $attack['requestId']], [...$chainContext, 'attack' => $attack, 'now' => 4200]);
 requireComplexAbility(count($chain['stepStates']['chain']['attacks']) === 1, 'The authoritative weapon attack is counted once.');
-$chain = applyApplicationComplexAbilityCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 3],
+$chain = runComplexContractCommand($chain, ['action' => 'gate-roll', 'expectedRevision' => 3],
     [...$chainContext, 'now' => 4300, 'roll' => static fn(string $formula): array => ['formula' => $formula,
         'rawD100' => 61, 'total' => 61, 'breakdown' => '61']]);
 requireComplexAbility($chain['stepStates']['chain']['rolls'][1]['threshold'] === 60
@@ -383,7 +389,7 @@ $single = createApplicationComplexAbilityExecution(['id' => 'execution-single-pl
 requireComplexAbility(count($single['stepStates']['chain']['rolls']) === 1
     && $single['stepStates']['chain']['awaitingAttack'] === true, 'The cast is the first gate, never rolled twice.');
 $singleTokens = [[...$chainTokens[0], 'weaponAttacks' => [['id' => 'blade', 'formula' => '1d6']]], ...array_slice($chainTokens, 1)];
-$single = applyApplicationComplexAbilityCommand($single, ['action' => 'prepare-chain', 'expectedRevision' => 1,
+$single = runComplexContractCommand($single, ['action' => 'prepare-chain', 'expectedRevision' => 1,
     'targetTokenId' => 'target-a', 'attackId' => 'blade', 'statId' => 'character-stat-agility', 'opposed' => true],
     ['actor' => $chainContext['actor'], 'tokens' => $singleTokens, 'now' => 6001]);
 $single['stepStates']['chain']['attackRequestId'] = 'request-single-plan';
@@ -392,14 +398,14 @@ $plannedAttack = ['id' => 'attack-planned', 'requestId' => 'request-single-plan'
     'sourceTokenId' => 'caster', 'accountId' => 'caster-player', 'targetTokenId' => 'target-a',
     'opposed' => true, 'hit' => ['statId' => 'character-stat-agility'], 'status' => 'applied', 'createdAt' => 6002];
 try {
-    applyApplicationComplexAbilityCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+    runComplexContractCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
         'attackRequestId' => 'request-single-plan'], ['actor' => $chainContext['actor'], 'tokens' => $singleTokens,
         'now' => 6003, 'attack' => [...$plannedAttack, 'targetTokenId' => 'target-b']]);
     throw new RuntimeException('A locked series cannot switch target.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_attack_mismatch', 'The server rejects a switched target.');
 }
-$single = applyApplicationComplexAbilityCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
+$single = runComplexContractCommand($single, ['action' => 'confirm-attack', 'expectedRevision' => 2,
     'attackRequestId' => 'request-single-plan'], ['actor' => $chainContext['actor'], 'tokens' => $singleTokens,
     'now' => 6003, 'attack' => $plannedAttack]);
 requireComplexAbility(count($single['stepStates']['chain']['attacks']) === 1, 'The planned attack advances once.');
@@ -439,22 +445,22 @@ $allocated = createApplicationComplexAbilityExecution(['id' => 'execution-alloca
 $allocatedTokens = [$tokens[0], [...$tokens[1], 'stats' => [['id' => 'character-stat-instinct', 'value' => 55]]], $tokens[2]];
 $owner = ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'];
 $defender = ['id' => 'player-a', 'name' => 'A', 'role' => 'player'];
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'select-targets', 'expectedRevision' => 1,
+$allocated = runComplexContractCommand($allocated, ['action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 5]]], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5100]);
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 2,
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 2,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5200]);
 $projection = publicApplicationComplexAbilityExecution($allocated, 'player-a', false, $allocatedTokens);
 requireComplexAbility(($projection['participantOnly'] ?? false) === true && count($projection['stepStates']['strikes']['targets'] ?? []) === 1
     && ($projection['controllerAccountId'] ?? 'nonempty') === '', 'Only the pending defender sees their own awareness prompt.');
 try {
-    applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+    runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
         'actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5300,
         'roll' => static fn(string $formula): array => ['rawD100' => 1, 'total' => 1]]);
     throw new RuntimeException('The attacker cannot roll for the defender.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->httpStatus === 403, 'Awareness is authorized for the target or GM only.');
 }
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
     'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5300,
     'roll' => static fn(string $formula): array => ['rawD100' => 90, 'total' => 90]]);
 requireComplexAbility(($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? null) === false, 'A failed awareness prevents opposition.');
@@ -464,26 +470,26 @@ $first = ['id' => 'attack-first', 'requestId' => 'request-first-123456', 'attack
     'sourceTokenId' => 'caster', 'targetTokenId' => 'target-a', 'accountId' => 'caster-player',
     'opposed' => false, 'damagePercent' => 50, 'status' => 'applied', 'createdAt' => 5301];
 try {
-    applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+    runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
         'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens,
         'attack' => [...$first, 'opposed' => true], 'now' => 5400]);
     throw new RuntimeException('A failed awareness cannot open opposition.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_attack_mismatch', 'A forged opposition is rejected.');
 }
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
     'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $first, 'now' => 5400]);
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 5,
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 5,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5500]);
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 6], [
+$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 6], [
     'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5600,
     'roll' => static fn(string $formula): array => ['rawD100' => 30, 'total' => 30]]);
 $allocated['stepStates']['strikes']['attackRequestId'] = 'request-second-123456';
 $second = [...$first, 'id' => 'attack-second', 'requestId' => 'request-second-123456',
     'attackId' => 'sabre-feu', 'opposed' => true, 'createdAt' => 5601];
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 7,
+$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 7,
     'attackRequestId' => $second['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $second, 'now' => 5700]);
-$allocated = applyApplicationComplexAbilityCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 8,
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 8,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5800]);
 requireComplexAbility(($allocated['stepStates']['strikes']['awaitingAwareness'] ?? true) === false
     && ($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? false) === true,
@@ -504,11 +510,11 @@ requireComplexAbility(applicationComplexAbilityWorkflowError($noGateAbility['wor
     'A multi-target ability without awareness does not need an awareness statistic.');
 $noGate = createApplicationComplexAbilityExecution(['id' => 'execution-no-gate', 'sceneId' => 'scene-one',
     'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $noGateAbility, 'now' => 8000]);
-$noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'select-targets', 'expectedRevision' => $noGate['revision'],
+$noGate = runComplexContractCommand($noGate, ['action' => 'select-targets', 'expectedRevision' => $noGate['revision'],
     'allocations' => [['tokenId' => 'target-a', 'count' => 1], ['tokenId' => 'target-b', 'count' => 1]]],
     ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8100]);
 foreach (['target-a', 'target-b'] as $index => $targetId) {
-    $noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'prepare-target', 'expectedRevision' => $noGate['revision'],
+    $noGate = runComplexContractCommand($noGate, ['action' => 'prepare-target', 'expectedRevision' => $noGate['revision'],
         'targetTokenId' => $targetId], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8200 + $index * 200]);
     requireComplexAbility($noGate['stepStates']['strikes']['awaitingAwareness'] === false
         && $noGate['stepStates']['strikes']['awaitingAttack'] === true,
@@ -519,7 +525,7 @@ foreach (['target-a', 'target-b'] as $index => $targetId) {
         'attackId' => 'sabre-glace', 'complexExecutionId' => $noGate['id'], 'sceneId' => 'scene-one',
         'sourceTokenId' => 'caster', 'targetTokenId' => $targetId, 'accountId' => 'caster-player',
         'opposed' => $index === 0, 'damagePercent' => 100, 'status' => 'applied', 'createdAt' => 8300 + $index * 200];
-    $noGate = applyApplicationComplexAbilityCommand($noGate, ['action' => 'confirm-attack',
+    $noGate = runComplexContractCommand($noGate, ['action' => 'confirm-attack',
         'expectedRevision' => $noGate['revision'], 'attackRequestId' => $requestId],
         ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $attack, 'now' => 8300 + $index * 200]);
 }
@@ -539,14 +545,14 @@ $rangedMap = ['naturalWidth' => 1000, 'naturalHeight' => 1000, 'gridSize' => 100
 $rangedTokens = [[...$tokens[0], 'x' => 10, 'y' => 10], [...$tokens[1], 'x' => 30, 'y' => 10],
     [...$tokens[2], 'x' => 41, 'y' => 10]];
 try {
-    applyApplicationComplexAbilityCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
+    runComplexContractCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
         'allocations' => [['tokenId' => 'target-b', 'count' => 5]]],
         ['actor' => $owner, 'tokens' => $rangedTokens, 'map' => $rangedMap, 'now' => 9010]);
     throw new RuntimeException('A target outside two grid cells must fail.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_target_out_of_range', 'Range is enforced by the backend.');
 }
-$ranged = applyApplicationComplexAbilityCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
+$ranged = runComplexContractCommand($ranged, ['action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 5]]],
     ['actor' => $owner, 'tokens' => $rangedTokens, 'map' => $rangedMap, 'now' => 9010]);
 requireComplexAbility(($ranged['stepStates']['strikes']['targets'][0]['tokenId'] ?? '') === 'target-a'
@@ -579,17 +585,17 @@ foreach ([$gain($persistent, $bleeding, 0), $gain($persistent, [...$bleeding, 'c
 for ($index = 0; $index < 4; $index += 1) $persistent = $gain($persistent, $bleeding, 1);
 requireComplexAbility($persistent['stepStates']['charges']['value'] === 3 && $persistent['revision'] === 4,
     'Repeated injuries fill the counter to exactly three charges.');
-$persistent = applyApplicationComplexAbilityCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
+$persistent = runComplexContractCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
     'expectedRevision' => 4], ['actor' => $owner, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 6100]);
 requireComplexAbility($persistent['stepStates']['charges']['value'] === 2, 'One use consumes one charge.');
 try {
-    applyApplicationComplexAbilityCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
+    runComplexContractCommand($persistent, ['action' => 'counter-spend', 'optionId' => 'burst',
         'expectedRevision' => 5], ['actor' => $owner, 'combatActive' => true, 'turnKey' => 'combat-one:turn-1', 'now' => 6200]);
     throw new RuntimeException('A second free use in the same turn must fail.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_turn_spend_limit', 'The turn limit has a specific refusal.');
 }
-$manuallyEnded = applyApplicationComplexAbilityCommand($persistent, ['action' => 'cancel', 'expectedRevision' => 5],
+$manuallyEnded = runComplexContractCommand($persistent, ['action' => 'cancel', 'expectedRevision' => 5],
     ['actor' => $owner, 'now' => 6300]);
 requireComplexAbility($manuallyEnded['status'] === 'cancelled' && $manuallyEnded['stepStates']['charges']['value'] === 0
     && $gain($manuallyEnded, $bleeding, 1)['revision'] === 6,
@@ -601,7 +607,7 @@ $retained = createApplicationComplexAbilityExecution(['id' => 'execution-retaine
     'sourceTokenId' => 'caster', 'controllerAccountId' => 'caster-player', 'ability' => $retainedAbility,
     'combatId' => 'combat-one', 'now' => 6400]);
 $retained = $gain($retained, $bleeding, 1);
-$retained = applyApplicationComplexAbilityCommand($retained, ['action' => 'cancel', 'expectedRevision' => 2],
+$retained = runComplexContractCommand($retained, ['action' => 'cancel', 'expectedRevision' => 2],
     ['actor' => $owner, 'now' => 6500]);
 requireComplexAbility($retained['stepStates']['charges']['value'] === 1,
     'Another persistent counter can explicitly retain its value on termination.');
@@ -622,7 +628,7 @@ $onceRolls = [20, 80];
 $plan = [['tokenId' => 'target-a', 'attackId' => 'ice', 'statId' => 'character-stat-instinct', 'opposed' => true],
     ['tokenId' => 'target-b', 'attackId' => 'fire', 'statId' => 'character-stat-instinct', 'opposed' => true],
     ['tokenId' => 'target-a', 'attackId' => 'fire', 'statId' => 'character-stat-instinct', 'opposed' => true]];
-$once = applyApplicationComplexAbilityCommand($once, ['action' => 'select-targets', 'expectedRevision' => 1,
+$once = runComplexContractCommand($once, ['action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 2], ['tokenId' => 'target-b', 'count' => 1]],
     'attackPlan' => $plan], ['actor' => $owner, 'tokens' => $onceTokens, 'now' => 11001,
     'roll' => static function (string $formula) use (&$onceRolls): array {
@@ -631,7 +637,7 @@ $once = applyApplicationComplexAbilityCommand($once, ['action' => 'select-target
 requireComplexAbility($onceRolls === [] && $once['stepStates']['strikes']['targets'][0]['aware'] === true
     && $once['stepStates']['strikes']['targets'][1]['aware'] === false,
     'Each target rolls exactly once before the first strike, with independent parry rights.');
-$once = applyApplicationComplexAbilityCommand($once, ['action' => 'prepare-target', 'expectedRevision' => $once['revision'],
+$once = runComplexContractCommand($once, ['action' => 'prepare-target', 'expectedRevision' => $once['revision'],
     'targetTokenId' => 'target-b'], ['actor' => $owner, 'tokens' => $onceTokens, 'now' => 11002]);
 requireComplexAbility($once['stepStates']['strikes']['awaitingAwareness'] === false
     && $once['stepStates']['strikes']['awaitingAttack'] === true,
@@ -671,28 +677,28 @@ $guard = createApplicationComplexAbilityExecution(['id' => 'generic-guard', 'sce
 $nearbyTokens = [[...$tokens[0], 'x' => 10, 'y' => 10], [...$tokens[1], 'x' => 20, 'y' => 10],
     [...$tokens[2], 'x' => 40, 'y' => 10]];
 try {
-    applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
+    runComplexContractCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
         ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => false]);
     throw new RuntimeException('Guard should require active combat.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_guard_outside_combat', 'A guard requires combat.');
 }
-$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
+$guard = runComplexContractCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 1],
     ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => true, 'now' => 12001]);
 requireComplexAbility($guard['stepStates']['self']['protectedTokenIds'] === ['caster'],
     'The first module protects only the source.');
 try {
-    applyApplicationComplexAbilityCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
+    runComplexContractCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
         'allocations' => [['tokenId' => 'target-b', 'count' => 1]]],
         ['actor' => $owner, 'tokens' => $nearbyTokens, 'map' => $map, 'now' => 12002]);
     throw new RuntimeException('Out-of-range protection should fail.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_target_out_of_range', 'The target range is enforced.');
 }
-$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
+$guard = runComplexContractCommand($guard, ['action' => 'select-targets', 'expectedRevision' => 2,
     'allocations' => [['tokenId' => 'target-a', 'count' => 1]]],
     ['actor' => $owner, 'tokens' => $nearbyTokens, 'map' => $map, 'now' => 12003]);
-$guard = applyApplicationComplexAbilityCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 3],
+$guard = runComplexContractCommand($guard, ['action' => 'apply-guard', 'expectedRevision' => 3],
     ['actor' => $owner, 'tokens' => $nearbyTokens, 'combatActive' => true, 'now' => 12004]);
 requireComplexAbility($guard['status'] === 'completed' && $guard['stepStates']['others']['protectedTokenIds'] === ['target-a']
     && $guard['workflow']['steps'][0]['percent'] === 50 && $guard['workflow']['steps'][2]['percent'] === 25,
@@ -732,7 +738,7 @@ $batchContext = ['actor' => ['id' => 'batch-player', 'name' => 'Joueur', 'role' 
         requireComplexAbility($formula === '1d100' && $mode === 'advantage' && $under, 'Batch keeps the player roll mode.');
         $value = $draws[$drawCount++]; return ['total' => $value, 'rawD100' => $value];
     }];
-$batch = applyApplicationComplexAbilityCommand($batch, ['action' => 'prepare-chain', 'expectedRevision' => 1,
+$batch = runComplexContractCommand($batch, ['action' => 'prepare-chain', 'expectedRevision' => 1,
     'targetTokenId' => 'batch-target', 'attackId' => 'batch-formula', 'statId' => 'character-stat-agility', 'opposed' => true, 'rollMode' => 'advantage'], $batchContext);
 requireComplexAbility($drawCount === 3 && $batch['stepStates']['chain']['queuedAttackCount'] === 2, 'First failure stops the useful gates; successes determine the attacks.');
 requireComplexAbility(array_column($batch['stepStates']['chain']['rolls'], 'threshold') === [80,70,60], 'Cumulative penalty is exact.');
@@ -742,7 +748,7 @@ for ($i = 0; $i < 2; $i++) {
         'complexExecutionId' => $batch['id'], 'sceneId' => $batch['sceneId'], 'sourceTokenId' => $batch['sourceTokenId'],
         'targetTokenId' => 'batch-target', 'accountId' => 'batch-player', 'opposed' => true,
         'hit' => ['statId' => 'character-stat-agility'], 'status' => 'awaiting-opposition', 'createdAt' => 9002];
-    $batch = applyApplicationComplexAbilityCommand($batch, ['action' => 'confirm-attack', 'expectedRevision' => $batch['revision'], 'attackRequestId' => $request], $batchContext);
+    $batch = runComplexContractCommand($batch, ['action' => 'confirm-attack', 'expectedRevision' => $batch['revision'], 'attackRequestId' => $request], $batchContext);
 }
 requireComplexAbility($batch['status'] === 'completed' && $batch['endedByFailure'] && count($batch['stepStates']['chain']['attacks']) === 2,
     'Already successful strikes remain queued when the next gate fails.');

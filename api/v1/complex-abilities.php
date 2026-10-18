@@ -2,8 +2,10 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/complex-movement.php';
+require_once __DIR__ . '/charge-path.php';
 require_once __DIR__ . '/special-success.php';
 require_once __DIR__ . '/complex-chain-critical.php';
+require_once __DIR__ . '/ability-messages.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -79,6 +81,11 @@ function applicationComplexAbilityUpdateAttackResult(array $executions, array $a
             return $records;
         };
         foreach ($execution['stepStates'] as &$state) {
+            $step=$execution['workflow']['steps'][$execution['currentStepIndex']]??[];
+            if(($step['oppositionMode']??'')==='once'&&!empty($state['plan']['opposed'])&&empty($state['attacks'])
+                &&($state['attackRequestId']??'')===$attack['requestId']&&($attack['status']??'')==='defended'){
+                $state['attacks']=[$result];$state['attackRequestId']='';$changed=true;
+            }
             if (is_array($state['attacks'] ?? null)) $state['attacks'] = $replace($state['attacks']);
             if (is_array($state['targets'] ?? null)) foreach ($state['targets'] as &$target) {
                 if (is_array($target['attacks'] ?? null)) $target['attacks'] = $replace($target['attacks']);
@@ -155,8 +162,7 @@ function normalizeApplicationAbilityCompletionCue(mixed $value): array
         'version' => XAR_ABILITY_COMPLETION_CUE_VERSION,
         'trigger' => 'completed',
         'sound' => $sound,
-        // Réservation de schéma uniquement : aucune animation n'est exécutée.
-        'visual' => ['version' => 1, 'kind' => 'none'],
+        'visual' => applicationAbilityMessage($source['visual']??null),
     ];
 }
 
@@ -167,7 +173,8 @@ function validApplicationAbilityCompletionCue(mixed $value): bool
         || ($value['trigger'] ?? '') !== 'completed') return false;
     $visual = $value['visual'] ?? null;
     if (!is_array($visual) || array_is_list($visual)
-        || (int) ($visual['version'] ?? 0) !== 1 || ($visual['kind'] ?? '') !== 'none') return false;
+        || (int) ($visual['version'] ?? 0) !== 1 || !in_array($visual['kind']??'',['none','message'],true)) return false;
+    if(($visual['kind']??'')==='message'){try{applicationAbilityMessage($visual);}catch(RuntimeException){return false;}}
     if (($value['sound'] ?? null) === null) return true;
     $sound = $value['sound'];
     if (!is_array($sound) || array_is_list($sound)
@@ -333,12 +340,17 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
         ];
         if ($type === 'movement') {
             $step['maximumMeters'] = applicationComplexAbilityInteger($raw['maximumMeters'] ?? null, 1, 1000, 20);
+            if((is_int($raw['attackWidthCells']??null)||is_float($raw['attackWidthCells']??null))&&is_finite((float)$raw['attackWidthCells'])&&$raw['attackWidthCells']>0&&$raw['attackWidthCells']<=40)$step['attackWidthCells']=$raw['attackWidthCells'];
+            if(!empty($raw['charge']))$step['charge']=applicationCharge($raw['charge']);
+            if(($raw['avoidsOpportunity']??false)===true)$step['avoidsOpportunity']=true;
+            if(is_int($raw['maximumCells']??null)&&$raw['maximumCells']>0&&$raw['maximumCells']<=100)$step['maximumCells']=$raw['maximumCells'];
         } elseif ($type === 'targets') {
             $minimum = applicationComplexAbilityInteger($raw['minTargets'] ?? null, 0, 20, 1);
             $step['minTargets'] = $minimum;
             $step['maxTargets'] = applicationComplexAbilityInteger($raw['maxTargets'] ?? null, $minimum, 20, $minimum);
             $step['allocationTotal'] = applicationComplexAbilityInteger($raw['allocationTotal'] ?? null, 0, 100, 0);
             $step['rangeCells'] = applicationComplexAbilityInteger($raw['rangeCells'] ?? null, 0, 100, 0);
+            if(($raw['rangeMeters']??0)>0)$step['rangeMeters']=applicationComplexAbilityInteger($raw['rangeMeters'],1,1000,20);
             $step['sourceMovementStepId'] = !empty($raw['sourceMovementStepId']) ? applicationComplexAbilityIdentifier($raw['sourceMovementStepId']) : '';
             $step['targetRelation'] = ($raw['targetRelation'] ?? '') === 'enemies' ? 'enemies' : 'any';
             $step['maximumPerTarget'] = applicationComplexAbilityInteger($raw['maximumPerTarget'] ?? null, 0, 100, 0);
@@ -360,11 +372,13 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
             $step['damageMode'] = ($raw['damageMode'] ?? '') === 'configured' ? 'configured' : 'weapon';
             $step['damageComponents'] = $step['damageMode'] === 'configured' ? applicationDamageComponents($raw['damageComponents'] ?? []) : [];
             $step['allowOpposition'] = ($raw['allowOpposition'] ?? true) !== false;
+            if (($raw['oppositionMode'] ?? '') === 'once') $step['oppositionMode'] = 'once';
             $step['firstGateAtCast'] = ($raw['firstGateAtCast'] ?? false) === true;
             if (($raw['criticalSuccessCompletesChain'] ?? false) === true) $step['criticalSuccessCompletesChain'] = true;
         } elseif ($type === 'allocated-attacks') {
             $requested = applicationComplexAbilityIdentifier($raw['sourceStepId'] ?? '');
-            $step['sourceStepId'] = in_array($requested, $targetSteps, true) ? $requested : ($targetSteps[count($targetSteps) - 1] ?? '');
+            $chargeSource=array_filter($steps,static fn($s)=>$s['id']===$requested&&$s['type']==='movement'&&!empty($s['charge']));
+            $step['sourceStepId'] = $chargeSource!==[]||in_array($requested, $targetSteps, true) ? $requested : ($targetSteps[count($targetSteps) - 1] ?? '');
             // Absence du réglage : préserver la vigilance des étapes déjà enregistrées.
             $step['awarenessMode'] = in_array($raw['awarenessMode'] ?? '', ['none', 'once'], true) ? $raw['awarenessMode'] : 'required';
             $step['awarenessStatId'] = applicationComplexAbilityIdentifier($raw['awarenessStatId'] ?? '', 'character-stat-instinct', 120);
@@ -452,6 +466,11 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         if (isset($seen[$step['id']])) return 'L’étape ' . ($index + 1) . ' possède un identifiant en double.';
         $seen[$step['id']] = true;
         if ($step['title'] === '') return 'Donnez un titre à l’étape ' . ($index + 1) . '.';
+        if($step['type']==='movement'&&!empty($step['charge'])){
+            $target=null;foreach(array_slice($workflow['steps'],0,$index) as $s)if($s['id']===$step['charge']['targetStepId']&&$s['type']==='targets')$target=$s;
+            $next=$workflow['steps'][$index+1]??[];
+            if(!$target||$target['minTargets']!==1||$target['maxTargets']!==1||$target['allocationTotal']||!empty($step['maximumCells'])||($next['type']??'')!=='allocated-attacks'||$next['sourceStepId']!==$step['id']||$next['damageMode']!=='weapon'||$next['awarenessMode']!=='none')return 'Une charge demande une cible unique précédente, une limite en mètres, puis des frappes réparties avec l’arme sans vigilance.';
+        }
         if ($step['type'] === 'targets' && $step['sourceMovementStepId'] !== '') {
             $movements = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $entry): bool => $entry['id'] === $step['sourceMovementStepId'] && $entry['type'] === 'movement');
             if ($movements === []) return 'Le ciblage doit utiliser un déplacement précédent.';
@@ -464,12 +483,13 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
             return 'Le premier jet au lancement demande une chaîne en première étape avec arrêt à l’échec.';
         if ($step['type'] === 'attack-chain' && ($step['criticalSuccessCompletesChain'] ?? false) && $step['resolutionMode'] !== 'batch')
             return 'Le critique qui autorise toute la chaîne exige le mode automatique.';
+        if (($step['oppositionMode']??'')==='once'&&($step['resolutionMode']!=='batch'||$step['targetMode']!=='once')) return 'L’opposition unique exige une chaîne automatique sur une même cible.';
         if ($step['type'] === 'attack-chain' && $step['damageMode'] === 'configured' && ($step['resolutionMode'] !== 'batch'
             || $step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? [])))
             return 'La série de l’étape ' . ($index + 1) . ' exige le mode automatique et des composantes de dégâts valides.';
         if ($step['type'] === 'allocated-attacks' && $step['damageMode'] === 'configured' && ($step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? []) || ($step['hitMode'] !== 'automatic' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['statId']) !== 1))) return 'Définissez des dégâts et une statistique valides à l’étape ' . ($index + 1) . '.';
         if ($step['type'] === 'allocated-attacks') {
-            $sources = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $candidate): bool => $candidate['id'] === $step['sourceStepId'] && $candidate['type'] === 'targets' && ($candidate['allocationTotal'] > 0 || $step['damageMode'] === 'configured'));
+            $sources = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $candidate): bool => $candidate['id'] === $step['sourceStepId'] && ($candidate['type'] === 'movement' && !empty($candidate['charge']) || $candidate['type'] === 'targets' && ($candidate['allocationTotal'] > 0 || $step['damageMode'] === 'configured')));
             if ($sources === []) return 'L’étape ' . ($index + 1) . ' requiert une répartition précédente avec un total d’attaques fixé.';
             if ($step['awarenessMode'] !== 'none' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['awarenessStatId']) !== 1) return 'Choisissez une statistique de vigilance valide à l’étape ' . ($index + 1) . '.';
         }
@@ -609,6 +629,8 @@ function createApplicationComplexAbilityExecution(array $context): array
         'controllerAccountId' => applicationComplexAbilityIdentifier($context['controllerAccountId'] ?? '', '', 128),
         'controllerName' => applicationComplexAbilityText($context['controllerName'] ?? '', 120),
         'combatId' => applicationComplexAbilityIdentifier($context['combatId'] ?? '', '', 120),
+        'targetRangeCells'=>applicationAbilityRangeCells($ability,$context['sourcePosition']['weaponAttacks']??[]),
+        ...(!empty($ability['rangeCells'])||!empty($ability['reach'])?['targetRangeExplicit'=>true]:[]),
         'abilityId' => applicationComplexAbilityIdentifier($ability['id'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
         ...(($ability['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
@@ -627,7 +649,7 @@ function createApplicationComplexAbilityExecution(array $context): array
     if ($execution['sceneId'] === '' || $execution['sourceTokenId'] === '' || $execution['controllerAccountId'] === '' || $execution['abilityId'] === '') {
         applicationComplexAbilityFail('Le contexte de lancement de la compétence complexe est incomplet.', 'complex_ability_context_invalid', 400);
     }
-    $execution['stepStates'][$first['id']] = $first['type'] === 'movement' && is_array($context['sourcePosition'] ?? null) ? initialApplicationComplexMovementState($context['sourcePosition'], $now) : applicationComplexAbilityInitialStepState($first);
+    $execution['stepStates'][$first['id']] = $first['type'] === 'movement' && is_array($context['sourcePosition'] ?? null) ? initialApplicationComplexMovementState($context['sourcePosition'], $now,$first['attackWidthCells']??0) : applicationComplexAbilityInitialStepState($first);
     if (($first['firstGateAtCast'] ?? false) === true) {
         $outcome = $cast['outcome'];
         $execution['stepStates'][$first['id']]['rolls'][] = [
@@ -687,6 +709,8 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'controllerAccountId' => applicationComplexAbilityIdentifier($source['controllerAccountId'] ?? '', '', 128),
         'controllerName' => applicationComplexAbilityText($source['controllerName'] ?? '', 120),
         'combatId' => applicationComplexAbilityIdentifier($source['combatId'] ?? '', '', 120),
+        ...(!empty($source['targetRangeCells'])?['targetRangeCells'=>$source['targetRangeCells']]:[]),
+        ...(!empty($source['targetRangeExplicit'])?['targetRangeExplicit'=>true]:[]),
         'abilityId' => applicationComplexAbilityIdentifier($source['abilityId'] ?? '', '', 120),
         'abilityName' => applicationComplexAbilityText($source['abilityName'] ?? '', 120, 'Compétence complexe'),
         ...(($source['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
@@ -702,6 +726,8 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'updatedAt' => is_numeric($source['updatedAt'] ?? null) ? (int) $source['updatedAt'] : 0,
         'endedByFailure' => ($source['endedByFailure'] ?? false) === true,
         'endedByCombat' => ($source['endedByCombat'] ?? false) === true,
+        ...(!empty($source['endedByOpposition'])?['endedByOpposition'=>true]:[]),
+        ...(is_array($source['oppositionFailureTimer']??null)?['oppositionFailureTimer'=>$source['oppositionFailureTimer']]:[]),
         'compactDiscordSent' => ($source['compactDiscordSent'] ?? false) === true,
     ];
     foreach (array_slice(is_array($source['events'] ?? null) ? $source['events'] : [], -XAR_COMPLEX_ABILITY_MAXIMUM_EVENTS) as $event) {
@@ -961,16 +987,24 @@ function applicationComplexAbilityInitializeAllocatedTargets(array &$execution, 
     }
 }
 
-function applicationComplexAbilityTargetInRange(?array $source, ?array $target, array $map, int $rangeCells): bool
-{
-    if ($rangeCells < 1) return true;
-    $width = (float) ($map['naturalWidth'] ?? 0);
-    $height = (float) ($map['naturalHeight'] ?? 0);
-    $grid = (float) ($map['gridSize'] ?? 0);
-    if ($source === null || $target === null || $width <= 0 || $height <= 0 || $grid <= 0) return false;
-    $dx = ((float) ($source['x'] ?? 0) - (float) ($target['x'] ?? 0)) * $width / (100 * $grid);
-    $dy = ((float) ($source['y'] ?? 0) - (float) ($target['y'] ?? 0)) * $height / (100 * $grid);
-    return sqrt($dx * $dx + $dy * $dy) <= $rangeCells + 1e-9;
+function applicationComplexAbilityTargetInRange(?array $source,?array $target,array $map,float $rangeCells):bool {
+    if($rangeCells<=0)return true;
+    if($source!==null&&$target!==null&&applicationTargetIgnoresRange($target)&&($source['layerId']??'ground')===($target['layerId']??'ground'))return true;
+    return $source!==null&&$target!==null&&applicationMapDistanceInCells($source,$target,$map,true,true)<=$rangeCells+1e-9;
+}
+
+function applicationComplexAbilityTargetRangeCells(array $execution,array $step,?array $source,string $attackId=''):float {
+    $steps=$execution['workflow']['steps']??[];$origin=null;$targeting=null;$strikes=null;
+    foreach($steps as $entry)if(($entry['id']??'')===($step['sourceStepId']??''))$origin=$entry;
+    if(($step['type']??'')==='targets')$targeting=$step;elseif(($origin['type']??'')==='targets')$targeting=$origin;
+    else foreach($steps as $entry)if(($entry['id']??'')===($origin['charge']['targetStepId']??''))$targeting=$entry;
+    if(!empty($targeting['rangeCells']))return (float)$targeting['rangeCells'];
+    if(!empty($targeting['rangeMeters']))return $targeting['rangeMeters']/2;
+    if(!empty($execution['targetRangeExplicit']))return (float)$execution['targetRangeCells'];
+    if(in_array($step['type']??'',['attack-chain','allocated-attacks'],true))$strikes=$step;
+    else foreach($steps as $entry)if(($entry['type']??'')==='allocated-attacks'&&($entry['sourceStepId']??'')===($step['id']??''))$strikes=$entry;
+    if($strikes!==null&&($strikes['damageMode']??'')!=='configured')return applicationAbilityRangeCells(['useWeaponDamage'=>true],$source['weaponAttacks']??[],$attackId);
+    return (float)($execution['targetRangeCells']??15);
 }
 
 function applicationComplexAbilityCurrentDefenseIndex(array $state): ?int
@@ -1232,6 +1266,15 @@ function applicationComplexAbilityResetCountersOnEnd(array &$execution, int $now
     }
 }
 
+function applicationEndComplexCombatEffects(array $executions,string $sceneId,string $combatId):array {
+    $now=(int)floor(microtime(true)*1000);$executions=normalizeApplicationComplexAbilityExecutions($executions);
+    foreach($executions as &$e){
+        if($e['status']!=='active'||$e['sceneId']!==$sceneId||$combatId===''||$e['combatId']!==$combatId)continue;
+        $e['status']='completed';applicationComplexAbilityResetCountersOnEnd($e,$now);$e['completedAt']=$now;$e['endedByCombat']=true;$e['revision']++;$e['updatedAt']=$now;
+        applicationComplexAbilityAppendEvent($e,['type'=>'completed','actorId'=>'system','actorName'=>'Combat','label'=>'Sort terminé avec le combat'],$now);
+    }unset($e);return $executions;
+}
+
 function applyApplicationComplexAbilityCommand(
     mixed $value,
     mixed $commandValue,
@@ -1244,6 +1287,10 @@ function applyApplicationComplexAbilityCommand(
         foreach (is_array($command['attackPlan'] ?? null) ? $command['attackPlan'] : [] as $planned) {
             if (($planned['opposed'] ?? false) === true) applicationComplexAbilityFail('Aucune défense n’est possible contre cette compétence.', 'complex_ability_defense_forbidden', 400);
         }
+    }
+    if(!empty($execution['endedByOpposition'])&&($command['action']??'')==='confirm-attack'
+        &&(($context['actor']['role']??'')==='gm'||($context['actor']['id']??'')===$execution['controllerAccountId'])){
+        foreach($execution['stepStates'] as $s)foreach($s['attacks']??[] as $a)if(($a['requestId']??'')===($command['attackRequestId']??null))return $execution;
     }
     if ($execution['status'] !== 'active') applicationComplexAbilityFail('Cette compétence complexe est déjà terminée.', 'complex_ability_terminal');
     $expected = $command['expectedRevision'] ?? null;
@@ -1326,8 +1373,10 @@ function applyApplicationComplexAbilityCommand(
             applicationComplexAbilityFinishStep($execution, $state, $now);
         } elseif ($step['type'] === 'movement' && $action === 'confirm-movement') {
             if (!applicationComplexMovementAtDestination($state, applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']))) applicationComplexAbilityFail('Déplacez le pion avant de confirmer cette étape.', 'complex_ability_movement_required');
+            if(!empty($step['charge']))$state=[...$state,...applicationChargeAttackPlan($execution,$step,$state,applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']),$tokens,$map)];
             applicationComplexAbilityAppendEvent($execution, ['type' => 'movement', 'actorId' => $actorId, 'actorName' => $actorName, 'stepId' => $step['id'], 'label' => $step['title'], 'detail' => round($state['distanceMeters'], 2) . ' m parcourus'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
+            if(!empty($step['charge'])){$next=$execution['workflow']['steps'][$execution['currentStepIndex']];$nextState=&$execution['stepStates'][$next['id']];applicationComplexAbilityInitializeAllocatedTargets($execution,$next,$nextState,$tokens);unset($nextState);}
         } elseif ($step['type'] === 'instruction' && $action === 'acknowledge') {
             applicationComplexAbilityAppendEvent($execution, ['type' => 'step', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' validée'], $now);
@@ -1346,7 +1395,10 @@ function applyApplicationComplexAbilityCommand(
                 $tokenId = applicationComplexAbilityIdentifier($entry['tokenId'] ?? '', '', 80);
                 $token = applicationComplexAbilityTokenById($tokens, $tokenId);
                 if ($tokenId === '' || !is_array($token)) applicationComplexAbilityFail('Une cible n’est plus disponible.', 'complex_ability_target_missing', 404);
-                if (!applicationComplexAbilityTargetEligible($execution, $step, applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']), $token, $map)) applicationComplexAbilityFail('Cette cible ne respecte pas la portée, le camp ou le trajet de cette compétence.', 'complex_ability_target_out_of_range');
+                $rangeSource=applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']);$planned=is_array($command['attackPlan']??null)?array_values(array_filter($command['attackPlan'],static fn($strike)=>is_array($strike)&&($strike['tokenId']??'')===$tokenId)):[];
+                $possible=$planned!==[]?array_column($planned,'attackId'):(array_column($rangeSource['weaponAttacks']??[],'id')?:['']);
+                $valid=array_map(static fn($attackId)=>applicationComplexAbilityTargetEligible($execution,$step,$rangeSource,$token,$map,(string)$attackId),$possible);
+                if ($planned!==[]?in_array(false,$valid,true):!in_array(true,$valid,true)) applicationComplexAbilityFail('Cette cible ne respecte pas la portée, le camp ou le trajet de cette compétence.', 'complex_ability_target_out_of_range');
                 $allocations[] = ['tokenId' => $tokenId, 'targetName' => applicationComplexAbilityText($token['name'] ?? '', 120, 'Cible'),
                     'count' => $entry['count']];
                 $ids[$tokenId] = true;
@@ -1384,6 +1436,7 @@ function applyApplicationComplexAbilityCommand(
                 $state['attackPlan'] = array_map(static fn(array $strike): array => [...$strike, ...($nextStep['damageMode'] === 'configured' ? ['configured' => true] : [])], $plan);
             }
             $state['allocations'] = $allocations;
+            if(!empty($execution['workflow']['steps'][$execution['currentStepIndex']+1]['charge']))$state['opposed']=($command['opposed']??true)!==false;
             applicationComplexAbilityAppendEvent($execution, ['type' => 'targets', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => count($allocations) . ' cible(s) choisie(s)',
                 'detail' => implode(' · ', array_map(static fn(array $entry): string => $entry['targetName'] . ' ×' . $entry['count'], $allocations))], $now);
@@ -1454,6 +1507,8 @@ function applyApplicationComplexAbilityCommand(
                 || !in_array($statId, array_column(is_array($source['stats'] ?? null) ? $source['stats'] : [], 'id'), true)
                 || !is_bool($command['opposed'] ?? null))
                 applicationComplexAbilityFail('La cible, l’arme, la statistique ou l’opposition choisie n’est plus disponible.', 'complex_ability_attack_mismatch');
+            $plannedRange=applicationComplexAbilityTargetRangeCells($execution,$step,$source,$attackId);
+            if(!applicationComplexAbilityTargetInRange($source,$target,$map,$plannedRange))applicationComplexAbilityFail('La cible est hors de portée de cette série.','complex_ability_target_out_of_range');
             $state['plan'] = compact('targetTokenId', 'attackId', 'statId') + ['opposed' => $command['opposed']];
             if ($configured) $state['plan'] += ['attackKind' => 'ability', 'configured' => true];
             if ($step['resolutionMode'] === 'batch') {
@@ -1505,7 +1560,7 @@ function applyApplicationComplexAbilityCommand(
                     || ($attack['targetTokenId'] ?? '') !== $state['plan']['targetTokenId']
                     || ($attack['attackId'] ?? '') !== $state['plan']['attackId']
                     || ($attack['hit']['statId'] ?? '') !== $state['plan']['statId']
-                    || (($attack['opposed'] ?? null) !== $state['plan']['opposed'] && !($step['resolutionMode'] === 'batch' && $state['plan']['opposed'] && ($attack['opposed'] ?? null) === false))))) {
+                    || (($attack['opposed'] ?? null) !== applicationChainAttackOpposed($step,$state) && !($step['resolutionMode'] === 'batch' && applicationChainAttackOpposed($step,$state) && ($attack['opposed'] ?? null) === false))))) {
                 applicationComplexAbilityFail('Cette attaque de base ne correspond pas au jet autorisé.', 'complex_ability_attack_mismatch');
             }
             $state['attacks'][] = applicationComplexAbilityAttackResult($attack);
@@ -1521,10 +1576,14 @@ function applyApplicationComplexAbilityCommand(
             applicationComplexAbilityAppendEvent($execution, ['type' => 'attack', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' · attaque ' . count($state['attacks']) . '/' . $step['count'],
                 'detail' => applicationComplexAbilityText($attack['targetName'] ?? '', 120, 'Cible') . ' · ' . applicationComplexAbilityText($attack['status'] ?? '', 40)], $now);
-            if ($step['resolutionMode'] === 'batch') {
-                if (!$state['awaitingAttack']) applicationComplexAbilityFinishChainBatch($execution, $step, $state, $now);
-            } elseif (count($state['attacks']) >= $step['count']) applicationComplexAbilityFinishStep($execution, $state, $now);
             applicationSettleRejectedChainCritical($execution, $now);
+            if ($execution['status']==='active'&&$step['resolutionMode'] === 'batch') {
+                if (!$state['awaitingAttack']&&!(($step['oppositionMode']??'')==='once'&&!empty($state['plan']['opposed'])&&in_array($state['attacks'][0]['status']??'',['pending','awaiting-opposition'],true))) applicationComplexAbilityFinishChainBatch($execution, $step, $state, $now);
+            } elseif ($execution['status']==='active'&&count($state['attacks']) >= $step['count']) applicationComplexAbilityFinishStep($execution, $state, $now);
+        } elseif($step['type']==='attack-chain'&&$action==='finish-chain'){
+            if(($step['oppositionMode']??'')!=='once'||empty($state['batchReady'])||!empty($state['attackRequestId'])||empty($state['attacks'])
+                ||count($state['attacks'])<($state['queuedAttackCount']??0)||array_filter($state['attacks'],static fn($a)=>in_array($a['status']??'',['pending','awaiting-opposition'],true)))applicationComplexAbilityFail('Terminez les frappes autorisées avant de conclure cette série.','complex_ability_attack_pending');
+            applicationComplexAbilityFinishChainBatch($execution,$step,$state,$now);
         } elseif ($step['type'] === 'allocated-attacks' && $action === 'prepare-target') {
             if (($state['pendingTargetTokenId'] ?? '') !== '') applicationComplexAbilityFail('Terminez l’attaque courante avant de choisir une nouvelle cible.', 'complex_ability_attack_pending');
             applicationComplexAbilityInitializeAllocatedTargets($execution, $step, $state, $tokens);
@@ -1662,7 +1721,8 @@ function applyApplicationComplexAbilityCommand(
             if (in_array($effect['kind'], ['damage', 'guard'], true) && (!is_array($target) || ($target['layerId'] ?? 'ground') !== $execution['layerId'])) {
                 applicationComplexAbilityFail('Choisissez une cible visible sur le niveau courant pour cet effet.', 'complex_ability_effect_target_missing', 400);
             }
-            $source = $effect['kind'] === 'marker' ? applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']) : null;
+            $source = applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']);
+            if($target!==null&&!applicationComplexAbilityTargetInRange($source,$target,$map,applicationComplexAbilityTargetRangeCells($execution,$step,$source)))applicationComplexAbilityFail('Cette cible est hors de portée de la compétence.','complex_ability_target_out_of_range');
             if ($effect['kind'] === 'marker' && (!is_array($source) || ($source['layerId'] ?? 'ground') !== $execution['layerId']
                 || !is_numeric($source['x'] ?? null) || !is_numeric($source['y'] ?? null))) {
                 applicationComplexAbilityFail('Le lanceur doit être sur le niveau courant pour poser le marqueur.', 'complex_ability_marker_source_missing');
@@ -1730,7 +1790,8 @@ function applyApplicationComplexAbilityCommand(
     $current = $execution['workflow']['steps'][$execution['currentStepIndex']] ?? null;
     if ($execution['status'] === 'active' && ($current['type'] ?? '') === 'movement' && !isset($execution['stepStates'][$current['id']]['origin'])) {
         $source = applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']);
-        if ($source !== null) $execution['stepStates'][$current['id']] = initialApplicationComplexMovementState($source, $now);
+        if ($source !== null) $execution['stepStates'][$current['id']] = initialApplicationComplexMovementState($source, $now,$current['attackWidthCells']??0);
+        if(!empty($current['charge'])){$target=applicationChargeFinalTarget($execution,$current,$tokens);$execution['stepStates'][$current['id']]['chargeTarget']=['id'=>$target['id'],'x'=>$target['x'],'y'=>$target['y']];}
     }
     $execution['revision'] += 1; $execution['updatedAt'] = $now;
     return $execution;

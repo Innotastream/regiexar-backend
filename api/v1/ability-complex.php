@@ -192,7 +192,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
     $attack = applyOnlineAttackConditions($connection, $records, $pending, $attack);
     $attack = onlineFinalizeAttackDamageRoll($attack);
     $activity = $pending['activity']['payload'] ?? $activity;
-    $activity = onlineMergeAttackActivityRolls($activity, $attack);
+    $activity = onlineMergeAttackActivityRolls($activity, $attack, applicationDomainPayload($records, 'initiative:' . (string) ($attack['sceneId'] ?? '')));
     foreach ($activity['pendingAttacks'] ?? [] as $index => $entry) if (($entry['id'] ?? '') === $attack['id']) $activity['pendingAttacks'][$index] = $attack;
     $receipts[] = ['requestId' => $requestId, 'accountId' => (string) $identity['id'],
         'requestSignature' => onlineCommandRequestSignature('counter-spend', [$execution['id'], $execution['revision']]),
@@ -301,6 +301,7 @@ function onlineUseComplexAbility(
         if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
             return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.complex', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, [], $receiptContext);
         }
+        $chainTimersBefore = $activity['actionTimers'] ?? [];
         $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity, true, $continuation === null);
         if ($continuation !== null && is_array($cast['outcome'] ?? null)) $cast['outcome']['requiresGmValidation'] = false;
         $execution = null;
@@ -320,6 +321,7 @@ function onlineUseComplexAbility(
                 rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
             }
             $currentActivity = is_array($pending['activity']['payload'] ?? null) ? $pending['activity']['payload'] : $activity;
+            applicationCaptureChainFailureTimer($execution,$ability,$chainTimersBefore,$currentActivity['actionTimers']??[],applicationDomainPayload($records,'initiative:'.$sceneId));
             $currentActivity['abilityExecutions'] = trimApplicationComplexAbilityExecutions([
                 ...($currentActivity['abilityExecutions'] ?? []), $execution,
             ]);
@@ -498,6 +500,8 @@ function onlineUseComplexAbility(
         ));
     }
     $activity['abilityExecutions'][$executionIndex] = $next;
+    applicationSettleChainFailureTimers($activity,$sceneId,$initiative,$now);
+    $next=$activity['abilityExecutions'][$executionIndex];
     $activity['abilityExecutions'] = trimApplicationComplexAbilityExecutions($activity['abilityExecutions']);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     if (is_array($counterUse)) {

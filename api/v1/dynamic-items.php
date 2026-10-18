@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/item-physical.php';
+require_once __DIR__.'/active-items.php';
 
 function itemFailure(string $message, int $status = 400): never { throw new RuntimeException($message, $status); }
 function itemId(mixed $value): bool { return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,180}$/D', $value) === 1; }
@@ -29,6 +30,7 @@ function normalizeItemTemplate(array $value): array {
     $image = itemImage($value['image'] ?? '');
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image];
+    if(isset($value['active']))$result['active']=normalizeActiveItem($value['active']);
     if(array_key_exists('permissions',$value))$result['permissions']=normalizeItemPermissions($value['permissions']);
     if (array_key_exists('size', $value)) $result['size'] = normalizeItemSize($value['size']);
     if (array_key_exists('maxHp', $value)) $result['maxHp'] = normalizeItemMaxHp($value['maxHp']);
@@ -147,7 +149,7 @@ function itemTransferPair(array $state, string $sourceId, string $targetId, arra
     return null;
 }
 
-function applyDynamicItemCommand(array $state, array $identity, string $command, array $args): array {
+function applyDynamicItemCommand(array $state, array $identity, string $command, array $args,array $context=[]): array {
     $items = normalizeItemStore($state['items'] ?? null); $isGm = ($identity['role'] ?? '') === 'gm';
     $character = static function($id) use ($state): array {
         return unitById($state,(string)$id);
@@ -165,6 +167,11 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if (!$isGm && ($state['tacticalSync']['paused'] ?? false) === true) itemFailure('La table est temporairement verrouillée par le MJ.', 423);
         return $token;
     };
+    if($command==='item.effects.rest'){
+        if(!$isGm)itemFailure('Seul le MJ peut appliquer un repos.',403);
+        if(!in_array($args['kind']??'',['short','long'],true)||!is_array($args['unitIds']??null)||count($args['unitIds'])<1||count($args['unitIds'])>100)itemFailure('Choisissez les unités du repos.');foreach($args['unitIds'] as $unitId)unitById($state,$unitId);
+        return ['items'=>$items,'result'=>applicationItemEffectRest($state,$args['unitIds'],$args['kind']),'activeState'=>$state];
+    }
     if ($command === 'item.template.create') {
         if (!$isGm) itemFailure('La création de modèles est réservée au MJ.', 403);
         if (count($items['templates']) >= 200) itemFailure('La collection de modèles est pleine.', 429);
@@ -180,7 +187,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $previous=$items['templates'][$index];
         if(!empty($previous['sourceAbilityId']))itemFailure('Ce modèle est géré par sa compétence.',409);
         if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$previous)itemFailure('Ce modèle a été modifié par un autre MJ. Rouvrez-le avant de continuer.',409);
-        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','permissions','size','maxHp'],true));
+        $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','active','permissions','size','maxHp'],true));
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
         $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
         $template=normalizeItemTemplate($editable);$items['templates'][$index]=$template;
@@ -278,6 +285,12 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             $item['location'] = ['kind' => 'ground', 'sceneId' => $state['activeSceneId'], 'layerId' => $token['layerId'] ?? $state['map']['activeLayerId'] ?? 'ground', 'x' => $token['x'], 'y' => $token['y']];
         } elseif ($command === 'item.consume') {
             $template = $items['templates'][array_search($item['templateId'], array_column($items['templates'], 'id'), true)];
+            if(isset($template['active'])){
+                if(!empty($state['tacticalSync']['paused'])&&!$isGm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
+                if(($args['sceneId']??'')!==$state['activeSceneId'])itemFailure('La scène a changé.',409);$token=null;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===$source['id']&&(!isset($args['tokenId'])||$args['tokenId']===$t['id'])&&($t['layerId']??'ground')===($state['map']['activeLayerId']??'ground')){$token=$t;break;}
+                $result=applicationApplyActiveItem($state,$template,$source,$token,$identity,$context);$item['location']=['kind'=>'consumed','characterId'=>$source['id']];$item['revision']++;$items['instances'][$index]=$item;
+                return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item,...$result],'characterPatch'=>['id'=>$source['id'],'resources'=>$source['resources'],'fatigue'=>$source['fatigue']??['current'=>0,'max'=>150],'conditions'=>$source['conditions']??[]],'activeState'=>$state];
+            }
             if ($template['kind'] !== 'potion') itemFailure('Cet objet n’est pas une potion.');
             $resources = $source['resources'] ?? [];
             foreach (['hp', 'mana'] as $resource) $resources[$resource] = max($resource === 'hp' ? -1000000000 : 0, min($resources[$resource === 'hp' ? 'maxHp' : 'maxMana'] ?? 0, ($resources[$resource] ?? 0) + $template['potion'][$resource]));
@@ -371,17 +384,17 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     $map = applicationDomainPayload($records, 'map:' . $sceneId); $map['tokens'] = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
     $characters = [];
     foreach ($records as $key => $record) if (str_starts_with($key, 'character:') && is_array($record['payload'] ?? null)) $characters[] = $record['payload'];
-    $state = ['items' => applicationDomainPayload($records, 'items'), 'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices'), 'characters' => $characters, 'activeSceneId' => $sceneId, 'map' => $map,
-        'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),
-        'scenes' => array_map(static fn($id) => ['id' => $id], applicationDomainPayload($records, 'scene-index')['order'] ?? []), 'tacticalSync' => $table['tacticalSync'] ?? []];
+    $state=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$sceneId);
+    $state['tacticalSync']=$table['tacticalSync']??[];
     if (in_array($command,['item.pickup','item.destroy'],true) && !$isGm) {
         $visible = onlineMapMovementVisibility($connection, $records, $map, $identity['id'], $sceneId);
         foreach ($state['items']['instances'] ?? [] as $item) if ($item['id'] === ($args['itemId'] ?? '') && $item['location']['kind'] === 'ground' && !$visible($item['location']['x'], $item['location']['y'])) rejectOnlineCommand($connection, 403, 'Cet objet n’est pas visible sur la carte.', 'item_not_visible');
     }
     try {
         ensureDeviceItems($state,static fn($prefix)=>$prefix.'-'.randomToken(16));
-        $applied = applyDynamicItemCommand($state, ['id' => $identity['id'], 'role' => $isGm ? 'gm' : 'player'], $command, $args);
+        $applied = applyDynamicItemCommand($state, ['id' => $identity['id'], 'role' => $isGm ? 'gm' : 'player'], $command, $args, ['id'=>static fn($prefix)=>$prefix.'-'.randomToken(16),'rollDie'=>static function($sides,$label,$name)use($identity){$n=random_int(1,$sides);return onlineRollEntry($identity,['formula'=>'1d'.$sides,'total'=>$n,'breakdown'=>(string)$n],$label,$name);}]);
         if(function_exists('assertPhysicalDeviceItemAction'))assertPhysicalDeviceItemAction($state,['id'=>$identity['id'],'role'=>$isGm?'gm':'player'],$command,$args,['direct'=>'onlineDeviceDirect']);
+        $state=$applied['activeState']??$state;
         $state['items']=$applied['items'];synchronizeDeviceItemLocations($state,(string)($args['itemId']??''),['unitId'=>$args['characterId']??'','tokenId'=>$args['tokenId']??'']);
     }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, in_array($error->getCode(), [400, 403, 404, 409, 423, 429], true) ? $error->getCode() : 400, $error->getMessage(), 'item_command_refused'); }
@@ -391,16 +404,27 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
         $patch = $applied['characterPatch']; $unit=unitById($state,$patch['id']);
         if(($unit['unitKind']??'')==='token'){
             $unit=array_replace($unit,$patch);persistUnitResources($state,$unit);
+            if(isset($patch['conditions']))foreach($state['map']['tokens'] as &$t)if($t['id']===$unit['unitTokenId']){$t['conditions']=$patch['conditions'];$t['condition']=implode(', ',$patch['conditions']);}unset($t);
             foreach($state['map']['tokens'] as $token)if($token['id']===$unit['unitTokenId'])queueOnlineDomainUpsert($pending,$records,onlineTokenDomainKey($sceneId,$token['id']),$token);
         }else{
         $key = 'character:' . $patch['id'];
-        $updated = applicationDomainPayload($records, $key); $updated['resources'] = $patch['resources']; $updated['fatigue'] = $patch['fatigue']; $updated['_updatedAt'] = (int) floor(microtime(true) * 1000);
+        $updated = applicationDomainPayload($records, $key); $updated['resources'] = $patch['resources']; $updated['fatigue'] = $patch['fatigue']; if(isset($patch['conditions']))$updated['conditions']=$patch['conditions']; $updated['_updatedAt'] = (int) floor(microtime(true) * 1000);
         queueOnlineDomainUpsert($pending, $records, $key, $updated);
         foreach (applicationCharacterTokenDomainRecords($connection, $patch['id']) as $tokenKey => $record) {
             $records[$tokenKey] = $record;
             if (($record['payload']['followCharacter'] ?? true) !== false && empty($record['payload']['linkedTokenId'])) queueOnlineDomainUpsert($pending, $records, $tokenKey, synchronizeOnlineCharacterToken($record['payload'], $updated));
         }
         }
+    }
+    if(isset($applied['activeState'])){
+        foreach($applied['result']['rolls']??[] as $roll)$state['rolls']=array_slice([$roll,...($state['rolls']??[])],0,200);
+        $token=null;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===($args['characterId']??'')){$token=$t;break;}
+        foreach($applied['result']['messages']??[] as $message){$cue=['version'=>1,'trigger'=>'completed','sound'=>null,'visual'=>[...$message,'version'=>1,'kind'=>'message']];appendApplicationAbilityCueEvent($state,$cue,$sceneId,$token['layerId']??'ground',$token['id']??'');}
+        // Keep resources/conditions already queued above while flushing authoritative effects.
+        foreach($state['characters'] as $i=>$c)if(isset($pending['character:'.$c['id']]['payload']))$state['characters'][$i]=$pending['character:'.$c['id']]['payload'];
+        foreach($state['map']['tokens'] as $i=>$t)if(isset($pending[onlineTokenDomainKey($sceneId,$t['id'])]['payload']))$state['map']['tokens'][$i]=$pending[onlineTokenDomainKey($sceneId,$t['id'])]['payload'];
+        onlineDeviceFlush($state,$records,$pending);
+        foreach(legacyStateToDomains($state) as $k=>$p)if(str_starts_with($k,'map:')&&dsCanonical($pending[$k]['payload']??applicationDomainPayload($records,$k))!==dsCanonical($p))queueOnlineDomainUpsert($pending,$records,$k,$p);
     }
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
     if (!$isGm) $result = publicItemCommandResult($result);

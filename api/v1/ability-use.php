@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-function planApplicationMetamorphosis(array $source, array $characters, array $tokens, ?array $ability, array $request, string $accountId, bool $isGm, array $pendingAttacks = []): array {
+function planApplicationMetamorphosis(array $source, array $characters, array $tokens, ?array $ability, array $request, string $accountId, bool $isGm, array $pendingAttacks = [], array $initiative = []): array {
     if (($source['followCharacter'] ?? true) === false || !empty($source['linkedTokenId']) || empty($source['characterId'])) throw new RuntimeException('La métamorphose nécessite un pion lié à une fiche.');
     $previous = is_array($source['transformation'] ?? null) ? $source['transformation'] : [];
     $returning = ($request['returnForm'] ?? false) === true;
@@ -21,6 +21,10 @@ function planApplicationMetamorphosis(array $source, array $characters, array $t
     foreach ($pendingAttacks as $attack) if (isset($ids[$attack['sourceTokenId'] ?? '']) || isset($ids[$attack['targetTokenId'] ?? ''])) throw new RuntimeException('Terminez les attaques en attente avant de changer de forme.');
     $activeCharacterId = $returning ? $baseId : $formId;
     $transformation = ['baseCharacterId' => $baseId, 'formCharacterId' => $formId, 'active' => !$returning, 'requestId' => $request['requestId'], 'accountId' => $accountId];
+    if (!$returning && ($ability['formDurationTurns'] ?? 0) > 0) $transformation = [...$transformation,
+        'durationTurns' => $ability['formDurationTurns'], 'remainingTurns' => $ability['formDurationTurns'],
+        'clockTokenId' => $source['id'], 'clockCombatId' => $initiative['combatId'] ?? '', 'lastTurnSerial' => $initiative['turnSerial'] ?? 0];
+    if (!$returning && ($ability['formBonusHp'] ?? 0) > 0) $transformation['bonusHp'] = $ability['formBonusHp'];
     return ['activeCharacterId' => $activeCharacterId, 'deduplicated' => false, 'changes' => array_map(static fn(array $token): array => ['token' => $token, 'characterId' => $activeCharacterId, 'transformation' => $transformation], $affected)];
 }
 
@@ -60,14 +64,24 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             if (str_starts_with($key, 'character:')) $characters[] = applicationDomainPayload($records, $key);
             if (str_starts_with($key, 'token:')) $tokens[$key] = applicationDomainPayload($records, $key);
         }
-        try { $formPlan = planApplicationMetamorphosis($source, $characters, $tokens, $ability, $arguments, $accountId, $isGm, $activity['pendingAttacks'] ?? []); }
+        try { $formPlan = planApplicationMetamorphosis($source, $characters, $tokens, $ability, $arguments, $accountId, $isGm, $activity['pendingAttacks'] ?? [], applicationDomainPayload($records, 'initiative:' . $sceneId)); }
         catch (RuntimeException $error) { rejectOnlineCommand($connection, 409, $error->getMessage(), 'form_conflict'); }
         if ($formPlan['deduplicated']) return ['effect' => 'metamorphosis', 'activeCharacterId' => $formPlan['activeCharacterId'], 'deduplicated' => true];
+    } elseif(!empty($ability['tacticalEffect'])||!empty($ability['conditionRider'])&&($ability['effect']??'')==='movement'){
+        $target=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$arguments['targetTokenId']??''));
+        if($target===[]||applicationIsNonCombatant($target)||!onlineTokenOnActiveLayer($target,$map)||(!$isGm&&(($target['hidden']??false)||!onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId))))rejectOnlineCommand($connection,403,'La cible de cette compétence doit être une unité visible.','tactical_target_hidden');
+        if(($ability['tacticalEffect']['kind']??'')==='control'&&$source['id']===$target['id'])rejectOnlineCommand($connection,400,'Choisissez une autre unité à contrôler.','tactical_self_control');
     } elseif (!in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
         if (!in_array($ability['effect'] ?? '', ['healing', 'enhancement'], true)) rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus.', 'healing_ability_missing');
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
         if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403,
             $ability['effect'] === 'enhancement' ? 'Le bénéficiaire du buff n’est plus visible. Rouvrez la capacité.' : 'La cible du soin n’est pas visible.', 'healing_target_hidden');
+    }
+    if($target!==[]&&!$returning&&!applicationAbilityTargetInRange($ability,$source,$target,$map,$rules['weaponAttacks']??[]))rejectOnlineCommand($connection,409,'Cette cible est hors de portée de la compétence.','ability_target_out_of_range');
+    if(($ability['tacticalEffect']['kind']??'')==='coating'){
+        if((onlineTokenControllerIdFromRecords($connection,$records,$source)!=='')!==(onlineTokenControllerIdFromRecords($connection,$records,$target)!==''))rejectOnlineCommand($connection,403,'Ce poison s’applique sur votre arme ou celle d’un allié.','coating_target_forbidden');
+        $items=$pending['items']['payload']??applicationDomainPayload($records,'items');
+        if(!in_array($arguments['consumableItemId']??'',array_column(applicationCoatingVials($items,$source,$ability),'id'),true))rejectOnlineCommand($connection,409,'Choisissez une fiole disponible dans votre inventaire.','coating_vial_missing');
     }
     if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
@@ -86,12 +100,19 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     // against HP after payment, and a transformation must debit its base form.
     if ($plan !== null) $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $rules, $identity, false, $continuation === null);
     $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
+    if($cast['success']&&($ability['tacticalEffect']['kind']??'')==='coating'){
+        $itemState=['items'=>$pending['items']['payload']??applicationDomainPayload($records,'items')];
+        applicationConsumeCoatingVial($itemState,$source,$ability,(string)($arguments['consumableItemId']??''));queueOnlineDomainUpsert($pending,$records,'items',$itemState['items']);
+    }
     $effectRoll = null;
     $result = ['effect' => $metamorphosis ? 'metamorphosis' : ($ability['effect'] ?? 'healing'), 'appliedDelta' => 0];
     if ($cast['success'] && $metamorphosis) {
-        $form = applicationDomainPayload($records, 'character:' . $formPlan['activeCharacterId']);
+        $formState = onlineDeviceState($connection, $records, $pending);
+        applicationApplyMetamorphosisPlan($formState, $formPlan);
+        onlineDeviceFlush($formState, $records, $pending);
+        $form = $pending['character:' . $formPlan['activeCharacterId']]['payload'] ?? applicationDomainPayload($records, 'character:' . $formPlan['activeCharacterId']);
         foreach ($formPlan['changes'] as $key => $change) {
-            $token = $change['token']; $token['characterId'] = $change['characterId']; $token['transformation'] = $change['transformation'];
+            $token = $pending[$key]['payload'] ?? $change['token'];
             queueOnlineDomainUpsert($pending, $records, $key, synchronizeOnlineCharacterToken($token, $form));
         }
         if (!$returning) applyOnlineAttackConditions($connection, $records, $pending, [
@@ -100,6 +121,14 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $result['activeCharacterId'] = $formPlan['activeCharacterId'];
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'character', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $returning ? 'Reprend sa forme initiale' : 'Change de forme']);
     } elseif ($cast['success'] && in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
+        if(!empty($ability['tacticalEffect'])){
+            $sk=onlineTokenDomainKey($sceneId,$source['id']);$tk=onlineTokenDomainKey($sceneId,$target['id']);
+            $ss=$pending[$sk]['payload']??$source;$tt=$pending[$tk]['payload']??$target;
+            $tc=applicationAbilityCastingOwner($tt);if($tc['characterId']!==''){$sheet=$pending['character:'.$tc['characterId']]['payload']??applicationDomainPayload($records,'character:'.$tc['characterId']);if($sheet!==[])$tt=synchronizeOnlineCharacterToken($tt,$sheet);}
+            [$ss,$tt,$tacticalResult]=array_pad(applicationApplyTacticalEffect($ss,$tt,$ability,onlineTokenControllerIdFromRecords($connection,$records,$ss)?:$accountId,$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),'effect-'.$requestId),3,null);
+            $ss['image']=applicationTacticalImage($ss,$ss['image']??null);
+            queueOnlineDomainUpsert($pending,$records,$sk,$ss);if($sk!==$tk)queueOnlineDomainUpsert($pending,$records,$tk,$tt);
+        }
         if ($ability['effect'] === 'summoning') {
             $templates = normalizeOnlineLinkedTokens($character['linkedTokens'] ?? []);
             $templateIndex = findEntryIndex($templates, (string) ($ability['summonLinkedTokenId'] ?? ''));
@@ -121,7 +150,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $result['summonedTokenId'] = $token['id'];
         }
         applyOnlineAttackConditions($connection, $records, $pending, [
-            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $result['summonedTokenId'] ?? $source['id'], 'onHitConditions' => $ability['onHitConditions'] ?? [],
+            'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $result['summonedTokenId'] ?? $target['id'] ?? $source['id'], 'sourceTokenId'=>$source['id'],'conditionRider'=>!empty($tacticalResult['influenceTurns'])?['version'=>1,'label'=>'Influencé','turns'=>$tacticalResult['influenceTurns'],'resistance'=>false]:($ability['conditionRider']??null),'id'=>'effect-'.$requestId,'onHitConditions' => $ability['onHitConditions'] ?? [],
         ]);
     } elseif ($cast['success'] && ($ability['effect'] ?? '') === 'enhancement') {
         $result['targetTokenId'] = $target['id'];

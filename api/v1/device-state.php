@@ -1,6 +1,14 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/complex-movement.php';
+require_once __DIR__.'/fixed-structures.php';
+require_once __DIR__.'/combat-round-lifecycle.php';
+require_once __DIR__.'/tactical-effects.php';
+require_once __DIR__.'/consumable-crafting.php';
+require_once __DIR__.'/morale-conditions.php';
+require_once __DIR__.'/passive-abilities.php';
 require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/metamorphosis.php';
 require_once __DIR__.'/device-items.php';
 
 // Native PHP counterpart of public/device-state.js. Storage and dice are
@@ -30,22 +38,31 @@ function dsInfusion(mixed $value): ?array {
     if (($value['enabled'] ?? false) !== true) return null;
     return ['version'=>1,'enabled'=>true,'ratio'=>dsInt($value['ratio']??null,1,100,1),'minimumMana'=>dsInt($value['minimumMana']??null,0,1000000,0),'refundOnMiss'=>($value['refundOnMiss']??true)!==false];
 }
+function dsTextSlice(string $text,int $start,int $length):string {if(function_exists("mb_substr"))return mb_substr($text,$start,$length);preg_match_all("/./us",$text,$parts);return implode("",array_slice($parts[0]??[],$start,$length));}
 function dsRider(mixed $value): ?array {
     if (!is_array($value) || trim((string)($value['label']??''))==='') return null;
     if (($value['version']??1)!==1) dsError('Cet effet provient d’une version plus récente.');
-    return ['version'=>1,'label'=>mb_substr(trim($value['label']),0,240),'turns'=>dsInt($value['turns']??null,1,100,1),
+    return ['version'=>1,...(($value['resistance']??true)===false?['resistance'=>false]:[]),'label'=>dsTextSlice(trim($value['label']),0,240),'turns'=>dsInt($value['turns']??null,1,100,1),
+        ...(($value['trigger']??'')==='attempt'?['trigger'=>'attempt']:[]),
+        ...(!empty($value['attackPenalty'])?['attackPenalty'=>dsInt($value['attackPenalty'],1,100,15)]:[]),
+        ...(($value['expiry']??'')==='end-next-turn'?['expiry'=>'end-next-turn']:[]),
+        ...(trim((string)($value['criticalLabel']??''))!==''?['criticalLabel'=>dsTextSlice(trim($value['criticalLabel']),0,240)]:[]),
+        ...(is_array($value['escape']??null)&&is_array($value['escape']['penalties']??null)&&array_is_list($value['escape']['penalties'])&&count($value['escape']['penalties'])>=1&&count($value['escape']['penalties'])<=100
+            &&count(array_filter($value['escape']['penalties'],static fn($p)=>is_int($p)&&$p>=-100&&$p<=100))===count($value['escape']['penalties'])
+            ? ['escape'=>['statId'=>in_array($value['escape']['statId']??'',dsStats(),true)?$value['escape']['statId']:'character-stat-force','penalties'=>$value['escape']['penalties'],...(($value['escape']['atTurnStart']??false)===true?['atTurnStart'=>true]:[])]]:[]),
         'resistanceStatId'=>in_array($value['resistanceStatId']??'',dsStats(),true)?$value['resistanceStatId']:'character-stat-force',
-        'fallbackLabel'=>mb_substr(trim((string)($value['fallbackLabel']??'')),0,240),'fallbackTurns'=>dsInt($value['fallbackTurns']??null,1,100,1),
-        'immunityLabel'=>mb_substr(trim((string)($value['immunityLabel']??'')),0,240),'blocksMovement'=>($value['blocksMovement']??false)===true,'fallbackBlocksMovement'=>($value['fallbackBlocksMovement']??false)===true,'blocksActions'=>($value['blocksActions']??false)===true,'fallbackBlocksActions'=>($value['fallbackBlocksActions']??false)===true];
+        'fallbackLabel'=>dsTextSlice(trim((string)($value['fallbackLabel']??'')),0,240),'fallbackTurns'=>dsInt($value['fallbackTurns']??null,1,100,1),
+        'immunityLabel'=>dsTextSlice(trim((string)($value['immunityLabel']??'')),0,240),'blocksMovement'=>($value['blocksMovement']??false)===true,'fallbackBlocksMovement'=>($value['fallbackBlocksMovement']??false)===true,'blocksActions'=>($value['blocksActions']??false)===true,'fallbackBlocksActions'=>($value['fallbackBlocksActions']??false)===true];
 }
 function dsDefinition(mixed $v): array {
-    if (!is_array($v) || !in_array($v['kind']??'', ['battery','launcher','explosive','dome','beam'], true)) dsError('Choisissez un type de dispositif valide.',400);
+    if (!is_array($v) || !in_array($v['kind']??'', ['battery','launcher','explosive','dome','beam','structure'], true)) dsError('Choisissez un type de dispositif valide.',400);
     if (($v['version']??1)!==1) dsError('Ce dispositif provient d’une version plus récente.');
+    if($v['kind']==='structure')return applicationFixedStructureDefinition($v);
     $int=static fn($key,$min,$max,$fallback)=>dsInt($v[$key]??null,$min,$max,$fallback);
     $formula=static fn($key,$fallback)=>validApplicationAbilityFormula($v[$key]??null)?strtolower(preg_replace('/\s+/','',$v[$key])):$fallback;
     $damage=static fn($fallback)=>in_array($v['damageType']??'', ['physical','magical','ignore'],true)?$v['damageType']:$fallback;
     $stat=static fn($key,$fallback)=>in_array($v[$key]??'',dsStats(),true)?$v[$key]:$fallback;
-    $base=['version'=>1,'kind'=>$v['kind'],'interactionRangeCells'=>$int('interactionRangeCells',0,100,2)];
+    $base=['version'=>1,'kind'=>$v['kind'],'interactionRangeCells'=>$int('interactionRangeCells',0,100,2),...($v['kind']!=='explosive'?['maximumInstances'=>$int('maximumInstances',1,100,1)]:[])];
     return match($v['kind']) {
         'battery'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'radiusCells'=>$int('radiusCells',1,100,2),'chargeRatio'=>$int('chargeRatio',1,100,2),'requireDirectRange'=>($v['requireDirectRange']??true)!==false],
         'launcher'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'damageFormula'=>$formula('damageFormula','1d35'),'damageType'=>$damage('physical'),
@@ -71,13 +88,13 @@ function dsStore(mixed $value): array {
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1
-            || !in_array($entry['status']??'', ['active','packed','inventory','awaiting-launch','spent','stopped','failed','broken','repaired'],true)
+            || !in_array($entry['status']??'', ['active','preparing','packed','inventory','awaiting-launch','spent','stopped','failed','broken','repaired'],true)
             || empty($entry['creatorCharacterId']) || empty($entry['sceneId']) || !dsNumber($entry['x']??null) || !dsNumber($entry['y']??null)) dsError('Le registre des dispositifs est invalide.');
         dsDefinition($entry['definition']); $ids[$entry['id']]=true;
         if($entry['definition']['kind']==='dome'&&array_key_exists('mode',$entry)&&!in_array($entry['mode'],['carried','placed'],true))dsError('L’état du bouclier est invalide.');
         if(isset($entry['image'])&&$entry['image']!==''&&dsImage($entry['image'])==='')dsError('L’image du dispositif est invalide.',400);
         if(array_key_exists('size',$entry))normalizeItemSize($entry['size']);
-        if (isset($entry['mana'])) {if($entry['definition']['kind']==='beam'){if(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000)dsError('La réserve de ce rayon est invalide.');}else dsAmount($entry['mana']);}
+        if (isset($entry['mana'])) {if(in_array($entry['definition']['kind'],['beam','battery'],true)){if(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000)dsError('La réserve de ce rayon est invalide.');}else dsAmount($entry['mana']);}
     }
     return $value;
 }
@@ -98,7 +115,7 @@ function dsToken(array $state,array $owner,array $args): array {
     dsError('Placez votre personnage sur le niveau courant avant cette action.');
 }
 function dsAssertActions(array $state,array $token,string $sceneId):void {
-    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))dsError('Ce personnage est '.mb_strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
+    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
 }
 function dsTurn(array $state,array $actor,array $token): void {
     $i=$state['initiative']??[];
@@ -108,11 +125,8 @@ function dsAbility(array $owner,string $id): array {
     foreach($owner['abilities']??[] as $entry) if ($entry['id']===$id && ($entry['effect']??'')==='device') return $entry;
     dsError('Ce dispositif n’existe plus dans vos compétences.',404);
 }
-function dsDistance(array $a,array $b,array $map): float {
-    $level=$map['layers'][$a['layerId']??$map['activeLayerId']??'ground']??$map;
-    $grid=(float)($map['gridSize']??0); $width=(float)($level['naturalWidth']??$map['naturalWidth']??0); $height=(float)($level['naturalHeight']??$map['naturalHeight']??0);
-    return $grid>0 && $width>0 && $height>0 ? hypot(($a['x']-$b['x'])*$width/(100*$grid),($a['y']-$b['y'])*$height/(100*$grid)):INF;
-}
+function dsDistance(array $a,array $b,array $map,bool $diagonalAsOne=false,bool $fromEdges=false): float { return applicationMapDistanceInCells($a,$b,$map,$diagonalAsOne,$fromEdges); }
+
 function dsReach(array $state,array $token,array $device): void {
     if ($device['sceneId']!==$state['activeSceneId'] || ($token['layerId']??'ground')!==$device['layerId']
         || $device['definition']['interactionRangeCells']>0 && dsDistance($token,$device,$state['map'])>$device['definition']['interactionRangeCells']) dsError('Ce dispositif n’est pas à portée sur ce niveau.');
@@ -137,8 +151,8 @@ function dsProvider(array $store,array $source,array $map,string $sceneId,callab
         && (!$device['definition']['requireDirectRange'] || $direct($source,$device,$map))) $found[]=['index'=>$index,'distance'=>dsDistance($source,$device,$map),'id'=>$device['id']];
     usort($found,static fn($a,$b)=>($a['distance']<=>$b['distance'])?:strcmp($a['id'],$b['id'])); return $found[0]['index']??null;
 }
-function dsPayMana(array &$state,array &$store,array &$owner,?array $token,int $value,array $context): array {
-    dsAmount($value); $index=$token?dsProvider($store,$token,$state['map'],$state['activeSceneId'],$context['direct']??static fn()=>true):null;
+function dsPayMana(array &$state,array &$store,array &$owner,?array $token,int|float $value,array $context): array {
+    if(!is_finite((float)$value)||$value<0||$value>1000000000||floor($value*2)!==$value*2.0)dsError('Montant de mana invalide.'); $index=$token?dsProvider($store,$token,$state['map'],$state['activeSceneId'],$context['direct']??static fn()=>true):null;
     if($index!==null) { $device=&$store['devices'][$index]; if($device['mana']<$value) dsError('La batterie à portée ne contient pas assez de mana.'); $device['mana']-=$value; $device['revision']++; return ['kind'=>'battery','deviceId'=>$device['id'],'value'=>$value]; }
     dsResource($state,$owner,'mana',-$value); return isset($owner['resources'])?['kind'=>'character','characterId'=>$owner['id'],'value'=>$value]:['kind'=>'token','tokenId'=>$owner['id'],'sceneId'=>$state['activeSceneId'],'value'=>$value];
 }
@@ -171,10 +185,18 @@ function dsDomeMode(array $args,array $definition): string {
     if($mode==='placed'&&!$definition['canSetDown'])dsError('Ce bouclier doit rester porté.',400);
     return $mode;
 }
+function dsAssertDeploymentLimit(array $store,string $ownerId,array $ability):void {
+    if(!in_array($ability['device']['kind']??'',['battery','launcher','dome','beam'],true))return;
+    $maximum=dsInt($ability['device']['maximumInstances']??null,1,100,1);$count=0;
+    foreach($store['devices']??[] as $device)if($device['creatorCharacterId']===$ownerId&&$device['abilityId']===$ability['id']&&in_array($device['status'],['active','preparing','inventory','packed','broken'],true))$count++;
+    if($count>=$maximum)dsError('Cette compétence autorise '.$maximum.' machine'.($maximum>1?'s':'').' simultanée'.($maximum>1?'s':'').' par unité. Réutilisez les appareils existants, y compris ceux rangés ou en attente de réparation.');
+}
 function dsDeployment(array &$state,array &$store,array $actor,array $owner,array $token,array $ability,array $args,array $context): array {
+    dsAssertDeploymentLimit($store,$owner['id'],$ability);
     $definition=dsDefinition($ability['device']); $extra=match($definition['kind']) {
         'battery'=>['mana'=>0], 'dome'=>['mode'=>dsDomeMode($args,$definition),'channelCount'=>0,'activeTurns'=>0,'lastChannelTurn'=>null],
-        'beam'=>['mana'=>0,'participants'=>array_map(static fn($id)=>['characterId'=>$id,'status'=>'pending'],$args['participantCharacterIds']),'mark'=>$args['mark'],'waitingForConsent'=>true],default=>[] };
+        'beam'=>['mana'=>0,'participants'=>array_map(static fn($id)=>['characterId'=>$id,'status'=>'pending'],$args['participantCharacterIds']),'mark'=>$args['mark'],'waitingForConsent'=>true],
+        'structure'=>['status'=>'preparing','controlOnly'=>true,'variantId'=>applicationStructureVariant($definition,$args['variantId']??'')['id'],'preparationRemainingTurns'=>$definition['preparationTurns']],default=>[] };
     return dsAppend($store,['id'=>($context['id'])('device'),'revision'=>1,'status'=>'active','creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']?:$actor['id'],
         'sourceTokenId'=>$token['id'],'abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'image'=>dsImage($ability['image']??''),'sceneId'=>$state['activeSceneId'],'x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground','definition'=>$definition,
         'activatedRound'=>(int)($state['initiative']['round']??1),'activatedTurn'=>(int)($state['initiative']['turnSerial']??0),...$extra,...($definition['kind']==='dome'&&$extra['mode']==='carried'?['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground']:dsPlacement($state,$actor,$token,$definition,$args,$context))]);
@@ -216,7 +238,45 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
     ensureDeviceItems($state,$id);
-    if($command==='craft.request') {
+    if($command==='condition.activate'){$result=applicationActivateMoraleCondition($state,$actor,$args);
+    } elseif($command==='effect.revoke') {
+        $ti=dsIndex($state['map']['tokens'],$args['tokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
+        if(($args['kind']??'')==='appearance'){ownedUnit($state,$actor,unitIdForToken($token));if(!($token['appearanceState']['active']??false)||$token['appearanceState']['id']!==($args['effectId']??''))dsError('Cette apparence a changé.');$token['appearanceState']['active']=false;$token['image']=$token['appearanceState']['baseImage'];}
+        else{if($actor['role']!=='gm')dsError('Seul le MJ peut révoquer cet effet.',403);
+            if(($args['kind']??'')==='control'){if(($token['controlEffect']['id']??'')!==($args['effectId']??''))dsError('Ce contrôle a changé.');unset($token['controlEffect']);}
+            elseif(($args['kind']??'')==='mark'){$marks=$token['predatoryMarks']??[];if(dsIndex($marks,$args['effectId']??'')<0)dsError('Cette lecture a changé.');$token['predatoryMarks']=array_values(array_filter($marks,static fn($m)=>$m['id']!==$args['effectId']));}
+            else dsError('Cet effet ne peut pas être révoqué.',400);
+        }unset($token);$result=['revoked'=>true];
+    } elseif($command==='consumable.request'){
+        $owner=ownedUnit($state,$actor,$args['characterId']??'');$token=dsToken($state,$owner,$args);dsTurn($state,$actor,$token);
+        $ai=dsIndex($owner['abilities']??[],$args['abilityId']??'');$ability=$owner['abilities'][$ai]??[];$result=applicationRequestConsumableCraft($state,$store,$owner,$token,$ability,$context);
+    } elseif($command==='craft.resolve'&&($store['craftRequests'][dsIndex($store['craftRequests'],$args['craftRequestId']??'')]['kind']??'')==='consumable'){
+        if($actor['role']!=='gm')dsError('Seul le MJ peut valider cette fabrication.',403);$ri=dsIndex($store['craftRequests'],$args['craftRequestId']??'');if(($store['craftRequests'][$ri]['status']??'')!=='pending')dsError('Cette fabrication a déjà été traitée.');
+        $result=applicationResolveConsumableCraft($state,$store,$ri,($args['approve']??false)===true,$context);
+    } elseif($command==='condition.remove') {
+        if($actor['role']!=='gm')dsError('Seul le MJ peut retirer cet effet.',403);
+        $ci=dsIndex($store['timedConditions'],$args['conditionId']??'');
+        if($ci<0||($store['timedConditions'][$ci]['sceneId']??'')!==$sceneId)dsError('Cet effet a déjà été retiré.');
+        $condition=$store['timedConditions'][$ci];array_splice($store['timedConditions'],$ci,1);
+        $store['pendingRolls']=array_values(array_filter($store['pendingRolls'],static fn($r)=>$r['type']!=='escape'||($r['effect']['conditionId']??'')!==$condition['id']));
+        $effects[]=['type'=>'condition.expire','condition'=>$condition];$result=['removed'=>true];
+    } elseif($command==='condition.escape') {
+        $ci=dsIndex($store['timedConditions'],$args['conditionId']??'');
+        if($ci<0||($store['timedConditions'][$ci]['sceneId']??'')!==$sceneId||($store['timedConditions'][$ci]['remainingTurns']??0)<=0||empty($store['timedConditions'][$ci]['escape']))dsError('Cette entrave ne permet plus de tentative de libération.');
+        $condition=$store['timedConditions'][$ci];$ti=dsIndex($state['map']['tokens'],$condition['targetTokenId']);if($ti<0)dsError('Le pion entravé n’existe plus.');
+        $token=$state['map']['tokens'][$ti];$owner=ownedUnit($state,$actor,unitIdForToken($token));dsTurn($state,$actor,$token);
+        $turn=($state['initiative']['combatId']??'').':'.($state['initiative']['turnSerial']??0).':'.$condition['remainingTurns'];
+        if(($state['initiative']['active']??false)&&($state['initiative']['order'][$state['initiative']['currentIndex']]??'')!==$token['id'])dsError('La libération attend le tour du pion entravé.',403);
+        if(($state['initiative']['active']??false)&&!empty($condition['escape']['atTurnStart'])&&(empty($condition['hasStarted'])||!empty($condition['escapeWindowClosed'])))dsError('Cette tentative est possible au début de votre prochain tour, avant toute action.');
+        if(($condition['escapeAttemptTurn']??'')===$turn)dsError('Une tentative de libération a déjà été faite pendant ce tour.');
+        $index=max(0,($condition['initialTurns']??count($condition['escape']['penalties']))-$condition['remainingTurns']);
+        $penalty=$condition['escape']['penalties'][min($index,count($condition['escape']['penalties'])-1)];
+        $store['timedConditions'][$ci]['escapeAttemptTurn']=$turn;
+        $cast=($context['roll'])($state,$owner,$token,$condition['escape']['statId'],$penalty,$condition['label'].' · Se libérer');
+        if($cast['pendingGmApproval']??false)$store['pendingRolls'][]=['id'=>$id('validation'),'type'=>'escape','cast'=>$cast,'ownerId'=>$owner['id'],'tokenId'=>$token['id'],'sceneId'=>$sceneId,'effect'=>['conditionId'=>$condition['id']]];
+        elseif($cast['success']){array_splice($store['timedConditions'],$ci,1);$effects[]=['type'=>'condition.expire','condition'=>$condition];}
+        $result=['cast'=>$cast,'escaped'=>$cast['success']&&!($cast['pendingGmApproval']??false),'pendingValidation'=>($cast['pendingGmApproval']??false),'penalty'=>$penalty];
+    } elseif($command==='craft.request') {
         $owner=ownedUnit($state,$actor,$args['characterId']??''); $ability=dsAbility($owner,$args['abilityId']??''); $definition=dsDefinition($ability['device']);
         if($definition['kind']!=='explosive') dsError('Cette compétence ne fabrique pas de bombes.',400);
         $quantity=dsAmount($args['quantity']??null,1); $reserved=0; foreach($store['craftRequests'] as $entry) if($entry['status']==='pending' && $entry['characterId']===$owner['id']) $reserved+=$entry['quantity'];
@@ -249,10 +309,11 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     } elseif($command==='device.deploy') {
         $owner=ownedUnit($state,$actor,$args['characterId']??''); $token=dsToken($state,$owner,$args); dsTurn($state,$actor,$token);
         $ability=dsAbility($owner,$args['abilityId']??''); $definition=dsDefinition($ability['device']);
+        dsAssertDeploymentLimit($store,$owner['id'],$ability);
+        if($definition['kind']==='structure'){$variant=applicationStructureVariant($definition,$args['variantId']??'');$ability['restUseCost']=$variant['uses'];$ability['reusableInTurn']=false;foreach($store['devices'] as $d)if($d['creatorCharacterId']===$owner['id']&&$d['abilityId']===$ability['id']&&$d['status']==='preparing')dsError('Cette mise en place est déjà en cours.');}
         if($definition['kind']==='explosive') dsError('Utilisez la fabrication puis le lancement de la bombe.',400);
         foreach($store['pendingRolls'] as $entry) if(($entry['ownerId']??'')===$owner['id'] && ($entry['ability']['id']??'')===$ability['id']) dsError('Ce lancement attend déjà le MJ.');
         if($definition['kind']==='beam') {
-            foreach($store['devices'] as $entry) if($entry['creatorCharacterId']===$owner['id'] && $entry['abilityId']===$ability['id'] && in_array($entry['status'],['active','broken','inventory','packed'],true)) dsError('Ce dispositif est déjà actif ou attend une réparation du MJ.');
             $participants=$args['participantCharacterIds']??[$owner['id']];
             if(!is_array($participants) || count($participants)<1 || count($participants)>30 || count(array_unique($participants))!==count($participants)) dsError('Choisissez des participants valides.',400);
             foreach($participants as $participant) ownedUnit($state,['role'=>'gm','id'=>$actor['id']],$participant);
@@ -382,6 +443,17 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if($state['initiative']['active']??false)dsError('Utilisez l’initiative pour avancer un tour en combat.');
         $advanced=applicationAdvanceDevices($state,$state['initiative'],[...$context,'manual'=>true]);$state=$advanced['state'];$store=&$state['devices'];$effects=[...$effects,...$advanced['effects']];$result=['advanced'=>true];
         foreach($state['actionTimers']??[] as $index=>$timer)if(($timer['sceneId']??'')===$sceneId&&($timer['readyRound']??0)>($state['initiative']['round']??1))$state['actionTimers'][$index]['readyRound']=max($state['initiative']['round']??1,$timer['readyRound']-1);
+    } elseif($command==='opportunity.resolve') {
+        if($actor['role']!=='gm')dsError('Seul le MJ peut autoriser une attaque d’opportunité.',403);
+        $i=dsIndex($store['pendingRolls'],$args['validationId']??'');if($i<0||$store['pendingRolls'][$i]['type']!=='opportunity')dsError('Cette attaque d’opportunité a déjà été traitée.');
+        $p=$store['pendingRolls'][$i];$si=dsIndex($state['map']['tokens'],$p['sourceTokenId']);$ti=dsIndex($state['map']['tokens'],$p['targetTokenId']);$source=$si>=0?$state['map']['tokens'][$si]:null;$target=$ti>=0?$state['map']['tokens'][$ti]:null;
+        $owner=$source?unitById($state,unitIdForToken($source),false):null;$passive=null;foreach(applicationPassiveAbilities($owner['passiveAbilities']??$source['passiveAbilities']??null) as $v)if($v['enabled']&&$v['id']===$p['passiveId']&&$v['kind']==='opportunity-attack'){$passive=$v;break;}
+        $weapon=$owner['weaponAttacks'][0]??$source['weaponAttacks'][0]??null;
+        $live=$source&&$target&&($source['hp']??0)>0&&($target['hp']??0)>0&&($source['healthOverride']??'')!=='dead'&&($target['healthOverride']??'')!=='dead'&&$passive&&$weapon&&$p['sceneId']===$sceneId
+            &&($source['layerId']??'ground')===$p['layerId']&&($target['layerId']??'ground')===$p['layerId']&&(float)$source['x']===(float)$p['sourcePosition']['x']&&(float)$source['y']===(float)$p['sourcePosition']['y'];
+        array_splice($store['pendingRolls'],$i,1);$result=['resolved'=>true,'approved'=>($args['approve']??false)===true&&(bool)$live,'obsolete'=>!$live];
+        if($result['approved']){$stat=$args['statId']??$passive['statId'];if(!in_array($stat,dsStats(),true))dsError('Statistique de réaction invalide.',400);
+            $effects[]=['type'=>'opportunity.attack','sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'attackId'=>$weapon['id'],'statId'=>$stat,'opposed'=>($args['opposed']??false)===true,'rollMode'=>$args['rollMode']??'normal','strikeTargetPosition'=>$p['strikeTargetPosition']??null];}
     } elseif($command==='roll.resolve') {
         if($actor['role']!=='gm') dsError('Seul le MJ peut traiter ce résultat remarquable.',403);$i=dsIndex($store['pendingRolls'],$args['validationId']??'');if($i<0) dsError('Ce résultat a déjà été traité.');
         $p=$store['pendingRolls'][$i];array_splice($store['pendingRolls'],$i,1);$owner=null;
@@ -393,7 +465,9 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
             if($p['type']==='deploy'&&$success) $result['deviceId']=dsDeployment($state,$store,$actor,$owner,$token,$p['ability'],$p['args'],$context)['id'];
             if($p['type']==='bomb') dsCompleteBomb($store['devices'][dsDevice($store,$p['deviceId'],false)],$state,$token,$p['args'],$success);
         } elseif(in_array($p['type'],['channel','luck'],true)) { $device=&$store['devices'][dsDevice($store,$p['deviceId'],false)];if($p['type']==='luck')$device['status']=$success?'spent':'broken';elseif(!$success)$device['status']='stopped';$device['revision']++; }
-        elseif($p['type']==='condition'){if(($args['approve']??false)===true)$effects[]=['type'=>'condition',...$p['effect'],'resisted'=>$p['cast']['success']];}else dsError('Ce résultat n’est pas reconnu.');$result['resolved']=true;
+        elseif($p['type']==='condition'){if(!empty($p['cast']['manualResistance'])&&($args['approve']??false)===true&&!is_bool($args['resisted']??null))dsError('Le MJ doit choisir si cette unité résiste au piège.',400);if(($args['approve']??false)===true)$effects[]=['type'=>'condition',...$p['effect'],'resisted'=>!empty($p['cast']['manualResistance'])?$args['resisted']:$p['cast']['success']];}
+        elseif($p['type']==='escape'){$ci=dsIndex($store['timedConditions'],$p['effect']['conditionId']);if($ci>=0&&$success){$condition=$store['timedConditions'][$ci];array_splice($store['timedConditions'],$ci,1);$effects[]=['type'=>'condition.expire','condition'=>$condition];}}
+        else dsError('Ce résultat n’est pas reconnu.');$result['resolved']=true;
     } else dsError('Commande de dispositif inconnue.',400);
     ensureDeviceItems($state,$id);
     if(isset($state['items'])) $state['items']=normalizeItemStore($state['items']);
@@ -404,13 +478,25 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
 
 function applicationAdvanceDevices(array $state,array $previous,array $context): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
+    $effects=[...$effects,...applicationAdvanceMetamorphoses($state,$previous,($context['manual']??false)===true)];
+    $state['map']['tokens']=applicationAdvanceTacticalTokens($state['map']['tokens']??[],$previous,$current);
+    if(($previous['active']??false)===true&&($current['active']??false)!==true){
+        $state=applicationFinishCombatRounds($state,$sceneId,$previous);$store=&$state['devices'];
+        foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId)$effects[]=['type'=>'condition.expire','condition'=>$condition];
+        $store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($c)=>$c['sceneId']!==$sceneId));
+        $store['pendingRolls']=array_values(array_filter($store['pendingRolls'],static fn($p)=>($p['sceneId']??'')!==$sceneId||!in_array($p['type']??'',['condition','escape'],true)));
+        return ['state'=>$state,'effects'=>$effects];
+    }
     $manual=($context['manual']??false)===true;
+    if($manual){$store['manualTurns'][$sceneId]=($store['manualTurns'][$sceneId]??0)+1;$state['attackEnhancements']=array_values(array_filter(array_map(static function($e)use($sceneId){if(($e['sceneId']??'')===$sceneId&&($e['expiry']??'')!=='rests')$e['remainingTurns']--;return $e;},$state['attackEnhancements']??[]),static fn($e)=>($e['remainingTurns']??0)>0));}
     if(!$manual&&(!($current['active']??false)||!($previous['active']??false)||($current['combatId']??'')!==($previous['combatId']??'')||($current['turnSerial']??0)<=($previous['turnSerial']??0)))return ['state'=>$state,'effects'=>[]];
     foreach($store['timedConditions'] as &$condition) {
         if($condition['sceneId']===$sceneId&&($condition['clockCombatId']??'')!==($current['combatId']??'')){$condition['clockCombatId']=$current['combatId']??'';$condition['lastTurnSerial']=-1;}
+        if($condition['sceneId']===$sceneId&&($condition['expiry']??'')==='end-next-turn'&&!$manual){$wasStarted=($condition['hasStarted']??false)===true;if(($current['order'][$current['currentIndex']??0]??'')===$condition['targetTokenId']&&($current['turnSerial']??0)>($condition['createdTurnSerial']??0)){$condition['hasStarted']=true;$condition['escapeWindowClosed']=false;}if(!$wasStarted)continue;}
         if($condition['sceneId']!==$sceneId||!$manual&&($condition['targetTokenId']!==($previous['order'][$previous['currentIndex']??0]??'')||$condition['lastTurnSerial']>=($current['turnSerial']??0)))continue;
         $condition['remainingTurns']--;$condition['lastTurnSerial']=$current['turnSerial']??0;if($condition['remainingTurns']<=0)$effects[]=['type'=>'condition.expire','condition'=>$condition];
     }unset($condition);$store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($entry)=>$entry['remainingTurns']>0));
+    applicationAdvanceFixedStructures($state,$previous,$effects,$context,$manual);
     foreach($store['devices'] as &$device) {
         if($device['status']!=='active'||$device['sceneId']!==$sceneId)continue;
         $owner=unitById($state,$device['creatorCharacterId'],false);$token=dsDeviceSource($state,$device);

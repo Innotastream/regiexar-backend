@@ -2,6 +2,8 @@
 declare(strict_types=1);
 require_once __DIR__ . '/device-state.php';
 require_once __DIR__ . '/attack-enhancements.php';
+require_once __DIR__ . '/terrain-barrier.php';
+require_once __DIR__ . '/tactical-effects.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -44,8 +46,9 @@ function validApplicationDamageOverTime(mixed $value): bool {
 }
 function validApplicationDamageTargeting(mixed $value): bool {
     return is_array($value) && ($value['mode'] ?? '') === 'area'
-        && is_int($value['radiusCells'] ?? null) && $value['radiusCells'] >= 1 && $value['radiusCells'] <= 20
-        && (!array_key_exists('origin', $value) || in_array($value['origin'], ['target', 'caster'], true))
+        && (is_int($value['radiusCells'] ?? null) || is_float($value['radiusCells'] ?? null)) && is_finite((float)$value['radiusCells']) && floor($value['radiusCells']*2)===$value['radiusCells']*2.0 && $value['radiusCells'] >= 0.5 && $value['radiusCells'] <= 20
+        && (!array_key_exists('origin', $value) || in_array($value['origin'], ['target', 'caster', 'point'], true))
+        && (!array_key_exists('singleTargetHalfMana', $value) || is_bool($value['singleTargetHalfMana']))
         && (!array_key_exists('affectCaster', $value) || is_bool($value['affectCaster']))
         && (!array_key_exists('affectAllies', $value) || is_bool($value['affectAllies']))
         && (!array_key_exists('affectEnemies', $value) || is_bool($value['affectEnemies']))
@@ -56,14 +59,30 @@ function applicationDamageAreaAffects(array $targeting, string $sourceId, string
     $allied = ($sourceController !== '') === ($targetController !== '');
     return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
+
+function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
+    if (!is_array($value) || !(is_int($value['x']??null)||is_float($value['x']??null)) || !(is_int($value['y']??null)||is_float($value['y']??null))
+        || !is_finite((float)$value['x']) || !is_finite((float)$value['y']) || $value['x']<0 || $value['x']>100 || $value['y']<0 || $value['y']>100) return null;
+    return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
+}
 function validApplicationAbilityEffects(array $entry): bool {
+    if(isset($entry['manualD100'])&&(!is_bool($entry['manualD100'])||$entry['manualD100']&&!in_array($entry['effect']??'',['movement','healing','enhancement','summoning','metamorphosis'],true)))return false;
+    try{applicationOutcomeMessages($entry['outcomeMessages']??null);}catch(RuntimeException){return false;}
     if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement', 'enhancement'], true)
         || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
     if (array_key_exists('noDefensePossible', $entry) && (!is_bool($entry['noDefensePossible'])
         || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
+    if(array_key_exists('tacticalEffect',$entry)&&applicationTacticalEffect($entry['tacticalEffect'])===null)return false;
+    foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(array_key_exists($k,$entry)&&!is_bool($entry[$k]))return false;
+    if(isset($entry['weaponDamageMode'])&&!in_array($entry['weaponDamageMode'],['add','replace'],true))return false;
+    if(array_key_exists('terrainBarrier',$entry)&&(($entry['effect']??'damage')!=='damage'||applicationTerrainBarrier($entry['terrainBarrier'])===null))return false;
     if (!validApplicationAbilityCastingFields($entry)) return false;
+    if(array_key_exists('rangeCells',$entry)&&(!is_numeric($entry['rangeCells'])||$entry['rangeCells']<0||$entry['rangeCells']>1000))return false;
+    if(array_key_exists('reach',$entry)&&!in_array($entry['reach'],['melee','reach','ranged'],true))return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
+    foreach (['formDurationTurns' => 1000, 'formBonusHp' => 1000000000] as $field => $maximum) if (array_key_exists($field, $entry)
+        && ($effect !== 'metamorphosis' || !is_int($entry[$field]) || $entry[$field] < 0 || $entry[$field] > $maximum)) return false;
     if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device', 'enhancement'], true)) return false;
     foreach (['projectile','useWeaponDamage'] as $key) if (isset($entry[$key]) && !is_bool($entry[$key])) return false;
     try {
@@ -102,9 +121,16 @@ function applicationAbilityEffectFields(array $entry): array {
     if (in_array($effect, ['damage', 'healing', 'movement', 'enhancement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
         $conditions['attackEnhancement'] = applicationAttackEnhancement($entry['attackEnhancement']);
     if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
-    if(($entry['useWeaponDamage']??false)===true) $conditions['useWeaponDamage']=true;
+    if(is_numeric($entry['rangeCells']??null)&&$entry['rangeCells']>0)$conditions['rangeCells']=$entry['rangeCells'];
+    if(in_array($entry['reach']??'', ['melee','reach','ranged'],true))$conditions['reach']=$entry['reach'];
+    if(!empty($entry['manualD100']))$conditions['manualD100']=true;
+    if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
+    if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
     if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
+    if(applicationTacticalEffect($entry['tacticalEffect']??null))$conditions['tacticalEffect']=applicationTacticalEffect($entry['tacticalEffect']);
+    foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(($entry[$k]??false)===true)$conditions[$k]=true;
+    if(applicationTerrainBarrier($entry['terrainBarrier']??null))$conditions['terrainBarrier']=applicationTerrainBarrier($entry['terrainBarrier']);
     if(dsRider($entry['conditionRider']??null)) $conditions['conditionRider']=dsRider($entry['conditionRider']);
     if($effect==='device') return [...$casting,...$cue,...$conditions,'effect'=>'device','device'=>dsDefinition($entry['device'])];
     if (in_array($effect, ['damage', 'complex'], true) && ($entry['noDefensePossible'] ?? false) === true) $conditions['noDefensePossible'] = true;
@@ -122,13 +148,16 @@ function applicationAbilityEffectFields(array $entry): array {
     if ($effect === 'movement') return [...$casting, ...$cue, ...$conditions, 'effect' => 'movement'];
     if ($effect === 'summoning') return [...$casting, ...$cue, ...$conditions, 'effect' => 'summoning', 'summonLinkedTokenId' => (string) ($entry['summonLinkedTokenId'] ?? '')];
     if ($effect === 'healing') return [...$casting, ...$cue, ...$conditions, 'effect' => 'healing', 'healingFormula' => (string) ($entry['healingFormula'] ?? '1d6')];
-    if ($effect === 'metamorphosis') return [...$casting, ...$cue, ...$conditions, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? '')];
+    if ($effect === 'metamorphosis') return [...$casting, ...$cue, ...$conditions, 'effect' => 'metamorphosis', 'formCharacterId' => (string) ($entry['formCharacterId'] ?? ''),
+        ...(($entry['formDurationTurns'] ?? 0) > 0 ? ['formDurationTurns' => $entry['formDurationTurns']] : []),
+        ...(($entry['formBonusHp'] ?? 0) > 0 ? ['formBonusHp' => $entry['formBonusHp']] : [])];
     $parts = applicationDamageComponents($entry['damageComponents'] ?? []);
     return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : []),
         ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : []),
         ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => [
             'mode' => 'area', 'radiusCells' => $entry['damageTargeting']['radiusCells'],
             'origin' => $entry['damageTargeting']['origin'] ?? 'target',
+            ...(($entry['damageTargeting']['singleTargetHalfMana']??false)===true?['singleTargetHalfMana'=>true]:[]),
             'affectCaster' => $entry['damageTargeting']['affectCaster'] ?? true,
             'affectAllies' => $entry['damageTargeting']['affectAllies'] ?? true,
             'affectEnemies' => $entry['damageTargeting']['affectEnemies'] ?? true]] : [])];
@@ -208,6 +237,8 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
+        if (($entry['effect'] ?? $old['effect'] ?? '') === 'metamorphosis') foreach (['formDurationTurns', 'formBonusHp'] as $field)
+            if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (!array_key_exists('completionCue', $entry) && array_key_exists('completionCue', $old)) $entry['completionCue'] = $old['completionCue'];
         if (($entry['effect'] ?? $old['effect'] ?? '') === 'complex' && is_array($old['workflow'] ?? null)

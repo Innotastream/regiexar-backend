@@ -12,8 +12,8 @@ function auditCombat(string $name, callable $check): void {
 }
 function auditPreparedFixture(): MemoryConnection {
     $db = fixture();
-    $db->put('scene:scene-two', ['id' => 'scene-two', 'name' => 'Préparation privée']);
-    $db->put('map:scene-two', ['activeLayerId' => 'ground', 'gridSize' => 50]);
+    $db->put('scene:scene-two', ['metadata'=>['id' => 'scene-two', 'name' => 'Préparation privée']]);
+    $db->put('map:scene-two', ['activeLayerId' => 'ground', 'gridSize' => 50,'naturalWidth'=>1600,'naturalHeight'=>900]);
     $db->put('initiative:scene-two', ['active' => false, 'round' => 1]);
     $db->put('token:scene-two:token-monster', $db->payload('token:scene-one:token-monster'));
     $character = $db->payload('character:character-player');
@@ -180,8 +180,8 @@ auditCombat('Complex casting cannot answer its own opponent', function (): void 
     ]]];
     $execution = createApplicationComplexAbilityExecution(['id' => 'execution-audit', 'sceneId' => 'scene-one', 'sourceTokenId' => 'caster',
         'controllerAccountId' => 'account-caster', 'ability' => $ability]);
-    $tokens = [['id' => 'target', 'controllerAccountId' => 'account-defender']];
-    $context = ['actor' => ['id' => 'account-caster', 'role' => 'player'], 'tokens' => $tokens];
+    $tokens = [['id'=>'caster','x'=>20,'y'=>50],['id' => 'target','x'=>25,'y'=>50, 'controllerAccountId' => 'account-defender']];
+    $context = ['actor' => ['id' => 'account-caster', 'role' => 'player'], 'tokens' => $tokens,'map'=>['naturalWidth'=>1600,'naturalHeight'=>900,'gridSize'=>50]];
     $execution = applyApplicationComplexAbilityCommand($execution, ['action' => 'select-targets', 'expectedRevision' => 1, 'allocations' => [['tokenId' => 'target', 'count' => 1]]], $context);
     $rolled = false; $context['roll'] = static function () use (&$rolled): array { $rolled = true; return ['rawD100' => 25, 'total' => 25]; };
     try { applyApplicationComplexAbilityCommand($execution, ['action' => 'defense-roll', 'expectedRevision' => 2, 'targetTokenId' => 'target'], $context); }

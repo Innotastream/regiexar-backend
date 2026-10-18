@@ -119,7 +119,7 @@ $character = $db->payload('character:character-player'); $character['resources']
 requireTactical((runCommand($db, 'light.carry', $take)->body['code'] ?? '') === 'light_carrier_incapacitated',
     'A defeated unit cannot pick up a light.');
 
-$db = lightingFixture(['x' => 50.0]);
+$db = lightingFixture(['x' => 28.5]);
 $creatureTake = [
     'requestId' => 'creature-light-take-01', 'sceneId' => 'scene-one', 'layerId' => 'ground',
     'lightId' => 'portable-light', 'tokenId' => 'token-monster', 'carry' => true,

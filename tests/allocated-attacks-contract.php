@@ -14,9 +14,9 @@ $invalid=$ability['workflow']; $invalid['steps'][1]['hitMode']='cast';
 allocatedCheck(str_contains(applicationComplexAbilityWorkflowError($invalid),'statistique'), 'A cast still requires a real statistic.');
 $invalid=$ability['workflow']; $invalid['steps'][1]['damageComponents'][]=$invalid['steps'][1]['damageComponents'][0];
 allocatedCheck(str_contains(applicationComplexAbilityWorkflowError($invalid),'dégâts'), 'Duplicate damage types remain invalid.');
-$tokens=[['id'=>'source','name'=>'Source','stats'=>[]],...array_map(static fn(string $id):array=>['id'=>$id,'name'=>$id,'hp'=>1000,'maxHp'=>1000],['third','first','second'])];
+$tokens=[['id'=>'source','name'=>'Source','x'=>20,'y'=>50,'stats'=>[]],...array_map(static fn(string $id):array=>['id'=>$id,'name'=>$id,'x'=>25,'y'=>50,'hp'=>1000,'maxHp'=>1000],['third','first','second'])];
 $execution=createApplicationComplexAbilityExecution(['id'=>'execution-generic','sceneId'=>'scene','sourceTokenId'=>'source','controllerAccountId'=>'owner','ability'=>$ability,'now'=>1]);
-$context=['actor'=>['id'=>'owner','name'=>'Owner'],'tokens'=>$tokens,'now'=>4];
+$context=['actor'=>['id'=>'owner','name'=>'Owner'],'tokens'=>$tokens,'map'=>['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50],'now'=>4];
 $advance=static function(array $command,?array $attack=null) use (&$execution,$context):void {
     $execution=applyApplicationComplexAbilityCommand($execution,[...$command,'expectedRevision'=>$execution['revision']],[...$context,...($attack===null?[]:['attack'=>$attack])]);
 };

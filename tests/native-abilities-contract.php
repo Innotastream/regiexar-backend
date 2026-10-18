@@ -15,7 +15,7 @@ nativeCheck($execution['stepStates']['orbs']['value']===2,'A new condition witho
 nativeCheck(applicationComplexAbilityGainBleedingCharges([$execution],$gain)[0]['stepStates']['orbs']['value']===2,'No passive regeneration.');
 nativeCheck(applicationComplexAbilityGainBleedingCharges([$execution],[...$gain,'hpLost'=>5,'target'=>[...$target,'x'=>24.01]])[0]['stepStates']['orbs']['value']===2,'Four cells is the exact radius.');
 $command=['action'=>'counter-spend','expectedRevision'=>$execution['revision'],'optionId'=>'shield','targetTokenId'=>'target'];
-$context=['actor'=>['id'=>'owner','role'=>'player'],'tokens'=>[$source,$target],'combatActive'=>true,'currentTokenId'=>'target'];
+$context=['actor'=>['id'=>'owner','role'=>'player'],'tokens'=>[$source,$target],'map'=>$gain['map'],'combatActive'=>true,'currentTokenId'=>'target'];
 try { applyApplicationComplexAbilityCommand($execution,$command,$context);throw new RuntimeException('Other turns must refuse spending.'); }
 catch(ApplicationComplexAbilityException $e){nativeCheck($e->errorCode==='complex_ability_source_turn_required','Only the caster turn can consume orbs.');}
 $execution=applyApplicationComplexAbilityCommand($execution,$command,[...$context,'currentTokenId'=>'caster']);

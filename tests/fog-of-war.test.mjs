@@ -44,7 +44,7 @@ test("la projection masque les pions sous la brume tout en relayant les pings du
   assert.match(projection, /\$vision\['shared'\]/);
   assert.match(projection, /\$isolatedPlayerIds\[\$controllerId\]/);
   assert.match(projection, /\$pointIsHidden = static fn/);
-  assert.match(projection, /!\$owned && \$pointIsHidden/);
+  assert.match(projection, /!\$owned && !applicationTerrainBarrierPointVisible\(\$token,\$map,static fn\(\$x,\$y\)=>!\$pointIsHidden\(\$x,\$y\)\)/);
   assert.match(projection, /unset\(\$map\['layers'\]\)/);
   assert.match(projection, /unset\(\$map\['walls'\]\)/);
   assert.match(projection, /\$map\['fog'\] = \$fog/);

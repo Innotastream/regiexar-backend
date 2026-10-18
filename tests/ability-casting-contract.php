@@ -113,7 +113,9 @@ requireCasting(!applicationAbilitySourceDefeated(['hp' => 1, 'maxHp' => 100, 'he
 requireCasting(!applicationAbilitySourceDefeated(['hp' => 50, 'maxHp' => 100, 'healthOverride' => null, 'conditions' => ['Mort']]), 'An explicit cleared death override prevails over obsolete text');
 $initiative = ['active' => true, 'round' => 4];
 $plan = applicationAbilityCastingPlan($ability, $source, 'scene-one', $initiative, []);
-requireCasting($plan['manaCost'] === 8 && $plan['cooldownRounds'] === 3 && $plan['usedRound'] === 4, 'Casting cost and round were lost');
+requireCasting((float)$plan['manaCost'] === 8.0 && $plan['cooldownRounds'] === 3 && $plan['usedRound'] === 4, 'Casting cost and round were lost');
+requireCasting(applicationAbilityCastingPlan([...$ability,'manaCost'=>9],$source,'scene-one',$initiative,[],null,0.5)['manaCost']===4.5, 'La moitié d’un coût impair conserve sa fraction.');
+requireCasting(applicationAbilityCastingPlan($ability,$source,'scene-one',$initiative,[],null,0.5)['manaCost']===4, 'Un coût entier garde son type historique.');
 requireCasting($plan['statId'] === 'intelligence' && $plan['statLabel'] === 'Intelligence' && $plan['threshold'] === 62, 'Casting statistic must come from the authoritative source');
 requireCasting($plan['reducedFailureEnabled'] === true, 'The reduced-failure policy must come from the authoritative classic ability');
 requireCasting(applicationAbilityFailedCooldownRounds($plan, ['success' => false]) === 1, 'A failed checked classic ability must receive exactly one round');
@@ -237,7 +239,7 @@ requireCasting($explicitNone['statId'] === '' && $explicitNone['threshold'] === 
 $timer = ['id' => 'timer-one', 'sceneId' => 'scene-one', 'abilityId' => 'ability-mixed', 'characterId' => 'character-one', 'tokenId' => '', 'readyRound' => 7];
 rejectsCasting(fn() => applicationAbilityCastingPlan($ability, $source, 'scene-one', $initiative, [$timer]), 'ability_on_cooldown');
 rejectsCasting(fn() => applicationAbilityCastingPlan($ability, array_replace($source, ['id' => 'token-second-occurrence']), 'scene-one', $initiative, [$timer]), 'ability_on_cooldown');
-rejectsCasting(fn() => applicationAbilityCastingPlan($ability, $source, 'scene-one', ['active' => false, 'round' => 4], [$timer]), 'ability_on_cooldown');
+requireCasting(applicationAbilityCastingPlan($ability, $source, 'scene-one', ['active' => false, 'round' => 4], [$timer])['cooldownRounds']===0, 'Hors combat un ancien timer en rounds ne bloque pas la compétence.');
 $ready = applicationAbilityCastingPlan($ability, $source, 'scene-one', ['active' => true, 'round' => 7], [$timer]);
 requireCasting($ready['usedRound'] === 7, 'Cooldown must expire exactly at its ready round');
 requireCasting(applicationAbilityCastingPlan($ability, $source, 'scene-one', $initiative, [array_replace($timer, ['abilityId' => 'another-ability'])])['abilityId'] === 'ability-mixed', 'Other abilities must not share a recharge');
