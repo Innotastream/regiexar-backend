@@ -29,12 +29,12 @@ function applicationApplyTacticalEffect(array $source,array $target,array $abili
         $marks[]=[...$e,'id'=>$id,'label'=>$ability['name'],'abilityId'=>$ability['id'],'targetTokenId'=>$target['id'],'active'=>$e['trigger']!=='after-target-attacks','combatId'=>($clock['active']??false)?($clock['combatId']??''):''];$source['predatoryMarks']=$marks;}
     return [$source,$target];
 }
-function applicationAdvanceTacticalTokens(array $tokens,array $before,array $clock):array {
+function applicationAdvanceTacticalTokens(array $tokens,array $before,array $clock,bool $manual=false):array {
     $ended=($before['active']??false)&&!($clock['active']??false);$advanced=($clock['active']??false)&&($before['active']??false)&&($clock['turnSerial']??0)>($before['turnSerial']??0);
-    if(!$ended&&!$advanced)return $tokens;
-    foreach($tokens as &$token){if($ended)unset($token['predatoryMarks'],$token['controlEffect']);if($advanced&&!empty($token['controlEffect'])){
+    if(!$ended&&!$advanced&&!$manual)return $tokens;
+    foreach($tokens as &$token){if($ended)unset($token['predatoryMarks'],$token['controlEffect']);if(($advanced||$manual)&&!empty($token['controlEffect'])){
         $c=$token['controlEffect'];$left=$before['order'][$before['currentIndex']??0]??'';$entered=$clock['order'][$clock['currentIndex']??0]??'';
-        if(($c['hasStarted']??false)&&$left===$token['id'])$c['remainingTurns']=max(0,($c['remainingTurns']??1)-1);if($c['remainingTurns']<=0)unset($token['controlEffect']);else{if($entered===$token['id'])$c['hasStarted']=true;$token['controlEffect']=$c;}
+        if($manual||($c['hasStarted']??false)&&$left===$token['id'])$c['remainingTurns']=max(0,($c['remainingTurns']??1)-1);if($c['remainingTurns']<=0)unset($token['controlEffect']);else{if($manual||$entered===$token['id'])$c['hasStarted']=true;$token['controlEffect']=$c;}
     }}unset($token);return $tokens;
 }
 function applicationMarkAttackedTarget(array $target,string $attacker):array {foreach($target['predatoryMarks']??[] as $i=>$m)if($m['trigger']==='after-target-attacks'&&$m['targetTokenId']===$attacker)$target['predatoryMarks'][$i]['active']=true;return $target;}

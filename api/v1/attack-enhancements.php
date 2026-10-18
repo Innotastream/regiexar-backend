@@ -90,7 +90,12 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
     $activity['attackEnhancements'] = $effects;
 }
 
-function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, array $previous, array $initiative): array {
+function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, array $previous, array $initiative, bool $manual = false): array {
+    if($manual){$remaining=[];foreach($effects as $effect){
+        if(($effect['sceneId']??'')!==$sceneId||($effect['expiry']??'')==='rests'){$remaining[]=$effect;continue;}
+        if(($effect['expiry']??'')==='after-next-turn'){if(empty($effect['hasStarted'])){$effect['hasStarted']=true;$remaining[]=$effect;}continue;}
+        $effect['remainingTurns']--;if($effect['remainingTurns']>0)$remaining[]=$effect;
+    }return $remaining;}
     if (($previous['active'] ?? false) === true && ($initiative['active'] ?? false) !== true)
         return array_values(array_filter($effects, static fn(array $effect): bool => $effect['sceneId'] !== $sceneId || ($effect['expiry']??'')==='rests'));
     if (($initiative['active'] ?? false) !== true || (int) ($initiative['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) return $effects;

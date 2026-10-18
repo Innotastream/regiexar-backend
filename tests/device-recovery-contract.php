@@ -94,4 +94,52 @@ requireDevice($resized['size']===80&&$resized['revision']===$station['revision']
 requireDevice($resized['mana']===$station['mana']&&$resized['definition']===$station['definition']&&$sizeDb->payload('items')===$beforeItems&&$sizeDb->payload('character:character-player')===$beforeCharacter,'Visual size does not change reserve, reach, stock or character');
 requireDevice(deviceCommand($sizeDb,'device.size',[...$sizing,'requestId'=>'size-native-stale-0001','size'=>20],$gm)->status===409,'A stale size menu cannot overwrite a newer device');
 
+$manual=new MemoryConnection(array_map(static fn(array $entry):array=>$entry['payload'],$gmFixture->domains));$manual->mediaObjects=$gmFixture->mediaObjects;
+$manual->put('devices',dsEmpty());$manual->put('items',['version'=>1,'templates'=>[],'instances'=>[]]);
+$clock=['active'=>false,'round'=>7,'turnSerial'=>97,'order'=>[],'currentIndex'=>0,'combatId'=>'old-combat'];$manual->put('initiative:scene-one',$clock);
+$c=$manual->payload('character:character-player');$c['resources']['hp']=100;$c['resources']['maxHp']=100;$manual->put('character:character-player',$c);
+$monster=$manual->payload('token:scene-one:token-monster');$monster=array_replace($monster,['hp'=>100,'maxHp'=>100,'armorCategory'=>'special','armor'=>20,'layerId'=>'upper','conditions'=>['Étourdi'],'condition'=>'Étourdi',
+ 'controlEffect'=>['version'=>1,'id'=>'manual-control','label'=>'Contrôle fictif','controllerId'=>'account-player','sourceTokenId'=>'token-player','remainingTurns'=>1,'hasStarted'=>false,'createdTurnSerial'=>97]]);$manual->put('token:scene-one:token-monster',$monster);
+$clone=[...$monster,'id'=>'manual-clone','characterId'=>null,'followCharacter'=>false,'controllerPlayerId'=>'account-player','hp'=>50,'maxHp'=>50,'layerId'=>'ground','conditions'=>[],'condition'=>''];unset($clone['controlEffect']);
+$manual->put('token:scene-one:manual-clone',$clone);$index=$manual->payload('token-index:scene-one');$index['order'][]='manual-clone';$manual->put('token-index:scene-one',$index);
+$activity=$manual->payload('activity');$activity['damageOverTime']=[];$activity['attackEnhancements']=[];
+$dot=['id'=>'manual-dot','sceneId'=>'scene-one','targetTokenId'=>'token-monster','label'=>'Poison','formula'=>'10','damageType'=>'physical','remainingTurns'=>3,'combatId'=>'old-combat','lastTurnSerial'=>97];
+$activity['damageOverTime']=[$dot,[...$dot,'id'=>'manual-stack','formula'=>'7','damageType'=>'ignore'],[...$dot,'id'=>'manual-clone-dot','targetTokenId'=>'manual-clone','formula'=>'4','damageType'=>'ignore'],
+ [...$dot,'id'=>'manual-immune-dot','targetTokenId'=>'token-player'],[...$dot,'id'=>'private-dot','sceneId'=>'unrelated-scene']];
+$effect=['id'=>'manual-buff','sceneId'=>'scene-one','holder'=>'character:character-player','targetTokenId'=>'token-player','abilityId'=>'manual-buff','label'=>'Bonus fictif','mode'=>'stats','bonuses'=>['force'=>5],'turns'=>3,'remainingTurns'=>3];
+$activity['attackEnhancements']=[$effect,[...$effect,'id'=>'manual-immunity','mode'=>'immunity','family'=>'poison'],[...$effect,'id'=>'manual-rest','expiry'=>'rests','remainingTurns'=>999,'remainingShortRests'=>2],
+ [...$effect,'id'=>'manual-next','mode'=>'echo','expiry'=>'after-next-turn','hasStarted'=>false,'remainingTurns'=>1,'formula'=>'1','damageType'=>'ignore'],[...$effect,'id'=>'other-buff','sceneId'=>'unrelated-scene']];
+$manual->put('activity',$activity);$devices=dsEmpty();$devices['timedConditions']=[['id'=>'manual-condition','sceneId'=>'scene-one','targetTokenId'=>'token-monster','label'=>'Étourdi','remainingTurns'=>3,'lastTurnSerial'=>97,'introduced'=>true]];$manual->put('devices',$devices);
+$beforeCharacter=$manual->payload('character:character-player');$beforeTable=$manual->payload('table');$beforeMap=$manual->payload('map:scene-one');
+$args=['requestId'=>'manual-scene-round-native-0001'];requireDevice(deviceCommand($manual,'scene.advance',$args)->status===403,'Only effective MJ can advance the manual scene clock');
+requireDevice(deviceCommand($manual,'scene.advance',$args,$gm)->status===200,'Native manual scene round without an initiative order');
+$current=$manual->payload('activity');$dots=array_column($current['damageOverTime'],null,'id');$enhancements=array_column($current['attackEnhancements'],null,'id');
+requireDevice($manual->payload('token:scene-one:token-monster')['hp']===85&&$manual->payload('token:scene-one:manual-clone')['hp']===46,'Both native poison stacks use their own damage type and clone HP independently');
+requireDevice($dots['manual-dot']['remainingTurns']===2&&$dots['manual-dot']['lastManualTurn']===1&&$dots['manual-stack']['remainingTurns']===2,'Native manual poison clock persists independently from old turnSerial');
+requireDevice(!isset($dots['manual-immune-dot'])&&$dots['private-dot']['remainingTurns']===3,'Poison immunity removes the poison and other scenes never tick');
+requireDevice($enhancements['manual-buff']['remainingTurns']===2&&$enhancements['manual-next']['hasStarted']===true&&$enhancements['manual-rest']['remainingShortRests']===2&&$enhancements['other-buff']['remainingTurns']===3,'Buff expiry advances by its own rule while rests and other scenes stay unchanged');
+requireDevice(!isset($manual->payload('token:scene-one:token-monster')['controlEffect'])&&$manual->payload('devices')['timedConditions'][0]['remainingTurns']===2,'Mental control expires after one complete manual turn and timed states advance: '.json_encode(['control'=>$manual->payload('token:scene-one:token-monster')['controlEffect']??null,'conditions'=>$manual->payload('devices')['timedConditions']]));
+requireDevice($manual->payload('character:character-player')===$beforeCharacter&&$manual->payload('table')===$beforeTable&&$manual->payload('map:scene-one')===$beforeMap&&$manual->payload('initiative:scene-one')===$clock,'Manual turn changes no personal costs, broadcast, map settings or initiative');
+$persisted=$manual->domains;requireDevice(deviceCommand($manual,'scene.advance',$args,$gm)->body['deduplicated']===true&&$manual->domains===$persisted,'Native manual replay repeats neither poison damage nor timer advances');
+$resumed=new MemoryConnection(array_map(static fn(array $entry):array=>$entry['payload'],$persisted));$resumed->mediaObjects=$manual->mediaObjects;
+requireDevice(deviceCommand($resumed,'scene.advance',$args,$gm)->body['deduplicated']===true&&$resumed->payload('token:scene-one:manual-clone')['hp']===46,'Manual receipt is read from persisted domains after reconstruction');
+requireDevice(deviceCommand($resumed,'scene.advance',['requestId'=>'manual-scene-round-native-0002'],$gm)->status===200,'Next native manual scene round');
+$after=$resumed->payload('activity');requireDevice(!in_array('manual-next',array_column($after['attackEnhancements'],'id'),true)&&$resumed->payload('token:scene-one:token-monster')['hp']===70,'End-next-turn buff expires on the second passage and independent poison stacks tick again');
+$manualStore=$resumed->payload('devices');$manualStore['manualTurns']['private-clock']=91;
+foreach([null,['id'=>'account-player'],['id'=>'other-account']] as $viewer){$public=publicDeviceStore($manualStore,$viewer,[],['sceneId'=>'scene-one','layerId'=>'ground'],static fn()=>false);requireDevice($public['manualTurns']===['scene-one'=>2],'Only the current scene manual counter is public for Player and Stream');}
+$pausedClock=publicDeviceStore($manualStore,null,[],['sceneId'=>'scene-one','layerId'=>'ground','paused'=>true],static fn()=>false);requireDevice(json_encode($pausedClock['manualTurns'])==='{}','A paused table does not expose private manual round changes');
+$trusted=$resumed->domains['token:scene-one:token-monster'];$forged=$trusted['payload'];$forged['controlEffect']=$monster['controlEffect'];$forged['appearanceState']=['active'=>true,'image'=>'/media/private'];$forged['predatoryMarks']=[['id'=>'forged-mark']];$forged['name']='Legitimate edit';
+$safe=prepareApplicationDomainUpsert('token:scene-one:token-monster',$forged,$trusted,true)['payload'];
+requireDevice(!isset($safe['controlEffect'])&&!isset($safe['appearanceState'])&&!isset($safe['predatoryMarks'])&&$safe['name']==='Legitimate edit','Stale MJ PATCH cannot resurrect or forge an expired control, appearance or mark');
+$protected=$trusted;$protected['payload']['controlEffect']=$monster['controlEffect'];$protected['payload']['appearanceState']=['active'=>true,'image'=>'/media/abcdefghijklmnopqrstuvwx'];$protected['payload']['predatoryMarks']=[['id'=>'real-mark']];
+$incoming=$protected['payload'];unset($incoming['controlEffect'],$incoming['appearanceState'],$incoming['predatoryMarks']);$incoming['name']='Another edit';
+$safe=prepareApplicationDomainUpsert('token:scene-one:token-monster',$incoming,$protected,true)['payload'];requireDevice(isset($safe['controlEffect'],$safe['appearanceState'],$safe['predatoryMarks']),'Client PATCH cannot revoke authoritative tactical effects');
+$internal=prepareApplicationDomainUpsert('token:scene-one:token-monster',$incoming,$protected,false)['payload'];requireDevice(!isset($internal['controlEffect'],$internal['appearanceState'],$internal['predatoryMarks']),'Internal authority can persist legitimate tactical revocation');
+foreach([1,3] as $duration){
+ $immuneDb=new MemoryConnection(array_map(static fn(array $entry):array=>$entry['payload'],$gmFixture->domains));$immuneDb->mediaObjects=$gmFixture->mediaObjects;$immuneDb->put('devices',dsEmpty());$immuneDb->put('initiative:scene-one',$clock);
+ $victim=$immuneDb->payload('token:scene-one:token-monster');$victim['hp']=100;$victim['maxHp']=100;$immuneDb->put('token:scene-one:token-monster',$victim);
+ $a=$immuneDb->payload('activity');$a['damageOverTime']=[[...$dot,'id'=>'boundary-poison','formula'=>'7','damageType'=>'ignore']];$a['attackEnhancements']=[[...$effect,'id'=>'boundary-immunity','holder'=>'token:token-monster','targetTokenId'=>'token-monster','mode'=>'immunity','family'=>'poison','remainingTurns'=>$duration]];$immuneDb->put('activity',$a);
+ requireDevice(deviceCommand($immuneDb,'scene.advance',[],$gm)->status===200,'Manual immunity boundary advances through existing native damage engine');
+ requireDevice($immuneDb->payload('token:scene-one:token-monster')['hp']===($duration>1?100:93)&&count($immuneDb->payload('activity')['damageOverTime'])===($duration>1?0:1),'Active or expiring immunity has the same order as an ordinary combat turn');
+}
 echo json_encode(['ok'=>true,'checks'=>$deviceChecks],JSON_UNESCAPED_UNICODE).PHP_EOL;

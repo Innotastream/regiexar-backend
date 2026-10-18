@@ -10,6 +10,7 @@ require_once __DIR__.'/morale-conditions.php';
 require_once __DIR__.'/passive-abilities.php';
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/metamorphosis.php';
+require_once __DIR__.'/attack-enhancements.php';
 require_once __DIR__.'/device-items.php';
 
 // Native PHP counterpart of public/device-state.js. Storage and dice are
@@ -510,7 +511,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
 function applicationAdvanceDevices(array $state,array $previous,array $context): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
     $effects=[...$effects,...applicationAdvanceMetamorphoses($state,$previous,($context['manual']??false)===true)];
-    $state['map']['tokens']=applicationAdvanceTacticalTokens($state['map']['tokens']??[],$previous,$current);
+    $state['map']['tokens']=applicationAdvanceTacticalTokens($state['map']['tokens']??[],$previous,$current,($context['manual']??false)===true);
     if(($previous['active']??false)===true&&($current['active']??false)!==true){
         $state=applicationFinishCombatRounds($state,$sceneId,$previous);$store=&$state['devices'];
         foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId)$effects[]=['type'=>'condition.expire','condition'=>$condition];
@@ -519,7 +520,7 @@ function applicationAdvanceDevices(array $state,array $previous,array $context):
         return ['state'=>$state,'effects'=>$effects];
     }
     $manual=($context['manual']??false)===true;
-    if($manual){$store['manualTurns'][$sceneId]=($store['manualTurns'][$sceneId]??0)+1;$state['attackEnhancements']=array_values(array_filter(array_map(static function($e)use($sceneId){if(($e['sceneId']??'')===$sceneId&&($e['expiry']??'')!=='rests')$e['remainingTurns']--;return $e;},$state['attackEnhancements']??[]),static fn($e)=>($e['remainingTurns']??0)>0));}
+    if($manual){$store['manualTurns'][$sceneId]=($store['manualTurns'][$sceneId]??0)+1;$state['attackEnhancements']=applicationAdvanceAttackEnhancements($state['attackEnhancements']??[],$sceneId,$previous,$current,true);}
     if(!$manual&&(!($current['active']??false)||!($previous['active']??false)||($current['combatId']??'')!==($previous['combatId']??'')||($current['turnSerial']??0)<=($previous['turnSerial']??0)))return ['state'=>$state,'effects'=>[]];
     foreach($store['timedConditions'] as &$condition) {
         if($condition['sceneId']===$sceneId&&($condition['clockCombatId']??'')!==($current['combatId']??'')){$condition['clockCombatId']=$current['combatId']??'';$condition['lastTurnSerial']=-1;}

@@ -91,7 +91,9 @@ jobs:
           php tests/device-owner-return.php
           php tests/inventory-library-global.php
       - name: Assistant classic abilities and repair
-        run: php tests/ability-assistant-contract.php
+        run: |
+          php tests/ability-assistant-contract.php
+          php tests/assistant-object-plan.php
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence
@@ -145,6 +147,8 @@ jobs:
           grep -Fq 'Local MySQL Chance reset integration passed.' mysql-luck-reset.log
           php tests/mysql-spirit-migration.php | tee mysql-spirit-migration.log
           grep -Fq 'Local MySQL Esprit migration integration passed.' mysql-spirit-migration.log
+          php tests/mysql-assistant-object-plan.php | tee mysql-assistant-object-plan.log
+          grep -Fq 'Local MySQL assistant object plan integration passed.' mysql-assistant-object-plan.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

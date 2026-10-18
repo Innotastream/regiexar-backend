@@ -95,7 +95,9 @@ function onlineDeviceCommands(PDO $db,array &$records,array &$pending,array $ide
         $context['visible']=static fn(array $point):bool=>!applicationFogCoversPoint($map['fog']??null,$point['x'],$point['y'])&&!applicationVisionCoversPoint($map['visionMask']??null,$point['x'],$point['y']);
     }
     $applied=applicationApplyDeviceCommand($state,$actor,(string)($arguments['command']??''),$arguments['arguments']??[],$context);
-    onlineDeviceFlush($applied['state'],$records,$pending);return $applied;
+    onlineDeviceFlush($applied['state'],$records,$pending);
+    if(($arguments['command']??'')==='scene.advance'&&empty($applied['result']['deduplicated']))applyApplicationDamageOverTimeOnTurn($db,$records,$pending,$identity,['sceneId'=>$state['activeSceneId'],'turn'=>$applied['state']['devices']['manualTurns'][$state['activeSceneId']]]);
+    return $applied;
 }
 function onlineDeviceRememberResult(array &$records,array &$pending,string $requestId,array $result): void {
     $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());
@@ -301,5 +303,6 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
     $requests=[];foreach($store['craftRequests']??[] as $request)if(isset($own[$request['characterId']])){$request['abilityName']=$request['ability']['name'];unset($request['ability'],$request['controllerAccountId']);$requests[]=$request;}
     $rolls=[];foreach($store['pendingRolls']??[] as $roll)if(isset($own[$roll['ownerId']])){unset($roll['ability'],$roll['args'],$roll['cast']['_devicePlan'],$roll['cast']['_deviceIdentity']);$rolls[]=$roll;}
     $conditions=($context['paused']??false)?[]:array_values(array_filter($store['timedConditions']??[],static fn($entry)=>$entry['sceneId']===$context['sceneId']&&in_array($entry['targetTokenId'],$context['visibleTokenIds']??[],true)));
-    return ['version'=>1,'devices'=>$devices,'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[]];
+    $sceneId=$context['sceneId']??'';$manualTurn=$store['manualTurns'][$sceneId]??0;
+    return ['version'=>1,'devices'=>$devices,'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[]];
 }

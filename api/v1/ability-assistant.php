@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/assistant-object-plan.php';
 
 const XAR_ABILITY_ASSISTANT_MAXIMUM_TURNS = 12;
 const XAR_ABILITY_ASSISTANT_MAXIMUM_PROMPT_BYTES = 6000;
@@ -95,6 +96,14 @@ function abilityAssistantSafeCharacterContext(array $character, string $existing
             'armorCategory' => (string) ($character['armorCategory'] ?? ''),
             'magicArmorCategory' => (string) ($character['magicArmorCategory'] ?? ''),
             'knownConditions' => array_slice(normalizeOnlineConditions($character['conditions'] ?? []), 0, 30),
+            'weaponAttacks' => array_values(array_map(static function(array $attack):array {
+                $row = array_intersect_key($attack,array_flip(['id','name','reach','projectile','finesse','naturalWeapon','targetCount','onHitConditions']));
+                // A bound weapon follows its physical instance at execution;
+                // do not feed a possibly stale saved formula to the model.
+                if (isset($attack['equipmentBinding'])) $row['dynamicEquipment'] = true;
+                else $row += array_intersect_key($attack,array_flip(['formula','damageType','damageComponents']));
+                return $row;
+            }, array_slice(array_values(array_filter(is_array($character['weaponAttacks'] ?? null) ? $character['weaponAttacks'] : [], 'is_array')),0,30))),
         ],
         'mode' => is_array($existing) ? 'repair' : 'create',
         'existingAbility' => $existing,
@@ -143,6 +152,7 @@ function abilityAssistantConversationPayload(array $row): array
         'title' => (string) $row['title'],
         'mode' => in_array($context['mode'] ?? '', ['repair', 'help'], true) ? (string) $context['mode'] : 'create',
         'existingAbilityId' => (string) ($context['existingAbility']['id'] ?? ''),
+        'objectContext' => ['character'=>$context['character'] ?? null,'objectTemplates'=>$context['objectTemplates'] ?? [],'canApplyObjectPlan'=>($context['canApplyObjectPlan'] ?? false) === true],
         'createdAt' => (string) $row['created_at'],
         'updatedAt' => (string) $row['updated_at'],
     ];
@@ -187,6 +197,10 @@ function createAbilityAssistantConversation(PDO $connection): never
         $items=applicationDomainPayload(applicationDomainRecords($connection,['items']),'items',['version'=>1,'templates'=>[],'instances'=>[]]);$counts=[];
         foreach($items['instances']??[] as $item)if($item['location']['kind']==='inventory'&&($item['location']['characterId']??'')===$characterId)$counts[$item['templateId']]=($counts[$item['templateId']]??0)+1;
         $context['ammunition']=array_values(array_map(static fn($template)=>['id'=>$template['id'],'name'=>mb_substr($template['name'],0,120),'quantity'=>$counts[$template['id']]??0],array_filter($items['templates']??[],static fn($template)=>$template['kind']==='object'&&isset($counts[$template['id']]))));
+        $objectRecords = applicationDomainRecords($connection, ['items','devices','character:'.$characterId]);
+        $context = array_replace($context, abilityAssistantObjectContext($objectRecords, $character, $identity));
+        // Known zero stocks are real choices as well. No quantity is created.
+        $context['ammunition'] = array_values(array_filter($context['objectTemplates'], static fn($template)=>!$template['deviceManaged'] && !isset($template['sourceAbilityId'])));
     }
     if ($help) $context['mode'] = 'help';
     $context['role'] = (string) $identity['effective_mode'];
@@ -364,7 +378,17 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
         $value['completionCue'] = normalizeApplicationAbilityCompletionCue(null);
         unset($value['image']);
     }
+    $plan = normalizeAssistantObjectPlan($value['objectPlan'] ?? null, $value, $context);
+    if ($plan !== null) foreach ($plan['links'] as $link) if ($link['kind'] === 'launcher-ammunition') {
+        $object = array_values(array_filter($plan['objects'], static fn($o)=>$o['ref']===$link['objectRef']))[0];
+        $templateId = $object['templateId'] ?? 'assistant-plan-'.$object['ref'];
+        $value['device']['ammoTemplateId'] = $templateId;
+        $context['ammunition'][] = ['id'=>$templateId];
+    }
     $effect = (string) ($value['effect'] ?? '');
+    if (isset($value['tacticalEffect']) && (($value['tacticalEffect']['kind'] ?? '') === 'coating' ? $effect !== 'enhancement' : $effect !== 'movement')) throw new InvalidArgumentException('Choisissez Buff pour la fiole, ou une capacité simple sans dégâts pour l’apparence, le contrôle et la marque.');
+    if (($value['manualD100'] ?? false) && !in_array($effect,['movement','healing','enhancement','summoning','metamorphosis'],true)) throw new InvalidArgumentException('Le d100 arbitré nécessite une capacité simple sans attaque.');
+    if (($value['maximumWeaponDamage'] ?? false) && !($value['useWeaponDamage'] ?? false)) throw new InvalidArgumentException('Le maximum nécessite les dégâts d’une arme.');
     if (!in_array($effect, ['damage', 'enhancement', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition', 'device'], true)) {
         throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
     }
@@ -377,9 +401,9 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
     }
     if ($effect === 'damage') {
         $parts = applicationDamageComponents($value['damageComponents'] ?? []);
-        if ($parts === []) throw new InvalidArgumentException('Ajoutez au moins une formule de dégâts typés.');
+        if ($parts === [] && ($value['useWeaponDamage'] ?? false) !== true) throw new InvalidArgumentException('Ajoutez au moins une formule de dégâts typés.');
         $value['formula'] = applicationCombinedDamageFormula($parts);
-        $value['damageType'] = $parts[0]['type'];
+        if ($parts !== []) $value['damageType'] = $parts[0]['type'];
     } else {
         $value['formula'] = '0';
     }
@@ -400,7 +424,58 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
             ? $workflowError
             : 'La proposition ne respecte pas le contrat de compétence.');
     }
-    return $normalized;
+    return $plan === null ? $normalized : [...$normalized, 'objectPlan'=>$plan];
+}
+
+function applyAbilityAssistantObjectPlan(PDO $connection, string $conversationId, string $messageId): never
+{
+    $identity = requireAbilityAssistantIdentity($connection);
+    if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm') sendError(403, 'Création et liaison d’objets réservées au MJ.', 'assistant_objects_forbidden');
+    $body = readJsonBody(1024);
+    if (!is_string($body['requestId'] ?? null) || preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $body['requestId']) !== 1 || array_diff(array_keys($body), ['requestId'])) sendError(400, 'Référence de proposition invalide.', 'invalid_assistant_request');
+    try { $result = executeAbilityAssistantObjectApplication($connection, $identity, $conversationId, $messageId); }
+    catch (Throwable $error) {
+        $status = in_array((int)$error->getCode(),[400,403,409],true) ? (int)$error->getCode() : 400;
+        sendError($status, $error->getMessage(), 'assistant_object_application');
+    }
+    sendJson(200, ['ok'=>true, ...$result]);
+}
+
+function executeAbilityAssistantObjectApplication(PDO $connection, array $identity, string $conversationId, string $messageId): array
+{
+    if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm') assistantObjectPlanFailure('Création et liaison d’objets réservées au MJ.',403);
+    $connection->beginTransaction();
+    try {
+        $clock = domainClockRecord($connection, true);
+        $conversation = requireOwnedAbilityAssistantConversation($connection, $identity, $conversationId);
+        $select = $connection->prepare('SELECT * FROM ability_assistant_messages WHERE id = :id LIMIT 1 FOR UPDATE');
+        $select->execute([':id'=>$messageId]); $message = $select->fetch();
+        if (!is_array($message) || ($message['conversation_id'] ?? '') !== $conversationId || ($message['status'] ?? '') !== 'succeeded' || ($message['assistant_status'] ?? '') !== 'proposal') assistantObjectPlanFailure('Cette proposition n’est plus applicable.',409);
+        $draft = json_decode((string) $message['draft_json'], true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($draft)) assistantObjectPlanFailure('Proposition absente.',409);
+        if (is_array($draft['applicationReceipt'] ?? null)) {
+            $result = [...$draft['applicationReceipt'], 'deduplicated'=>true];
+            $connection->commit(); return $result;
+        }
+        $characterId = (string) $conversation['character_id'];
+        $records = applicationDomainRecords($connection, ['character:'.$characterId,'items','devices']);
+        $prepared = prepareAbilityAssistantObjectApplication($records, $conversation, $draft, $identity);
+        $pending = [];
+        queueOnlineDomainUpsert($pending, $records, 'character:'.$characterId, $prepared['character']);
+        if (canonicalApplicationDomainValue($prepared['items']) !== canonicalApplicationDomainValue(applicationDomainPayload($records,'items'))) queueOnlineDomainUpsert($pending,$records,'items',$prepared['items']);
+        $revision = persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
+        // Receipt is locked with the message and committed with both domains;
+        // it remains valid after reconnect, even if a response is lost.
+        $result = [...$prepared['result'], 'revision'=>$revision];
+        $draft['applicationReceipt'] = $result;
+        $save = $connection->prepare('UPDATE ability_assistant_messages SET draft_json = :draft WHERE id = :id');
+        $save->execute([':draft'=>json_encode($draft,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR), ':id'=>$messageId]);
+        $connection->commit();
+        return [...$result, 'deduplicated'=>false];
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
+    }
 }
 
 function recordAbilityAssistantGap(PDO $connection, array $values): array
@@ -562,6 +637,7 @@ function abilityAssistantWorkerJobPayload(PDO $connection, array $message): arra
     foreach ($historyStatement->fetchAll() as $entry) {
         $history[] = ['role' => 'user', 'text' => (string) $entry['prompt']];
         $draft = $entry['draft_json'] === null ? null : json_decode((string) $entry['draft_json'], true);
+        if (is_array($draft)) unset($draft['applicationReceipt']);
         $history[] = [
             'role' => 'assistant', 'text' => (string) $entry['response_text'],
             'status' => (string) $entry['assistant_status'],
@@ -569,6 +645,7 @@ function abilityAssistantWorkerJobPayload(PDO $connection, array $message): arra
         ];
     }
     $context = json_decode((string) $conversation['context_json'], true);
+    if (is_array($context)) unset($context['_objectSnapshots']);
     return [
         'jobType' => 'ability-assistant', 'id' => (string) $message['id'],
         'conversationId' => (string) $message['conversation_id'], 'prompt' => (string) $message['prompt'],
@@ -618,9 +695,11 @@ function completeAbilityAssistantRegieJob(PDO $connection, string $id): never
         }
         if ($assistantStatus === 'proposal') {
             try {
-                $draft = normalizeAbilityAssistantDraft($conversation, $payload['ability'] ?? null);
+                $ability = $payload['ability'] ?? null;
+                if (is_array($ability) && isset($payload['objectPlan'])) $ability['objectPlan'] = $payload['objectPlan'];
+                $draft = normalizeAbilityAssistantDraft($conversation, $ability);
                 if (!is_array($draft)) throw new InvalidArgumentException('La proposition de compétence est absente.');
-            } catch (InvalidArgumentException $validationError) {
+            } catch (InvalidArgumentException|RuntimeException|TypeError|ValueError $validationError) {
                 $assistantStatus = 'blocked';
                 $reason = cleanAbilityAssistantText($validationError->getMessage(), 500, 'Motif de validation');
                 $response = 'Le brouillon proposé n’a pas été enregistré : ' . $reason
@@ -730,6 +809,10 @@ function handleAbilityAssistantRoute(PDO $connection, string $route, string $met
         requireMethod($method, ['GET', 'HEAD', 'POST']);
         if ($method === 'POST') createAbilityAssistantMessage($connection, $match[1]);
         listAbilityAssistantMessages($connection, $match[1], $headOnly);
+    }
+    if (preg_match('#^/api/v1/ability-assistant/conversations/([A-Za-z0-9_-]{22})/messages/([A-Za-z0-9_-]{24})/apply$#D', $route, $match) === 1) {
+        requireMethod($method, ['POST']);
+        applyAbilityAssistantObjectPlan($connection, $match[1], $match[2]);
     }
     if (preg_match('#^/api/v1/ability-assistant/regie/jobs/([A-Za-z0-9_-]{24})/complete$#D', $route, $match) === 1) {
         requireMethod($method, ['POST']);

@@ -2402,7 +2402,12 @@ function prepareApplicationDomainUpsert(
 ): ?array
 {
     if($protectAgainstStaleEntityWrite&&str_starts_with($key,'token:')&&is_array($payload)&&empty($current['payload']['fixedStructure']))unset($payload['fixedStructure']);
-    if(str_starts_with($key,'token:')&&is_array($payload)){$payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload));foreach(['appearanceState','controlEffect','predatoryMarks'] as $field)if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];}
+    if(str_starts_with($key,'token:')&&is_array($payload)){
+        $payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload));
+        if($protectAgainstStaleEntityWrite)foreach(['appearanceState','controlEffect','predatoryMarks'] as $field){
+            if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];else unset($payload[$field]);
+        }
+    }
     if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }
     if (str_starts_with($key, 'character:') && $protectAgainstStaleEntityWrite && is_array($payload) && is_array($current['payload'] ?? null)) {
         $oldLore = $current['payload']['lore'] ?? '';
@@ -3034,7 +3039,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
     ], $headOnly);
 }
 
-function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, array &$pending, array $identity): void
+function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, array &$pending, array $identity, ?array $manual = null): void
 {
     $turns = [];
     $endedScenes = [];
@@ -3049,8 +3054,9 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         }
         if (($next['active'] ?? false) !== true || (int) ($next['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) continue;
         $tokenId = $next['order'][$next['currentIndex'] ?? 0] ?? '';
-        if (validApplicationDomainIdentifier($tokenId, 80)) $turns[] = [$sceneId, (string) $tokenId, $next];
+        if (validApplicationDomainIdentifier($tokenId, 80)) $turns[] = [$sceneId, (string) $tokenId, $next, 0];
     }
+    if($manual!==null)$turns=[[(string)$manual['sceneId'],'',applicationDomainPayload($records,'initiative:'.$manual['sceneId']),(int)$manual['turn']]];
     if ($turns === [] && $endedScenes === []) return;
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
@@ -3075,10 +3081,11 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     foreach ($dots as $dot) {
         if (!is_array($dot) || isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) continue;
         $keep = true;
-        foreach ($turns as [$sceneId, $tokenId, $initiative]) {
-            if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId
-                || (($dot['combatId'] ?? '') !== '' && $dot['combatId'] !== ($initiative['combatId'] ?? ''))
-                || (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial']) continue;
+        foreach ($turns as [$sceneId, $tokenId, $initiative, $manualTurn]) {
+            if($manualTurn>0)$tokenId=(string)($dot['targetTokenId']??'');
+            if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId || ($manualTurn>0 ? (int)($dot['lastManualTurn']??0)>=$manualTurn :
+                (($dot['combatId'] ?? '') !== '' && $dot['combatId'] !== ($initiative['combatId'] ?? ''))
+                || (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial'])) continue;
             $key = onlineTokenDomainKey($sceneId, $tokenId);
             $records = array_replace($records, applicationDomainRecords($connection, [$key]));
             $target = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
@@ -3112,7 +3119,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);
-            $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
+            if($manualTurn>0)$dot['lastManualTurn']=$manualTurn;else $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
             if ($dot['remainingTurns'] === 0) $keep = false;
             break;
         }

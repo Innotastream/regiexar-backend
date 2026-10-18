@@ -52,4 +52,11 @@ morphCheck($db->payload('character:character-player')['resources']['hp']==40,'Fi
 $entry=['id'=>'test','name'=>'test','effect'=>'metamorphosis','formCharacterId'=>'character-form','formula'=>'0','castingStatId'=>''];
 foreach ([-1,1.5,1001,'5'] as $duration) morphCheck(!validApplicationAbilityEffects([...$entry,'formDurationTurns'=>$duration]),'Durée invalide rejetée');
 morphCheck(validApplicationAbilityEffects([...$entry,'formDurationTurns'=>5,'formBonusHp'=>150]),'Champs simples acceptés');
+$db=morphFixture();$clock=$db->payload('initiative:scene-one');$clock['active']=false;$clock['order']=[];$db->put('initiative:scene-one',$clock);
+$base=$db->payload('character:character-player');$base['abilities'][0]['formDurationTurns']=1;$db->put('character:character-player',$base);
+morphCheck(specialUse($db,'form','token-player')->status===200,'Manual one-turn transformation');
+$activity=$db->payload('activity');$activity['damageOverTime']=[['id'=>'manual-form-poison','sceneId'=>'scene-one','targetTokenId'=>'token-player','label'=>'Poison différé','formula'=>'7','damageType'=>'ignore','remainingTurns'=>3,'lastTurnSerial'=>97]];$db->put('activity',$activity);
+morphCheck(specialMechanics($db,'scene.advance',[])->status===200,'Manual transformation and poison share one authoritative turn');
+$returned=$db->payload('token:scene-one:token-player');morphCheck($returned['characterId']==='character-player'&&$returned['hp']===63&&$db->payload('character:character-player')['resources']['hp']===63,'Return settles temporary HP before one poison tick on normal HP');
+morphCheck($db->payload('activity')['damageOverTime'][0]['remainingTurns']===2&&$db->payload('activity')['actionTimers'][0]['restUseCount']===1,'Poison duration advances once without restoring long-rest transformation quota');
 echo json_encode(['ok'=>true,'checks'=>$morphChecks],JSON_THROW_ON_ERROR).PHP_EOL;
