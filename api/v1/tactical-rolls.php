@@ -14,8 +14,6 @@ function applicationRollUppercase(string $value): string {
 }
 
 function onlineStatFatigueDetails(array $source, string $statId, ?array $character = null): ?array {
-    if (!(str_starts_with($statId, 'character-stat-') || $statId === 'weapon-skill') || trim((string) ($source['characterId'] ?? '')) === ''
-        || ($source['followCharacter'] ?? true) === false || trim((string) ($source['linkedTokenId'] ?? '')) !== '') return null;
     $fatigue = normalizeApplicationFatigue($source['fatigue'] ?? null);
     $current = $fatigue['current'];
     $maximum = $fatigue['max'];
@@ -24,7 +22,7 @@ function onlineStatFatigueDetails(array $source, string $statId, ?array $charact
     $index = findEntryIndex(is_array($source['stats'] ?? null) ? $source['stats'] : [], $statId);
     if ($index < 0 || !is_numeric($source['stats'][$index]['value'] ?? null)) return null;
     $effective = max(1, min(100, (int) $source['stats'][$index]['value']));
-    $before = $effective > 0 ? min(100, $effective + $penalty) : null;
+    $before = !unitUsesCharacterSheet($source) ? max(0,min(100,(int)$source['stats'][$index]['value'])) : ($effective > 0 ? min(100, $effective + $penalty) : null);
     $key = substr($statId, strlen('character-stat-'));
     if ($statId === 'weapon-skill' && is_numeric($source['weaponSkillBefore'] ?? null)) {
         $before = max(0, min(100, (int) $source['weaponSkillBefore']));

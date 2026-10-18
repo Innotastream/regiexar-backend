@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/unit-authority.php';
 
 function equipmentFailure(string $message,int $status=409):never{throw new RuntimeException($message,$status);}
 function equipmentId(mixed $value):bool{return is_string($value)&&preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value)===1;}
@@ -18,12 +19,12 @@ function reconcileEquipmentEnchantments(array &$state):void {
         if(!$match)foreach($matches as $candidate)if($candidate['scene']['id']===$effect['sceneId']){$match=$candidate;break;}
         $match??=$matches[0]??null;
         if($match){$scene=$match['scene'];$token=$match['token'];if($scene['id']!==$effect['sceneId']||$token['id']!==$effect['targetTokenId']){
-            $effect['holder']=!empty($token['characterId'])&&($token['followCharacter']??true)!==false&&empty($token['linkedTokenId'])?'character:'.$token['characterId']:'token:'.$token['id'];
+            $effect['holder']=unitUsesCharacterSheet($token)?'character:'.$token['characterId']:'token:'.$token['id'];
             $effect['targetTokenId']=$token['id'];$effect['sceneId']=$scene['id'];$effect['combatId']=!empty($scene['initiative']['active'])?($scene['initiative']['combatId']??''):'';$effect['lastTurnSerial']=(int)($scene['initiative']['turnSerial']??0);
         }}$effects[]=$effect;
     }$state['attackEnhancements']=$effects;
 }
-function equipmentUnitId(array $unit):string{return ($unit['unitKind']??'')==='token'?(string)$unit['id']:(!empty($unit['characterId'])&&($unit['followCharacter']??true)!==false&&($unit['usesCharacterSheet']??true)!==false&&($unit['rollUsesCharacterSheet']??true)!==false&&empty($unit['independent'])&&empty($unit['independentClone'])&&empty($unit['linkedTokenId'])?(string)$unit['characterId']:(isset($unit['resources'])?(string)$unit['id']:(!empty($unit['id'])?'unit_'.$unit['id']:'')));}
+function equipmentUnitId(array $unit):string{return ($unit['unitKind']??'')==='token'?(string)$unit['id']:(unitUsesCharacterSheet($unit)?(string)$unit['characterId']:(isset($unit['resources'])?(string)$unit['id']:unitIdForToken($unit)));}
 function normalizeEquipment(mixed $value):?array {
     if($value===null)return null;
     if(!is_array($value)||($value['version']??1)!==1||!in_array($value['kind']??'', ['weapon','shield'],true)||!in_array($value['hands']??null,[1,2],true)||($value['kind']==='shield'&&$value['hands']!==1))equipmentFailure('Choisissez une arme à une ou deux mains, ou un bouclier à une main.',400);
@@ -36,7 +37,7 @@ function normalizeEquipmentLoadouts(mixed $value=[]):array {
     if(!is_array($value)||count($value)>1000)equipmentFailure('Les équipements sont invalides.',400);
     $result=[];
     foreach($value as $unitId=>$loadout){
-        if(!equipmentId($unitId)||!is_array($loadout)||!is_array($loadout['sets']??null)||count($loadout['sets'])>30||!array_is_list($loadout['sets'])||!is_array($loadout['equippedItemIds']??null)||!array_is_list($loadout['equippedItemIds'])||count($loadout['equippedItemIds'])>2||count(array_unique($loadout['equippedItemIds']))!==count($loadout['equippedItemIds']))equipmentFailure('La configuration des mains est invalide.',400);
+        if(!equipmentId((string)$unitId)||!is_array($loadout)||!is_array($loadout['sets']??null)||count($loadout['sets'])>30||!array_is_list($loadout['sets'])||!is_array($loadout['equippedItemIds']??null)||!array_is_list($loadout['equippedItemIds'])||count($loadout['equippedItemIds'])>2||count(array_unique($loadout['equippedItemIds']))!==count($loadout['equippedItemIds']))equipmentFailure('La configuration des mains est invalide.',400);
         foreach($loadout['equippedItemIds'] as $id)if(!equipmentId($id))equipmentFailure('La configuration des mains est invalide.',400);
         $sets=[];
         foreach($loadout['sets'] as $set){

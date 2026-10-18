@@ -126,7 +126,7 @@ function normalizeItemStore(?array $value): array {
         }
         $instances[] = $normalized;
     }
-    $catalog=null;if(isset($value['inventoryCatalog'])){if(!is_array($value['inventoryCatalog'])||count($value['inventoryCatalog'])>1000)itemFailure('Catalogue des stocks invalide.');$catalog=[];foreach($value['inventoryCatalog'] as $unitId=>$entryIds){if(!itemId($unitId)||!is_array($entryIds)||!array_is_list($entryIds)||count($entryIds)>200||count(array_unique($entryIds))!==count($entryIds))itemFailure('Catalogue des stocks invalide.');foreach($entryIds as $entryId)if(!is_string($entryId)||!isset($ids[$entryId]))itemFailure('Modèle du catalogue introuvable.');$catalog[$unitId]=$entryIds;}}
+    $catalog=null;if(isset($value['inventoryCatalog'])){if(!is_array($value['inventoryCatalog'])||count($value['inventoryCatalog'])>1000)itemFailure('Catalogue des stocks invalide.');$catalog=[];foreach($value['inventoryCatalog'] as $unitId=>$entryIds){if(!itemId((string)$unitId)||!is_array($entryIds)||!array_is_list($entryIds)||count($entryIds)>200||count(array_unique($entryIds))!==count($entryIds))itemFailure('Catalogue des stocks invalide.');foreach($entryIds as $entryId)if(!is_string($entryId)||!isset($ids[$entryId]))itemFailure('Modèle du catalogue introuvable.');$catalog[$unitId]=$entryIds;}}
     return ['version' => 1, 'templates' => $templates, 'instances' => $instances,...($catalog!==null?['inventoryCatalog'=>$catalog]:[]),...(isset($value['equipmentLoadouts'])?['equipmentLoadouts'=>normalizeEquipmentLoadouts($value['equipmentLoadouts'])]:[])];
 }
 

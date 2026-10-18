@@ -3,10 +3,10 @@ declare(strict_types=1);
 
 function unitFailure(string $message,int $status=409):never { throw new RuntimeException($message,$status); }
 function unitUsesCharacterSheet(array $token):bool {
-    return !empty($token['characterId'])&&($token['followCharacter']??true)!==false&&($token['usesCharacterSheet']??true)!==false
-        &&empty($token['independentClone'])&&empty($token['linkedTokenId']);
+    return is_string($token['characterId']??null)&&$token['characterId']!==''&&($token['followCharacter']??true)!==false&&($token['usesCharacterSheet']??true)!==false
+        &&($token['rollUsesCharacterSheet']??true)!==false&&empty($token['independent'])&&empty($token['independentClone'])&&empty($token['linkedTokenId']);
 }
-function unitIdForToken(array $token):string { return unitUsesCharacterSheet($token)?$token['characterId']:(!empty($token['id'])?'unit_'.$token['id']:''); }
+function unitIdForToken(array $token):string { return unitUsesCharacterSheet($token)?$token['characterId']:(is_string($token['id']??null)&&$token['id']!==''?'unit_'.$token['id']:''); }
 function unitMaps(array $state):array {
     $sceneId=$state['activeSceneId']??'';$maps=[['sceneId'=>$sceneId,'map'=>$state['map']??[]]];
     foreach($state['scenes']??[] as $scene)if($scene['id']!==$sceneId)$maps[]=['sceneId'=>$scene['id'],'map'=>$scene['combat']['map']??[]];

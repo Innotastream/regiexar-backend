@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/character-statistics.php';
+require_once __DIR__ . '/unit-authority.php';
 
 require_once __DIR__.'/active-items.php';
 function applicationAttackEnhancement(mixed $value): ?array {
@@ -40,8 +41,7 @@ function applicationAttackTriggersEnhancement(array $effect, array $attack): boo
 
 function applicationEnhancementHolder(array $source): string {
     return isset($source['resources']) && empty($source['characterId']) && ($source['unitKind']??'')!=='token' ? 'character:' . ($source['id'] ?? '')
-        : (!empty($source['characterId']) && ($source['followCharacter'] ?? true) !== false && empty($source['linkedTokenId'])
-            && ($source['usesCharacterSheet'] ?? true) !== false && ($source['independent'] ?? false) !== true
+        : (unitUsesCharacterSheet($source)
             ? 'character:' . $source['characterId'] : 'token:' . ($source['id'] ?? ''));
 }
 
@@ -214,22 +214,25 @@ function onlineFailedChainEchoes(PDO $connection, array &$records, array &$pendi
 }
 
 function applicationEnhancedStatRows(array $source,array $activity,string $sceneId,?array $character=null): array {
+    if($character===null&&!empty($source['statsIncludeActiveEffects']))return $source['stats']??[];
     $bonuses=[];$holder=applicationEnhancementHolder($source);
     foreach($activity['attackEnhancements']??[] as $effect){
         if(($effect['holder']??'')!==$holder||(($effect['sceneId']??'')!==$sceneId&&($effect['expiry']??'')!=='rests')||($effect['remainingTurns']??0)<=0||($effect['mode']??'')!=='stats'||applicationAttackEnhancement($effect)===null)continue;
         foreach($effect['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;
     }
     $rows=applicationUnitStatRows($source['stats']??[]);
+    $penalty=unitUsesCharacterSheet($source)?0:max(0,(int)floor(min(150,(float)($source['fatigue']['current']??0))-50));
     foreach($rows as &$row){
         $key=preg_replace('/^character-stat-/','',(string)($row['id']??''));
-        if(empty($bonuses[$key]))continue;
+        if(empty($bonuses[$key])&&$penalty===0)continue;
         $base=$row['value']??0;
         if($character!==null&&array_key_exists($key,$character['stats']??[])){
             $temporary=$character['temporaryStats'][$key]??null;
             $base=($temporary!==null&&$temporary!==''&&is_numeric($temporary)?(float)$temporary:(float)$character['stats'][$key])-max(0,(int)floor(($character['fatigue']['current']??0)-50));
         }
         if($character!==null&&$key==='mentalResistance')$base=(float)($character['resources']['mentalResistance']??0)-max(0,(int)floor(($character['fatigue']['current']??0)-50));
-        $row['value']=(string)max(1,min(100,(float)$base+$bonuses[$key]));$row['timedBonus']=$bonuses[$key];
+        if(!is_numeric($base))continue;
+        $row['value']=(string)max(1,min(100,(float)$base+($bonuses[$key]??0)-$penalty));if(!empty($bonuses[$key]))$row['timedBonus']=$bonuses[$key];
     }
     unset($row);return $rows;
 }

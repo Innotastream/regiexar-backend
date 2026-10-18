@@ -1184,7 +1184,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         if($details){$visible['weaponAttacks']=equipmentAttackRows($token['weaponAttacks']??[],$token,$fullState);$visible['enchantableWeapons']=array_map(static fn($item)=>['id'=>$item['id'],'name'=>$item['name']],enchantableWeapons($fullState,$token));}
         if ($details && !$paused) {
             $rows=applicationEnhancedStatRows($token,$fullState,(string)($fullState['activeSceneId']??''),unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??null):null);
-            if(array_filter($rows,static fn($row)=>!empty($row['timedBonus']))){$visible['stats']=$rows;$visible['statsIncludeActiveEffects']=true;}
+            if(array_filter($rows,static fn($row)=>!empty($row['timedBonus']))||!unitUsesCharacterSheet($token)&&($token['fatigue']['current']??0)>50){$visible['stats']=$rows;$visible['statsIncludeActiveEffects']=true;}
         }
         if (!$details) unset($visible['visionDistance'], $visible['darkVision']);
         if (is_array($token['resourcePulse'] ?? null)) {
