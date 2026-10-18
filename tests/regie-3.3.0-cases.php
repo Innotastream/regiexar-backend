@@ -59,21 +59,20 @@ function patchAbilityFixture(array $ability): MemoryConnection {
 }
 $db = patchAbilityFixture(['manaCost' => 0, 'hpCost' => 0, 'fatigueCost' => 3, 'cooldownRounds' => 0, 'reusableInTurn' => false, 'difficultyIncrement' => 0]);
 $character = $db->payload('character:character-player');
-$character['fatigue'] = ['current' => 149, 'max' => 150];
+$character['fatigue'] = ['current' => 147, 'max' => 150];
 $db->put('character:character-player', $character);
 $fatigueRequest = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player',
     'targetTokenId' => 'token-player', 'abilityId' => 'patch-ability', 'requestId' => 'fatigue-overflow-use-001'];
 $firstFatigueCast = runCommand($db, 'ability.use', $fatigueRequest);
 requireTactical($firstFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 150
-    && ($firstFatigueCast->body['cast']['fatigueGained'] ?? null) == 1,
-    'Fatigue reaches 150 without exceeding the ceiling or rejecting the authoritative cast.');
+    && ($firstFatigueCast->body['cast']['fatigueGained'] ?? null) == 3,
+    'A cost reaching exactly 150 is accepted in full.');
 $repeatFatigueCast = runCommand($db, 'ability.use', $fatigueRequest);
 requireTactical($repeatFatigueCast->status === 200 && $repeatFatigueCast->body['deduplicated']
     && $db->payload('character:character-player')['fatigue']['current'] == 150, 'A receipt does not charge fatigue twice.');
 $nextFatigueCast = runCommand($db, 'ability.use', [...$fatigueRequest, 'requestId' => 'fatigue-overflow-use-002']);
-requireTactical($nextFatigueCast->status === 200 && $db->payload('character:character-player')['fatigue']['current'] == 150
-    && ($nextFatigueCast->body['cast']['fatigueGained'] ?? null) == 0,
-    'A character at 150 may cast again without exceeding the limit.');
+requireTactical($nextFatigueCast->status === 409 && $db->payload('character:character-player')['fatigue']['current'] == 150,
+    'A new paid action exceeding 150 is refused before costs or dice.');
 $base = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-player', 'abilityId' => 'patch-ability'];
 $db = patchAbilityFixture([]);
 for ($i = 0; $i < 3; $i++) {

@@ -12,7 +12,7 @@ function applicationRequestConsumableCraft(array &$state,array &$store,array $ow
     if((applicationTacticalEffect($ability['tacticalEffect']??null)['kind']??'')!=='coating')dsError('Cette compétence ne fabrique pas de fiole.',400);
     foreach($store['craftRequests'] as $r)if(($r['kind']??'')==='consumable'&&$r['characterId']===$owner['id']&&$r['ability']['id']===$ability['id']&&$r['status']==='pending')dsError('Une tentative de fabrication attend déjà le MJ.');
     if(count($store['craftRequests'])>=1000)dsError('La liste des fabrications est pleine.');
-    $cast=($context['roll'])($state,$owner,$token,'character-stat-intelligence',0,$ability['name'].' · Création d’une fiole');
+    $cast=($context['roll'])($state,$owner,$token,applicationTacticalEffect($ability['tacticalEffect']??null)['craftStatId']??'character-stat-intelligence',0,$ability['name'].' · Création d’une fiole');
     $request=['id'=>($context['id'])('craft'),'kind'=>'consumable','status'=>'pending','characterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']??'',
         'ability'=>$ability,'sourceTokenId'=>$token['id'],'sceneId'=>$state['activeSceneId'],'quantity'=>1,'cost'=>0,'cast'=>$cast,'requestedAt'=>$context['now']];
     $store['craftRequests'][]=$request;return ['craftRequestId'=>$request['id'],'pendingGmApproval'=>true,'cast'=>$cast,'quantity'=>1,'manaCost'=>0,'fatigueCost'=>0];

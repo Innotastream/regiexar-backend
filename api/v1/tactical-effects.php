@@ -8,7 +8,7 @@ function applicationTacticalEffect(mixed $v):?array {
     return match($v['kind']){
         'mark'=>['version'=>1,'kind'=>'mark','attackBonus'=>$count($v['attackBonus']??null,20),'dodgeBonus'=>$count($v['dodgeBonus']??null,20),'trigger'=>($v['trigger']??'')==='after-target-attacks'?'after-target-attacks':'against-target'],
         'control'=>['version'=>1,'kind'=>'control','turns'=>$count($v['turns']??null,1,1)],
-        'coating'=>['version'=>1,'kind'=>'coating','craftStatId'=>'character-stat-intelligence'],
+        'coating'=>['version'=>1,'kind'=>'coating','craftStatId'=>in_array($v['craftStatId']??'',applicationStatIds(),true)?$v['craftStatId']:'character-stat-intelligence'],
         default=>['version'=>1,'kind'=>'appearance']};
 }
 function applicationTacticalController(array $token,string $fallback=''):string {return $token['controlEffect']['controllerId']??$fallback;}

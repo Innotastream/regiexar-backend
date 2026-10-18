@@ -1,3 +1,7 @@
+# Backend 0.18.44 — client exact 3.7.0
+
+Build client-3-7-0-inventaire-esprit-20261018-1. Statistique Esprit indépendante de Social, migration transactionnelle SQL 24 des fiches et des unités, équipements par exemplaire, sets et budget de mains, enchantement lié à une arme, attaques multiples et cercles de créatures. Les coûts de fatigue dépassant 150 sont refusés avant toute mutation. Les commandes conservent les droits, révisions et reçus persistants. La migration refuse les schémas futurs, sauvegarde les documents bruts et ne réécrit pas les stocks ni les résultats historiques. Le client exact attendu est 3.7.0. Les preuves de CI, migration de données et déploiement sont distinctes.
+
 # Backend 0.18.43 — client exact 3.6.3
 
 Build client-3-6-3-competences-portees-20261018-1. Autorité des compétences, unités indépendantes, effets temporaires, consommables, attaques multiples, distances depuis les bords et contacts pendant les déplacements. Aucun changement de schéma SQL. Le verrou candidat exige 3.6.3. Les preuves externes établissent séparément CI et déploiement.

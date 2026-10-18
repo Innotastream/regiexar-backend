@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/token-groups.php';
 require_once __DIR__ . '/strategy-break.php';
@@ -1389,6 +1390,11 @@ function validApplicationWeaponAttacks(mixed $value): bool
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
             || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
             || (array_key_exists('reach',$entry) && !in_array($entry['reach'],['melee','reach','ranged'],true))
+            || (array_key_exists('naturalWeapon',$entry)&&!is_bool($entry['naturalWeapon']))
+            || (array_key_exists('finesse',$entry)&&!is_bool($entry['finesse']))
+            || (isset($entry['equipmentBinding'])&&(!is_array($entry['equipmentBinding'])||!in_array($entry['equipmentBinding']['kind']??'',['item','set'],true)||!equipmentId($entry['equipmentBinding']['id']??null)))
+            || (array_key_exists('damageTargeting',$entry)&&!validApplicationDamageTargeting($entry['damageTargeting']))
+            || (array_key_exists('projectile',$entry)&&!is_bool($entry['projectile']))
             || (array_key_exists('targetCount',$entry) && (!is_int($entry['targetCount']) || $entry['targetCount']<1 || $entry['targetCount']>20))
             || (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions']))) {
             return false;
@@ -1716,7 +1722,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (isset($payload['characterSchemaVersion'])
-        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 9)) {
+        && (!is_int($payload['characterSchemaVersion']) || $payload['characterSchemaVersion'] < 0 || $payload['characterSchemaVersion'] > 10)) {
         return false;
     }
     if (isset($payload['conditions']) && !validApplicationConditions($payload['conditions'])) {
@@ -1777,9 +1783,11 @@ function applicationDomainFatiguePayload(string $key, array $payload): array
 {
     if (str_starts_with($key, 'character:')) {
         $payload['fatigue'] = normalizeApplicationFatigue($payload['fatigue'] ?? null);
+        $payload['stats'] = applicationCharacterStats($payload['stats']??[]);
     } elseif (str_starts_with($key, 'token:') && array_key_exists('fatigue', $payload)) {
         $payload['fatigue'] = normalizeApplicationFatigue($payload['fatigue']);
     }
+    if(str_starts_with($key,'token:')&&array_key_exists('stats',$payload))$payload['stats']=applicationUnitStatRows($payload['stats']);
     return $payload;
 }
 

@@ -368,8 +368,7 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
     if (!in_array($effect, ['damage', 'enhancement', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition', 'device'], true)) {
         throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
     }
-    $stats = ['', 'character-stat-force', 'character-stat-dexterity', 'character-stat-agility',
-        'character-stat-spiritSocial', 'character-stat-intelligence', 'character-stat-instinct'];
+    $stats = ['', ...applicationStatIds()];
     if (!in_array((string) ($value['castingStatId'] ?? ''), $stats, true)) {
         throw new InvalidArgumentException('La statistique de lancement n’est pas disponible.');
     }

@@ -87,6 +87,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
     if (($ability['effect'] ?? '') === 'enhancement') $plan['enhancementRecipient'] = $target;
+    if(($ability['attackEnhancement']['trigger']??'')==='enchanted-weapon')$plan['enchantment']=requireEnchantedWeapon(onlineEquipmentState($connection,$records,$pending,$sceneId,$map),$target,(string)($arguments['enchantedItemId']??''));
     $sourceVisibleToPlayers = $isGm && onlineGmTokenVisibleToPlayers($connection, $records, $table, $source, $sceneId);
     $cast = $continuation['cast'] ?? ($returning ? ['success' => true, 'manaSpent' => 0, 'cooldownRounds' => 0, 'remainingRounds' => 0, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null] : onlineAbilityCastingRoll($plan, $rules, $identity, $arguments, onlineTokenLayerId($source, $map), $character, $sourceVisibleToPlayers, (string) ($source['id'] ?? '')));
     if ($isGm && $sceneId !== onlineActiveSceneId($table) && is_array($cast['roll'] ?? null)) {

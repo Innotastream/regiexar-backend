@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__.'/complex-movement.php';
 require_once __DIR__.'/fixed-structures.php';
 require_once __DIR__.'/combat-round-lifecycle.php';
@@ -30,7 +31,7 @@ function dsNumber(mixed $value): bool { return (is_int($value) || is_float($valu
 function dsInt(mixed $value, int $minimum, int $maximum, int $fallback): int {
     return is_numeric($value) && (float)$value === (float)(int)$value && $value >= $minimum && $value <= $maximum ? (int)$value : $fallback;
 }
-function dsStats(): array { return array_map(static fn($stat) => 'character-stat-' . $stat, ['force','dexterity','agility','spiritSocial','intelligence','instinct']); }
+function dsStats(): array { return applicationStatIds(); }
 function dsCastingChoices(mixed $value): array { return is_array($value) ? array_values(array_unique(array_intersect($value, dsStats()))) : []; }
 function dsInfusion(mixed $value): ?array {
     if (!is_array($value)) return null;

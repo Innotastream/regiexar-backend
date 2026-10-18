@@ -87,6 +87,7 @@ jobs:
           php tests/simple-weapon-intimidation.php
           php tests/weapon-targeting.php
           php tests/web-structures.php
+          php tests/equipment-spirit-creatures.php
       - name: Assistant classic abilities and repair
         run: php tests/ability-assistant-contract.php
       - name: Authoritative tactical rolls and audio loops
@@ -140,6 +141,8 @@ jobs:
           grep -Fq 'Local MySQL domain schema integration passed.' mysql-domain-schema.log
           php tests/mysql-luck-reset.php | tee mysql-luck-reset.log
           grep -Fq 'Local MySQL Chance reset integration passed.' mysql-luck-reset.log
+          php tests/mysql-spirit-migration.php | tee mysql-spirit-migration.log
+          grep -Fq 'Local MySQL Esprit migration integration passed.' mysql-spirit-migration.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

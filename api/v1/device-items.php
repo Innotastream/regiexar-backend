@@ -52,10 +52,10 @@ function copyUnitInventory(array $state,array $source,array $target,callable $id
     if($targetId===''||in_array($targetId,array_column($state['characters']??[],'id'),true))itemFailure('L’identité du nouvel inventaire est invalide.',409);
     $inventory=array_values(array_filter($state['items']['instances'],static fn($item)=>$item['location']['kind']==='inventory'&&$item['location']['characterId']===$sourceId));
     if(count($state['items']['instances'])+count($inventory)>2000)itemFailure('Le stock copié dépasserait la limite d’objets.',429);
-    $unit=[...$target,'id'=>$targetId,'abilities'=>$target['abilities']??[]];$itemIds=[];
+    $unit=[...$target,'id'=>$targetId,'abilities'=>$target['abilities']??[]];$itemIds=[];$itemMap=[];
     foreach($inventory as $item){
         $copy=[...$item,'id'=>$id('item'),'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$targetId]];
-        $state['items']['instances'][]=$copy;$itemIds[]=$copy['id'];rememberLinkedItemStock($state['items'],$unit,$copy['templateId']);
+        $state['items']['instances'][]=$copy;$itemIds[]=$copy['id'];$itemMap[$item['id']]=$copy['id'];rememberLinkedItemStock($state['items'],$unit,$copy['templateId']);
         foreach($state['devices']['devices']??[] as $device)if(($device['itemId']??'')===$item['id']){
             if(count($state['devices']['devices'])>=1000)itemFailure('Le registre des dispositifs est plein.',429);
             $state['devices']['devices'][]=[...$device,'id'=>$id('device'),'itemId'=>$copy['id'],'revision'=>1,'status'=>'inventory',
@@ -63,5 +63,6 @@ function copyUnitInventory(array $state,array $source,array $target,callable $id
                 'sceneId'=>$state['activeSceneId'],'layerId'=>$target['layerId']??'ground','x'=>$target['x'],'y'=>$target['y']];break;
         }
     }
-    return ['items'=>normalizeItemStore($state['items']),'devices'=>empty($state['devices'])?null:$state['devices'],'itemIds'=>$itemIds];
+    $weaponAttacks=cloneEquipment($state['items'],$sourceId,$targetId,$itemMap,$target['weaponAttacks']??[],$id);
+    return ['items'=>normalizeItemStore($state['items']),'devices'=>empty($state['devices'])?null:$state['devices'],'itemIds'=>$itemIds,'weaponAttacks'=>$weaponAttacks];
 }

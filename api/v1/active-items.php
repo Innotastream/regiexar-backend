@@ -1,9 +1,10 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 function activeItemTag(mixed $v):bool{return is_string($v)&&preg_match('/^[a-z][a-z0-9-]{0,59}$/D',$v)===1;}
 function activeItemInt(mixed $v,int $min,int $max):bool{return is_int($v)&&$v>=$min&&$v<=$max;}
-function activeItemStats():array{return ['force','dexterity','agility','spiritSocial','intelligence','instinct','mentalResistance'];}
+function activeItemStats():array{return [...array_keys(applicationStatLabels()),'mentalResistance'];}
 function normalizeActiveItem(mixed $v):?array {
  if($v===null)return null;if(!is_array($v)||($v['version']??0)!==1)itemFailure('Ces effets d’objet proviennent d’une version plus récente.');
  if(!is_array($v['effects']??null)||count($v['effects'])>12)itemFailure('Choisissez au maximum douze effets pour cet objet.');$effects=[];

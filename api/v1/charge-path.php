@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 function applicationCharge(mixed $v): ?array {
     if (!$v) return null;
     if (($v['version'] ?? 1) !== 1) applicationComplexAbilityFail('Cette charge provient d’une version plus récente.', 'complex_ability_definition_invalid', 400);
     $integer = static fn($value, $min, $max, $fallback) => is_int($value) && $value >= $min && $value <= $max ? $value : $fallback;
     return ['version'=>1,'targetStepId'=>substr(preg_replace('/[^A-Za-z0-9_-]/','',(string)($v['targetStepId']??'')),0,80),
-        'statId'=>preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D',(string)($v['statId']??'')) ? $v['statId'] : 'character-stat-force',
+        'statId'=>preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D',(string)($v['statId']??'')) ? $v['statId'] : 'character-stat-force',
         'pathPenalty'=>$integer($v['pathPenalty']??null,0,100,10),'finalAttacks'=>$integer($v['finalAttacks']??null,1,12,2),'allowOpposition'=>($v['allowOpposition']??true)!==false,
         'finalCondition'=>dsRider($v['finalCondition']??null)];
 }

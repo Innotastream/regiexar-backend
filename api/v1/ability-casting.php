@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/ability-validation.php';
 require_once __DIR__ . '/combat-round-lifecycle.php';
@@ -41,20 +42,7 @@ function applicationAbilityCastingOwner(array $source): array {
     return ['characterId' => $characterId, 'tokenId' => $characterId === '' ? (string) ($source['id'] ?? '') : ''];
 }
 
-function applicationAbilityCastingStat(array $stats, string $statId): ?array {
-    foreach ($stats as $stat) if (is_array($stat) && ($stat['id'] ?? '') === $statId) return $stat;
-    $shortId = preg_replace('/^character-stat-/', '', $statId);
-    $labels = ['force' => 'force', 'dexterity' => 'dexterite', 'agility' => 'agilite', 'spiritSocial' => 'espritsocial', 'intelligence' => 'intelligence', 'instinct' => 'instinctperception'];
-    if (!array_key_exists($shortId, $labels)) return null;
-    foreach ($stats as $stat) if (is_array($stat) && in_array($stat['id'] ?? '', [$shortId, 'character-stat-' . $shortId], true)) return $stat;
-    foreach ($stats as $stat) {
-        if (!is_array($stat)) continue;
-        $label = strtr((string) ($stat['label'] ?? ''), ['é' => 'e', 'É' => 'e', 'è' => 'e', 'È' => 'e', 'ê' => 'e', 'Ê' => 'e', 'î' => 'i', 'Î' => 'i', 'ï' => 'i', 'Ï' => 'i', 'à' => 'a', 'À' => 'a', 'â' => 'a', 'Â' => 'a']);
-        $label = preg_replace('/[^a-z0-9]/', '', strtolower($label));
-        if ($label === $labels[$shortId]) return $stat;
-    }
-    return null;
-}
+function applicationAbilityCastingStat(array $stats, string $statId): ?array { return applicationResolveCharacterStat($stats,$statId); }
 
 function applicationAbilitySourceDefeated(array $source): bool {
     return !is_numeric($source['hp'] ?? null) || !is_finite((float) $source['hp']) || $source['hp'] <= 0
@@ -106,6 +94,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         (string) ($arguments['targetTokenId'] ?? ''),
         ...(array_key_exists('targetPoint',$arguments)||array_key_exists('targetingMode',$arguments)?[['targetPoint'=>$arguments['targetPoint']??null,'targetingMode'=>$arguments['targetingMode']??'area']]:[]),
         ...(array_key_exists('consumableItemId',$arguments)?[['consumableItemId'=>$arguments['consumableItemId']]]:[]),
+        ...(array_key_exists('enchantedItemId',$arguments)?[['enchantedItemId'=>$arguments['enchantedItemId']]]:[]),
         ($arguments['returnForm'] ?? false) === true,
         $hasCastingCheck ? normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal') : 'normal',
         $modifierValue,
@@ -159,6 +148,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     if ($availableMana < $manaCost) throw new RuntimeException('ability_mana_insufficient');
     $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = (int) ($ability['fatigueCost'] ?? 0);
     if ((float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
+    if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
     // Absence preserves the old attack-dialogue statistic; an explicit empty
     // string means no casting check. Legacy simple rolls had no check.
     $statId = !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
@@ -211,6 +201,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     catch (RuntimeException $error) {
         $messages = ['ability_combat_required' => 'Cette compétence exige un combat actif.', 'ability_combat_exhausted' => 'Toutes les utilisations de cette compétence ont été consommées pendant ce combat.', 'ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
             'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.',
+            'ability_fatigue_insufficient' => 'Fatigue trop élevée : cette compétence ferait dépasser 150.',
             'ability_cast_stat_missing' => 'La caractéristique de lancement n’existe plus sur cette fiche.', 'ability_cast_invalid' => 'Les règles de lancement sont invalides.'];
         rejectOnlineCommand($connection, 409, $messages[$error->getMessage()] ?? 'Cette compétence ne peut pas être lancée.', $error->getMessage());
     }
@@ -376,6 +367,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $value = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
         if ($resource === 'fatigue') {
             $fatigue = normalizeApplicationFatigue($value['fatigue'] ?? null);
+            if ($fatigue['current'] + $amount > 150) rejectOnlineCommand($connection, 409, 'Fatigue trop élevée : cette compétence ferait dépasser 150.', 'ability_fatigue_insufficient');
             $value['fatigue'] = normalizeApplicationFatigue(['current' => $fatigue['current'] + $amount]);
         } else {
             $hp = (float) ($characterKey !== '' ? ($value['resources']['hp'] ?? 0) : ($value['hp'] ?? 0));
@@ -407,7 +399,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     $countsUse=($cast['success']??false)||!empty($plan['manualD100'])&&($cast['outcome']['code']??'pending')!=='pending';
     if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null)
         applicationActivateAttackEnhancement($activity, ['id' => $plan['abilityId'], 'name' => $plan['label'], 'attackEnhancement' => $plan['attackEnhancement']],
-            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null);
+            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null, $plan['enchantment']??[]);
     $failedCooldown = applicationAbilityFailedCooldownRounds($plan, $cast);
     $remaining = $countsUse ? (int) $plan['cooldownRounds'] : $failedCooldown;
     $retainCooldown = false; $old = [];

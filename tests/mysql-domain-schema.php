@@ -87,7 +87,10 @@ try {
         domainSchemaCheck($snapshot['revision'] === 73 && $snapshot['reset'] === true
             && count($snapshot['domains']) === 3, 'The complete read preserves the real SQL revision and document set.');
         $returnedCharacters = array_values(array_filter($snapshot['domains'], static fn (array $entry): bool => $entry['key'] === 'character:fixture-character'));
-        domainSchemaCheck(json_encode($returnedCharacters[0]['payload'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+        $readCharacter=$returnedCharacters[0]['payload'];
+        domainSchemaCheck(($readCharacter['stats']['spirit']??null)===30&&!array_key_exists('characterSchemaVersion',$readCharacter),'Legacy reads expose default Esprit without fabricating a persisted schema migration.');
+        unset($readCharacter['stats']);
+        domainSchemaCheck(json_encode($readCharacter, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
             === json_encode($character, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) && $returnedCharacters[0]['revision'] === 11,
             'The character retains its lore, abilities, owner, optional null, fractional mana and revision.');
         $delta = capturedSnapshot($db, 73);

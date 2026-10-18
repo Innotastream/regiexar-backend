@@ -66,6 +66,7 @@ function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
     return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    if(isset($entry['weaponDamageMultiplier'])&&(!is_int($entry['weaponDamageMultiplier'])||$entry['weaponDamageMultiplier']<1||$entry['weaponDamageMultiplier']>10||empty($entry['useWeaponDamage'])))return false;
     if(isset($entry['manualD100'])&&(!is_bool($entry['manualD100'])||$entry['manualD100']&&!in_array($entry['effect']??'',['movement','healing','enhancement','summoning','metamorphosis'],true)))return false;
     try{applicationOutcomeMessages($entry['outcomeMessages']??null);}catch(RuntimeException){return false;}
     if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement', 'enhancement'], true)
@@ -125,7 +126,7 @@ function applicationAbilityEffectFields(array $entry): array {
     if(in_array($entry['reach']??'', ['melee','reach','ranged'],true))$conditions['reach']=$entry['reach'];
     if(!empty($entry['manualD100']))$conditions['manualD100']=true;
     if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
-    if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
+    if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMultiplier']??1)>1)$conditions['weaponDamageMultiplier']=$entry['weaponDamageMultiplier'];if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
     if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
     if(applicationTacticalEffect($entry['tacticalEffect']??null))$conditions['tacticalEffect']=applicationTacticalEffect($entry['tacticalEffect']);

@@ -277,23 +277,23 @@ $migratedStandaloneToken = migrateOnlineCombatTokenPayload([
 ]);
 requireDomainCompatibility(
     extractOnlineDamageFormulas("Fouet d30+6,\n2 Dague d20+4,\nArbalète d30+6") === ['d30+6', 'd20+4', 'd30+6']
-        && count(extractOnlineDamageFormulas('1d4 1d6 1d8 1d10 1d12 1d20')) === 5,
-    'La détection préserve les armes distinctes à formule répétée, jusqu’à cinq.'
+        && count(extractOnlineDamageFormulas('1d4 1d6 1d8 1d10 1d12 1d20')) === 6,
+    'La détection préserve les armes distinctes à formule répétée, jusqu’à trente.'
 );
 $fiveWeapons = normalizeOnlineWeaponAttacks([
     ['id' => 'fouet', 'formula' => 'd30+6', 'damageType' => 'physical', 'onHitConditions' => ['Saignement']],
     ['id' => 'dagues', 'formula' => 'd20+4', 'damageType' => 'magical'],
     ['id' => 'arbalete', 'formula' => 'd30+6', 'damageType' => 'ignore', 'onHitConditions' => ['Empoisonné']],
 ], ['d30+6', 'd20+4', 'd30+6', '1d8', '1d10', '1d12']);
-requireDomainCompatibility(count($fiveWeapons) === 5
-    && array_column($fiveWeapons, 'id') === ['fouet', 'dagues', 'arbalete', 'weapon-4', 'weapon-5']
+requireDomainCompatibility(count($fiveWeapons) === 6
+    && array_column($fiveWeapons, 'id') === ['fouet', 'dagues', 'arbalete', 'weapon-4', 'weapon-5', 'weapon-6']
     && $fiveWeapons[0]['onHitConditions'] === ['Saignement']
     && $fiveWeapons[2]['onHitConditions'] === ['Empoisonné']
     && array_column(normalizeOnlineWeaponAttacks($fiveWeapons, ['d20+4', 'd30+6', 'd30+6']), 'id') === ['dagues', 'fouet', 'arbalete'],
     'Chaque arme répétée conserve son identifiant, type et effet lors d’un réordonnancement.'
 );
 requireDomainCompatibility(
-    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 9
+    ($migratedCombatCharacter['characterSchemaVersion'] ?? 0) === 10
         && ($migratedCombatCharacter['temporalPerception'] ?? '') === 'normal'
         && ($migratedCombatCharacter['darkVision'] ?? '') === 'none'
         && !array_key_exists('speed', $migratedCombatCharacter)
@@ -503,7 +503,7 @@ $genericCharacterPatch = playerCharacterPatch([
 ]);
 requireDomainCompatibility(
     ($genericCharacterPatch['resources'] ?? null) === ['hp' => 42, 'maxHp' => 80, 'mana' => 70, 'maxMana' => 100, 'mentalResistance' => 0.0, 'mentalResistanceMax' => 100.0]
-        && ($genericCharacterPatch['stats'] ?? null) === ['force' => 62, 'dexterity' => 52, 'agility' => 48, 'intelligence' => 73]
+        && ($genericCharacterPatch['stats'] ?? null) === ['force' => 62, 'dexterity' => 52, 'agility' => 48, 'intelligence' => 73, 'spirit' => 30]
         && ($genericCharacterPatch['fatigue'] ?? null) === ['current' => 13.0, 'max' => 150],
     'Un patch partiel de n’importe quelle fiche doit préserver toutes les autres ressources, stats et valeurs de fatigue.'
 );

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/complex-movement.php';
 require_once __DIR__ . '/charge-path.php';
@@ -475,8 +476,8 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
             $movements = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $entry): bool => $entry['id'] === $step['sourceMovementStepId'] && $entry['type'] === 'movement');
             if ($movements === []) return 'Le ciblage doit utiliser un déplacement précédent.';
         }
-        if ($step['type'] === 'allocated-attacks' && $step['defenseStatId'] !== '' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['defenseStatId']) !== 1) return 'Choisissez une statistique de défense valide.';
-        if ($step['type'] === 'attack-chain' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['statId']) !== 1) {
+        if ($step['type'] === 'allocated-attacks' && $step['defenseStatId'] !== '' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D', $step['defenseStatId']) !== 1) return 'Choisissez une statistique de défense valide.';
+        if ($step['type'] === 'attack-chain' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D', $step['statId']) !== 1) {
             return 'Choisissez une statistique valide pour les attaques conditionnelles de l’étape ' . ($index + 1) . '.';
         }
         if ($step['type'] === 'attack-chain' && $step['firstGateAtCast'] && ($index !== 0 || !$step['stopOnFailure']))
@@ -487,11 +488,11 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         if ($step['type'] === 'attack-chain' && $step['damageMode'] === 'configured' && ($step['resolutionMode'] !== 'batch'
             || $step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? [])))
             return 'La série de l’étape ' . ($index + 1) . ' exige le mode automatique et des composantes de dégâts valides.';
-        if ($step['type'] === 'allocated-attacks' && $step['damageMode'] === 'configured' && ($step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? []) || ($step['hitMode'] !== 'automatic' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['statId']) !== 1))) return 'Définissez des dégâts et une statistique valides à l’étape ' . ($index + 1) . '.';
+        if ($step['type'] === 'allocated-attacks' && $step['damageMode'] === 'configured' && ($step['damageComponents'] === [] || count($step['damageComponents']) !== count($value['steps'][$index]['damageComponents'] ?? []) || ($step['hitMode'] !== 'automatic' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D', $step['statId']) !== 1))) return 'Définissez des dégâts et une statistique valides à l’étape ' . ($index + 1) . '.';
         if ($step['type'] === 'allocated-attacks') {
             $sources = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $candidate): bool => $candidate['id'] === $step['sourceStepId'] && ($candidate['type'] === 'movement' && !empty($candidate['charge']) || $candidate['type'] === 'targets' && ($candidate['allocationTotal'] > 0 || $step['damageMode'] === 'configured')));
             if ($sources === []) return 'L’étape ' . ($index + 1) . ' requiert une répartition précédente avec un total d’attaques fixé.';
-            if ($step['awarenessMode'] !== 'none' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|instinct)$/D', $step['awarenessStatId']) !== 1) return 'Choisissez une statistique de vigilance valide à l’étape ' . ($index + 1) . '.';
+            if ($step['awarenessMode'] !== 'none' && preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D', $step['awarenessStatId']) !== 1) return 'Choisissez une statistique de vigilance valide à l’étape ' . ($index + 1) . '.';
         }
         if ($step['type'] === 'defense-series' && ($step['sourceStepId'] === '' || !isset($seen[$step['sourceStepId']]))) {
             return 'L’étape ' . ($index + 1) . ' doit suivre une étape de ciblage.';
@@ -941,15 +942,8 @@ function applicationComplexAbilityTokenThreshold(array $token, array $step): int
         if (!is_numeric($token['hitThreshold'] ?? null)) applicationComplexAbilityFail('La cible n’a plus de seuil de touché.', 'complex_ability_threshold_missing');
         return applicationComplexAbilityInteger($token['hitThreshold'], 0, 100, 0);
     }
-    $statId = (string) ($step['targetStatId'] ?? '');
-    $key = preg_replace('/^character-stat-/', '', $statId) ?? $statId;
-    $labels = ['force' => 'force', 'dexterity' => 'dexterite', 'agility' => 'agilite', 'spiritSocial' => 'espritsocial', 'intelligence' => 'intelligence', 'instinct' => 'instinctperception'];
-    foreach (is_array($token['stats'] ?? null) ? $token['stats'] : [] as $stat) {
-        if (!is_array($stat)) continue;
-        $matches = in_array((string) ($stat['id'] ?? ''), [$statId, $key, 'character-stat-' . $key], true)
-            || applicationComplexAbilityComparable($stat['label'] ?? '') === ($labels[$key] ?? '');
-        if ($matches && is_numeric($stat['value'] ?? null)) return max(1, applicationComplexAbilityInteger($stat['value'], 0, 100, 0));
-    }
+    $stat=applicationResolveCharacterStat($token['stats']??[],(string)($step['targetStatId']??''));
+    if($stat!==null&&is_numeric($stat['value']??null))return max(1,applicationComplexAbilityInteger($stat['value'],0,100,0));
     applicationComplexAbilityFail('La statistique de défense n’existe plus sur la cible.', 'complex_ability_threshold_missing');
 }
 
@@ -1057,18 +1051,10 @@ function applicationComplexAbilityTokenConditionValue(array $token, array $step)
         return false;
     }
     if ($step['fact'] === 'stat') {
-        $requested = preg_replace('/^character-stat-/', '', (string) $step['statId']) ?? '';
-        $aliases = ['dexterity' => 'dexterite', 'agility' => 'agilite', 'spiritSocial' => 'espritsocial', 'instinct' => 'instinctperception'];
-        $stats = is_array($token['stats'] ?? null) ? $token['stats'] : [];
-        if (!array_is_list($stats)) {
-            $stats = array_map(static fn(string $id, mixed $value): array => ['id' => $id, 'value' => $value], array_keys($stats), array_values($stats));
-        }
-        foreach ($stats as $stat) {
-            if (!is_array($stat)) continue;
-            $id = preg_replace('/^character-stat-/', '', (string) ($stat['id'] ?? '')) ?? '';
-            $matches = $id === $requested || applicationComplexAbilityComparable($stat['label'] ?? '') === ($aliases[$requested] ?? applicationComplexAbilityComparable($requested));
-            if ($matches && is_numeric($stat['value'] ?? null)) return 0 + $stat['value'];
-        }
+        $stats = is_array($token['stats']??null)?$token['stats']:[];
+        if(!array_is_list($stats))$stats=array_map(static fn($id,$value)=>['id'=>$id,'value'=>$value],array_keys($stats),array_values($stats));
+        $stat=applicationResolveCharacterStat($stats,(string)($step['statId']??''));
+        if($stat!==null&&is_numeric($stat['value']??null))return 0+$stat['value'];
         applicationComplexAbilityFail('La statistique demandée n’est plus disponible.', 'complex_ability_condition_data_missing');
     }
     applicationComplexAbilityFail('Cette donnée ne s’évalue pas sur un pion.', 'complex_ability_condition_invalid', 400);

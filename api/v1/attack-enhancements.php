@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__.'/active-items.php';
 function applicationAttackEnhancement(mixed $value): ?array {
@@ -11,7 +12,7 @@ function applicationAttackEnhancement(mixed $value): ?array {
     if(is_array($value)&&($value['mode']??'')==='stats'){
         if(!is_int($value['turns']??null)||$value['turns']<1||$value['turns']>999||!is_array($value['bonuses']??null))return null;
         $bonuses=[];foreach($value['bonuses'] as $key=>$amount){
-            if(!in_array($key,['force','dexterity','agility','spiritSocial','intelligence','instinct','mentalResistance'],true)||!is_int($amount)||$amount < -100||$amount>100)return null;
+            if(!in_array($key,[...array_keys(applicationStatLabels()),'mentalResistance'],true)||!is_int($amount)||$amount < -100||$amount>100)return null;
             if($amount!==0)$bonuses[$key]=$amount;
         }
         return $bonuses!==[]?['mode'=>'stats','turns'=>$value['turns'],'bonuses'=>$bonuses]:null;
@@ -24,20 +25,21 @@ function applicationAttackEnhancement(mixed $value): ?array {
         && (preg_match('/^\d+$/D', $formula) !== 1 || (float) $formula > 1000000000))) return null;
     $allyFormula = strtolower(preg_replace('/\s+/', '', (string) ($value['allyFormula'] ?? $formula)));
     if ($value['mode'] === 'echo' && !validApplicationAbilityFormula($allyFormula)) return null;
-    if ($value['mode'] === 'echo' && isset($value['trigger']) && !in_array($value['trigger'], ['all-attacks', 'melee-weapon', 'main-weapon'], true)) return null;
+    if ($value['mode'] === 'echo' && isset($value['trigger']) && !in_array($value['trigger'], ['all-attacks', 'melee-weapon', 'main-weapon', 'enchanted-weapon'], true)) return null;
     return ['mode' => $value['mode'], 'formula' => $formula, 'damageType' => $value['damageType'], 'turns' => $value['turns'],
-        ...($value['mode'] === 'echo' ? ['allyFormula' => $allyFormula, ...(in_array($value['trigger']??'',['melee-weapon','main-weapon'],true)?['trigger'=>$value['trigger']]:[]),...(($value['requiresHit']??false)===true?['requiresHit'=>true]:[]),...(($value['expiry']??'')==='after-next-turn'?['expiry'=>'after-next-turn']:[]),...(!empty($value['immunityLabel'])&&is_string($value['immunityLabel'])?['immunityLabel'=>substr($value['immunityLabel'],0,240)]:[])] : [])];
+        ...($value['mode'] === 'echo' ? ['allyFormula' => $allyFormula, ...(in_array($value['trigger']??'',['melee-weapon','main-weapon','enchanted-weapon'],true)?['trigger'=>$value['trigger']]:[]),...(($value['requiresHit']??false)===true?['requiresHit'=>true]:[]),...(($value['expiry']??'')==='after-next-turn'?['expiry'=>'after-next-turn']:[]),...(!empty($value['immunityLabel'])&&is_string($value['immunityLabel'])?['immunityLabel'=>substr($value['immunityLabel'],0,240)]:[])] : [])];
 }
 
 function applicationAttackTriggersEnhancement(array $effect, array $attack): bool {
     if(!empty($effect['requiresHit'])&&(empty($attack['hit']['outcome']['success'])||in_array($attack['status']??'',['missed','defended','cancelled','rejected'],true)))return false;
+    if(($effect['trigger']??'')==='enchanted-weapon')return ($attack['echoAttackContext']['weaponBased']??false)===true&&($attack['echoAttackContext']['naturalWeapon']??false)!==true&&($attack['echoAttackContext']['projectile']??false)!==true&&in_array($effect['enchantedItemId']??null,$attack['echoAttackContext']['equipmentItemIds']??[],true);
     if(($effect['trigger']??'')==='main-weapon')return ($attack['echoAttackContext']['weaponBased']??false)===true&&($attack['echoAttackContext']['projectile']??false)!==true&&($attack['echoAttackContext']['weaponId']??'')===($effect['weaponId']??null);
     return ($effect['trigger'] ?? '') !== 'melee-weapon'
         || (($attack['echoAttackContext']['weaponBased'] ?? false) === true && ($attack['echoAttackContext']['projectile'] ?? false) !== true);
 }
 
 function applicationEnhancementHolder(array $source): string {
-    return isset($source['resources']) ? 'character:' . ($source['id'] ?? '')
+    return isset($source['resources']) && empty($source['characterId']) && ($source['unitKind']??'')!=='token' ? 'character:' . ($source['id'] ?? '')
         : (!empty($source['characterId']) && ($source['followCharacter'] ?? true) !== false && empty($source['linkedTokenId'])
             && ($source['usesCharacterSheet'] ?? true) !== false && ($source['independent'] ?? false) !== true
             ? 'character:' . $source['characterId'] : 'token:' . ($source['id'] ?? ''));
@@ -49,7 +51,7 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
     $tokens = ($state['activeSceneId'] ?? $state['activeScene']['id'] ?? '') === $sceneId ? ($state['map']['tokens'] ?? []) : [];
     if ($tokens === []) foreach ($state['scenes'] ?? [] as $scene) if (($scene['id'] ?? '') === $sceneId) $tokens = $scene['combat']['map']['tokens'] ?? [];
     foreach ($state['attackEnhancements'] ?? [] as $effect) {
-        if (($effect['holder'] ?? '') !== $holder || (($effect['sceneId'] ?? '') !== $sceneId&&($effect['expiry']??'')!=='rests') || ($effect['remainingTurns'] ?? 0) <= 0 || applicationAttackEnhancement($effect) === null) continue;
+        if ((($effect['trigger']??'')==='enchanted-weapon'?!enchantmentOnUnit($effect,$token,$state):($effect['holder']??'')!==$holder) || (($effect['sceneId'] ?? '') !== $sceneId&&($effect['expiry']??'')!=='rests') || ($effect['remainingTurns'] ?? 0) <= 0 || applicationAttackEnhancement($effect) === null) continue;
         $image = $effect['abilityImage'] ?? null;
         if (!$image) foreach ($tokens as $caster) if (($caster['id'] ?? '') === ($effect['casterTokenId'] ?? '')) {
             $abilities = $caster['abilities'] ?? [];
@@ -70,7 +72,7 @@ function applicationTransferAttackEnhancements(array $effects, array $source, st
         : $effect, $effects);
 }
 
-function applicationActivateAttackEnhancement(array &$activity, array $ability, array $source, string $sceneId, array $initiative, string $id, ?array $recipient = null): void {
+function applicationActivateAttackEnhancement(array &$activity, array $ability, array $source, string $sceneId, array $initiative, string $id, ?array $recipient = null, array $enchantment = []): void {
     $definition = applicationAttackEnhancement($ability['attackEnhancement'] ?? null);
     if ($definition === null) return;
     $recipient ??= $source;
@@ -78,9 +80,9 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
     $holder = applicationEnhancementHolder($recipient);
     if ($definition['mode'] === 'echo' && $holder !== applicationEnhancementHolder($source)) $definition['formula'] = $definition['allyFormula'];
     $effects = array_values(array_filter($activity['attackEnhancements'] ?? [], static fn(array $effect): bool =>
-        $effect['holder'] !== $holder || $effect['abilityId'] !== $ability['id']));
+        ($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || $effect['abilityId'] !== $ability['id'])));
     if (count($effects) >= 100) throw new RuntimeException('Trop d’effets sur les attaques sont déjà actifs.', 409);
-    $effects[] = [...$definition, 'id' => $id, 'holder' => $holder, 'abilityId' => $ability['id'], 'label' => $ability['name'], 'sceneId' => $sceneId,
+    $effects[] = [...$definition, 'id' => $id, 'holder' => $holder, 'abilityId' => $ability['id'], 'label' => $ability['name'].(!empty($enchantment['enchantedItemName'])?' — '.$enchantment['enchantedItemName']:''), 'sceneId' => $sceneId, ...$enchantment,
         ...(!empty($ability['image']) ? ['abilityImage' => $ability['image']] : []),
         ...(($definition['trigger']??'')==='main-weapon'?['weaponId'=>$recipient['weaponAttacks'][0]['id']??'']:[]),...(($definition['expiry']??'')==='after-next-turn'?['hasStarted'=>false]:[]),
         'targetTokenId' => $recipient['id'], 'casterTokenId' => $source['id'], 'remainingTurns' => $definition['turns'],
@@ -113,7 +115,7 @@ function applicationEnhancedBasicAttack(array $weapon, array $source, array $act
     if ($effects === []) return $weapon;
     $replacement = null;
     foreach ($effects as $effect) if ($effect['mode'] === 'replace') $replacement = $effect;
-    $parts = [['type' => $replacement['damageType'] ?? $weapon['damageType'] ?? 'physical', 'formula' => $replacement['formula'] ?? $weapon['formula']]];
+    $parts = $replacement!==null?[['type'=>$replacement['damageType'],'formula'=>$replacement['formula']]]:($weapon['damageComponents']??[['type'=>$weapon['damageType']??'physical','formula'=>$weapon['formula']]]);
     foreach ($effects as $effect) {
         if ($effect['mode'] !== 'bonus') continue;
         $index = null;
@@ -130,6 +132,7 @@ function applicationEnhancedBasicAttack(array $weapon, array $source, array $act
 // Persist the triggering attack and its independent receipts in the same transaction.
 // A remarkable roll freezes the effects until MJ approval; echoes never recurse.
 function onlineApplyAttackEchoes(PDO $connection, array &$records, array &$pending, array $attack, bool $approved = false): array {
+    onlineBreakAttackTorch($connection,$records,$pending,$attack,$approved);
     if (!empty($attack['echoParentId']) || !empty($attack['deviceOrigin']) || !empty($attack['echoProcessed']) || !empty($attack['areaAnchorOnly'])) return $attack;
     $sceneId = $attack['sceneId'];
     $sourceKey = onlineTokenDomainKey($sceneId, $attack['sourceTokenId']);
@@ -138,8 +141,9 @@ function onlineApplyAttackEchoes(PDO $connection, array &$records, array &$pendi
     $target = $pending[$targetKey]['payload'] ?? applicationDomainPayload($records, $targetKey);
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     $holder = applicationEnhancementHolder($source);
+    $equipmentState=onlineEquipmentState($connection,$records,$pending,$sceneId);
     $attack['echoDefinitions'] ??= array_values(array_filter($activity['attackEnhancements'] ?? [], static fn(array $effect): bool =>
-        ($effect['holder'] ?? '') === $holder && ($effect['sceneId'] ?? '') === $sceneId && ($effect['mode'] ?? '') === 'echo'
+        ((($effect['trigger']??'')==='enchanted-weapon')?enchantmentOnUnit($effect,$source,$equipmentState):($effect['holder']??'')===$holder) && ($effect['sceneId'] ?? '') === $sceneId && ($effect['mode'] ?? '') === 'echo'
         && ($effect['remainingTurns'] ?? 0) > 0 && applicationAttackEnhancement($effect) !== null && applicationAttackTriggersEnhancement($effect, $attack)));
     if ($attack['echoDefinitions'] !== [] && $attack['status'] !== 'awaiting-opposition' && ($attack['status'] !== 'pending' || $approved)) {
         $attack['echoProcessed'] = true;
@@ -175,7 +179,8 @@ function onlineFailedChainEchoes(PDO $connection, array &$records, array &$pendi
     if (($step['type'] ?? '') !== 'attack-chain' || !in_array($action, ['prepare-chain', 'gate-roll'], true) || empty($state['plan']['targetTokenId'])) return [];
     $source = applicationDomainPayload($records, onlineTokenDomainKey($next['sceneId'], $next['sourceTokenId']));
     $holder = applicationEnhancementHolder($source); $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
-    if (!array_filter($activity['attackEnhancements'] ?? [], static fn($e) => ($e['holder'] ?? '') === $holder && ($e['sceneId'] ?? '') === $next['sceneId'] && ($e['mode'] ?? '') === 'echo' && ($e['remainingTurns'] ?? 0) > 0)) return [];
+    $equipmentState=onlineEquipmentState($connection,$records,$pending,$next['sceneId']);$weapon=array_values(array_filter(equipmentAttackRows($source['weaponAttacks']??[],$source,$equipmentState),static fn($w)=>($w['id']??'')===($state['plan']['attackId']??'')))[0]??[];
+    if (empty($weapon['torchLightId'])&&!array_filter($activity['attackEnhancements'] ?? [], static fn($e) => ($e['holder'] ?? '') === $holder && ($e['sceneId'] ?? '') === $next['sceneId'] && ($e['mode'] ?? '') === 'echo' && ($e['remainingTurns'] ?? 0) > 0)) return [];
     $rolls = [];
     foreach (array_slice($state['rolls'], count($current['stepStates'][$step['id']]['rolls'] ?? [])) as $gate) {
         if (($gate['success'] ?? true) !== false) continue;
@@ -189,8 +194,7 @@ function onlineFailedChainEchoes(PDO $connection, array &$records, array &$pendi
             'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$target['id'],'targetName'=>$target['name'],
             'accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur',
             'attackKind'=>'ability','attackId'=>$next['abilityId'],'attackName'=>$next['abilityName'].' · Frappe ratée',
-            'echoAttackContext'=>['weaponId'=>$state['plan']['attackId']??'','reach'=>applicationWeaponReach(array_values(array_filter($source['weaponAttacks']??[],static fn($w)=>($w['id']??'')===($state['plan']['attackId']??'')))[0]??[]),'weaponBased'=>($state['plan']['attackKind']??'')==='weapon',
-                'projectile'=>array_reduce($source['weaponAttacks']??[],static fn(bool $found,array $weapon):bool=>$found||(($weapon['id']??'')===($state['plan']['attackId']??'')&&($weapon['projectile']??false)===true),false)],
+            'echoAttackContext'=>['weaponId'=>$state['plan']['attackId']??'','reach'=>applicationWeaponReach($weapon),'weaponBased'=>($state['plan']['attackKind']??'')==='weapon','projectile'=>($weapon['projectile']??false)===true,'naturalWeapon'=>($weapon['naturalWeapon']??false)===true,'equipmentItemIds'=>$weapon['equipmentItemIds']??[],'torchLightId'=>$weapon['torchLightId']??''],
             'visibility'=>$isGm && !onlineGmTokenVisibleToPlayers($connection,$records,applicationDomainPayload($records,'table'),$source,$next['sceneId'])?'gm':'public',
             'defenderAccountId'=>onlineTokenControllerIdFromRecords($connection,$records,$target),
             'hit'=>[...$gate,'raw'=>$gate['rawD100']??$gate['total'],'outcome'=>$gate['outcomeDetails'],'statId'=>$step['statId']],
@@ -215,7 +219,7 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
         if(($effect['holder']??'')!==$holder||(($effect['sceneId']??'')!==$sceneId&&($effect['expiry']??'')!=='rests')||($effect['remainingTurns']??0)<=0||($effect['mode']??'')!=='stats'||applicationAttackEnhancement($effect)===null)continue;
         foreach($effect['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;
     }
-    $rows=$source['stats']??[];
+    $rows=applicationUnitStatRows($source['stats']??[]);
     foreach($rows as &$row){
         $key=preg_replace('/^character-stat-/','',(string)($row['id']??''));
         if(empty($bonuses[$key]))continue;

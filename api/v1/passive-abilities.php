@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 function applicationPassiveKinds():array {return ['opportunity-attack'=>['name'=>'Attaque d’opportunité','description'=>'Lorsqu’un ennemi quitte une case adjacente, propose au MJ une attaque avec l’arme principale.'],
     'mental-control-resistance'=>['name'=>'Boss : résistance au contrôle mental','description'=>'Un contrôle mental réussi devient une simple influence de même durée. Le contrôleur du pion ne change pas.']];}
 function applicationPassiveAbilities(mixed $v):array {
@@ -8,7 +9,7 @@ function applicationPassiveAbilities(mixed $v):array {
     foreach($v as $e){if(!is_array($e)||($e['version']??0)!==1||!isset($kinds[$e['kind']??'']))throw new RuntimeException('Ce passif utilise une version ou une mécanique non prise en charge.',400);
         $id=(string)($e['id']??$e['kind']);if(!preg_match('/^[A-Za-z0-9_-]{1,120}$/D',$id)||isset($seen[$id]))throw new RuntimeException('Identité de passif invalide.',400);$seen[$id]=true;
         $p=['version'=>1,'id'=>$id,'kind'=>$e['kind'],'name'=>substr((string)($e['name']??$kinds[$e['kind']]['name']),0,120),'description'=>substr((string)($e['description']??$kinds[$e['kind']]['description']),0,4000),'enabled'=>($e['enabled']??true)!==false];
-        if($e['kind']==='opportunity-attack'){$p['reachCells']=is_int($e['reachCells']??null)&&$e['reachCells']>=1&&$e['reachCells']<=20?$e['reachCells']:1;$p['statId']=in_array($e['statId']??'',array_map(static fn($k)=>'character-stat-'.$k,['force','dexterity','agility','spiritSocial','intelligence','instinct']),true)?$e['statId']:'character-stat-force';}$r[]=$p;
+        if($e['kind']==='opportunity-attack'){$p['reachCells']=is_int($e['reachCells']??null)&&$e['reachCells']>=1&&$e['reachCells']<=20?$e['reachCells']:1;$p['statId']=in_array($e['statId']??'',applicationStatIds(),true)?$e['statId']:'character-stat-force';}$r[]=$p;
     }return $r;
 }
 function applicationHasPassive(array $source,string $kind):bool {foreach(applicationPassiveAbilities($source['passiveAbilities']??null) as $p)if($p['enabled']&&$p['kind']===$kind)return true;return false;}

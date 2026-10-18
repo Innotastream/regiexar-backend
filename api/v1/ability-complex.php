@@ -45,6 +45,7 @@ function onlineComplexAbilitySceneTokens(
             && !onlineAttackTargetVisible($connection, $records, $map, $token, $accountId, $sceneId)) continue;
         $token['controllerAccountId'] = onlineTokenControllerIdFromRecords($connection, $records, $token);
         $token['stats']=onlineEnhancedStatRows($connection,$records,[],$token,$sceneId);
+        $token['weaponAttacks']=equipmentAttackRows($token['weaponAttacks']??[],$token,onlineEquipmentState($connection,$records,[],$sceneId,$map));
         $tokens[] = $token;
     }
     return $tokens;

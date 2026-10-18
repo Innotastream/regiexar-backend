@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . "/damage-guard.php";
 require_once __DIR__ . "/ongoing-effects.php";
@@ -850,6 +851,7 @@ function applicationPublicCharacterResources(array $character): array {
     $resources['mentalResistance'] = (float) ($resources['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0);
     $resources['mentalResistanceMax'] = (float) ($resources['mentalResistanceMax'] ?? $character['secret']['mentalResistanceMax'] ?? 100);
     $character['resources'] = $resources;
+    $character['stats'] = applicationCharacterStats($character['stats']??[]);
     $character['fatigue'] = normalizeApplicationFatigue($character['fatigue'] ?? null);
     unset($character['secret']['mentalResistance'], $character['secret']['mentalResistanceMax']);
     return $character;
@@ -1179,6 +1181,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
                 }
             }
         }
+        if($details){$visible['weaponAttacks']=equipmentAttackRows($token['weaponAttacks']??[],$token,$fullState);$visible['enchantableWeapons']=array_map(static fn($item)=>['id'=>$item['id'],'name'=>$item['name']],enchantableWeapons($fullState,$token));}
         if ($details && !$paused) {
             $rows=applicationEnhancedStatRows($token,$fullState,(string)($fullState['activeSceneId']??''),unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??null):null);
             if(array_filter($rows,static fn($row)=>!empty($row['timedBonus']))){$visible['stats']=$rows;$visible['statsIncludeActiveEffects']=true;}
@@ -2416,7 +2419,7 @@ function extractOnlineDamageFormulas(mixed $value): array
         if (validOnlineRollFormula($formula)) {
             $formulas[] = $formula;
         }
-        if (count($formulas) === 5) break;
+        if (count($formulas) === 30) break;
     }
     return $formulas;
 }
@@ -2432,7 +2435,7 @@ function onlineWeaponNamesFromText(mixed $value): array
         $prefix = end($parts) ?: '';
         $names[] = substr(trim(preg_replace('/^[\s•*\/|:=\-]+|[\s\/|:=\-]+$/u', '', $prefix) ?? ''), 0, 120);
         $previousEnd = $match[0][1] + strlen($match[0][0]);
-        if (count($names) === 5) break;
+        if (count($names) === 30) break;
     }
     return $names;
 }
@@ -2443,7 +2446,7 @@ function normalizeOnlineWeaponAttacks(mixed $value, array $formulas, mixed $weap
     $names = onlineWeaponNamesFromText($weaponText);
     $requested = array_slice(array_values(array_filter(array_map(
         static fn (mixed $formula): string => strtolower(str_replace(' ', '', (string) $formula)), $formulas
-    ))), 0, 5);
+    ))), 0, 30);
     $previousFormula = static fn (mixed $entry): string => is_array($entry)
         ? strtolower(str_replace(' ', '', (string) ($entry['formula'] ?? ''))) : '';
     $assigned = array_fill(0, count($requested), -1); $used = [];
@@ -2474,8 +2477,12 @@ function normalizeOnlineWeaponAttacks(mixed $value, array $formulas, mixed $weap
         $name = substr(trim((string) ($names[$index] ?? '') ?: (string) ($source['name'] ?? '')), 0, 120);
         $normalized[] = ['id' => $id, ...($name !== '' ? ['name' => $name] : []), 'formula' => $formula, 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null),
             ...(array_key_exists('projectile',$source)?['projectile'=>$source['projectile']===true]:[]),
+            ...(array_key_exists('naturalWeapon',$source)?['naturalWeapon'=>$source['naturalWeapon']===true]:[]),
+            ...(array_key_exists('finesse',$source)?['finesse'=>$source['finesse']===true]:[]),
+            ...(isset($source['equipmentBinding'])?['equipmentBinding'=>normalizeEquipmentBinding($source['equipmentBinding'])]:[]),
             ...(array_key_exists('reach',$source)?['reach'=>applicationWeaponReach($source)]:[]),
             ...(array_key_exists('targetCount',$source)?['targetCount'=>applicationWeaponTargetCount($source)]:[]),
+            ...(validApplicationDamageTargeting($source['damageTargeting']??null)?['damageTargeting'=>$source['damageTargeting']]:[]),
             ...(dsInfusion($source['infusion']??null)?['infusion'=>dsInfusion($source['infusion'])]:[]),
             'onHitConditions' => normalizeOnlineConditions($source['onHitConditions'] ?? [])];
     }
@@ -2516,7 +2523,7 @@ function migrateOnlineCombatCharacterPayload(array $character): array
     $physical = normalizeOnlineArmorProfile($character['armorCategory'] ?? null, $character['armor'] ?? 0);
     $magical = normalizeOnlineMagicResistance($character['magicArmor'] ?? 0);
     $character['characterSchema'] = 'xar-tsaroth.character-sheet';
-    $character['characterSchemaVersion'] = 9;
+    $character['characterSchemaVersion'] = 10;
     $character = applicationPublicCharacterResources($character);
     $character['armorCategory'] = $physical['category'];
     $character['armor'] = $physical['percent'];
@@ -2698,6 +2705,7 @@ function playerCharacterPatch(array $current, array $patch): array
     $current['temporalPerception'] = normalizeOnlineTemporalPerception($current['temporalPerception'] ?? null);
     $current['visionDistance'] = normalizeApplicationVisionDistance($current['visionDistance'] ?? null);
     $current['fatigue'] = normalizeApplicationFatigue($current['fatigue'] ?? null);
+    $current['stats'] = applicationCharacterStats($current['stats']??[]);
     $current['darkVision'] = normalizeApplicationDarkVision($current['darkVision'] ?? null);
     $current['weaponAttacks'] = normalizeOnlineWeaponAttacks($current['weaponAttacks'] ?? [], extractOnlineDamageFormulas($current['weaponText'] ?? ''), $current['weaponText'] ?? '');
     unset($current['speed']);
@@ -2705,7 +2713,7 @@ function playerCharacterPatch(array $current, array $patch): array
     // New sheets default to Normal; an existing label changes only when the
     // player explicitly selects one of the ordinary levels above.
     $current['moraleExtremes'] = normalizeOnlineMoraleExtremes($current['moraleExtremes'] ?? []);
-    $current['characterSchemaVersion'] = 9;
+    $current['characterSchemaVersion'] = 10;
     $current['_updatedAt'] = (int) floor(microtime(true) * 1000);
     return $current;
 }
@@ -4330,6 +4338,7 @@ function applyOnlineTokenResourceAdjustment(
         $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
         $resources[$resource] = $current;
         $character['resources'] = $resources;
+    $character['stats'] = applicationCharacterStats($character['stats']??[]);
         $character['_updatedAt'] = $now;
         queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
         $characterTokenRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
@@ -4608,6 +4617,7 @@ function applyOnlineAttackDamage(PDO $connection, array &$records, array &$pendi
         $resources = is_array($character['resources'] ?? null) ? $character['resources'] : [];
         $resources['hp'] = $current;
         $character['resources'] = $resources;
+    $character['stats'] = applicationCharacterStats($character['stats']??[]);
         $character['_updatedAt'] = $now;
         queueOnlineDomainUpsert($pending, $records, $characterKey, $character);
         $relatedRecords = applicationCharacterTokenDomainRecords($connection, $characterId);
@@ -5105,13 +5115,9 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     }
     $fatiguePenalty = max(0, (int) floor(normalizeApplicationFatigue($character['fatigue'] ?? null)['current'] - 50));
     if (is_array($character['stats'] ?? null)) {
-        $labels = [
-            'force' => 'Force', 'dexterity' => 'Dextérité', 'agility' => 'Agilité',
-            'spiritSocial' => 'Esprit / Social', 'intelligence' => 'Intelligence',
-            'instinct' => 'Instinct',
-        ];
+        $labels = applicationStatLabels();
         $token['stats'] = [];
-        foreach ($character['stats'] as $key => $value) {
+        foreach (applicationCharacterStats($character['stats']) as $key => $value) {
             $token['stats'][] = [
                 'id' => 'character-stat-' . (string) $key,
                 'label' => $labels[(string) $key] ?? (string) $key,
@@ -5335,7 +5341,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5357,7 +5363,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -6242,7 +6248,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $attackRequestSignature = onlineAttackRequestSignature($sceneId, $arguments);
             $sourceKey = onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? '');
             $targetKey = onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? '');
-            if ($sourceKey === '' || $targetKey === '' || ($sourceKey === $targetKey && ($arguments['attackKind'] ?? '') !== 'ability')) {
+            if ($sourceKey === '' || $targetKey === '' || ($sourceKey === $targetKey && !in_array(($arguments['attackKind'] ?? ''),['ability','weapon'],true))) {
                 rejectOnlineCommand($connection, 400, 'Attaquant ou cible invalide.', 'invalid_attack_target');
             }
             $initiativeKey = 'initiative:' . $sceneId;
@@ -6345,7 +6351,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if(applicationIsNonCombatant($source))rejectOnlineCommand($connection,403,'Cet élément fixe ne peut pas agir.','fixed_structure_cannot_act');
                 $sourceController = $source === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $source);
                 $targetController = $target === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $target);
-                $selfAreaRequest = ($target['id'] ?? null) === ($source['id'] ?? null) && ($arguments['attackKind'] ?? '') === 'ability';
+                $selfAreaRequest = ($target['id'] ?? null) === ($source['id'] ?? null) && in_array(($arguments['attackKind'] ?? ''),['ability','weapon'],true);
                 if ($isGm) {
                     if ($source === [] || ($source['hidden'] ?? false) === true) {
                         rejectOnlineCommand($connection, 403, 'Le token attaquant doit être visible sur le niveau actif.', 'attack_source_not_visible');
@@ -6385,6 +6391,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 409, 'Un attaquant KO ou mort ne peut pas attaquer.', 'attack_source_defeated');
                 }
                 $sourceCharacter = $characterId !== '' ? applicationDomainPayload($records, 'character:' . $characterId) : [];
+                $equipmentState=onlineEquipmentState($connection,$records,$pending,$sceneId,$map);
+                $source['weaponAttacks']=equipmentAttackRows($source['weaponAttacks']??[],$source,$equipmentState);
                 $complexExecutionId = trim((string) ($arguments['complexExecutionId'] ?? ''));
                 $damagePercent = 100;
                 $chainGate = null; $chainDefinition = null; $chargeStrike = null; $authorizedRangeCells=0; $strikeSourcePosition=null;
@@ -6511,7 +6519,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     if ($seed === [] && $weaponFormulas !== []) {
                         $seed = [['id' => 'weapon-1', 'formula' => $weaponFormulas[0], 'damageType' => normalizeOnlineDamageType($source['damageType'] ?? null)]];
                     }
-                    $weapons = normalizeOnlineWeaponAttacks($seed, $weaponFormulas);
+                    $weapons = equipmentAttackRows(normalizeOnlineWeaponAttacks($seed, $weaponFormulas),$source,$equipmentState);
                     $weaponIndex = findEntryIndex($weapons, $attackId);
                     if ($weaponIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque de base n’existe plus sur le token.', 'attack_weapon_missing');
                     $attackName = $weapons[$weaponIndex]['name'] ?? (count($weapons) > 1 ? 'Attaque de base ' . ($weaponIndex + 1) : 'Attaque de base');
@@ -6526,14 +6534,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $mechanicsDefinition = $chainDefinition === null ? ($attackKind==='ability' ? $abilities[$abilityIndex] : ($attackKind==='weapon' ? $weapons[$weaponIndex] : [])) : [];
                 $selectedWeapon = [];
                 if (($mechanicsDefinition['useWeaponDamage']??false)===true) {
-                    $stored=$source['weaponAttacks']??[];$weaponList=normalizeOnlineWeaponAttacks($stored,array_column($stored,'formula'),$source['weaponText']??'');
+                    $stored=$source['weaponAttacks']??[];$weaponList=equipmentAttackRows(normalizeOnlineWeaponAttacks($stored,array_column($stored,'formula'),$source['weaponText']??''),$source,$equipmentState);
                     try{$weaponResult=applicationSimpleWeaponDamage($mechanicsDefinition,$weaponList,(string)($arguments['weaponAttackId']??''));}
                     catch(RuntimeException $error){rejectOnlineCommand($connection,400,$error->getMessage(),'ability_weapon_required');}
                     $selectedWeapon=$weaponResult['selectedWeapon'];$damageComponents=$weaponResult['damageComponents'];$damageFormula=$weaponResult['damageFormula'];$damageType=$weaponResult['damageType'];
                 }
                 if(array_key_exists('targetTokenIds',$arguments)&&$attackKind!=='weapon')rejectOnlineCommand($connection,400,'Les cibles multiples de cette arme ne s’appliquent pas à cette compétence.','weapon_targets_invalid');
                 if(array_key_exists('targetTokenIds',$arguments)&&$arguments['targetTokenIds']===null)rejectOnlineCommand($connection,400,'Liste des cibles invalide.','weapon_targets_invalid');
-                try{$requestedWeaponIds=$attackKind==='weapon'?applicationWeaponTargetIds($mechanicsDefinition,(string)$target['id'],array_key_exists('targetTokenIds',$arguments)?$arguments['targetTokenIds']:null,$complexExecutionId!==''):[];}
+                try{$requestedWeaponIds=$attackKind==='weapon'&&!validApplicationDamageTargeting($mechanicsDefinition['damageTargeting']??null)?applicationWeaponTargetIds($mechanicsDefinition,(string)$target['id'],array_key_exists('targetTokenIds',$arguments)?$arguments['targetTokenIds']:null,$complexExecutionId!==''):[];}
                 catch(RuntimeException $error){rejectOnlineCommand($connection,400,$error->getMessage(),'weapon_targets_invalid');}
                 $weaponTargets=[];
                 foreach($requestedWeaponIds as $weaponTargetId){
@@ -6557,7 +6565,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 if($infusion!==null&&$sourceCharacter!==[]){$sourceCharacter=$pending['character:'.$characterId]['payload']??$sourceCharacter;$source=synchronizeOnlineCharacterToken($source,$sourceCharacter);}
                 $areaTargetCandidates = [];
-                $damageTargeting = $attackKind === 'ability' && $chainDefinition === null ? ($abilities[$abilityIndex]['damageTargeting'] ?? null) : null;
+                $damageTargeting=$mechanicsDefinition['damageTargeting']??null;
+                if(validApplicationDamageTargeting($damageTargeting)&&($complexExecutionId!==''||array_key_exists('targetTokenIds',$arguments)))rejectOnlineCommand($connection,400,'La zone détermine ses propres cibles et ne peut pas remplacer une frappe de série.','attack_area_targets_invalid');
                 $singleAreaTarget = ($arguments['targetingMode']??'')==='single';
                 if($singleAreaTarget&&(!validApplicationDamageTargeting($damageTargeting)||empty($damageTargeting['singleTargetHalfMana'])))rejectOnlineCommand($connection,400,'Cette compétence ne permet pas ce mode cible unique.','attack_single_mode_invalid');
                 $aimedPoint=array_key_exists('targetPoint',$arguments)?applicationAreaTargetPoint($arguments['targetPoint'],$attackLayerId):null;
@@ -6587,7 +6596,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($selfAreaRequest && (!validApplicationDamageTargeting($damageTargeting) || ($damageTargeting['origin'] ?? 'target') !== 'caster' && !$aimedPoint && !$singleAreaTarget)) {
                     rejectOnlineCommand($connection, 403, 'Cette attaque ne peut pas cibler le lanceur.', 'attack_self_forbidden');
                 }
-                if($attackKind==='ability'&&$complexExecutionId===''&&!applicationAbilityTargetInRange($mechanicsDefinition,$source,$aimedPoint?:$target,$map,$source['weaponAttacks']??[],(string)($arguments['weaponAttackId']??'')))rejectOnlineCommand($connection,409,'Cette cible ou ce point est hors de portée de la compétence.','ability_target_out_of_range');
+                if(($attackKind==='ability'||validApplicationDamageTargeting($damageTargeting))&&$complexExecutionId===''&&!applicationAbilityTargetInRange($mechanicsDefinition,$source,$aimedPoint?:$target,$map,$source['weaponAttacks']??[],(string)($arguments['weaponAttackId']??'')))rejectOnlineCommand($connection,409,'Cette cible ou ce point est hors de portée de la compétence.','ability_target_out_of_range');
                 if($complexExecutionId!==''&&$authorizedRangeCells&&!applicationAbilityTargetInRange(['rangeCells'=>$authorizedRangeCells],[...$source,...($strikeSourcePosition??[])],$target,$map))rejectOnlineCommand($connection,409,'Cette cible est hors de portée de la compétence.','ability_target_out_of_range');
                 $primaryAffects = !$aimedPoint && (!validApplicationDamageTargeting($damageTargeting)
                     || applicationDamageAreaAffects($damageTargeting, (string) $source['id'], $sourceController, (string) $target['id'], $targetController));
@@ -6728,7 +6737,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     ...(!empty($mechanicsDefinition['terrainBarrier'])&&$aimedPoint?['terrainBarrier'=>$mechanicsDefinition['terrainBarrier']]:[]),
                     ...($complexExecutionId !== '' ? ['complexExecutionId' => $complexExecutionId] : []),
                     'attackId' => $attackId,
-                    'echoAttackContext' => ['weaponId'=>$attackKind==='weapon'?$attackId:($selectedWeapon['id']??''),'weaponBased' => $attackKind === 'weapon' || ($mechanicsDefinition['useWeaponDamage'] ?? false) === true,
+                    'echoAttackContext' => ['equipmentItemIds'=>($selectedWeapon?:$mechanicsDefinition)['equipmentItemIds']??[],'naturalWeapon'=>($selectedWeapon?:$mechanicsDefinition)['naturalWeapon']??false,'torchLightId'=>($selectedWeapon?:$mechanicsDefinition)['torchLightId']??'', 'weaponId'=>$attackKind==='weapon'?$attackId:($selectedWeapon['id']??''),'weaponBased' => $attackKind === 'weapon' || ($mechanicsDefinition['useWeaponDamage'] ?? false) === true,
                         'projectile' => ($mechanicsDefinition['projectile'] ?? false) === true || ($selectedWeapon['projectile'] ?? false) === true, 'reach'=>applicationWeaponReach($selectedWeapon?:$mechanicsDefinition)],
                     'opposed' => $opposed,
                     ...(!empty($chainDefinition['defenseStatId']) ? ['defenseStatId' => $chainDefinition['defenseStatId'], 'defenseRollMode' => $chainDefinition['defenseRollMode']] : []),

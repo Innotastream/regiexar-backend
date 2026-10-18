@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.43';
-const XAR_BACKEND_BUILD = 'client-3-6-3-competences-portees-20261018-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.6.3';
+const XAR_BACKEND_VERSION = '0.18.44';
+const XAR_BACKEND_BUILD = 'client-3-7-0-inventaire-esprit-20261018-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.7.0';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.6.3'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.7.0'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 23;
+const XAR_DATABASE_SCHEMA_VERSION = 24;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -1118,6 +1118,10 @@ function ensureCurrentSchema(PDO $connection): void
             $connection->prepare('INSERT IGNORE INTO schema_migrations (version,name,checksum) VALUES (23,:name,:checksum)')
                 ->execute([':name' => 'character_lore_import_backups', ':checksum' => hash('sha256', 'character_lore_imports|immutable-backup|3.5.6')]);
             $version = 23;
+        }
+        if ($version < 24) {
+            migrateApplicationSpiritStatistics($connection);
+            $version = 24;
         }
     } finally {
         try {

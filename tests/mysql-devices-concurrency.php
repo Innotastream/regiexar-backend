@@ -7,6 +7,7 @@ $dsn=(string)getenv('XAR_TEST_MYSQL_DSN');
 if(preg_match('/^mysql:host=127\.0\.0\.1;port=([1-9][0-9]{3,4});charset=utf8mb4$/D',$dsn,$port)!==1||(int)$port[1]>65535)throw new RuntimeException('Explicit loopback DSN required.');
 require_once __DIR__.'/../api/v1/domains.php';
 require_once __DIR__.'/../api/v1/online.php';
+require_once __DIR__.'/../api/v1/dynamic-items.php';
 function sendError(int $status,string $message,string $code=''):never{throw new RuntimeException($message,$status);}
 function randomToken(int $bytes=32):string{return rtrim(strtr(base64_encode(random_bytes($bytes)),'+/','-_'),'=');}
 function devicesSqlConnection(?string $schema=null):PDO{
@@ -21,14 +22,17 @@ if(($argv[1]??'')==='worker'){
  echo json_encode(['ready'=>(int)$db->query('SELECT CONNECTION_ID()')->fetchColumn()])."\n";flush();if(trim((string)fgets(STDIN))!=='GO')throw new RuntimeException('Missing worker barrier.');
  try{
   $db->beginTransaction();$clock=domainClockRecord($db,true);$records=applicationDomainRecords($db);$pending=[];
-  $applied=onlineDeviceCommands($db,$records,$pending,$identity,['command'=>'launcher.fire','arguments'=>['requestId'=>$argv[2],'sceneId'=>'fixture-scene','characterId'=>'fixture-user-character','sourceTokenId'=>'fixture-user-token','deviceId'=>'fixture-launcher','targetTokenId'=>'fixture-maker-token','statId'=>'character-stat-dexterity','mana'=>5,'opposed'=>false]]);
+  if(isset($argv[3])){
+   $command=json_decode($argv[3],true,512,JSON_THROW_ON_ERROR);
+   $applied=['result'=>onlineItemCommand($db,$records,$pending,applicationDomainPayload($records,'table'),$identity,$command['command'],['requestId'=>$argv[2],'characterId'=>'fixture-user-character',...$command['arguments']],false),'effects'=>[]];
+  }else $applied=onlineDeviceCommands($db,$records,$pending,$identity,['command'=>'launcher.fire','arguments'=>['requestId'=>$argv[2],'sceneId'=>'fixture-scene','characterId'=>'fixture-user-character','sourceTokenId'=>'fixture-user-token','deviceId'=>'fixture-launcher','targetTokenId'=>'fixture-maker-token','statId'=>'character-stat-dexterity','mana'=>5,'opposed'=>false]]);
   $revision=$pending===[]?$clock['globalRevision']:persistDomainChangesInTransaction($db,$identity,$clock,array_values($pending));$db->commit();
   echo json_encode(['result'=>$applied['result'],'effects'=>$applied['effects'],'revision'=>$revision],JSON_UNESCAPED_UNICODE)."\n";
  }catch(Throwable $error){if($db->inTransaction())$db->rollBack();echo json_encode(['error'=>$error->getMessage(),'status'=>$error->getCode()])."\n";}exit(0);
 }
-function startDeviceSqlWorker(string $schema,string $request):array{
+function startDeviceSqlWorker(string $schema,string $request,?array $command=null):array{
  $environment=getenv();$environment['XAR_DEVICES_TEST_SCHEMA']=$schema;
- $process=proc_open([PHP_BINARY,__FILE__,'worker',$request],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,__DIR__,$environment);if(!is_resource($process))throw new RuntimeException('Worker unavailable.');
+ $process=proc_open([PHP_BINARY,__FILE__,'worker',$request,...($command!==null?[json_encode($command,JSON_THROW_ON_ERROR)]:[])],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,__DIR__,$environment);if(!is_resource($process))throw new RuntimeException('Worker unavailable.');
  stream_set_timeout($pipes[1],12);$ready=json_decode((string)fgets($pipes[1]),true);if(!is_int($ready['ready']??null)){proc_terminate($process);throw new RuntimeException('Worker not connected: '.stream_get_contents($pipes[2]));}
  return [$process,$pipes];
 }
@@ -88,6 +92,19 @@ try{
  $arrived=applicationDomainPayload($records,'token:fixture-arrival:fixture-user-token');
  deviceSqlCheck(($arrived['layerId']??'')==='upper'&&$arrived['x']>65&&$arrived['x']<80&&applicationDomainPayload($records,'table')['activeSceneId']==='fixture-scene','A new SQL connection sees the linked arrival without a broadcast change.');
  deviceSqlCheck(applicationDomainPayload($records,'character:fixture-user-character')['resources']['mana']==5,'Travelling and replaying a passage leave resources intact.');
+ // Equipment mutations compete under the same real database clock.
+ $gear=applicationDomainPayload($records,'items');$emptyLoadout=['sets'=>[],'equippedItemIds'=>[],'activeSetId'=>''];
+ $gear['equipmentLoadouts']=['fixture-user-character'=>$emptyLoadout];
+ foreach(['sword','spear'] as $id){$profile=['version'=>1,'kind'=>'weapon','hands'=>1,'formula'=>'7','damageType'=>'physical','reach'=>'melee'];$gear['templates'][]=['id'=>'gear-'.$id,'name'=>'Arme fictive '.$id,'kind'=>'object','equipment'=>$profile];$gear['instances'][]=['id'=>'gear-'.$id,'templateId'=>'gear-'.$id,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'fixture-user-character']];}
+ upsertApplicationDomain($db,'items',normalizeItemStore($gear),20,null);
+ $commands=array_map(static fn($id)=>['command'=>'item.equipment.equip','arguments'=>['itemIds'=>['gear-'.$id],'expectedLoadout'=>$emptyLoadout]],['sword','spear']);
+ $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'equipment-race-distinct-01',$commands[0]),startDeviceSqlWorker($schema,'equipment-race-distinct-02',$commands[1])];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
+ deviceSqlCheck(count(array_filter($results,static fn($r)=>isset($r['result'])))===1&&count(array_filter($results,static fn($r)=>($r['status']??0)===409))===1,'Concurrent equipment changes never overwrite a newer loadout. '.json_encode($results));
+ $records=applicationDomainRecords(devicesSqlConnection($schema));$held=applicationDomainPayload($records,'items');deviceSqlCheck(count($held['equipmentLoadouts']['fixture-user-character']['equippedItemIds'])===1&&count($held['instances'])===count($gear['instances'])&&array_values(array_filter($held['instances'],static fn($i)=>$i['templateId']==='fixture-bolt'))===array_values(array_filter($gear['instances'],static fn($i)=>$i['templateId']==='fixture-bolt')),'The winner is durable; equipment never duplicates or consumes unrelated ammunition.');
+ $quick=['command'=>'item.quick.create','arguments'=>['name'=>'Corde fictive','quantity'=>2,'templateId'=>'sql-quick-model','itemIds'=>['sql-quick-1','sql-quick-2'],'description'=>'Recette uniquement']];
+ $db->beginTransaction();domainClockRecord($db,true);$workers=[startDeviceSqlWorker($schema,'equipment-quick-same-0001',$quick),startDeviceSqlWorker($schema,'equipment-quick-same-0001',$quick)];foreach($workers as $worker){fwrite($worker[1][0],"GO\n");fflush($worker[1][0]);}$db->commit();$results=array_map('finishDeviceSqlWorker',$workers);$workers=[];
+ deviceSqlCheck(count(array_filter($results,static fn($r)=>isset($r['result'])))===2&&count(array_filter($results,static fn($r)=>$r['result']['deduplicated']??false))===1,'Concurrent quick-object retries share one persistent receipt. '.json_encode($results));
+ $records=applicationDomainRecords(devicesSqlConnection($schema));$held=applicationDomainPayload($records,'items');deviceSqlCheck(count(array_filter($held['instances'],static fn($i)=>$i['templateId']==='sql-quick-model'))===2,'A fresh SQL connection sees exactly two requested objects, never four.');
  echo "Local MySQL device concurrency integration passed.\n";
 }finally{
  foreach($workers as [$process,$pipes]){foreach($pipes as $pipe)if(is_resource($pipe))fclose($pipe);if(is_resource($process)){proc_terminate($process);proc_close($process);}}

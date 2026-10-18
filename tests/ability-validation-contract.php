@@ -24,7 +24,7 @@ function startValidation(string $route = 'ability.use', string $effect = 'healin
             $sourceId = $copy->body['token']['id'];
             $token = $db->payload('token:scene-one:' . $sourceId);
             $token['mana'] = 20; $token['maxMana'] = 40; $token['hp'] = 60; $token['maxHp'] = 100;
-            $token['fatigue'] = ['current' => 149.5, 'max' => 150];
+            $token['fatigue'] = ['current' => 148.5, 'max' => 150];
             $db->put('token:scene-one:' . $sourceId, $token);
         }
         $body = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'tokenId' => 'token-player',
@@ -93,10 +93,10 @@ requireTactical($refused->status===200 && $refused->body['validationRejected'] &
 $sourceKey = 'token:scene-one:' . $body['sourceTokenId'];
 $model = $db->payload('character:character-player');
 $paid = $db->payload($sourceKey);
-requireTactical($start->body['cast']['outcome']['code'] === 'critical-failure' && (float) $paid['mana'] === 18.0 && (float) $paid['hp'] === 57.0 && (float) $paid['fatigue']['current'] === 150.0, 'The critical failure pays only clone resources.');
+requireTactical($start->body['cast']['outcome']['code'] === 'critical-failure' && (float) $paid['mana'] === 18.0 && (float) $paid['hp'] === 57.0 && (float) $paid['fatigue']['current'] === 149.5, 'The critical failure pays only clone resources.');
 $rejected = validationResolve($db,$start->body,'reject');
 $restored = $db->payload($sourceKey);
-requireTactical($rejected->status === 200 && (float) $restored['mana'] === 20.0 && (float) $restored['hp'] === 60.0 && (float) $restored['fatigue']['current'] === 149.5, 'Refusing the critical failure restores the clone, including only the fatigue actually gained: ' . json_encode($rejected->body));
+requireTactical($rejected->status === 200 && (float) $restored['mana'] === 20.0 && (float) $restored['hp'] === 60.0 && (float) $restored['fatigue']['current'] === 148.5, 'Refusing the critical failure restores the clone, including only the fatigue actually gained: ' . json_encode($rejected->body));
 requireTactical($db->payload('character:character-player') === $model && $db->payload('activity')['actionTimers'] === [], 'The model and recharge remain unchanged.');
 $revision = $db->revision;
 $replayed = validationResolve($db,$start->body,'reject');

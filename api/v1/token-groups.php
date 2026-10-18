@@ -322,6 +322,7 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
         'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices'),'activeSceneId'=>$sceneId,'map'=>[...$map,'tokens'=>$occupied]],$source,$clone,static fn($prefix)=>$prefix.'-'.randomToken(16));
     queueOnlineDomainUpsert($pending,$records,'items',$copy['items']);
     if(is_array($copy['devices']))queueOnlineDomainUpsert($pending,$records,'devices',$copy['devices']);
+    $clone['weaponAttacks']=$copy['weaponAttacks'];
     $index['order'][] = $clone['id'];
     queueOnlineDomainUpsert($pending, $records, onlineTokenDomainKey($sceneId, $clone['id']), $clone);
     queueOnlineDomainUpsert($pending, $records, $indexKey, $index);
