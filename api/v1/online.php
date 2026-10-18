@@ -6421,6 +6421,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         rejectOnlineCommand($connection, 409, 'Cette série n’attend plus d’attaque de base.', 'complex_attack_not_ready');
                     }
                     if ($step['type'] === 'allocated-attacks') {
+                        // Check the current resolved loadout before reserving a
+                        // strike, including executions saved by an older client.
+                        if (($step['damageMode'] ?? 'weapon') === 'weapon') {
+                            $currentWeaponIndex = findEntryIndex($source['weaponAttacks'], (string) ($arguments['attackId'] ?? ''));
+                            if ($currentWeaponIndex >= 0 && !applicationAllocatedAttackAllowsWeapon($step, $source['weaponAttacks'][$currentWeaponIndex])) {
+                                rejectOnlineCommand($connection, 409, 'Cette série exige une seule arme par frappe : choisissez une arme individuelle.', 'complex_ability_single_weapon_required');
+                            }
+                        }
                         if(!applicationComplexAbilityTargetEligible($execution,$step,$source,$target,$map,(string)($arguments['attackId']??'')))rejectOnlineCommand($connection,409,'La cible ne respecte plus le trajet ou la portée de cette compétence.','complex_ability_target_out_of_range');
                         $strikeSourcePosition=applicationComplexAbilityStrikeOrigin($execution,$step,$target,$map);
                         $targetId = (string) ($target['id'] ?? '');
@@ -6527,6 +6535,10 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $weapons = equipmentAttackRows(normalizeOnlineWeaponAttacks($seed, $weaponFormulas),$source,$equipmentState);
                     $weaponIndex = findEntryIndex($weapons, $attackId);
                     if ($weaponIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque de base n’existe plus sur le token.', 'attack_weapon_missing');
+                    if ($complexExecutionId !== '' && ($step['type'] ?? '') === 'allocated-attacks'
+                        && !applicationAllocatedAttackAllowsWeapon($step, $weapons[$weaponIndex])) {
+                        rejectOnlineCommand($connection, 409, 'Cette série exige une seule arme par frappe : choisissez une arme individuelle.', 'complex_ability_single_weapon_required');
+                    }
                     $attackName = $weapons[$weaponIndex]['name'] ?? (count($weapons) > 1 ? 'Attaque de base ' . ($weaponIndex + 1) : 'Attaque de base');
                     $damageFormula = (string) $weapons[$weaponIndex]['formula'];
                     $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);

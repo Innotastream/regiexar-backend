@@ -48,3 +48,6 @@ allocatedCheck($read['revision']===$execution['revision'] && $read['updatedAt']=
 allocatedCheck($read['stepStates']['strikes']['targets'][1]['attacks'][0]['appliedDamage']===17, 'Legacy completed results use acquired receipts.');
 allocatedCheck(applicationComplexAbilityUpdateAttackResult([$updated],[...$late,'sceneId'=>'other-scene'],12)[0]===$updated, 'A receipt from another scene cannot change the execution.');
 echo "allocated-attacks-contract: ok\n";
+
+// Keep the current-equipment and transaction regression in the existing CI entry point.
+require __DIR__ . '/allocated-single-weapon.php';

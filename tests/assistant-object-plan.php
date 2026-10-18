@@ -71,6 +71,11 @@ $safeCharacter=abilityAssistantSafeCharacterContext($genericCharacter)['characte
 planCheck(count($safeCharacter['weaponAttacks'])===2&&$safeCharacter['weaponAttacks'][0]['naturalWeapon']&&$safeCharacter['weaponAttacks'][0]['finesse']&&$safeCharacter['weaponAttacks'][0]['targetCount']===2,'Safe character context exposes actual weapon semantics without guessing a class');
 planCheck($safeCharacter['weaponAttacks'][1]['dynamicEquipment']&&!isset($safeCharacter['weaponAttacks'][1]['formula'])&&!isset($safeCharacter['privateNotes']),'Dynamic equipment never feeds stale saved damage or private notes to the assistant');
 foreach(['character-stat-spirit','character-stat-spiritSocial'] as $stat){$generic=normalizeAbilityAssistantDraft($conversation,['name'=>'Effet inédit','effect'=>'movement','castingStatId'=>$stat,'tacticalEffect'=>['version'=>1,'kind'=>'mark','attackBonus'=>20,'dodgeBonus'=>20]]);planCheck($generic['castingStatId']===$stat&&$generic['tacticalEffect']['kind']==='mark','Spirit and Social remain independent for a generic simple effect: '.$stat);}
+$singleWeaponDraft=normalizeAbilityAssistantDraft($conversation,['name'=>'Série inédite avec une arme','effect'=>'complex','castingStatId'=>'','workflow'=>['version'=>8,'steps'=>[
+ ['id'=>'distribution','type'=>'targets','minTargets'=>1,'maxTargets'=>5,'allocationTotal'=>5],
+ ['id'=>'strikes','type'=>'allocated-attacks','sourceStepId'=>'distribution','awarenessMode'=>'none','damagePercent'=>50,'allowWeaponSets'=>false]
+]]]);
+planCheck($singleWeaponDraft['workflow']['steps'][1]['allowWeaponSets']===false&&$singleWeaponDraft['workflow']['steps'][1]['damagePercent']===50,'Assistant draft preserves generic single-weapon allocated strikes without inventing fixed damage');
 $hybridPlan=['version'=>1,'objects'=>[['ref'=>'ammo','templateId'=>'bolt'],['ref'=>'vial','template'=>['kind'=>'object','name'=>'Fiole']]],'links'=>[['kind'=>'launcher-ammunition','objectRef'=>'ammo'],['kind'=>'coating-vial','objectRef'=>'vial']]];
 planRejected(fn()=>normalizeAssistantObjectPlan($hybridPlan,[...$draft,'tacticalEffect'=>['version'=>1,'kind'=>'coating']],$context),400,'A hybrid launcher cannot bypass the coating-only Buff port');
 foreach([

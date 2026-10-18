@@ -384,6 +384,7 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
             $step['awarenessMode'] = in_array($raw['awarenessMode'] ?? '', ['none', 'once'], true) ? $raw['awarenessMode'] : 'required';
             $step['awarenessStatId'] = applicationComplexAbilityIdentifier($raw['awarenessStatId'] ?? '', 'character-stat-instinct', 120);
             $step['damagePercent'] = applicationComplexAbilityInteger($raw['damagePercent'] ?? null, 1, 100, 100);
+            $step['allowWeaponSets'] = ($raw['allowWeaponSets'] ?? true) !== false;
             $step['damageMode'] = ($raw['damageMode'] ?? '') === 'configured' ? 'configured' : 'weapon';
             $step['damageComponents'] = $step['damageMode'] === 'configured' ? applicationDamageComponents($raw['damageComponents'] ?? []) : [];
             $step['hitMode'] = $step['damageMode'] === 'configured' && ($raw['hitMode'] ?? '') === 'automatic' ? 'automatic' : 'cast';
@@ -924,6 +925,15 @@ function applicationComplexAbilityTokenById(array $tokens, mixed $id): ?array
     return null;
 }
 
+function applicationAllocatedAttackAllowsWeapon(array $step, array $weapon): bool
+{
+    if (($step['allowWeaponSets'] ?? true) !== false) return true;
+    // The equipment resolver supplies physical identities. Dice count and the
+    // number of hands do not determine whether this is one weapon.
+    return ($weapon['equipmentBinding']['kind'] ?? '') !== 'set'
+        && count(is_array($weapon['equipmentItemIds'] ?? null) ? $weapon['equipmentItemIds'] : []) <= 1;
+}
+
 function applicationComplexAbilityComparable(mixed $value): string
 {
     $normalized = strtolower(strtr((string) $value, [
@@ -1413,6 +1423,12 @@ function applyApplicationComplexAbilityCommand(
                         || (($nextStep['damageMode'] !== 'configured' || $nextStep['hitMode'] !== 'automatic') && !in_array($strike['statId'] ?? '', $stats, true))
                         || !is_bool($strike['opposed'] ?? null)) {
                         applicationComplexAbilityFail('Une frappe prévue a une cible, une arme ou une statistique invalide.', 'complex_ability_attack_plan_invalid');
+                    }
+                    if ($nextStep['damageMode'] !== 'configured') {
+                        $weaponIndex = array_search($strike['attackId'], $weapons, true);
+                        if (!applicationAllocatedAttackAllowsWeapon($nextStep, $source['weaponAttacks'][$weaponIndex])) {
+                            applicationComplexAbilityFail('Cette série exige une seule arme par frappe : choisissez une arme individuelle.', 'complex_ability_single_weapon_required');
+                        }
                     }
                     $counts[$strike['tokenId']]++;
                 }
