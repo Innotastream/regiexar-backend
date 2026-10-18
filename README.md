@@ -1,4 +1,10 @@
-# Backend 0.18.44 — client exact 3.7.0
+# Backend 0.18.45 — client exact 3.7.1
+
+Build `client-3-7-1-temps-assistant-valse-20261018-1`. Cette version ajoute au moteur publié en 0.18.44 le passage de tours hors combat, les projections nécessaires à son annonce, les liaisons d’objets proposées par l’assistant et la restriction configurable d’une seule arme par frappe répartie. Les anciens scénarios continuent à accepter les sets quand `allowWeaponSets` est absent ou vrai ; la valeur fausse contrôle le plan puis l’équipement courant avant chaque frappe, sans modifier les coûts, l’identité des armes ou les ressources des clones.
+
+Le schéma SQL reste **24**, les schémas de session et de fiche restent **22** et **10**. Cette livraison ne rejoue pas la migration d’inventaire et d’Esprit déjà appliquée en 3.7.0. L’activation de la restriction sur Valse tumultueuse est une modification ciblée des seules étapes concernées de la fiche et du clone indépendant ; ses preuves d’application sont distinctes du code et du déploiement. Le verrou candidat accepte exclusivement **3.7.1** et refuse notamment **3.7.0** et **3.7.2**. Les résultats des contrôles, la mise en service et les écritures de données sont consignés séparément.
+
+## Publication précédente : backend 0.18.44 — client exact 3.7.0
 
 Build client-3-7-0-inventaire-esprit-20261018-1. Statistique Esprit indépendante de Social, migration transactionnelle SQL 24 des fiches et des unités, équipements par exemplaire, sets et budget de mains, enchantement lié à une arme, attaques multiples et cercles de créatures. Les coûts de fatigue dépassant 150 sont refusés avant toute mutation. Les commandes conservent les droits, révisions et reçus persistants. La migration refuse les schémas futurs, sauvegarde les documents bruts et ne réécrit pas les stocks ni les résultats historiques. Le client exact attendu est 3.7.0. Les preuves de CI, migration de données et déploiement sont distinctes.
 
