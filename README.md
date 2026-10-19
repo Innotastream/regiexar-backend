@@ -1,3 +1,9 @@
+# Backend 0.18.46 — client exact 3.7.2
+
+Build `client-3-7-2-stream-visuels-20261019-1`. Les Jokers et jets révélés gardent leur résultat animé après anonymisation de la projection publique. Les filtres de scène, étage et visibilité des jets ordinaires restent vérifiés. Les zones centrées sur le lanceur mesurent leur rayon depuis son bord, comme leur aperçu client.
+
+Les schémas SQL/session/fiche restent **24/22/10**. Aucun import de fiche ni migration à rejouer. Le verrou accepte exclusivement **3.7.2**, et refuse notamment **3.7.1** et **3.7.3**. Les preuves de déploiement et de distribution Windows sont distinctes.
+
 # Backend 0.18.45 — client exact 3.7.1
 
 Build `client-3-7-1-temps-assistant-valse-20261018-1`. Cette version ajoute au moteur publié en 0.18.44 le passage de tours hors combat, les projections nécessaires à son annonce, les liaisons d’objets proposées par l’assistant et la restriction configurable d’une seule arme par frappe répartie. Les anciens scénarios continuent à accepter les sets quand `allowWeaponSets` est absent ou vrai ; la valeur fausse contrôle le plan puis l’équipement courant avant chaque frappe, sans modifier les coûts, l’identité des armes ou les ressources des clones.

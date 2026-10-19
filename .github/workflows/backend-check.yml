@@ -55,7 +55,10 @@ jobs:
       - name: Character lore import and owner projection
         run: php tests/character-lore-contract.php
       - name: Tactical lifecycle and concurrent conditions
-        run: php tests/tactical-lifecycle.php
+        run: |
+          php tests/tactical-lifecycle.php
+          php tests/stream-roll-projection.php > /dev/null
+          php tests/caster-area-footprint.php
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php
       - name: Infusions, devices and individual consent

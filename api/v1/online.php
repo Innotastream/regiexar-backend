@@ -920,16 +920,16 @@ function onlineEffectiveTokenControllerId(array $token, array $characterOwners):
     return trim((string) ($token['controllerPlayerId'] ?? ''));
 }
 
-function onlineDamageAreaTargets(array $tokens, array $center, array $map, float $radiusCells): array
+function onlineDamageAreaTargets(array $tokens, array $center, array $map, float $radiusCells, bool $fromCenterEdges = false): array
 {
     $width = (float) ($map['naturalWidth'] ?? 0);
     $height = (float) ($map['naturalHeight'] ?? 0);
     $grid = (float) ($map['gridSize'] ?? 0);
     if (!is_finite($radiusCells) || $radiusCells < 0.5 || $radiusCells > 20 || floor($radiusCells*2)!==$radiusCells*2 || $width <= 0 || $height <= 0 || $grid <= 0) return [];
     $layer = onlineTokenLayerId($center, $map);
-    return array_values(array_filter($tokens, static function (mixed $token) use ($center, $width, $height, $grid, $radiusCells, $map, $layer): bool {
+    return array_values(array_filter($tokens, static function (mixed $token) use ($center, $width, $height, $grid, $radiusCells, $map, $layer, $fromCenterEdges): bool {
         if (!is_array($token) || ($token['hidden'] ?? false) === true || onlineTokenLayerId($token, $map) !== $layer) return false;
-        return applicationMapDistanceInCells(['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$layer],$token,$map,false,true)<=$radiusCells+1e-9;
+        return applicationMapDistanceInCells($fromCenterEdges ? $center : ['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$layer],$token,$map,false,true)<=$radiusCells+1e-9;
     }));
 }
 
@@ -1521,8 +1521,12 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'activeScene' => stripForbiddenPlayerData($paused
             ? ($fullState['tacticalSync']['publishedActiveScene'] ?? null)
             : ($fullState['activeScene'] ?? null)),
+        // Explicit revelations have already passed the scene/damage guards above
+        // and lost private anchor ids. Requiring those removed ids here erased
+        // their public animation (notably every forced-public Joker).
         'rolls' => stripForbiddenPlayerData(array_slice(array_values(array_filter($rolls,
-            static fn (array $roll): bool => onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
+            static fn (array $roll): bool => ($roll['gmRevealed'] ?? false) === true
+                || onlineMapRollVisible($roll, $visibleSceneId, $visibleLayerId, $visibleAttackTokenIds))), 0, 30)),
         'items' => publicItemStore($fullState['items'] ?? [], $characters, $streamPov?null:['id' => $accountId], ['sceneId' => $visibleSceneId, 'layerId' => $visibleLayerId, 'paused' => $paused,'tokens'=>$streamPov?[]:$map['tokens']], static fn($location) => !$strictPointIsHidden($location['x'], $location['y'])),
         'devices' => $visibleDevices,
         'actionTimers' => $visibleActionTimers,
@@ -6597,7 +6601,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $areaTargetCandidates = onlineDamageAreaTargets(
                         onlineSceneTokensForLights($connection, $records, $pending, $sceneId),
                         $aimedPoint ?? (($damageTargeting['origin'] ?? 'target') === 'caster' ? $source : $target), $map,
-                        (float) $damageTargeting['radiusCells']);
+                        (float) $damageTargeting['radiusCells'], ($damageTargeting['origin'] ?? 'target') === 'caster');
                     if($singleAreaTarget)$areaTargetCandidates=[];
                     $areaTargetCandidates = array_values(array_filter($areaTargetCandidates,
                         static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController, $map, $accountId, $sceneId, $isGm): bool {
