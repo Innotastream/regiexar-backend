@@ -1,3 +1,9 @@
+# Backend 0.18.47 — client exact 3.7.3
+
+Build `client-3-7-3-objets-pieges-20261019-1`. Catalogue commun et suppression atomique avec inventaires/scènes, objets utilisables configurables (dégâts, effets périodiques, états, bonus aux attaques, invocation) et pièges avec validation MJ et oppositions. Les pièges au passage fonctionnent seulement en combat, y compris dans une autre scène manipulée par le MJ. Les révisions, reçus persistants et contraintes de file protègent les réponses tardives et les usages concurrents.
+
+Le parseur commun accepte la multiplication de gauche à droite et les parenthèses. Les soins en pourcentage acceptent une formule additionnelle ; les bonus temporaires d'initiative emploient le moteur de statistiques commun. Les schémas SQL/session/fiche restent **24/22/10**. Aucun import de fiche ni migration à rejouer. Le verrou accepte exclusivement **3.7.3** et refuse notamment **3.7.2** et **3.7.4**. Le changement de génération applique le délai de transition de session de trente secondes existant. Les preuves de déploiement et de distribution Windows sont distinctes.
+
 # Backend 0.18.46 — client exact 3.7.2
 
 Build `client-3-7-2-stream-visuels-20261019-1`. Les Jokers et jets révélés gardent leur résultat animé après anonymisation de la projection publique. Les filtres de scène, étage et visibilité des jets ordinaires restent vérifiés. Les zones centrées sur le lanceur mesurent leur rayon depuis son bord, comme leur aperçu client.

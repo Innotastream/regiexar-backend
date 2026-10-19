@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/passive-abilities.php';
 function applicationTacticalEffect(mixed $v):?array {
     if($v===null||empty($v['kind']))return null;
@@ -13,11 +14,8 @@ function applicationTacticalEffect(mixed $v):?array {
 }
 function applicationTacticalController(array $token,string $fallback=''):string {return $token['controlEffect']['controllerId']??$fallback;}
 function applicationTacticalImage(array $token,mixed $base):mixed {return isset($token['appearanceState'])?(($token['appearanceState']['active']??false)?$token['appearanceState']['image']:$token['appearanceState']['baseImage']):$base;}
-function applicationMaximumFormula(string $formula):int {
-    if(!validApplicationAbilityFormula($formula))throw new RuntimeException('Formule d’arme invalide.',400);
-    preg_match_all('/[+-]?(?:\d*d\d+|\d+)/',strtolower(preg_replace('/\s+/','',$formula)),$matches);$sum=0;
-    foreach($matches[0] as $term){$sign=$term[0]==='-'?-1:1;$v=ltrim($term,'+-');$dice=[];if(preg_match('/^(\d*)d(\d+)$/',$v,$dice))$sum+=$sign*(int)($dice[1]?:1)*($sign<0?1:(int)$dice[2]);else $sum+=$sign*(int)$v;}return $sum;
-}
+function applicationMaximumFormula(string $formula):int { return parseEffectFormula($formula)['max']; }
+
 function applicationApplyTacticalEffect(array $source,array $target,array $ability,string $controller,array $clock,string $id):array {
     $e=applicationTacticalEffect($ability['tacticalEffect']??null);if(!$e)return [$source,$target];
     if($e['kind']==='appearance')$source['appearanceState']=['version'=>1,'id'=>$id,'label'=>$ability['name'],'abilityId'=>$ability['id'],'active'=>true,

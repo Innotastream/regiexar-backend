@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__.'/effect-formula.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . "/damage-guard.php";
@@ -1141,6 +1142,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             ...(array_key_exists('passiveAbilities',$token)?['passiveAbilities'=>applicationPassiveAbilities($token['passiveAbilities'])]:[]),
             'color' => $token['color'] ?? '#8d72cb',
             'frameVariant' => normalizeOnlineTokenFrameVariant($token['frameVariant'] ?? null, $allied),
+            ...(!empty($token['artworkOnly'])?['artworkOnly'=>true]:[]),
             'x' => (float) ($token['x'] ?? 50),
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 40),
@@ -2355,34 +2357,7 @@ function cleanPlayerCharacter(array $character, string $accountId): array
     return $character;
 }
 
-function validOnlineRollFormula(string $formula): bool
-{
-    $normalized = strtolower(str_replace(' ', '', $formula));
-    if (strlen($normalized) > 100) {
-        return false;
-    }
-    if ($normalized === '' || preg_match('/^[+-]?((\d*)d\d+|\d+)([+-]((\d*)d\d+|\d+))*$/D', $normalized) !== 1) {
-        return false;
-    }
-    preg_match_all('/[+-]?[^+-]+/', $normalized, $matches);
-    if (count($matches[0]) > 30) {
-        return false;
-    }
-    foreach ($matches[0] as $term) {
-        $clean = ltrim($term, '+-');
-        if (str_contains($clean, 'd')) {
-            [$countText, $sidesText] = explode('d', $clean, 2);
-            $count = $countText === '' ? 1 : (int) $countText;
-            $sides = (int) $sidesText;
-            if ($count < 1 || $count > 100 || $sides < 2 || $sides > 1000) {
-                return false;
-            }
-        } elseif (strlen($clean) > 10 || (int) $clean > 1000000000) {
-            return false;
-        }
-    }
-    return true;
-}
+function validOnlineRollFormula(string $formula): bool { return validEffectFormula($formula); }
 
 function normalizeOnlineDamageType(mixed $value): string
 {
@@ -2416,7 +2391,7 @@ function normalizeOnlineArmorProfile(mixed $category, mixed $value): array
 function extractOnlineDamageFormulas(mixed $value): array
 {
     $text = (string) $value;
-    preg_match_all('/(?:^|[^A-Za-z0-9_])([+\-]?(?:\d*)d\d+(?:\s*[+\-]\s*(?:(?:\d*)d\d+|\d+))*)(?=$|[^A-Za-z0-9_])/i', $text, $matches);
+    preg_match_all('/(?:^|[^A-Za-z0-9_])([+\-]?(?:\d*)d\d+(?:\s*[+\-x×*]\s*(?:(?:\d*)d\d+|\d+))*)(?=$|[^A-Za-z0-9_])/i', $text, $matches);
     $formulas = [];
     foreach ($matches[1] ?? [] as $candidate) {
         $formula = strtolower(str_replace(' ', '', (string) $candidate));
@@ -2758,44 +2733,7 @@ function playerCharacterPatchChangesCurrent(array $current, array $patch): bool
     return false;
 }
 
-function onlineRollFormula(string $formula): array
-{
-    $normalized = strtolower(str_replace(' ', '', $formula));
-    if (!validOnlineRollFormula($normalized)) {
-        throw new InvalidArgumentException('Formule de jet invalide.');
-    }
-    preg_match_all('/[+-]?[^+-]+/', $normalized, $matches);
-    $total = 0;
-    $parts = [];
-    $dice = [];
-    foreach ($matches[0] as $term) {
-        $sign = str_starts_with($term, '-') ? -1 : 1;
-        $clean = ltrim($term, '+-');
-        if (str_contains($clean, 'd')) {
-            [$countText, $sidesText] = explode('d', $clean, 2);
-            $count = $countText === '' ? 1 : (int) $countText;
-            $sides = (int) $sidesText;
-            if ($count < 1 || $count > 100 || $sides < 2 || $sides > 1000) {
-                throw new InvalidArgumentException('Dés hors limites.');
-            }
-            $rolls = [];
-            for ($index = 0; $index < $count; $index += 1) {
-                $rolls[] = random_int(1, $sides);
-            }
-            $total += array_sum($rolls) * $sign;
-            $parts[] = ($sign < 0 ? '−' : ($parts !== [] ? '+' : '')) . '[' . implode(', ', $rolls) . ']';
-            $dice[] = ['count' => $count, 'sides' => $sides, 'sign' => $sign, 'results' => $rolls];
-        } else {
-            $value = (int) $clean * $sign;
-            $total += $value;
-            $parts[] = ($value >= 0 && $parts !== [] ? '+' : '') . (string) $value;
-        }
-    }
-    $rawD100 = count($dice) === 1 && $dice[0]['count'] === 1 && $dice[0]['sides'] === 100 && $dice[0]['sign'] === 1
-        ? (int) $dice[0]['results'][0]
-        : null;
-    return ['total' => $total, 'breakdown' => implode(' ', $parts), 'formula' => $normalized, 'rawD100' => $rawD100];
-}
+function onlineRollFormula(string $formula): array { $roll=evaluateEffectFormula($formula);unset($roll['dice']);return $roll; }
 
 function normalizeOnlineRollMode(mixed $value): string
 {
@@ -4536,7 +4474,10 @@ function applyOnlineAttackConditions(PDO $connection, array &$records, array &$p
     $source=$sourceId!==''?($pending[onlineTokenDomainKey($attack['sceneId'],$sourceId)]['payload']??applicationDomainPayload($records,onlineTokenDomainKey($attack['sceneId'],$sourceId))):[];
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $effectState=[...$activity,'initiative'=>$pending['initiative:'.$attack['sceneId']]['payload']??applicationDomainPayload($records,'initiative:'.$attack['sceneId']),'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices')];
+    $needsUnits=(bool)array_filter($activity['attackEnhancements']??[],static fn($effect)=>($effect['mode']??'')==='on-hit-effects'&&($effect['holder']??'')===applicationEnhancementHolder($source)&&($effect['sceneId']??'')===$attack['sceneId']&&($effect['remainingTurns']??0)>0);
+    if($needsUnits)$effectState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),(string)$attack['sceneId']);
     applicationAttackPoisonStacks($effectState,$attack,$source,$target,static fn($p)=>$p.'-'.randomToken(16));
+    if($needsUnits){onlineDeviceFlush($effectState,$records,$pending);$activity=$pending['activity']['payload']??$activity;}
     $activity['damageOverTime']=$effectState['damageOverTime']??[];$activity['attackEnhancements']=$effectState['attackEnhancements']??[];
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
     return $attack;
@@ -5350,7 +5291,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5372,7 +5313,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -5903,6 +5844,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($executions !== ($activity['abilityExecutions'] ?? [])) { $activity['abilityExecutions'] = $executions; queueOnlineDomainUpsert($pending, $records, 'activity', $activity); }
                 $opportunities=applicationMovementAvoidsOpportunity($activity['abilityExecutions']??[],$moveSceneId,$token['id'])?[]:applicationOpportunityRequests([...$map,'tokens'=>$sceneMountTokens],$token,$token,$resolved,$resolved['path']??null,$moveSceneId,static fn($t)=>onlineTokenControllerIdFromRecords($connection,$records,$t),static function($t)use($connection,&$records,&$pending){$c=applicationAbilityCastingOwner($t);return $c['characterId']!==''?($pending['character:'.$c['characterId']]['payload']['passiveAbilities']??applicationDomainPayload($records,'character:'.$c['characterId'])['passiveAbilities']??$t['passiveAbilities']??null):($t['passiveAbilities']??null);});
                 if($opportunities!==[]){$deviceStore=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());if(count($deviceStore['pendingRolls'])+count($opportunities)>1000)rejectOnlineCommand($connection,429,'Traitez les réactions en attente avant ce déplacement.','opportunity_queue_full');$deviceStore['pendingRolls']=[...$deviceStore['pendingRolls'],...$opportunities];queueOnlineDomainUpsert($pending,$records,'devices',$deviceStore);}
+                $trapState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$moveSceneId);$trapState['map']=[...$map,'tokens'=>$sceneMountTokens];
+                if(queueItemTrapPassages($trapState,$token,$token,$resolved,$resolved['path']??null,static fn($prefix)=>$prefix.'-'.randomToken(16)))queueOnlineDomainUpsert($pending,$records,'items',$trapState['items']);
                 $token['x'] = $resolved['x'];
                 $token['y'] = $resolved['y'];
                 $token['_movedAt'] = (int) floor(microtime(true) * 1000);
@@ -7632,7 +7575,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $label = 'Touché';
                 $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . (string) $resultModifier : '');
             } elseif ($kind === 'initiative') {
-                $bonus = is_numeric($token['initiativeBonus'] ?? null) ? -(int) $token['initiativeBonus'] : 0;
+                $bonus=-applicationEffectiveInitiativeBonus($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId??onlineActiveSceneId($table));
                 $label = 'Initiative';
                 $formula = '1d100' . ($bonus >= 0 ? '+' : '') . $bonus;
             } elseif ($kind === 'damage') {
@@ -7773,7 +7716,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $formula = (string) ($shortcut['formula'] ?? '1d100');
             $rollMode = 'normal';
             if ($kind === 'initiative') {
-                $modifier = -(int) ($character['initiativeBonus'] ?? 0);
+                $modifier=-applicationEffectiveInitiativeBonus($character,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),onlineActiveSceneId($table));
                 $formula = '1d100' . ($modifier === 0 ? '' : ($modifier > 0 ? '+' : '') . $modifier);
             }
             $authoritySignature = $requestId !== '' ? onlineShortcutRollAuthoritySignature(

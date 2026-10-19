@@ -304,7 +304,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     } else {
         $source = synchronizeOnlineCharacterToken(['characterId' => $characterId], $source);
     }
-    try { $spec = applicationTacticalRollSpecification([...$source,'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
+    try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,$activity,$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);

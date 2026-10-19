@@ -93,6 +93,8 @@ jobs:
           php tests/equipment-spirit-creatures.php
           php tests/device-owner-return.php
           php tests/inventory-library-global.php
+          php tests/item-catalog-rework.php
+          php tests/item-activations.php
       - name: Assistant classic abilities and repair
         run: |
           php tests/ability-assistant-contract.php

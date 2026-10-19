@@ -17,7 +17,7 @@ function applicationDamageComponents(mixed $value): array {
     return $parts;
 }
 function applicationCombinedDamageFormula(array $parts): string {
-    return str_replace(['+-', '++'], ['-', '+'], implode('+', array_column($parts, 'formula'))) ?: '0';
+    return sumEffectFormulas(array_column($parts,'formula'));
 }
 function validApplicationOppositionAbility(mixed $value): bool {
     if (!is_array($value) || !validApplicationDomainIdentifier($value['statId'] ?? null, 120)

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/effect-formula.php';
 
 const XAR_PENDING_DOT_RESOLUTION_MAXIMUM = 500;
 
@@ -9,7 +10,8 @@ function onlineDotTargetIdentity(array $token): string {
 }
 
 function onlineRemainingDotFormula(string $formula, int $turns): ?string {
-    $formula = strtolower(preg_replace('/\s+/', '', $formula));
+    $formula=normalizeEffectFormula($formula);
+    if(preg_match('/[()*]/',$formula)){if($turns<1||$turns>20||!validEffectFormula($formula))return null;$sum=sumEffectFormulas(array_fill(0,$turns,$formula));return validEffectFormula($sum)?$sum:null;}
     if ($turns < 1 || $turns > 20 || preg_match('/^(?:\d*d\d+|\d+)(?:[+-](?:\d*d\d+|\d+))*$/D', $formula) !== 1) return null;
     preg_match_all('/[+-]?(?:\d*d\d+|\d+)/', $formula, $terms);
     return implode('', array_map(static function (string $term) use ($turns): string {

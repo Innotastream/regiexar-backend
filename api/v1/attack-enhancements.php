@@ -5,6 +5,7 @@ require_once __DIR__ . '/unit-authority.php';
 
 require_once __DIR__.'/active-items.php';
 function applicationAttackEnhancement(mixed $value): ?array {
+    if(is_array($value)&&($value['mode']??'')==='on-hit-effects'){$p=normalizeItemPayload($value['payload']??null);return $p&&in_array($p['kind'],['dot','condition'],true)&&activeItemInt($value['turns']??null,1,999)&&in_array($value['trigger']??'',['all-attacks','melee-weapon','main-weapon'],true)?['mode'=>'on-hit-effects','turns'=>$value['turns'],'trigger'=>$value['trigger'],'requiresHit'=>true,...((applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])) ? ['family'=>applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])]:[]),'payload'=>$p]:null;}
     if(is_array($value)&&($value['mode']??'')==='immunity')return activeItemTag($value['family']??null)&&activeItemInt($value['turns']??null,1,999)?['mode'=>'immunity','family'=>$value['family'],'turns'=>$value['turns']]:null;
     if(is_array($value)&&($value['mode']??'')==='on-attack-dot'){
         $d=$value['dot']??[];if(!activeItemInt($value['turns']??null,1,999)||!validApplicationAbilityFormula($d['formula']??'')||!activeItemInt($d['turns']??null,1,20))return null;
@@ -13,7 +14,7 @@ function applicationAttackEnhancement(mixed $value): ?array {
     if(is_array($value)&&($value['mode']??'')==='stats'){
         if(!is_int($value['turns']??null)||$value['turns']<1||$value['turns']>999||!is_array($value['bonuses']??null))return null;
         $bonuses=[];foreach($value['bonuses'] as $key=>$amount){
-            if(!in_array($key,[...array_keys(applicationStatLabels()),'mentalResistance'],true)||!is_int($amount)||$amount < -100||$amount>100)return null;
+            if(!in_array($key,[...array_keys(applicationStatLabels()),'mentalResistance','initiativeBonus'],true)||!is_int($amount)||$amount < -100||$amount>100)return null;
             if($amount!==0)$bonuses[$key]=$amount;
         }
         return $bonuses!==[]?['mode'=>'stats','turns'=>$value['turns'],'bonuses'=>$bonuses]:null;
@@ -128,7 +129,7 @@ function applicationEnhancedBasicAttack(array $weapon, array $source, array $act
         if ($index !== null) $parts[$index]['formula'] .= '+' . $effect['formula'];
         else $parts[] = ['type' => $effect['damageType'], 'formula' => $effect['formula']];
     }
-    $formula = str_replace('+-', '-', implode('+', array_column($parts, 'formula')));
+    $formula = sumEffectFormulas(array_column($parts, 'formula'));
     if (!validApplicationAbilityFormula($formula)) throw new RuntimeException('Les dégâts cumulés des effets dépassent la limite autorisée.', 409);
     return [...$weapon, 'formula' => $formula, 'damageType' => $parts[0]['type'], 'damageComponents' => $parts,
         'enhancementLabel' => implode(' · ', array_column($effects, 'label'))];
@@ -248,3 +249,5 @@ function onlineEnhancedStatRows(PDO $connection,array &$records,array $pending,a
     $character=str_starts_with($holder,'character:')?($pending[$holder]['payload']??applicationDomainPayload($records,$holder)):null;
     return applicationEnhancedStatRows($source,$activity,$sceneId,$character);
 }
+
+function applicationEffectiveInitiativeBonus(array $source,array $state,string $sceneId):int { $bonus=(int)($source['initiativeBonus']??0);$holder=applicationEnhancementHolder($source);foreach($state['attackEnhancements']??[] as $e)if(($e['mode']??'')==='stats'&&($e['holder']??'')===$holder&&(($e['sceneId']??'')===$sceneId||($e['expiry']??'')==='rests')&&($e['remainingTurns']??0)>0&&applicationAttackEnhancement($e))$bonus+=(int)($e['bonuses']['initiativeBonus']??0);return $bonus; }

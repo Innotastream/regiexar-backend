@@ -1,15 +1,20 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/item-use-schema.php';
+require_once __DIR__.'/item-payloads.php';
 require_once __DIR__ . '/character-statistics.php';
 
 function activeItemTag(mixed $v):bool{return is_string($v)&&preg_match('/^[a-z][a-z0-9-]{0,59}$/D',$v)===1;}
 function activeItemInt(mixed $v,int $min,int $max):bool{return is_int($v)&&$v>=$min&&$v<=$max;}
-function activeItemStats():array{return [...array_keys(applicationStatLabels()),'mentalResistance'];}
+function activeItemStats():array{return [...array_keys(applicationStatLabels()),'mentalResistance','initiativeBonus'];}
 function normalizeActiveItem(mixed $v):?array {
  if($v===null)return null;if(!is_array($v)||($v['version']??0)!==1)itemFailure('Ces effets d’objet proviennent d’une version plus récente.');
  if(!is_array($v['effects']??null)||count($v['effects'])>12)itemFailure('Choisissez au maximum douze effets pour cet objet.');$effects=[];
  foreach($v['effects'] as $e){$kind=$e['kind']??'';
-  if($kind==='heal-max-die'){if(!activeItemInt($e['percent']??null,1,100))itemFailure('Pourcentage de soin invalide.');$effects[]=['kind'=>$kind,'percent'=>$e['percent']];}
+  if($kind==='summon'){if(!itemId($e['templateId']??null))itemFailure('Choisissez un modèle du bestiaire.');$effects[]=['kind'=>'summon','templateId'=>$e['templateId'],'controllable'=>($e['controllable']??true)!==false,'nonCombatant'=>($e['nonCombatant']??false)===true];continue;}
+  $payload=normalizeItemPayload($e);if($payload){$effects[]=$payload;continue;}
+  if($kind==='heal-max-die'){if(!activeItemInt($e['percent']??null,1,100))itemFailure('Pourcentage de soin invalide.');$bonus=$e['bonusFormula']??'';if(!is_string($bonus)||trim($bonus)!==''&&!validEffectFormula($bonus))itemFailure('Le complément de soin doit être un calcul valide.');$effects[]=['kind'=>$kind,'percent'=>$e['percent'],...(trim($bonus)!==''?['bonusFormula'=>normalizeEffectFormula($bonus)]:[])];}
   elseif($kind==='cleanse'){if(!is_array($e['families']??null)||count($e['families'])<1||count($e['families'])>10||array_filter($e['families'],static fn($f)=>!activeItemTag($f)))itemFailure('Familles d’effets invalides.');$effects[]=['kind'=>$kind,'families'=>array_values(array_unique($e['families']))];}
   elseif($kind==='immunity'){if(!activeItemTag($e['family']??null)||!activeItemInt($e['turns']??null,1,999))itemFailure('Durée ou famille d’immunité invalide.');$effects[]=['kind'=>$kind,'family'=>$e['family'],'turns'=>$e['turns']];}
   elseif($kind==='stats'){
@@ -23,7 +28,7 @@ function normalizeActiveItem(mixed $v):?array {
   else itemFailure('Cet effet d’objet n’est pas pris en charge.');
  }
  if(!empty($v['ingredientTag'])&&!activeItemTag($v['ingredientTag']))itemFailure('Catégorie d’ingrédient invalide.');
- return ['version'=>1,'useLabel'=>itemText($v['useLabel']??'Utiliser',40),'authority'=>($v['authority']??'')==='gm'?'gm':'owner','effects'=>$effects,...(!empty($v['ingredientTag'])?['ingredientTag'=>$v['ingredientTag']]:[])];
+ return ['version'=>1,'useLabel'=>itemText($v['useLabel']??'Utiliser',40),'authority'=>($v['authority']??'')==='gm'?'gm':'owner','effects'=>$effects,...(isset($v['targeting'])?['targeting'=>normalizeItemTargeting($v['targeting'])]:[]),...(isset($v['trap'])?['trap'=>normalizeItemTrap($v['trap'])]:[]),...(($v['reusable']??false)===true?['reusable'=>true]:[]),...(!empty($v['ingredientTag'])?['ingredientTag'=>$v['ingredientTag']]:[])];
 }
 function applicationEffectFamily(mixed $v):string {
  if(is_array($v)&&!empty($v['family']??$v['effectFamily']??''))return (string)($v['family']??$v['effectFamily']);
@@ -50,13 +55,14 @@ function applicationApplyActiveItem(array &$state,array $template,array &$unit,?
  $active=normalizeActiveItem($template['active']??null);if(empty($active['effects']))itemFailure('Cet objet est un prérequis de compétence, il ne s’utilise pas directement.',409);
  if($active['authority']==='gm'&&$identity['role']!=='gm')itemFailure('Cette fiole doit être utilisée par le MJ pour son arbitrage.',403);
  $sceneId=$state['activeSceneId'];$holder=($unit['unitKind']??'')==='token'?'token:'.$unit['unitTokenId']:'character:'.$unit['id'];$clock=$state['initiative']??[];$result=['used'=>true,'itemName'=>$template['name'],'healing'=>0,'rolls'=>[],'messages'=>[]];
- foreach($active['effects'] as $a){
+ foreach($active['effects'] as $index=>$a){
+  if(in_array($a['kind'],['damage','dot','condition'],true)){if(!$token)itemFailure('Placez le pion sur la carte pour utiliser cet effet.',409);applicationItemPayload($state,$template,$unit,$token,$a,$index,$context,$result);}
   if($a['kind']==='cleanse')applicationCleanseUnitEffects($state,$unit,$a['families']);
-  elseif($a['kind']==='heal-max-die'){$sides=max(1,(int)floor(($unit['resources']['maxHp']??0)*$a['percent']/100));$roll=($context['rollDie'])($sides,$template['name'],$unit['name']);$result['rolls'][]=$roll;$old=$unit['resources']['hp'];$unit['resources']['hp']=min($unit['resources']['maxHp'],$old+$roll['total']);$result['healing']+=$unit['resources']['hp']-$old;}
+  elseif($a['kind']==='heal-max-die'){$sides=max(1,(int)floor(($unit['resources']['maxHp']??0)*$a['percent']/100));$roll=($context['rollDie'])($sides,$template['name'],$unit['name']);$result['rolls'][]=$roll;$healing=$roll['total'];if(!empty($a['bonusFormula'])){$bonus=($context['rollFormula'])($a['bonusFormula'],$template['name'].' · complément de soin',$unit['name']);$result['rolls'][]=$bonus;$healing+=$bonus['total'];}$old=$unit['resources']['hp'];$unit['resources']['hp']=min($unit['resources']['maxHp'],$old+max(0,$healing));$result['healing']+=$unit['resources']['hp']-$old;}
   elseif(in_array($a['kind'],['stats','immunity'],true)){
    $d=$a['kind']==='stats'?$a['duration']:['kind'=>'rounds','turns'=>$a['turns']];$mode=$a['kind']==='stats'?'stats':'immunity';
-   $e=['id'=>($context['id'])('item-effect'),'abilityId'=>'item-'.$template['id'],'holder'=>$holder,'label'=>$template['name'],'sceneId'=>$sceneId,'targetTokenId'=>$token['id']??'','casterTokenId'=>$token['id']??'','abilityImage'=>$template['image']??'','combatId'=>!empty($clock['active'])&&$d['kind']==='rounds'?($clock['combatId']??''):'','lastTurnSerial'=>$clock['turnSerial']??0,'mode'=>$mode,'turns'=>$d['turns']??1,'remainingTurns'=>$d['turns']??1,'stackGroup'=>'item-'.$template['id'],...($mode==='stats'?['bonuses'=>$a['bonuses']]:['family'=>$a['family']]),...($d['kind']==='rests'?['expiry'=>'rests','remainingShortRests'=>$d['shortRests']]:[])];
-   $effects=array_values(array_filter($state['attackEnhancements']??[],static fn($old)=>($old['holder']??'')!==$holder||($old['stackGroup']??'')!==$e['stackGroup']||($old['mode']??'')!==$mode));if(count($effects)>=100)itemFailure('Trop d’effets actifs.',409);$effects[]=$e;$state['attackEnhancements']=$effects;
+   $e=['id'=>($context['id'])('item-effect'),'abilityId'=>'item-'.$template['id'],'holder'=>$holder,'label'=>$template['name'],'sceneId'=>$sceneId,'targetTokenId'=>$token['id']??'','casterTokenId'=>$token['id']??'','abilityImage'=>$template['image']??'','combatId'=>!empty($clock['active'])&&$d['kind']==='rounds'?($clock['combatId']??''):'','lastTurnSerial'=>$clock['turnSerial']??0,'mode'=>$mode,'turns'=>$d['turns']??1,'remainingTurns'=>$d['turns']??1,'stackGroup'=>'item-'.$template['id'],'effectIndex'=>$index,...($mode==='stats'?['bonuses'=>$a['bonuses']]:['family'=>$a['family']]),...($d['kind']==='rests'?['expiry'=>'rests','remainingShortRests'=>$d['shortRests']]:[])];
+   $effects=array_values(array_filter($state['attackEnhancements']??[],static fn($old)=>($old['holder']??'')!==$holder||($old['stackGroup']??'')!==$e['stackGroup']||($old['mode']??'')!==$mode||($old['effectIndex']??$index)!==$index));if(count($effects)>=100)itemFailure('Trop d’effets actifs.',409);$effects[]=$e;$state['attackEnhancements']=$effects;
   }
   elseif($a['kind']==='light'){
    if(!$token)itemFailure('Placez le pion sur la carte pour allumer le flambeau.',409);$layerId=$token['layerId']??$state['map']['activeLayerId']??'ground';$map=&$state['map'];$layer=&$map;if(isset($map['layers'][$layerId]))$layer=&$map['layers'][$layerId];$lights=$layer['lights']??[];if(count($lights)>=40)itemFailure('Ce niveau contient déjà trop de lumières.',409);
@@ -74,6 +80,7 @@ function applicationItemEffectRest(array &$state,array $ids,string $kind):array 
 function applicationAttackPoisonStacks(array &$state,array &$attack,array $source,array $target,callable $id):void {
  if($source===[])return;
  if(!empty($attack['poisonStacksProcessed'])||!empty($attack['echoParentId'])||empty($attack['hit']['outcome']['success'])||!in_array($attack['status']??'',['applied','blocked'],true))return;$attack['poisonStacksProcessed']=true;
+ foreach($state['attackEnhancements']??[] as $e)if(($e['mode']??'')==='on-hit-effects'&&$e['holder']===applicationEnhancementHolder($source)&&$e['sceneId']===$attack['sceneId']&&$e['remainingTurns']>0&&applicationAttackTriggersEnhancement($e,$attack)){$payload=$e['payload'];unset($payload['timing'],$payload['buffTurns'],$payload['trigger']);$unit=unitById($state,unitIdForToken($target));$r=['rolls'=>[],'messages'=>[]];applicationItemPayload($state,['id'=>$e['abilityId'],'name'=>$e['label'],'image'=>$e['abilityImage']??''],$unit,$target,$payload,0,['id'=>$id,'sourceTokenId'=>$source['id']],$r);}
  if(applicationHasEffectImmunity($target,$state,$attack['sceneId'],'poison'))return;$clock=$state['initiative']??[];$key=!empty($clock['active'])?($clock['combatId']??'').':'.($clock['turnSerial']??0):'free:'.($state['devices']['manualTurns'][$attack['sceneId']]??0);$holder=applicationEnhancementHolder($source);
  foreach($state['attackEnhancements']??[] as $i=>$e){if(($e['mode']??'')!=='on-attack-dot'||$e['holder']!==$holder||$e['sceneId']!==$attack['sceneId']||$e['remainingTurns']<=0||($e['appliedTargets'][$target['id']]??'')===$key)continue;
   if(count($state['damageOverTime']??[])>=100)itemFailure('La liste des dégâts périodiques est pleine.',409);$d=$e['dot'];$state['damageOverTime'][]=['id'=>$id('dot'),'sceneId'=>$attack['sceneId'],'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$source['name']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'label'=>$d['label'],'family'=>'poison','formula'=>$d['formula'],'damageType'=>'ignore','remainingTurns'=>$d['turns'],'lastTurnSerial'=>$clock['turnSerial']??0];$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;

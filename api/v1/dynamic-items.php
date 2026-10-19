@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/item-catalog.php';
+require_once __DIR__.'/item-activations.php';
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/item-physical.php';
 require_once __DIR__.'/active-items.php';
@@ -31,7 +33,7 @@ function normalizeItemTemplate(array $value): array {
     $image = itemImage($value['image'] ?? '');
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image];
-    if(array_key_exists('category',$value)){if(!in_array($value['category'],['ability','usable','reading','equipment','utility','quick'],true))itemFailure('La catégorie d’objet est invalide.');$result['category']=$value['category'];}
+    if(array_key_exists('category',$value)){if(!in_array($value['category'],['ability','usable','reading','equipment','utility','quick'],true)&&!customItemCategoryId($value['category']))itemFailure('La catégorie d’objet est invalide.');$result['category']=$value['category'];}
     if(isset($value['active']))$result['active']=normalizeActiveItem($value['active']);
     if(isset($value['equipment']))$result['equipment']=normalizeEquipment($value['equipment']);
     if(array_key_exists('permissions',$value))$result['permissions']=normalizeItemPermissions($value['permissions']);
@@ -99,10 +101,12 @@ function normalizeItemStore(?array $value): array {
     if ($value === null || $value === []) return ['version' => 1, 'templates' => [], 'instances' => []];
     if (($value['version'] ?? 1) !== 1) itemFailure('Ces objets proviennent d’une version plus récente. Ils ont été conservés.', 409);
     if (!is_array($value['templates'] ?? null) || !is_array($value['instances'] ?? null) || count($value['templates']) > 200 || count($value['instances']) > 2000) itemFailure('La collection d’objets dépasse les limites.');
+    $categories=normalizeItemCategories($value['categories']??[]);
     $templates = []; $ids = [];
     foreach ($value['templates'] as $template) {
         if (!is_array($template)) itemFailure('Le modèle d’objet est invalide.');
         $template = normalizeItemTemplate($template);
+        if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($categories,'id'),true))itemFailure('Cette catégorie n’existe plus.');
         if (isset($ids[$template['id']])) itemFailure('Deux modèles portent le même identifiant.');
         $ids[$template['id']] = true; $templates[] = $template;
     }
@@ -128,7 +132,7 @@ function normalizeItemStore(?array $value): array {
         $instances[] = $normalized;
     }
     $catalog=null;if(isset($value['inventoryCatalog'])){if(!is_array($value['inventoryCatalog'])||count($value['inventoryCatalog'])>1000)itemFailure('Catalogue des stocks invalide.');$catalog=[];foreach($value['inventoryCatalog'] as $unitId=>$entryIds){if(!itemId((string)$unitId)||!is_array($entryIds)||!array_is_list($entryIds)||count($entryIds)>200||count(array_unique($entryIds))!==count($entryIds))itemFailure('Catalogue des stocks invalide.');foreach($entryIds as $entryId)if(!is_string($entryId)||!isset($ids[$entryId]))itemFailure('Modèle du catalogue introuvable.');$catalog[$unitId]=$entryIds;}}
-    return ['version' => 1, 'templates' => $templates, 'instances' => $instances,...($catalog!==null?['inventoryCatalog'=>$catalog]:[]),...(isset($value['equipmentLoadouts'])?['equipmentLoadouts'=>normalizeEquipmentLoadouts($value['equipmentLoadouts'])]:[])];
+    return ['version' => 1, 'templates' => $templates, 'instances' => $instances, ...(array_key_exists('pendingUses',$value)?['pendingUses'=>normalizeItemUses($value['pendingUses'])]:[]),...(array_key_exists('categories',$value)?['categories'=>$categories]:[]),...($catalog!==null?['inventoryCatalog'=>$catalog]:[]),...(isset($value['equipmentLoadouts'])?['equipmentLoadouts'=>normalizeEquipmentLoadouts($value['equipmentLoadouts'])]:[])];
 }
 
 function itemWithinReach(array $location, array $token, array $map): bool {
@@ -158,6 +162,7 @@ function itemTransferPair(array $state, string $sourceId, string $targetId, arra
 
 function applyDynamicItemCommand(array $state, array $identity, string $command, array $args,array $context=[]): array {
     $items = normalizeItemStore($state['items'] ?? null); $isGm = ($identity['role'] ?? '') === 'gm';
+    if(in_array($command,['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){$result=applyItemUseCommand($state,$items,$identity,$command,$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
     $character = static function($id) use ($state): array {
         return unitById($state,(string)$id);
     };
@@ -190,11 +195,21 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         foreach($ids as $id)$created[]=['id'=>$id,'templateId'=>$template['id'],'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$unit['id']]];
         $items['instances']=[...$items['instances'],...$created];return ['items'=>$items,'result'=>['items'=>$created,'template'=>$template]];
     }
+    if($command==='item.category.create'){
+        if(!$isGm)itemFailure('Seul le MJ peut créer une catégorie.',403);
+        $items['categories']=normalizeItemCategories([...($items['categories']??[]),['id'=>$args['categoryId']??null,'name'=>$args['name']??null]]);
+        return ['items'=>$items,'result'=>['category'=>end($items['categories'])]];
+    }
+    if($command==='item.template.delete'){
+        if(!$isGm)itemFailure('Seul le MJ peut supprimer un objet de la bibliothèque.',403);
+        $result=deleteItemTemplate($items,$state,$args);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];
+    }
     if ($command === 'item.template.create') {
         if (!$isGm) itemFailure('La création de modèles est réservée au MJ.', 403);
         if (count($items['templates']) >= 200) itemFailure('La collection de modèles est pleine.', 429);
         $template = normalizeItemTemplate(is_array($args['template'] ?? null) ? $args['template'] : []);
         foreach ($items['templates'] as $entry) if ($entry['id'] === $template['id']) itemFailure('Ce modèle existe déjà.', 409);
+        if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
         $items['templates'][] = $template;
         return ['items' => $items, 'result' => ['template' => $template]];
     }
@@ -206,7 +221,9 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$previous)itemFailure('Ce modèle a été modifié par un autre MJ. Rouvrez-le avant de continuer.',409);
         if(!empty($previous['sourceAbilityId'])){
             if(($args['appearanceOnly']??false)!==true)itemFailure('Ce modèle est géré par sa compétence. Seule son apparence peut être modifiée ici.',409);
-            $template=normalizeItemTemplate(array_replace($previous,array_intersect_key($args['template'],array_fill_keys(['name','description','image','category'],true))));$items['templates'][$index]=$template;return ['items'=>$items,'result'=>['template'=>$template]];
+            $template=normalizeItemTemplate(array_replace($previous,array_intersect_key($args['template'],array_fill_keys(['name','description','image','category'],true))));
+            if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
+            $items['templates'][$index]=$template;return ['items'=>$items,'result'=>['template'=>$template]];
         }
         $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','active','equipment','permissions','size','maxHp','category'],true));
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
@@ -219,29 +236,31 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             foreach($instances as $item)if(($expected[$item['id']]??null)!==$item['revision'])itemFailure('Un exemplaire de ce modèle a changé. Rouvrez la bibliothèque avant d’appliquer les réglages à tous.',409);
             foreach(array_keys($instances) as $ii){if(isset($template['equipment']))$items['instances'][$ii]['equipment']=$template['equipment'];else unset($items['instances'][$ii]['equipment']);$items['instances'][$ii]['revision']++;}
         }
+        if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
         $items['templates'][$index]=$template;
         return ['items'=>$items,'result'=>['template'=>$template]];
     }
     if ($command === 'item.spawn') {
         if (!$isGm) itemFailure('La création d’exemplaires est réservée au MJ.', 403);
-        if (count($items['instances']) >= 2000) itemFailure('La collection d’exemplaires est pleine.', 429);
-        if (!itemId($args['itemId'] ?? null) || !in_array($args['templateId'] ?? '', array_column($items['templates'], 'id'), true) || in_array($args['itemId'], array_column($items['instances'], 'id'), true)) itemFailure('L’exemplaire d’objet est invalide.', 409);
-        $location = $args['location'] ?? [];
-        if (($location['kind'] ?? '') === 'inventory') $character($location['characterId'] ?? null);
-        elseif (($location['kind'] ?? '') !== 'ground' || !in_array($location['sceneId'] ?? '', array_column($state['scenes'] ?? [], 'id'), true)) itemFailure('Choisissez un inventaire ou une scène existante.');
-        $item = ['id' => $args['itemId'], 'templateId' => $args['templateId'], 'revision' => 1, 'location' => $location];
-        $model = $items['templates'][array_search($args['templateId'], array_column($items['templates'], 'id'), true)];
-        if(isset($model['equipment']))$item['equipment']=$model['equipment'];
-        if (isset($model['size'])) $item['size'] = $model['size'];
-        if (isset($model['maxHp'])) $item['health'] = ['current' => $model['maxHp'], 'max' => $model['maxHp']];
-        $items['instances'][] = $item;
-        if ($location['kind'] === 'inventory') rememberLinkedItemStock($items, $character($location['characterId']), $item['templateId']);
-        return ['items' => normalizeItemStore($items), 'result' => ['item' => $item]];
+        $ids=$args['itemIds']??[$args['itemId']??null];
+        if(!is_array($ids)||!array_is_list($ids)||count($ids)<1||count($ids)>50||count(array_unique($ids))!==count($ids))itemFailure('Choisissez de 1 à 50 nouveaux exemplaires distincts.',409);
+        foreach($ids as $id)if(!itemId($id)||in_array($id,array_column($items['instances'],'id'),true))itemFailure('Choisissez de 1 à 50 nouveaux exemplaires distincts.',409);
+        if(count($items['instances'])+count($ids)>2000)itemFailure('La collection d’exemplaires est pleine.',429);
+        $index=array_search($args['templateId']??'',array_column($items['templates'],'id'),true);if($index===false)itemFailure('Ce modèle n’existe plus.',409);$model=$items['templates'][$index];
+        $location=$args['location']??[];
+        if(($location['kind']??'')==='inventory')$character($location['characterId']??null);
+        elseif(count($ids)!==1||($location['kind']??'')!=='ground'||!in_array($location['sceneId']??'',array_column($state['scenes']??[],'id'),true))itemFailure('Choisissez un inventaire ou une scène existante.');
+        $created=[];foreach($ids as $id){$item=['id'=>$id,'templateId'=>$model['id'],'revision'=>1,'location'=>$location];
+            if(isset($model['equipment']))$item['equipment']=$model['equipment'];if(isset($model['size']))$item['size']=$model['size'];if(isset($model['maxHp']))$item['health']=['current'=>$model['maxHp'],'max'=>$model['maxHp']];$created[]=$item;}
+        $items['instances']=[...$items['instances'],...$created];
+        if($location['kind']==='inventory')rememberLinkedItemStock($items,$character($location['characterId']),$model['id']);
+        return ['items'=>normalizeItemStore($items),'result'=>['item'=>$created[0],...(count($ids)>1?['items'=>$created]:[])]];
     }
     $index = array_search($args['itemId'] ?? '', array_column($items['instances'], 'id'), true);
     if ($index === false) itemFailure('Objet introuvable.', 404);
     $item = $items['instances'][$index];
     if ($item['revision'] !== ($args['expectedItemRevision'] ?? null)) itemFailure('Cet objet a changé de place. L’inventaire a été actualisé.', 409);
+    if(array_filter($items['pendingUses']??[],static fn($u)=>$u['itemId']===$item['id'])){if($command==='item.destroy'&&$isGm)$items['pendingUses']=array_values(array_filter($items['pendingUses'],static fn($u)=>$u['itemId']!==$item['id']));else itemFailure('Cet objet attend la résolution de son effet. Le MJ peut annuler son activation.',409);}
     if ($command === 'item.move') {
         if (!$isGm) itemFailure('Le déplacement des objets posés est réservé au MJ.', 403);
         foreach ($state['devices']['devices'] ?? [] as $device) if (($device['itemId'] ?? '') === $item['id']) itemFailure('Utilisez les actions du dispositif pour le déplacer.', 409);
@@ -315,6 +334,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             $item['location'] = ['kind' => 'ground', 'sceneId' => $state['activeSceneId'], 'layerId' => $token['layerId'] ?? $state['map']['activeLayerId'] ?? 'ground', 'x' => $token['x'], 'y' => $token['y']];
         } elseif ($command === 'item.consume') {
             $template = $items['templates'][array_search($item['templateId'], array_column($items['templates'], 'id'), true)];
+            if(isset($template['active'])&&(isset($template['active']['targeting'])||isset($template['active']['trap'])||array_filter($template['active']['effects'],static fn($e)=>in_array($e['kind'],['damage','dot','condition','summon'],true)))){$result=applyItemUseCommand($state,$items,$identity,'item.activate',$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
             if(isset($template['active'])){
                 if(!empty($state['tacticalSync']['paused'])&&!$isGm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
                 if(($args['sceneId']??'')!==$state['activeSceneId'])itemFailure('La scène a changé.',409);$token=null;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===$source['id']&&(!isset($args['tokenId'])||$args['tokenId']===$t['id'])&&($t['layerId']??'ground')===($state['map']['activeLayerId']??'ground')){$token=$t;break;}
@@ -398,7 +418,8 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
         $mayRead=itemPermissions($template)['read']&&(isset($ownIds[$template['id']])||($template['permissions']['read']??false)===true);
         $templates[]=$mayRead?publicItemPhysical($template):array_intersect_key($template,array_fill_keys(['id','name','kind','image','permissions','size'],true));
     }
-    return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
+    $uses=[];if(empty($context['paused']))foreach($store['pendingUses']??[] as $u){if($u['phase']!=='opposition'||$u['sceneId']!==($context['sceneId']??'')||$u['layerId']!==($context['layerId']??''))continue;$targets=[];foreach($u['targets'] as $t)foreach($context['tokens']??[] as $token)if($token['id']===$t['tokenId']&&isset($owned[unitIdForToken($token)]))$targets[]=['tokenId'=>$t['tokenId'],'status'=>$t['status']];if($targets)$uses[]=[...array_intersect_key($u,array_flip(['id','itemId','itemRevision','sceneId','layerId','name','phase'])),'targets'=>$targets];}
+    return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances), ...(isset($store['pendingUses'])?['pendingUses'=>$uses]:[]),...(isset($store['categories'])?['categories'=>array_values(array_filter($store['categories'],static fn($c)=>in_array($c['id'],array_column($templates,'category'),true)))]:[]),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
 }
 
 function onlineItemCommand(PDO $connection, array &$records, array &$pending, array $table, array $identity, string $command, array $args, bool $isGm): array {
@@ -423,7 +444,8 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     }
     try {
         ensureDeviceItems($state,static fn($prefix)=>$prefix.'-'.randomToken(16));
-        $applied = applyDynamicItemCommand($state, ['id' => $identity['id'], 'role' => $isGm ? 'gm' : 'player'], $command, $args, ['id'=>static fn($prefix)=>$prefix.'-'.randomToken(16),'rollDie'=>static function($sides,$label,$name)use($identity){$n=random_int(1,$sides);return onlineRollEntry($identity,['formula'=>'1d'.$sides,'total'=>$n,'breakdown'=>(string)$n],$label,$name);}]);
+        $itemVisible=$isGm?static fn()=>true:onlineMapMovementVisibility($connection,$records,$state['map'],$identity['id'],$sceneId);
+        $applied = applyDynamicItemCommand($state, ['id' => $identity['id'], 'role' => $isGm ? 'gm' : 'player'], $command, $args, ['id'=>static fn($prefix)=>$prefix.'-'.randomToken(16),'visible'=>static fn($point)=>$isGm||$itemVisible($point['x'],$point['y']),'rollRecord'=>static fn($rolled,$label,$name)=>onlineRollEntry($identity,$rolled,$label,$name),'rollFormula'=>static fn($formula,$label,$name)=>onlineRollEntry($identity,onlineRollFormula($formula),$label,$name),'rollDie'=>static function($sides,$label,$name)use($identity){$n=random_int(1,$sides);return onlineRollEntry($identity,['formula'=>'1d'.$sides,'total'=>$n,'breakdown'=>(string)$n],$label,$name);}]);
         if(function_exists('assertPhysicalDeviceItemAction'))assertPhysicalDeviceItemAction($state,['id'=>$identity['id'],'role'=>$isGm?'gm':'player'],$command,$args,['direct'=>'onlineDeviceDirect']);
         $state=$applied['activeState']??$state;
         $state['items']=$applied['items'];reconcileEquipmentEnchantments($state);synchronizeDeviceItemLocations($state,(string)($args['itemId']??''),['unitId'=>$args['characterId']??'','tokenId'=>$args['tokenId']??'']);

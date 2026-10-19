@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__.'/effect-formula.php';
 require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/token-groups.php';
@@ -1330,34 +1331,7 @@ function validApplicationTokenStats(mixed $value): bool
     return true;
 }
 
-function validApplicationAbilityFormula(mixed $value): bool
-{
-    if (!is_string($value)) {
-        return false;
-    }
-    $formula = strtolower(str_replace(' ', '', $value));
-    if ($formula === '' || strlen($formula) > 100
-        || preg_match('/^[+-]?((\d*)d\d+|\d+)([+-]((\d*)d\d+|\d+))*$/D', $formula) !== 1) {
-        return false;
-    }
-    preg_match_all('/[+-]?[^+-]+/', $formula, $matches);
-    if (count($matches[0]) > 30) {
-        return false;
-    }
-    foreach ($matches[0] as $term) {
-        $clean = ltrim($term, '+-');
-        if (str_contains($clean, 'd')) {
-            [$countText, $sidesText] = explode('d', $clean, 2);
-            $count = $countText === '' ? 1 : (int) $countText;
-            if ($count < 1 || $count > 100 || (int) $sidesText < 2 || (int) $sidesText > 1000) {
-                return false;
-            }
-        } elseif (strlen($clean) > 10 || (int) $clean > 1000000000) {
-            return false;
-        }
-    }
-    return true;
-}
+function validApplicationAbilityFormula(mixed $value): bool { return validEffectFormula($value); }
 
 function validApplicationAbilities(mixed $value): bool
 {
@@ -1478,7 +1452,7 @@ function validApplicationTokenDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('layerId', $payload) && !in_array($payload['layerId'], ['basement', 'ground', 'upper'], true)) return false;
-    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable', 'mountable', 'mountControllable'] as $key) {
+    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable', 'mountable', 'mountControllable', 'artworkOnly'] as $key) {
         if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
             return false;
         }
