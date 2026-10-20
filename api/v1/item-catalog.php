@@ -2,6 +2,9 @@
 declare(strict_types=1);
 function customItemCategoryId(mixed $id):bool{return is_string($id)&&preg_match('/^category-[A-Za-z0-9_-]{1,100}$/D',$id)===1;}
 function itemCategoryNameKey(string $name):string{return strtolower(strtr(trim($name),['À'=>'a','Â'=>'a','Ä'=>'a','à'=>'a','â'=>'a','ä'=>'a','É'=>'e','È'=>'e','Ê'=>'e','Ë'=>'e','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e','Î'=>'i','Ï'=>'i','î'=>'i','ï'=>'i','Ô'=>'o','Ö'=>'o','ô'=>'o','ö'=>'o','Ù'=>'u','Û'=>'u','Ü'=>'u','ù'=>'u','û'=>'u','ü'=>'u','Ç'=>'c','ç'=>'c']));}
+function itemNameKey(string $name):string{$name=strtr($name,['Œ'=>'oe','œ'=>'oe','Æ'=>'ae','æ'=>'ae']);$name=preg_replace('/\p{Mn}/u','',$name)??$name;return itemCategoryNameKey(preg_replace('/\s+/u',' ',$name)??$name);}
+function namedItemTemplate(array $items,string $name,string $exceptId=''):?array{foreach($items['templates']??[] as $template)if($template['id']!==$exceptId&&itemNameKey($template['name'])===itemNameKey($name))return $template;return null;}
+function availableItemName(array $items,string $name):string{$characters=array_slice(preg_split('//u',trim($name),-1,PREG_SPLIT_NO_EMPTY),0,120);$base=implode('',$characters);if(!namedItemTemplate($items,$base))return $base;$n=2;do{$suffix=' · '.$n++;$candidate=implode('',array_slice($characters,0,120-count(preg_split('//u',$suffix,-1,PREG_SPLIT_NO_EMPTY)))).$suffix;}while(namedItemTemplate($items,$candidate));return $candidate;}
 function normalizeItemCategories(mixed $value=[]):array {
     if(!is_array($value)||!array_is_list($value)||count($value)>60)itemFailure('Les catégories doivent avoir un nom unique de 1 à 60 caractères.');
     $ids=[];$names=array_fill_keys(array_map('itemCategoryNameKey',['Liés aux capacités','Utilisables','Lectures','Équipements','Utilitaires','Objets rapides']),true);$result=[];

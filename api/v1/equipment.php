@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/item-catalog.php';
 
 function equipmentFailure(string $message,int $status=409):never{throw new RuntimeException($message,$status);}
 function equipmentId(mixed $value):bool{return is_string($value)&&preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value)===1;}
@@ -161,6 +162,7 @@ function applyEquipmentCommand(array $state,array $items,array $identity,string 
         if(count($items['templates'])>=200||count($items['instances'])>=2000)equipmentFailure('La collection d’objets est pleine.',429);
         if(!equipmentId($args['templateId']??null)||!equipmentId($args['itemId']??null)||in_array($args['templateId'],array_column($items['templates'],'id'),true)||in_array($args['itemId'],array_column($items['instances'],'id'),true))equipmentFailure('Cet équipement existe déjà.');
         $name=trim(itemText($args['name']??'',120));if($name==='')equipmentFailure('Donnez un nom à cet équipement.',400);
+        if(namedItemTemplate($items,$name))equipmentFailure('Un modèle porte déjà ce nom. Ajoutez cet équipement depuis la bibliothèque ou précisez un nom différent.',409);
         $equipment=normalizeEquipment($args['equipment']??null);if($equipment===null)equipmentFailure('Définissez cet équipement.',400);
         $items['templates'][]=['id'=>$args['templateId'],'kind'=>'object','name'=>$name,'description'=>'','image'=>'','equipment'=>$equipment];
         $item=['id'=>$args['itemId'],'templateId'=>$args['templateId'],'revision'=>1,'equipment'=>$equipment,'location'=>['kind'=>'inventory','characterId'=>$unitId]];$items['instances'][]=$item;return ['items'=>$items,'result'=>['item'=>$item]];

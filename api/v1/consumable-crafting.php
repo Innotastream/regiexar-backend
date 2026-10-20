@@ -25,7 +25,7 @@ function applicationResolveConsumableCraft(array &$state,array &$store,int $inde
     if(count($state['items']['instances']??[])>=2000)dsError('L’inventaire est plein.');
     $state['items']??=['version'=>1,'templates'=>[],'instances'=>[]];$template=null;$a=$r['ability'];
     foreach($state['items']['templates'] as $t)if($t['kind']==='object'&&($t['sourceAbilityId']??'')===$a['id']&&($t['creatorCharacterId']??'')===$r['characterId']){$template=$t;break;}
-    if(!$template){if(count($state['items']['templates'])>=200)dsError('La bibliothèque d’objets est pleine.');$template=['id'=>($context['id'])('template'),'kind'=>'object','name'=>'Fiole · '.$a['name'],'description'=>'Poison d’arme. Fabrication validée par le MJ.','image'=>'','sourceAbilityId'=>$a['id'],'creatorCharacterId'=>$r['characterId']];$state['items']['templates'][]=$template;}
+    if(!$template){if(count($state['items']['templates'])>=200)dsError('La bibliothèque d’objets est pleine.');$template=['id'=>($context['id'])('template'),'kind'=>'object','name'=>availableItemName($state['items'],'Fiole · '.$a['name']),'description'=>'Poison d’arme. Fabrication validée par le MJ.','image'=>'','sourceAbilityId'=>$a['id'],'creatorCharacterId'=>$r['characterId']];$state['items']['templates'][]=$template;}
     $item=['id'=>($context['id'])('item'),'templateId'=>$template['id'],'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$r['characterId']]];
     $state['items']['instances'][]=$item;$r['status']='approved';$r['approvedAt']=$context['now'];return ['itemIds'=>[$item['id']],'manaSpent'=>0,'fatigueSpent'=>0];
 }

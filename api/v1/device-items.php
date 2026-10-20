@@ -24,7 +24,7 @@ function ensureDeviceItems(array &$state,callable $id):void {
         foreach($state['items']['templates'] as $entry)if($entry['kind']==='object'&&($entry['sourceAbilityId']??'')===$device['abilityId']&&($entry['creatorCharacterId']??'')===$device['creatorCharacterId']){$template=$entry;break;}
         if(!$template){
             if(count($state['items']['templates'])>=200)itemFailure('La collection de modèles est pleine.',429);
-            $template=['id'=>$id('template'),'kind'=>'object','name'=>$device['name'],'description'=>'Dispositif transportable.','image'=>$device['image']??'','sourceAbilityId'=>$device['abilityId'],'creatorCharacterId'=>$device['creatorCharacterId']];
+            $template=['id'=>$id('template'),'kind'=>'object','name'=>availableItemName($state['items'],$device['name']),'description'=>'Dispositif transportable.','image'=>$device['image']??'','sourceAbilityId'=>$device['abilityId'],'creatorCharacterId'=>$device['creatorCharacterId']];
             $state['items']['templates'][]=$template;
         }
         $device['itemId']=$id('item');$device['ownerUnitId']??=$device['creatorCharacterId'];

@@ -1,4 +1,10 @@
-# Backend 0.18.47 — client exact 3.7.3
+# Backend 0.18.48 — client exact 3.7.4
+
+Build `client-3-7-4-inventaires-lisibles-20261021-1`. Identité commune des modèles, refus des collisions de noms, réutilisation des objets rapides compatibles avec notes par exemplaire et noms distincts pour les créations liées aux compétences. Les droits, propriétés d’armes, propriétaires, stocks et reçus restent autoritatifs.
+
+Le verrou accepte uniquement **3.7.4**, refuse notamment **3.7.3** et **3.7.5**, et conserve le délai de transition de session de trente secondes. Schémas SQL/session/fiche : **24/22/10**. Aucun import de fiche ni nettoyage de catalogue automatique.
+
+## Backend 0.18.47 — client exact 3.7.3
 
 Build `client-3-7-3-objets-pieges-20261019-1`. Catalogue commun et suppression atomique avec inventaires/scènes, objets utilisables configurables (dégâts, effets périodiques, états, bonus aux attaques, invocation) et pièges avec validation MJ et oppositions. Les pièges au passage fonctionnent seulement en combat, y compris dans une autre scène manipulée par le MJ. Les révisions, reçus persistants et contraintes de file protègent les réponses tardives et les usages concurrents.
 

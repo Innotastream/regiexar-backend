@@ -189,10 +189,12 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $unit=$owned($args['characterId']??'');$name=trim(itemText($args['name']??'',120));$quantity=$args['quantity']??1;$ids=$args['itemIds']??null;
         if($name===''||!is_int($quantity)||$quantity<1||$quantity>50||!itemId($args['templateId']??null)||!is_array($ids)||!array_is_list($ids)||count($ids)!==$quantity||count(array_unique($ids))!==$quantity)itemFailure('Indiquez un nom et une quantité de 1 à 50.');
         foreach($ids as $id)if(!itemId($id))itemFailure('Indiquez un nom et une quantité de 1 à 50.');
-        if(count($items['templates'])>=200||count($items['instances'])+$quantity>2000)itemFailure('La collection d’objets est pleine.',429);
+        $existing=namedItemTemplate($items,$name);
+        if($existing&&($existing['kind']!=='object'||($existing['category']??'')!=='quick'||($existing['description']??'')!==''||isset($existing['active'])||isset($existing['equipment'])||isset($existing['document'])||isset($existing['sourceAbilityId'])||!empty($existing['stockBindings'])||isset($existing['maxHp'])||itemPermissions($existing)!==itemPermissions([])))itemFailure('Ce nom appartient déjà à un modèle de la bibliothèque. Choisissez un autre nom pour cet objet rapide.',409);
+        if((!$existing&&count($items['templates'])>=200)||count($items['instances'])+$quantity>2000)itemFailure('La collection d’objets est pleine.',429);
         if(in_array($args['templateId'],array_column($items['templates'],'id'),true)||array_intersect($ids,array_column($items['instances'],'id'))!==[])itemFailure('Cet ajout existe déjà.',409);
-        $template=['id'=>$args['templateId'],'kind'=>'object','name'=>$name,'description'=>itemText($args['description']??'',4000),'image'=>'','category'=>'quick'];$items['templates'][]=$template;$created=[];
-        foreach($ids as $id)$created[]=['id'=>$id,'templateId'=>$template['id'],'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$unit['id']]];
+        $description=itemText($args['description']??'',4000);$template=$existing??['id'=>$args['templateId'],'kind'=>'object','name'=>$name,'description'=>'','image'=>'','category'=>'quick'];if(!$existing)$items['templates'][]=$template;$created=[];
+        foreach($ids as $id)$created[]=['id'=>$id,'templateId'=>$template['id'],'revision'=>1,'description'=>$description,'location'=>['kind'=>'inventory','characterId'=>$unit['id']]];
         $items['instances']=[...$items['instances'],...$created];return ['items'=>$items,'result'=>['items'=>$created,'template'=>$template]];
     }
     if($command==='item.category.create'){
@@ -209,6 +211,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if (count($items['templates']) >= 200) itemFailure('La collection de modèles est pleine.', 429);
         $template = normalizeItemTemplate(is_array($args['template'] ?? null) ? $args['template'] : []);
         foreach ($items['templates'] as $entry) if ($entry['id'] === $template['id']) itemFailure('Ce modèle existe déjà.', 409);
+        if(namedItemTemplate($items,$template['name']))itemFailure('Un modèle porte déjà ce nom. Ajoutez un exemplaire depuis la bibliothèque ou précisez un nom différent.',409);
         if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
         $items['templates'][] = $template;
         return ['items' => $items, 'result' => ['template' => $template]];
@@ -222,6 +225,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if(!empty($previous['sourceAbilityId'])){
             if(($args['appearanceOnly']??false)!==true)itemFailure('Ce modèle est géré par sa compétence. Seule son apparence peut être modifiée ici.',409);
             $template=normalizeItemTemplate(array_replace($previous,array_intersect_key($args['template'],array_fill_keys(['name','description','image','category'],true))));
+            if(itemNameKey($template['name'])!==itemNameKey($previous['name'])&&namedItemTemplate($items,$template['name'],$previous['id']))itemFailure('Un modèle porte déjà ce nom. Précisez un nom différent.',409);
             if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
             $items['templates'][$index]=$template;return ['items'=>$items,'result'=>['template'=>$template]];
         }
@@ -229,6 +233,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
         $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
         $template=normalizeItemTemplate($editable);
+        if(itemNameKey($template['name'])!==itemNameKey($previous['name'])&&namedItemTemplate($items,$template['name'],$previous['id']))itemFailure('Un modèle porte déjà ce nom. Précisez un nom différent.',409);
         if(($args['applyEquipmentToInstances']??false)===true){
             $instances=array_filter($items['instances'],static fn($item)=>$item['templateId']===$previous['id']&&in_array($item['location']['kind'],['inventory','ground'],true));
             $expected=$args['expectedInstanceRevisions']??null;

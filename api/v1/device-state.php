@@ -306,7 +306,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
             dsPayMana($state,$store,$owner,$token,$request['cost'],$context); $state['items']=normalizeItemStore($state['items']??null); $existingTemplate=null;
             foreach($state['items']['templates'] as $template) if($template['kind']==='object' && ($template['sourceAbilityId']??'')===$ability['id'] && ($template['creatorCharacterId']??'')===$owner['id']) {$existingTemplate=$template;break;}
             $templateId=$existingTemplate['id']??$id('template');
-            if($existingTemplate===null) $state['items']['templates'][]=['id'=>$templateId,'kind'=>'object','name'=>$ability['name'],'description'=>'Bombe fabriquée et validée par le MJ.','image'=>'','sourceAbilityId'=>$ability['id'],'creatorCharacterId'=>$owner['id']]; $itemIds=[];
+            if($existingTemplate===null) $state['items']['templates'][]=['id'=>$templateId,'kind'=>'object','name'=>availableItemName($state['items'],$ability['name']),'description'=>'Bombe fabriquée et validée par le MJ.','image'=>'','sourceAbilityId'=>$ability['id'],'creatorCharacterId'=>$owner['id']]; $itemIds=[];
             for($n=0;$n<$request['quantity'];$n++) {
                 $itemId=$id('item'); $itemIds[]=$itemId; $state['items']['instances'][]=['id'=>$itemId,'templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$owner['id']]];
                 dsAppend($store,['id'=>$id('device'),'revision'=>1,'status'=>'inventory','image'=>dsImage($ability['image']??''),'itemId'=>$itemId,'creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId'],
