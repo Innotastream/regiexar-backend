@@ -6,6 +6,8 @@ require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/item-physical.php';
 require_once __DIR__.'/active-items.php';
 require_once __DIR__.'/equipment.php';
+require_once __DIR__.'/health-state.php';
+require_once __DIR__.'/complex-movement.php';
 
 function itemFailure(string $message, int $status = 400): never { throw new RuntimeException($message, $status); }
 function itemId(mixed $value): bool { return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,180}$/D', $value) === 1; }
@@ -158,6 +160,27 @@ function itemTransferPair(array $state, string $sourceId, string $targetId, arra
         if($distance<=5+1e-9)return ['source'=>$source,'target'=>$target];
     }
     return null;
+}
+
+function itemTokenHealth(array $state,array $token):string {
+    $unit=unitUsesCharacterSheet($token)?unitById($state,unitIdForToken($token),false):null;
+    $entity=$unit??$token;$hp=$unit['resources']['hp']??$token['hp']??null;$max=$unit['resources']['maxHp']??$token['maxHp']??null;
+    if(($hp===null||$max===null)&&in_array($token['publicHealth']??'',['normal','critical','down','dead'],true))return onlineManualDeath($entity)?'dead':$token['publicHealth'];
+    return onlineHealthState($hp,$max,($token['playerControlled']??false)===true||!empty($entity['ownerPlayerId'])||!empty($token['controllerPlayerId'])||!empty($token['controlEffect']['controllerId']),onlineManualDeath($entity))['code'];
+}
+function itemLootAccess(array $state,string $targetTokenId,string $sourceTokenId,array $context=[]):string {
+    $map=$state['map']??[];$layer=$map['activeLayerId']??'ground';$target=null;$source=null;
+    if(!empty($state['tacticalSync']['paused']))return 'La table est temporairement verrouillée par le MJ.';
+    foreach($map['tokens']??[] as $t){if($t['id']===$targetTokenId)$target=$t;if($t['id']===$sourceTokenId)$source=$t;}
+    $visible=$context['visible']??static fn($t)=>true;
+    if(!$target||!empty($target['hidden'])||!empty($target['dimSilhouette'])||($target['layerId']??$layer)!==$layer||!$visible($target))return 'Ce pion n’est plus visible sur ce niveau.';
+    if(itemTokenHealth($state,$target)!=='dead')return 'Seuls les pions morts peuvent être fouillés par les joueurs.';
+    if(!$source||!empty($source['hidden'])||!empty($source['dimSilhouette'])||($source['layerId']??$layer)!==$layer||!$visible($source))return 'Placez votre pion sur ce niveau.';
+    if(in_array(itemTokenHealth($state,$source),['dead','down'],true))return 'Un pion KO ou mort ne peut pas fouiller.';
+    if(unitIdForToken($source)===unitIdForToken($target))return 'Ouvrez votre propre inventaire.';
+    foreach([$source['x']??null,$source['y']??null,$target['x']??null,$target['y']??null] as $n)if(!(is_int($n)||is_float($n))||!is_finite((float)$n))return 'Approchez votre pion à 1 case maximum du bord du pion mort.';
+    if(applicationMapDistanceInCells($source,$target,$map,true,true)>1+1e-9)return 'Approchez votre pion à 1 case maximum du bord du pion mort.';
+    return '';
 }
 
 function applyDynamicItemCommand(array $state, array $identity, string $command, array $args,array $context=[]): array {
@@ -314,6 +337,18 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $item['location']=['kind'=>'destroyed'];if(isset($item['health']))$item['health']['current']=0;$item['revision']++;$items['instances'][$index]=$item;
         return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item]];
     }
+    if($command==='item.loot'){
+        $receiver=$owned($args['characterId']??'');$source=$tokenFor($receiver['id']);
+        $reason=itemLootAccess($state,$args['targetTokenId']??'',$source['id'],$context);
+        if($reason!=='')itemFailure($reason,!empty($state['tacticalSync']['paused'])?423:403);
+        $target=null;foreach($state['map']['tokens'] as $t)if($t['id']===$args['targetTokenId'])$target=$t;$targetId=unitIdForToken($target);
+        if($item['location']['kind']!=='inventory'||$item['location']['characterId']!==$targetId)itemFailure('Cet objet n’est plus dans cet inventaire.',409);
+        $permissions=itemPermissions($template);$device=false;foreach($state['devices']['devices']??[] as $d)if(($d['itemId']??'')===$item['id'])$device=true;
+        if(!$permissions['pickup']||$permissions['boundToCarrier']||$device)itemFailure('Cet objet est lié à son porteur ou réservé par le MJ et ne peut pas être pris.',403);
+        rememberLinkedItemStock($items,$character($targetId),$item['templateId']);rememberLinkedItemStock($items,$receiver,$item['templateId']);
+        $item['location']=['kind'=>'inventory','characterId'=>$receiver['id']];$item['revision']++;$items['instances'][$index]=$item;
+        return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item]];
+    }
     $patch = null;
     if ($command === 'item.pickup') {
         $owned($args['characterId'] ?? null); $token = $tokenFor($args['characterId'] ?? null);
@@ -400,17 +435,23 @@ function readableLinkedStock(array $store, array $character, string $templateId)
 }
 
 function publicItemStore(array $store, array $characters, ?array $identity, array $context, callable $visible): array {
-    foreach($context['tokens']??[] as $token)if(!empty($identity['id'])&&($token['controllerPlayerId']??'')===$identity['id']&&!unitUsesCharacterSheet($token))
+    foreach($context['tokens']??[] as $token)if(!empty($identity['id'])&&(($token['ownedByYou']??false)===true||($token['controllerPlayerId']??'')===$identity['id'])&&!unitUsesCharacterSheet($token))
         $characters[]=[...$token,'id'=>unitIdForToken($token),'ownerPlayerId'=>$identity['id']];
     $owned = [];
     foreach ($characters as $character) if (($character['ownerPlayerId'] ?? null) === ($identity['id'] ?? false)) $owned[$character['id']] = true;
-    $instances = []; $ids = []; $ownIds = [];
+    foreach($context['tokens']??[] as $token)if(!empty($identity['id'])&&($token['ownedByYou']??false)===true)$owned[unitIdForToken($token)]=true;
+    $lootable=[];$lootState=['characters'=>$characters,'activeSceneId'=>$context['sceneId']??'','map'=>[...($context['map']??[]),'activeLayerId'=>$context['layerId']??'ground','tokens'=>$context['tokens']??[]],'tacticalSync'=>['paused'=>$context['paused']??false]];
+    $inventoryOwners=[];foreach($store['instances']??[] as $i)if($i['location']['kind']==='inventory')$inventoryOwners[$i['location']['characterId']]=true;
+    if(!empty($identity['id']))foreach($context['tokens']??[] as $target)if(isset($inventoryOwners[unitIdForToken($target)])&&!isset($owned[unitIdForToken($target)])&&itemTokenHealth($lootState,$target)==='dead')foreach($context['tokens']??[] as $source)if(isset($owned[unitIdForToken($source)])&&itemLootAccess($lootState,$target['id'],$source['id'],['visible'=>$visible])===''){$lootable[unitIdForToken($target)]=true;break;}
+    $instances = []; $ids = []; $ownIds = []; $lootIds=[];
     foreach ($store['instances'] ?? [] as $item) {
         $location = $item['location']; $inventory = $location['kind'] === 'inventory' && isset($owned[$location['characterId']]);
         $ground = $location['kind'] === 'ground' && !($context['paused'] ?? false) && $location['sceneId'] === ($context['sceneId'] ?? '') && $location['layerId'] === ($context['layerId'] ?? '') && $visible($location);
-        if (!$inventory && !$ground) continue;
+        $loot=$location['kind']==='inventory'&&isset($lootable[$location['characterId']]);
+        if (!$inventory && !$ground && !$loot) continue;
         $instances[] = $item; $ids[$item['templateId']] = true;
         if ($inventory) $ownIds[$item['templateId']] = true;
+        if($loot)$lootIds[$item['templateId']]=true;
     }
     foreach ($characters as $character) if (isset($owned[$character['id']])) {
         foreach (linkedItemTemplateIds($character, $store['templates'] ?? []) as $templateId) {
@@ -418,11 +459,13 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
         }
     }
     foreach($store['inventoryCatalog']??[] as $unitId=>$catalogIds)if(isset($owned[$unitId]))foreach($catalogIds as $templateId){$ownIds[$templateId]=true;$ids[$templateId]=true;}
-    $templates = [];
+    $templates = []; $readableIds=[];
     foreach ($store['templates'] ?? [] as $template) if (isset($ids[$template['id']])) {
-        $mayRead=itemPermissions($template)['read']&&(isset($ownIds[$template['id']])||($template['permissions']['read']??false)===true);
+        $mayRead=itemPermissions($template)['read']&&(isset($ownIds[$template['id']])||isset($lootIds[$template['id']])||($template['permissions']['read']??false)===true);
+        if($mayRead)$readableIds[$template['id']]=true;
         $templates[]=$mayRead?publicItemPhysical($template):array_intersect_key($template,array_fill_keys(['id','name','kind','image','permissions','size'],true));
     }
+    foreach($instances as &$instance)if(!isset($owned[$instance['location']['characterId']??''])&&!isset($readableIds[$instance['templateId']]))unset($instance['description'],$instance['equipment']);unset($instance);
     $uses=[];if(empty($context['paused']))foreach($store['pendingUses']??[] as $u){if($u['phase']!=='opposition'||$u['sceneId']!==($context['sceneId']??'')||$u['layerId']!==($context['layerId']??''))continue;$targets=[];foreach($u['targets'] as $t)foreach($context['tokens']??[] as $token)if($token['id']===$t['tokenId']&&isset($owned[unitIdForToken($token)]))$targets[]=['tokenId'=>$t['tokenId'],'status'=>$t['status']];if($targets)$uses[]=[...array_intersect_key($u,array_flip(['id','itemId','itemRevision','sceneId','layerId','name','phase'])),'targets'=>$targets];}
     return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances), ...(isset($store['pendingUses'])?['pendingUses'=>$uses]:[]),...(isset($store['categories'])?['categories'=>array_values(array_filter($store['categories'],static fn($c)=>in_array($c['id'],array_column($templates,'category'),true)))]:[]),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
 }

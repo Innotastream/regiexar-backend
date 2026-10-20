@@ -2,6 +2,8 @@
 
 Build `client-3-7-4-inventaires-lisibles-20261021-1`. Identité commune des modèles, refus des collisions de noms, réutilisation des objets rapides compatibles avec notes par exemplaire et noms distincts pour les créations liées aux compétences. Les droits, propriétés d’armes, propriétaires, stocks et reçus restent autoritatifs.
 
+Les joueurs peuvent fouiller les pions morts visibles à une case maximum de leur bord, avec un pion contrôlé en état d’agir. Le menu permet de voir les objets autorisés et de les prendre directement dans l’inventaire choisi. Les objets liés et les dispositifs restent protégés ; les stocks sont mis à jour sans duplication. Réanimation, éloignement, étage, pause ou perte du contrôle retirent cet accès. Le MJ dispose sur chaque plaque d’un accès « Donner des objets » pour transférer directement depuis un pion vivant ou mort, sans limite de distance. Le titre et la fermeture du menu restent au-dessus de la liste défilante.
+
 Le verrou accepte uniquement **3.7.4**, refuse notamment **3.7.3** et **3.7.5**, et conserve le délai de transition de session de trente secondes. Schémas SQL/session/fiche : **24/22/10**. Aucun import de fiche ni nettoyage de catalogue automatique.
 
 ## Backend 0.18.47 — client exact 3.7.3
