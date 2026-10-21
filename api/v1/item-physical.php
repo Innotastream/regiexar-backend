@@ -17,6 +17,7 @@ function normalizeItemHealth(mixed $value): array {
 function publicItemPhysical(array $value): array { unset($value['health'], $value['maxHp']); return $value; }
 function publicItemCommandResult(array $result): array {
     if (isset($result['item'])) $result['item'] = publicItemPhysical($result['item']);
+    if (isset($result['items'])) $result['items'] = array_map('publicItemPhysical', $result['items']);
     if(isset($result['rolls']))$result['rolls']=array_map(static fn($roll)=>($roll['mapEvent']['kind']??'')==='damage'?publicOnlineAttackRoll($roll,false,'damage',false):$roll,$result['rolls']);
     return $result;
 }

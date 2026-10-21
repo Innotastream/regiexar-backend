@@ -881,7 +881,7 @@ function onlineEffectiveTokenControllerId(array $token, array $characterOwners):
 {
     if(!empty($token['controlEffect']['controllerId']))return $token['controlEffect']['controllerId'];
     $characterId = trim((string) ($token['characterId'] ?? ''));
-    if ($characterId !== '' && array_key_exists($characterId, $characterOwners)) {
+    if ($characterId !== '' && (unitUsesCharacterSheet($token)||!empty($token['linkedTokenId'])) && array_key_exists($characterId, $characterOwners)) {
         return trim((string) $characterOwners[$characterId]);
     }
     return trim((string) ($token['controllerPlayerId'] ?? ''));
@@ -1131,7 +1131,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'mountedOnTokenId' => $token['mountedOnTokenId'] ?? null,
             ...($owned && is_array($token['transformation'] ?? null) ? ['transformation' => $token['transformation']] : []),
             'playerControlled' => $allied,
-            'usesCharacterSheet' => ($token['followCharacter'] ?? true) !== false && trim((string) ($token['linkedTokenId'] ?? '')) === '',
+            'usesCharacterSheet' => unitUsesCharacterSheet($token),
             'temporaryMovementAllowed' => $temporaryMovementAllowed,
             ...(!empty($token['terrainBarrier'])?['terrainBarrier'=>['version'=>1]]:[]),
             ...(!empty($token['fixedStructure'])?['fixedStructure'=>['version'=>1]]:[]),
@@ -4971,6 +4971,7 @@ function onlineCompactComplexResult(array $execution, array $receipts): ?string
 
 function synchronizeOnlineCharacterToken(array $token, array $character): array
 {
+    if(!unitUsesCharacterSheet($token)&&empty($token['linkedTokenId']))return $token;
     $updatedAt = (int) ($character['_updatedAt'] ?? floor(microtime(true) * 1000));
     $token['controllerPlayerId'] = $character['ownerPlayerId'] ?? null;
     $linkedId = (string) ($token['linkedTokenId'] ?? '');
@@ -5257,7 +5258,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5279,7 +5280,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;

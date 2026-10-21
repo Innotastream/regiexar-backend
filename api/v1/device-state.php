@@ -221,6 +221,7 @@ function dsCanonical(mixed $value): mixed {
     foreach($value as $key=>$entry) $value[$key]=dsCanonical($entry); return $value;
 }
 function assertPhysicalDeviceItemAction(array $state,array $actor,string $command,array $args,array $context=[]):void {
+    if($command==='item.transfer'&&is_array($args['itemIds']??null)){$ids=$args['itemIds'];unset($args['itemIds']);foreach($ids as $itemId)assertPhysicalDeviceItemAction($state,$actor,$command,[...$args,'itemId'=>$itemId],$context);return;}
     if($command==='item.spawn')foreach($state['devices']['devices']??[] as $entry)if(physicalDevice($entry))foreach($state['items']['instances']??[] as $item)if($item['id']===($entry['itemId']??'')&&$item['templateId']===($args['templateId']??''))dsError('Cette machine est gérée par sa compétence. Réutilisez son exemplaire existant.');
     $device=null;foreach($state['devices']['devices']??[] as $entry)if(($entry['itemId']??'')===($args['itemId']??'')&&physicalDevice($entry)){$device=$entry;break;}
     if(!$device)return;

@@ -96,6 +96,7 @@ jobs:
           php tests/item-catalog-rework.php
           php tests/item-catalog-identity.php
           php tests/item-looting.php
+          php tests/inventory-tools.php
           php tests/item-activations.php
       - name: Assistant classic abilities and repair
         run: |

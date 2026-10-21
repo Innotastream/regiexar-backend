@@ -8,6 +8,7 @@ require_once __DIR__.'/active-items.php';
 require_once __DIR__.'/equipment.php';
 require_once __DIR__.'/health-state.php';
 require_once __DIR__.'/complex-movement.php';
+require_once __DIR__.'/inventory-favorites.php';
 
 function itemFailure(string $message, int $status = 400): never { throw new RuntimeException($message, $status); }
 function itemId(mixed $value): bool { return is_string($value) && preg_match('/^[A-Za-z0-9_-]{1,180}$/D', $value) === 1; }
@@ -134,7 +135,7 @@ function normalizeItemStore(?array $value): array {
         $instances[] = $normalized;
     }
     $catalog=null;if(isset($value['inventoryCatalog'])){if(!is_array($value['inventoryCatalog'])||count($value['inventoryCatalog'])>1000)itemFailure('Catalogue des stocks invalide.');$catalog=[];foreach($value['inventoryCatalog'] as $unitId=>$entryIds){if(!itemId((string)$unitId)||!is_array($entryIds)||!array_is_list($entryIds)||count($entryIds)>200||count(array_unique($entryIds))!==count($entryIds))itemFailure('Catalogue des stocks invalide.');foreach($entryIds as $entryId)if(!is_string($entryId)||!isset($ids[$entryId]))itemFailure('Modèle du catalogue introuvable.');$catalog[$unitId]=$entryIds;}}
-    return ['version' => 1, 'templates' => $templates, 'instances' => $instances, ...(array_key_exists('pendingUses',$value)?['pendingUses'=>normalizeItemUses($value['pendingUses'])]:[]),...(array_key_exists('categories',$value)?['categories'=>$categories]:[]),...($catalog!==null?['inventoryCatalog'=>$catalog]:[]),...(isset($value['equipmentLoadouts'])?['equipmentLoadouts'=>normalizeEquipmentLoadouts($value['equipmentLoadouts'])]:[])];
+    return ['version' => 1, 'templates' => $templates, 'instances' => $instances, ...(array_key_exists('pendingUses',$value)?['pendingUses'=>normalizeItemUses($value['pendingUses'])]:[]),...(array_key_exists('categories',$value)?['categories'=>$categories]:[]),...($catalog!==null?['inventoryCatalog'=>$catalog]:[]),...(isset($value['equipmentLoadouts'])?['equipmentLoadouts'=>normalizeEquipmentLoadouts($value['equipmentLoadouts'])]:[]),...(array_key_exists('favorites',$value)?['favorites'=>normalizeInventoryFavorites($value['favorites'],$ids)]:[])];
 }
 
 function itemWithinReach(array $location, array $token, array $map): bool {
@@ -189,11 +190,17 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
     $character = static function($id) use ($state): array {
         return unitById($state,(string)$id);
     };
-    $owned = static function($id) use ($character, $identity, $isGm): array {
-        $entry = $character($id);
-        if (!$isGm && ($entry['ownerPlayerId'] ?? '') !== ($identity['id'] ?? null)) itemFailure('Cet inventaire ne vous appartient pas.', 403);
-        return $entry;
-    };
+    $owned = static fn($id):array => ownedUnit($state,$identity,(string)$id);
+    if($command==='item.favorite.set'){
+        $unit=$owned($args['characterId']??'');$templateId=$args['templateId']??'';
+        if(!is_bool($args['enabled']??null)||!itemId($identity['id']??null))itemFailure('Choisissez si cet objet est un favori.');
+        $eligible=in_array($templateId,linkedItemTemplateIds($unit,$items['templates']),true)||in_array($templateId,$items['inventoryCatalog'][$unit['id']]??[],true);
+        foreach($items['instances'] as $entry)if($entry['templateId']===$templateId&&$entry['location']['kind']==='inventory'&&$entry['location']['characterId']===$unit['id'])$eligible=true;
+        if(!$eligible||!in_array($templateId,array_column($items['templates'],'id'),true))itemFailure('Cet objet ne fait plus partie de cet inventaire.',409);
+        $favorites=array_values(array_filter($items['favorites']??[],static fn($entry)=>!($entry['accountId']===$identity['id']&&$entry['unitId']===$unit['id']&&$entry['templateId']===$templateId)));
+        if($args['enabled']){if(count($favorites)>=20000||count(array_filter($favorites,static fn($entry)=>$entry['accountId']===$identity['id']))>=200)itemFailure('Votre liste de favoris est pleine. Retirez un favori avant d’en ajouter un.',429);$favorites[]=['accountId'=>$identity['id'],'unitId'=>$unit['id'],'templateId'=>$templateId];}
+        $items['favorites']=$favorites;return ['items'=>normalizeItemStore($items),'result'=>['favorite'=>['unitId'=>$unit['id'],'templateId'=>$templateId,'enabled'=>$args['enabled']]]];
+    }
     $tokenFor = static function($id) use ($state, $args, $isGm): array {
         $token = null;
         foreach ($state['map']['tokens'] ?? [] as $entry) if (($entry['id'] ?? '') === ($args['tokenId'] ?? null) && unitIdForToken($entry) === $id) $token = $entry;
@@ -284,6 +291,36 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if($location['kind']==='inventory')rememberLinkedItemStock($items,$character($location['characterId']),$model['id']);
         return ['items'=>normalizeItemStore($items),'result'=>['item'=>$created[0],...(count($ids)>1?['items'=>$created]:[])]];
     }
+    if($command==='item.transfer'){
+        $batch=array_key_exists('itemIds',$args);$ids=$batch?$args['itemIds']:[$args['itemId']??null];
+        if(!is_array($ids)||!array_is_list($ids)||count($ids)<1||count($ids)>2000)itemFailure('Choisissez des exemplaires distincts à donner.');
+        foreach($ids as $id)if(!itemId($id))itemFailure('Choisissez des exemplaires distincts à donner.');
+        if(count(array_unique($ids))!==count($ids)||$ids[0]!==($args['itemId']??null))itemFailure('Choisissez des exemplaires distincts à donner.');
+        $revisions=$batch?($args['expectedItemRevisions']??null):[$args['itemId']=>($args['expectedItemRevision']??null)];
+        if(!is_array($revisions)||count($revisions)!==count($ids))itemFailure('La quantité ou les exemplaires à donner ont changé. Rouvrez le don.',409);
+        foreach($ids as $id)if(!is_int($revisions[$id]??null)||$revisions[$id]<1)itemFailure('La quantité ou les exemplaires à donner ont changé. Rouvrez le don.',409);
+        $indices=array_flip(array_column($items['instances'],'id'));$models=array_column($items['templates'],null,'id');$selected=[];
+        foreach($ids as $id){if(!isset($indices[$id]))itemFailure('Objet introuvable.',404);$item=$items['instances'][$indices[$id]];if($item['revision']!==$revisions[$id])itemFailure('Cet objet a changé de place. L’inventaire a été actualisé.',409);$selected[]=$item;}
+        $source=$owned($args['characterId']??'');$target=$character($args['targetCharacterId']??'');
+        if(!$isGm&&empty($target['ownerPlayerId']))itemFailure('Ce personnage n’appartient à aucun joueur.',403);
+        if($target['id']===$source['id'])itemFailure('L’objet se trouve déjà dans cet inventaire.');
+        $pending=array_flip(array_column($items['pendingUses']??[],'itemId'));
+        foreach($selected as $item){
+            if($item['location']['kind']!=='inventory'||$item['location']['characterId']!==$source['id'])itemFailure('Cet objet n’est plus dans cet inventaire.',409);
+            if(isset($pending[$item['id']]))itemFailure('Cet objet attend la résolution de son effet. Le MJ peut annuler son activation.',409);
+            $permissions=itemPermissions($models[$item['templateId']]);
+            if(!$isGm&&$permissions['boundToCarrier'])itemFailure('Cet objet est lié à son porteur. Seul le MJ peut le déplacer.',403);
+            if(!$isGm&&!$permissions['transfer'])itemFailure('Le MJ n’autorise pas cette action sur cet objet.',403);
+        }
+        if(!$isGm){
+            if(isset($args['sceneId'])&&$args['sceneId']!==($state['activeSceneId']??''))itemFailure('La scène a changé.',409);
+            if(!empty($state['tacticalSync']['paused']))itemFailure('La table est temporairement verrouillée par le MJ.',423);
+            if(itemTransferPair($state,$source['id'],$target['id'],$args)===null)itemFailure('Pour donner cet objet, les deux pions doivent être à 5 cases maximum sur la même scène et le même étage.',409);
+        }
+        foreach(array_unique(array_column($selected,'templateId')) as $templateId){rememberLinkedItemStock($items,$source,$templateId);rememberLinkedItemStock($items,$target,$templateId);}
+        foreach($selected as &$item){$item['location']=['kind'=>'inventory','characterId'=>$target['id']];$item['revision']++;$items['instances'][$indices[$item['id']]]=$item;}unset($item);
+        return ['items'=>normalizeItemStore($items),'result'=>['item'=>$selected[0],...($batch?['items'=>$selected]:[])]];
+    }
     $index = array_search($args['itemId'] ?? '', array_column($items['instances'], 'id'), true);
     if ($index === false) itemFailure('Objet introuvable.', 404);
     $item = $items['instances'][$index];
@@ -359,17 +396,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         if ($item['location']['kind'] !== 'inventory' || $item['location']['characterId'] !== ($args['characterId'] ?? '')) itemFailure('Cet objet n’est plus dans cet inventaire.', 409);
         $source = $owned($args['characterId'] ?? null);
         rememberLinkedItemStock($items, $source, $item['templateId']);
-        if ($command === 'item.transfer') {
-            $target = $character($args['targetCharacterId'] ?? null);
-            if (!$isGm && ($target['ownerPlayerId'] ?? '') === '') itemFailure('Ce personnage n’appartient à aucun joueur.', 403);
-            if ($source['id'] === $target['id']) itemFailure('L’objet se trouve déjà dans cet inventaire.');
-            if(!$isGm){
-                if(isset($args['sceneId'])&&$args['sceneId']!==($state['activeSceneId']??''))itemFailure('La scène a changé.',409);
-                if(!empty($state['tacticalSync']['paused']))itemFailure('La table est temporairement verrouillée par le MJ.',423);
-                if(itemTransferPair($state,$source['id'],$target['id'],$args)===null)itemFailure('Pour donner cet objet, les deux pions doivent être à 5 cases maximum sur la même scène et le même étage.',409);
-            }
-            $item['location'] = ['kind' => 'inventory', 'characterId' => $target['id']];
-        } elseif ($command === 'item.drop') {
+        if ($command === 'item.drop') {
             $token = $tokenFor($source['id']);
             $item['location'] = ['kind' => 'ground', 'sceneId' => $state['activeSceneId'], 'layerId' => $token['layerId'] ?? $state['map']['activeLayerId'] ?? 'ground', 'x' => $token['x'], 'y' => $token['y']];
         } elseif ($command === 'item.consume') {
@@ -467,7 +494,8 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
     }
     foreach($instances as &$instance)if(!isset($owned[$instance['location']['characterId']??''])&&!isset($readableIds[$instance['templateId']]))unset($instance['description'],$instance['equipment']);unset($instance);
     $uses=[];if(empty($context['paused']))foreach($store['pendingUses']??[] as $u){if($u['phase']!=='opposition'||$u['sceneId']!==($context['sceneId']??'')||$u['layerId']!==($context['layerId']??''))continue;$targets=[];foreach($u['targets'] as $t)foreach($context['tokens']??[] as $token)if($token['id']===$t['tokenId']&&isset($owned[unitIdForToken($token)]))$targets[]=['tokenId'=>$t['tokenId'],'status'=>$t['status']];if($targets)$uses[]=[...array_intersect_key($u,array_flip(['id','itemId','itemRevision','sceneId','layerId','name','phase'])),'targets'=>$targets];}
-    return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances), ...(isset($store['pendingUses'])?['pendingUses'=>$uses]:[]),...(isset($store['categories'])?['categories'=>array_values(array_filter($store['categories'],static fn($c)=>in_array($c['id'],array_column($templates,'category'),true)))]:[]),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
+    $favorites=isset($store['favorites'])?array_values(array_filter($store['favorites'],static fn($entry)=>!empty($identity['id'])&&$entry['accountId']===$identity['id']&&isset($owned[$entry['unitId']],$ids[$entry['templateId']]))):null;
+    return ['version' => 1, 'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances), ...($favorites!==null?['favorites'=>$favorites]:[]), ...(isset($store['pendingUses'])?['pendingUses'=>$uses]:[]),...(isset($store['categories'])?['categories'=>array_values(array_filter($store['categories'],static fn($c)=>in_array($c['id'],array_column($templates,'category'),true)))]:[]),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
 }
 
 function onlineItemCommand(PDO $connection, array &$records, array &$pending, array $table, array $identity, string $command, array $args, bool $isGm): array {

@@ -1,4 +1,8 @@
-# Backend 0.18.48 — client exact 3.7.4
+# Backend 0.18.49 — client exact 3.7.5
+
+Build `client-3-7-5-inventaires-lots-favoris-20261021-1`. Transfert atomique de lots avec révision par exemplaire et reçu persistant, contrôle de chaque objet lié et dispositif, favoris par compte et unité effective. Projection privée des favoris et contrôle indépendant des clones qui conservent une référence de fiche. Aucun import de fiche ni changement de schéma ; SQL/session/fiche **24/22/10**. Le verrou autorise exclusivement **3.7.5**.
+
+## Backend 0.18.48 — client exact 3.7.4
 
 Build `client-3-7-4-inventaires-lisibles-20261021-1`. Identité commune des modèles, refus des collisions de noms, réutilisation des objets rapides compatibles avec notes par exemplaire et noms distincts pour les créations liées aux compétences. Les droits, propriétés d’armes, propriétaires, stocks et reçus restent autoritatifs.
 
