@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.18.50';
-const XAR_BACKEND_BUILD = 'client-3-7-6-titres-fortune-20261021-1';
+const XAR_BACKEND_VERSION = '0.18.51';
+const XAR_BACKEND_BUILD = 'atelier-connecte-2-0-0-20261022-1';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.7.6';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.7.6'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 24;
+const XAR_DATABASE_SCHEMA_VERSION = 25;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -1123,6 +1123,10 @@ function ensureCurrentSchema(PDO $connection): void
             migrateApplicationSpiritStatistics($connection);
             $version = 24;
         }
+        if ($version < 25 && XAR_DATABASE_SCHEMA_VERSION >= 25) {
+            migrateAtelierSchema($connection);
+            $version = 25;
+        }
     } finally {
         try {
             $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v11')");
@@ -1885,10 +1889,12 @@ function updateManagedAccount(PDO $connection): never
 
 function authenticateAccount(PDO $connection, mixed $username, mixed $password, string $scope): array
 {
+    $inputValid = true;
     try {
         [, $usernameKey] = normalizeUsername($username);
         $passwordText = validatedPassword($password);
     } catch (InvalidArgumentException) {
+        $inputValid = false;
         $usernameKey = 'invalid';
         $passwordText = str_repeat('x', 10);
     }
@@ -1900,7 +1906,7 @@ function authenticateAccount(PDO $connection, mixed $username, mixed $password, 
         ? (string) $account['password_verifier']
         : hashPassword(randomToken());
     $passwordMatches = password_verify($passwordText, $verifier);
-    $allowed = is_array($account)
+    $allowed = $inputValid && is_array($account)
         && $account['revoked_at'] === null
         && $passwordMatches
         && ($scope !== 'gm' || (string) $account['permanent_role'] === 'gm');
@@ -2130,6 +2136,8 @@ require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/ability-assistant.php';
 require_once __DIR__ . '/image-studio.php';
+require_once __DIR__ . '/atelier.php';
+require_once __DIR__ . '/atelier-gpt.php';
 require_once __DIR__ . '/health-overlays.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));

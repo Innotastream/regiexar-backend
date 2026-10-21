@@ -8685,9 +8685,10 @@ function mediaStorageUsage(PDO $connection): array
         . 'COALESCE(SUM(byte_size), 0) AS retained_bytes FROM media_objects'
     );
     $usage = $statement === false ? false : $statement->fetch();
+    $atelierBytes = function_exists('atelierTicketStorageBytes') ? atelierTicketStorageBytes($connection) : 0;
     return [
-        'active' => is_array($usage) ? (int) $usage['active_bytes'] : 0,
-        'retained' => is_array($usage) ? (int) $usage['retained_bytes'] : 0,
+        'active' => (is_array($usage) ? (int) $usage['active_bytes'] : 0) + $atelierBytes,
+        'retained' => (is_array($usage) ? (int) $usage['retained_bytes'] : 0) + $atelierBytes,
     ];
 }
 
@@ -8915,6 +8916,9 @@ function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHis
     );
     $catalog->execute([':media_id' => $id]);
     $count += (int) $catalog->fetchColumn();
+    if (function_exists('atelierMediaReferenceCount')) {
+        $count += atelierMediaReferenceCount($connection, $id);
+    }
     if (!$includeHistory) {
         return $count;
     }
@@ -9035,6 +9039,9 @@ function onlineMediaIsPlayerUpload(array $media, array $identity): bool
 function streamOnlineMedia(PDO $connection, string $id, bool $headOnly = false): never
 {
     $identity = requireIdentity($connection);
+    if (function_exists('assertAtelierRegieMediaAccess')) {
+        assertAtelierRegieMediaAccess($connection, $identity, $id);
+    }
     if (!onlineIdentityIsGm($identity)) {
         requireOnlinePlayerMediaAccess($connection, $identity, $id);
     } else {
@@ -9122,6 +9129,9 @@ function deleteOnlineMedia(PDO $connection, string $id): never
 function publishOnlineMedia(PDO $connection, string $id): never
 {
     $identity = requireGmIdentity($connection);
+    if (function_exists('atelierMediaReferenceCount') && atelierMediaReferenceCount($connection, $id) > 0) {
+        sendError(403, 'Cette image privée appartient à l’Atelier.', 'atelier_media_private');
+    }
     $record = mediaRecord($connection, $id);
     if (!is_array($record) || !str_starts_with((string) $record['content_type'], 'image/')) {
         sendError(404, 'Image introuvable.', 'media_missing');
@@ -9371,6 +9381,9 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
 
 function handleOnlineRoute(PDO $connection, array $configuration, string $route, string $method, bool $headOnly): bool
 {
+    if (handleAtelierRoute($connection, $configuration, $route, $method, $headOnly)) {
+        return true;
+    }
     if (handleAbilityAssistantRoute($connection, $route, $method, $headOnly)) {
         return true;
     }

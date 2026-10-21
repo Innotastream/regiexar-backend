@@ -852,6 +852,7 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
         if ($takeover && $differentLiveWorker) {
             recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
             recoverReplacedAbilityAssistantJobs($connection, $workerLeaseId);
+            if (function_exists('recoverAtelierGptJobs')) recoverAtelierGptJobs($connection, $workerLeaseId);
         }
         if ($payload['ready'] && $activeMessageId !== '') {
             $renew = $activeJobType === 'ability-assistant'
@@ -871,6 +872,9 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
                 ':account_id' => (string) $identity['id'],
                 ':worker_lease_id' => $workerLeaseId,
             ]);
+            if ($activeJobType === 'image' && function_exists('renewAtelierGptJob')) {
+                renewAtelierGptJob($connection, $activeMessageId, (string) $identity['id'], $workerLeaseId);
+            }
         }
         $connection->commit();
     } catch (Throwable $error) {
@@ -948,10 +952,12 @@ function claimImageStudioRegieJob(PDO $connection): never
         $service = imageStudioRegieServiceRecord($connection, true);
         recoverExpiredImageStudioRegieJobs($connection);
         recoverExpiredAbilityAssistantJobs($connection);
+        if (function_exists('recoverAtelierGptJobs')) recoverAtelierGptJobs($connection);
         $ownsActiveLease = hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''));
         if (!(bool) $service['paused'] && (bool) $service['worker_online'] && $ownsActiveLease) {
             recoverReplacedImageStudioRegieJobs($connection, $workerLeaseId);
             recoverReplacedAbilityAssistantJobs($connection, $workerLeaseId);
+            if (function_exists('recoverAtelierGptJobs')) recoverAtelierGptJobs($connection, $workerLeaseId);
             $active = $connection->query(
                 "SELECT id FROM image_studio_messages WHERE execution_mode = 'regie' "
                 . "AND status = 'generating' ORDER BY started_at, id LIMIT 1 FOR UPDATE"
@@ -962,7 +968,8 @@ function claimImageStudioRegieJob(PDO $connection): never
                 . 'ORDER BY started_at, id LIMIT 1 FOR UPDATE'
             );
             $activeAssistantId = $activeAssistant === false ? false : $activeAssistant->fetchColumn();
-            if ($activeId === false && $activeAssistantId === false) {
+            $activeAtelier = function_exists('activeAtelierGptJob') && activeAtelierGptJob($connection);
+            if ($activeId === false && $activeAssistantId === false && !$activeAtelier) {
                 $imageCandidate = false;
                 if ($imageGenerationAvailable) {
                     $nextImage = $connection->query(
@@ -976,10 +983,20 @@ function claimImageStudioRegieJob(PDO $connection): never
                     . 'ORDER BY created_at, id LIMIT 1 FOR UPDATE'
                 );
                 $assistantCandidate = $nextAssistant === false ? false : $nextAssistant->fetch();
+                $atelierCandidate = $imageGenerationAvailable && function_exists('nextAtelierGptJob') ? nextAtelierGptJob($connection) : false;
+                $atelierFirst = is_array($atelierCandidate)
+                    && (!is_array($imageCandidate) || strcmp((string) $atelierCandidate['created_at'] . (string) $atelierCandidate['id'], (string) $imageCandidate['created_at'] . (string) $imageCandidate['id']) < 0)
+                    && (!is_array($assistantCandidate) || strcmp((string) $atelierCandidate['created_at'] . (string) $atelierCandidate['id'], (string) $assistantCandidate['created_at'] . (string) $assistantCandidate['id']) < 0);
                 $chooseAssistant = is_array($assistantCandidate) && (!is_array($imageCandidate)
                     || strcmp((string) $assistantCandidate['created_at'] . (string) $assistantCandidate['id'],
                         (string) $imageCandidate['created_at'] . (string) $imageCandidate['id']) < 0);
-                if ($chooseAssistant) {
+                if ($atelierFirst) {
+                    $candidate = (string) $atelierCandidate['id'];
+                    if (claimAtelierGptJob($connection, $candidate, (string) $identity['id'], $workerLeaseId)) {
+                        $messageId = $candidate;
+                        $jobType = 'atelier-image';
+                    }
+                } elseif ($chooseAssistant) {
                     $candidate = (string) $assistantCandidate['id'];
                     $claim = $connection->prepare(
                         "UPDATE ability_assistant_messages SET status = 'generating', worker_account_id = :account_id, "
@@ -1018,11 +1035,11 @@ function claimImageStudioRegieJob(PDO $connection): never
         }
         throw $error;
     }
-    $message = $messageId === null ? null : ($jobType === 'ability-assistant'
-        ? abilityAssistantMessageRecord($connection, $messageId) : imageStudioMessageRecord($connection, $messageId));
-    $job = !is_array($message) ? null : ($jobType === 'ability-assistant'
-        ? abilityAssistantWorkerJobPayload($connection, $message)
-        : [...imageStudioMessagePayload($message, true), 'jobType' => 'image']);
+    $message = $messageId === null ? null : ($jobType === 'atelier-image' ? atelierGptMessageRecord($connection, $messageId)
+        : ($jobType === 'ability-assistant' ? abilityAssistantMessageRecord($connection, $messageId) : imageStudioMessageRecord($connection, $messageId)));
+    $job = !is_array($message) ? null : ($jobType === 'atelier-image' ? atelierGptWorkerJobPayload($message)
+        : ($jobType === 'ability-assistant' ? abilityAssistantWorkerJobPayload($connection, $message)
+        : [...imageStudioMessagePayload($message, true), 'jobType' => 'image']));
     sendJson(200, [
         'ok' => true,
         'job' => $job,
@@ -1361,6 +1378,9 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(65536);
     $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
+    if (function_exists('atelierGptMessageRecord') && atelierGptMessageRecord($connection, $id) !== null) {
+        sendJson(200, finishAtelierGptWorkerJob($connection, $identity, $id, $workerLeaseId, $payload, true));
+    }
     $mediaId = trim((string) ($payload['mediaId'] ?? ''));
     if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $mediaId) !== 1) {
         sendError(400, 'Résultat média invalide.', 'invalid_media');
@@ -1453,6 +1473,9 @@ function failImageStudioRegieJob(PDO $connection, string $id): never
     $identity = requireRegieCodexOwner($connection);
     $payload = readJsonBody(8192);
     $workerLeaseId = requiredImageStudioWorkerLeaseId($payload);
+    if (function_exists('atelierGptMessageRecord') && atelierGptMessageRecord($connection, $id) !== null) {
+        sendJson(200, finishAtelierGptWorkerJob($connection, $identity, $id, $workerLeaseId, $payload, false));
+    }
     $code = strtolower(trim((string) ($payload['code'] ?? 'generation_failed')));
     if (preg_match('/^[a-z0-9_]{3,64}$/D', $code) !== 1) {
         $code = 'generation_failed';
@@ -1976,6 +1999,10 @@ function writeImageReferenceCatalog(PDO $connection, ?string $id = null): never
         if ($media->fetchColumn() === false) {
             $connection->rollBack();
             sendError(404, 'Image de référence introuvable.', 'media_missing');
+        }
+        if (function_exists('atelierMediaReferenceCount') && atelierMediaReferenceCount($connection, $mediaId) > 0) {
+            $connection->rollBack();
+            sendError(403, 'Cette image appartient à l’Atelier privé.', 'atelier_media_private');
         }
         $active = array_key_exists('active', $payload) ? $payload['active'] === true : (bool) ($existing['active'] ?? true);
         $priority = array_key_exists('priority', $payload)

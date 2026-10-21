@@ -159,6 +159,9 @@ jobs:
           grep -Fq 'Local MySQL Esprit migration integration passed.' mysql-spirit-migration.log
           php tests/mysql-assistant-object-plan.php | tee mysql-assistant-object-plan.log
           grep -Fq 'Local MySQL assistant object plan integration passed.' mysql-assistant-object-plan.log
+          node tests/atelier-http-contract.mjs | tee atelier-http-contract.log
+          grep -Fq '"http":"real PHP multipart"' atelier-http-contract.log
+          php tests/mysql-atelier-gpt.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 
