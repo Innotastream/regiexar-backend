@@ -107,7 +107,9 @@ jobs:
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence
-        run: php tests/image-studio-idempotence-contract.php
+        run: |
+          php tests/image-studio-idempotence-contract.php
+          php tests/atelier-gpt-worker-contract.php
       - name: Authenticated diagnostic logs and expiring shares
         run: php tests/diagnostics-contract.php
       - name: Private PHP warning and failure journal

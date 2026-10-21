@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/fixtures/atelier-gpt-worker.php';
+
 // This suite creates and drops only its own random schema on an explicitly
 // opted-in loopback server. It never calls Codex, HTTP or a production account.
 if (getenv('XAR_TEST_MYSQL_ALLOW_LOCAL') !== '1') { echo "Atelier GPT SQL skipped: explicit local opt-in required.\n"; exit(0); }
@@ -60,16 +62,7 @@ if (($argv[1] ?? '') === 'claim-worker') {
     exit(0);
 }
 function gptStartClaimWorker(string $schema, string $lease): array {
-    $environment = [];
-    foreach (['XAR_TEST_MYSQL_ALLOW_LOCAL', 'XAR_TEST_MYSQL_DSN', 'XAR_TEST_MYSQL_USER', 'XAR_TEST_MYSQL_PASSWORD', 'SYSTEMROOT', 'TEMP', 'TMP'] as $name) {
-        $value = getenv($name); if ($value !== false) $environment[$name] = $value;
-    }
-    $process = proc_open([PHP_BINARY, '-n', '-d', 'extension_dir=' . ini_get('extension_dir'), '-d', 'extension=pdo_mysql', '-d', 'extension=mbstring', __FILE__, 'claim-worker', $schema, $lease],
-        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, __DIR__, $environment);
-    if (!is_resource($process)) throw new RuntimeException('Could not start fixture worker.');
-    stream_set_timeout($pipes[1], 15);
-    if (trim((string) fgets($pipes[1])) !== 'READY') throw new RuntimeException('Fixture worker not ready: ' . stream_get_contents($pipes[2]));
-    return [$process, $pipes];
+    return gptFixtureStartWorker(gptFixturePhpCommand([__FILE__, 'claim-worker', $schema, $lease]), __DIR__, gptFixtureWorkerEnvironment());
 }
 function gptFinishClaimWorker(array $worker): array {
     [$process, $pipes] = $worker;
