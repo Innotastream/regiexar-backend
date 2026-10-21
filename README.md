@@ -1,3 +1,7 @@
+## Version 0.18.52 / client 3.7.7
+
+Le verrou de version accompagne le correctif client de la plaque de sélection et du bouton Fiche perso. Aucune règle métier, aucun schéma ni donnée de fiche n’est modifié par ce correctif. Build `client-3-7-7-plaque-fiche-20261022-1`, client exact **3.7.7**.
+
 ## Backend 0.18.50 — Régie 3.7.6
 
 Titres honorifiques cumulatifs, fortune narrative à six niveaux, validations et droits MJ, calcul des statistiques partagé et instantanés indépendants sans double fatigue. Aucun import de fiches ni migration SQL.
