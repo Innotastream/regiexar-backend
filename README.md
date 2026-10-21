@@ -1,3 +1,7 @@
+## Backend 0.18.50 — Régie 3.7.6
+
+Titres honorifiques cumulatifs, fortune narrative à six niveaux, validations et droits MJ, calcul des statistiques partagé et instantanés indépendants sans double fatigue. Aucun import de fiches ni migration SQL.
+
 # Backend 0.18.49 — client exact 3.7.5
 
 Build `client-3-7-5-inventaires-lots-favoris-20261021-1`. Transfert atomique de lots avec révision par exemplaire et reçu persistant, contrôle de chaque objet lié et dispositif, favoris par compte et unité effective. Projection privée des favoris et contrôle indépendant des clones qui conservent une référence de fiche. Aucun import de fiche ni changement de schéma ; SQL/session/fiche **24/22/10**. Le verrou autorise exclusivement **3.7.5**.

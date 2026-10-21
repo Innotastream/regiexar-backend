@@ -30,8 +30,8 @@ function onlineStatFatigueDetails(array $source, string $statId, ?array $charact
     if ($statId !== 'weapon-skill' && is_array($character) && $character !== []) {
         $original = $key === 'mentalResistance'
             ? ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? null)
-            : ($character['temporaryStats'][$key] ?? $character['stats'][$key] ?? null);
-        if (is_numeric($original)) $before = max(0, min(100, (int) $original));
+            : applicationCharacterStatTotal($character,$key);
+        if (is_numeric($original)) $before = max(-1000000000,min(1000000000,(int)$original));
     }
     return ['current' => $current, 'max' => $maximum, 'penalty' => $penalty, 'before' => $before];
 }

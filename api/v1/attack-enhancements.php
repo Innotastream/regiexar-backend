@@ -226,17 +226,19 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
         if(($effect['holder']??'')!==$holder||(($effect['sceneId']??'')!==$sceneId&&($effect['expiry']??'')!=='rests')||($effect['remainingTurns']??0)<=0||($effect['mode']??'')!=='stats'||applicationAttackEnhancement($effect)===null)continue;
         foreach($effect['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;
     }
+    if($character!==null){
+        $rows=applicationEffectiveCharacterStats($character,$bonuses);$ids=array_column($rows,'id');
+        // An attack may add an already resolved weapon-skill row. Keep these
+        // contextual tests alongside the shared character scores.
+        foreach($source['stats']??[] as $row)if(is_array($row)&&isset($row['id'])&&!in_array($row['id'],$ids,true))$rows[]=$row;
+        return $rows;
+    }
     $rows=applicationUnitStatRows($source['stats']??[]);
     $penalty=unitUsesCharacterSheet($source)?0:max(0,(int)floor(min(150,(float)($source['fatigue']['current']??0))-50));
     foreach($rows as &$row){
         $key=preg_replace('/^character-stat-/','',(string)($row['id']??''));
         if(empty($bonuses[$key])&&$penalty===0)continue;
         $base=$row['value']??0;
-        if($character!==null&&array_key_exists($key,$character['stats']??[])){
-            $temporary=$character['temporaryStats'][$key]??null;
-            $base=($temporary!==null&&$temporary!==''&&is_numeric($temporary)?(float)$temporary:(float)$character['stats'][$key])-max(0,(int)floor(($character['fatigue']['current']??0)-50));
-        }
-        if($character!==null&&$key==='mentalResistance')$base=(float)($character['resources']['mentalResistance']??0)-max(0,(int)floor(($character['fatigue']['current']??0)-50));
         if(!is_numeric($base))continue;
         $row['value']=(string)max(1,min(100,(float)$base+($bonuses[$key]??0)-$penalty));if(!empty($bonuses[$key]))$row['timedBonus']=$bonuses[$key];
     }

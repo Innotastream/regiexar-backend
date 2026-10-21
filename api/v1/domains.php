@@ -1679,6 +1679,8 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if(array_key_exists('honorificTitles',$payload)&&!validApplicationHonorificTitles($payload['honorificTitles']))return false;
+    if(array_key_exists('fortune',$payload)&&(!applicationHonorificInteger($payload['fortune'])||$payload['fortune']<0||$payload['fortune']>5))return false;
     if(isset($payload['sheetKind'])&&!in_array($payload['sheetKind'],['notes','character'],true))return false;
     if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     if (array_key_exists('lore', $payload) && !validApplicationDomainText($payload['lore'], 200000)) return false;

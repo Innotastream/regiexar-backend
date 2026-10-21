@@ -310,6 +310,7 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
         'cloneSourceTokenId' => $source['id'], 'layerId' => onlineTokenLayerId($source, $map), 'libraryTemplateId' => null,
         'initiative' => null, 'resourcePulse' => null, '_updatedAt' => (int) floor(microtime(true) * 1000), '_movedAt' => (int) floor(microtime(true) * 1000)]);
     unset($clone['transformation']);
+    if(unitUsesCharacterSheet($source)&&!empty($character))$clone['stats']=applicationIndependentCharacterStats($character);
     $layer = $map['layers'][$clone['layerId']] ?? $map;
     $layer['naturalWidth'] = (float) ($layer['naturalWidth'] ?? 1600) ?: 1600.0;
     $layer['naturalHeight'] = (float) ($layer['naturalHeight'] ?? 900) ?: 900.0;

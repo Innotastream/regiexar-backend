@@ -820,6 +820,8 @@ function applicationPublicCharacterResources(array $character): array {
     $character['resources'] = $resources;
     $character['stats'] = applicationCharacterStats($character['stats']??[]);
     $character['fatigue'] = normalizeApplicationFatigue($character['fatigue'] ?? null);
+    if(array_key_exists('honorificTitles',$character))$character['honorificTitles']=normalizeApplicationHonorificTitles($character['honorificTitles']);
+    if(array_key_exists('fortune',$character))$character['fortune']=normalizeApplicationFortune($character['fortune']);
     unset($character['secret']['mentalResistance'], $character['secret']['mentalResistanceMax']);
     return $character;
 }
@@ -1103,6 +1105,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'layerId' => onlineTokenLayerId($token, $map),
             'characterId' => $token['characterId'] ?? null,
             'name' => $token['name'] ?? 'Token',
+            ...(applicationDisplayedHonorificTitle(unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??$token):$token)!==''?['honorificTitle'=>applicationDisplayedHonorificTitle(unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??$token):$token)]:[]),
             'image' => applicationTacticalImage($token,$token['image'] ?? null),
             'tacticalEffects'=>applicationTacticalEffectsSummary($token),
             ...(array_key_exists('passiveAbilities',$token)?['passiveAbilities'=>applicationPassiveAbilities($token['passiveAbilities'])]:[]),
@@ -1142,6 +1145,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         ];
         if ($details) {
             $moraleEntity=unitUsesCharacterSheet($token)?($charactersById[(string)($token['characterId']??'')]??[]):$token;
+            if(array_key_exists('fortune',$moraleEntity))$visible['fortune']=normalizeApplicationFortune($moraleEntity['fortune']);
             if(array_key_exists('morale',$moraleEntity)) { $visible['morale']=trim((string)$moraleEntity['morale'])?:'Normal'; $visible['moraleExtremes']=normalizeOnlineMoraleExtremes($moraleEntity['moraleExtremes']??[]); }
             foreach (['hp', 'maxHp', 'mana', 'maxMana', 'fatigue', 'damageDice', 'damageType', 'weaponAttacks', 'hitThreshold', 'armorCategory', 'armor', 'magicArmorCategory', 'magicArmor', 'temporalPerception', 'stats', 'abilities', 'initiativeBonus', 'bonuses', 'penalties', 'resourcePulse'] as $key) {
                 if (array_key_exists($key, $token)) {
@@ -1207,6 +1211,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'id' => $character['id'] ?? null,
             'ownerPlayerId' => $character['ownerPlayerId'] ?? null,
             'name' => $character['name'] ?? 'Personnage',
+            ...(applicationDisplayedHonorificTitle($character)!==''?['honorificTitle'=>applicationDisplayedHonorificTitle($character)]:[]),
             'portrait' => $character['portrait'] ?? null,
             'color' => $character['color'] ?? '#8d72cb',
             'skills' => is_string($character['skills'] ?? null) ? $character['skills'] : '',
@@ -4999,6 +5004,8 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
         return $token;
     }
     if (unitUsesCharacterSheet($token)) $token['specialSuccessStock'] = normalizeSpecialSuccessStock($character['specialSuccessStock'] ?? 0);
+    if(array_key_exists('honorificTitles',$character)||array_key_exists('honorificTitle',$token))$token['honorificTitle']=applicationDisplayedHonorificTitle($character);
+    if(array_key_exists('fortune',$character)||array_key_exists('fortune',$token))$token['fortune']=normalizeApplicationFortune($character['fortune']);
     if(array_key_exists('passiveAbilities',$character))$token['passiveAbilities']=applicationPassiveAbilities($character['passiveAbilities']);
     $token['healthOverride'] = onlineManualDeath($character) ? 'dead' : null;
     $token['conditions'] = normalizeOnlineConditions($character['conditions'] ?? []);
@@ -5030,19 +5037,7 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
     if (is_numeric($character['initiativeBonus'] ?? null)) {
         $token['initiativeBonus'] = (float) $character['initiativeBonus'];
     }
-    $fatiguePenalty = max(0, (int) floor(normalizeApplicationFatigue($character['fatigue'] ?? null)['current'] - 50));
-    if (is_array($character['stats'] ?? null)) {
-        $labels = applicationStatLabels();
-        $token['stats'] = [];
-        foreach (applicationCharacterStats($character['stats']) as $key => $value) {
-            $token['stats'][] = [
-                'id' => 'character-stat-' . (string) $key,
-                'label' => $labels[(string) $key] ?? (string) $key,
-                'value' => (string) max(1, min(100, (float) ((isset($character['temporaryStats'][$key]) && $character['temporaryStats'][$key] !== '' && is_numeric($character['temporaryStats'][$key])) ? $character['temporaryStats'][$key] : $value) - $fatiguePenalty)),
-            ];
-        }
-    }
-    $token['stats'][] = ['id' => 'character-stat-mentalResistance', 'label' => 'Résistance mentale', 'value' => (string) max(1, min(100, (float) ($character['resources']['mentalResistance'] ?? $character['secret']['mentalResistance'] ?? 0) - $fatiguePenalty))];
+    $token['stats'] = applicationEffectiveCharacterStats($character);
     $token['fatigue'] = normalizeApplicationFatigue($character['fatigue'] ?? null);
     $token['hitThreshold'] = normalizeOnlineD100Difficulty($character['hitThreshold'] ?? null);
     $token['abilities'] = normalizeOnlineAbilities($character['abilities'] ?? []);
@@ -5549,6 +5544,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if (array_key_exists('lore', $patch) && $patch['lore'] !== ($character['lore'] ?? '')) {
                 rejectOnlineCommand($connection, 403, 'Le lore est en lecture seule.', 'readonly_character_lore');
             }
+            foreach(['honorificTitles','fortune'] as $reserved)if(array_key_exists($reserved,$patch)&&canonicalApplicationDomainValue($patch[$reserved])!==canonicalApplicationDomainValue($character[$reserved]??null))rejectOnlineCommand($connection,403,'Seul le MJ peut modifier les titres honorifiques et la fortune.','gm_honors_required');
             $previousConditions = normalizeOnlineConditions($character['conditions'] ?? []);
             $legacyWholePatch = legacyWholePlayerCharacterPatch($patch);
             if ($legacyWholePatch && playerCharacterPatchChangesCurrent($character, $patch)) {

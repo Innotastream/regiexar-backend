@@ -47,6 +47,58 @@ function applicationResolveCharacterStat(array $rows,string $statId):?array {
     return null;
 }
 
+function applicationHonorificInteger(mixed $value): bool { return (is_int($value)||is_float($value))&&is_finite((float)$value)&&floor((float)$value)===(float)$value; }
+function validApplicationHonorificTitles(mixed $value): bool {
+    if(!is_array($value)||!applicationHonorificInteger($value['version']??null)||(int)$value['version']!==1||!is_array($value['entries']??null)||!array_is_list($value['entries'])||count($value['entries'])>50||!is_string($value['displayedId']??null))return false;
+    if(array_diff(array_keys($value),['version','entries','displayedId']))return false;
+    $ids=[];
+    foreach($value['entries'] as $entry){
+        if(!is_array($entry)||array_diff(array_keys($entry),['id','name','bonuses'])||!is_string($entry['id']??null)||!preg_match('/^[A-Za-z0-9_-]{1,80}$/D',$entry['id'])||isset($ids[$entry['id']]))return false;
+        $name=$entry['name']??null;if(!is_string($name)||trim($name)===''||applicationCharacterTextLength($name)>120||preg_match('/[\x00-\x1f]/',$name))return false;
+        if(!is_array($entry['bonuses']??null)&&!(($entry['bonuses']??null) instanceof stdClass))return false;
+        foreach((array)$entry['bonuses'] as $key=>$amount)if(!array_key_exists($key,applicationStatLabels())||!applicationHonorificInteger($amount)||abs($amount)>100)return false;
+        $ids[$entry['id']]=true;
+    }
+    return $value['displayedId']===''||isset($ids[$value['displayedId']]);
+}
+function applicationCharacterTextLength(string $value): int { return function_exists('mb_strlen')?mb_strlen($value,'UTF-8'):preg_match_all('/./us',$value); }
+function normalizeApplicationHonorificTitles(mixed $value): array {
+    if(is_array($value)&&(int)($value['version']??0)>1)throw new RuntimeException('future_honorific_titles');
+    $value=is_array($value)?$value:[];$entries=[];$ids=[];
+    foreach(array_slice(is_array($value['entries']??null)?$value['entries']:[],0,50) as $entry){
+        if(!is_array($entry)||!is_string($entry['id']??null)||!preg_match('/^[A-Za-z0-9_-]{1,80}$/D',$entry['id'])||isset($ids[$entry['id']])||!is_string($entry['name']??null))continue;
+        $name=trim(preg_replace('/[\x00-\x1f]/','',$entry['name'])??'');if($name==='')continue;
+        preg_match('/^.{0,120}/us',$name,$match);$name=$match[0]??'';$bonuses=[];
+        foreach(applicationStatLabels() as $key=>$_label){$amount=((array)($entry['bonuses']??[]))[$key]??null;if(applicationHonorificInteger($amount)&&abs($amount)<=100&&(int)$amount!==0)$bonuses[$key]=(int)$amount;}
+        $entries[]=['id'=>$entry['id'],'name'=>$name,'bonuses'=>$bonuses===[]?(object)[]:$bonuses];$ids[$entry['id']]=true;
+    }
+    return ['version'=>1,'entries'=>$entries,'displayedId'=>isset($ids[$value['displayedId']??''])?$value['displayedId']:''];
+}
+function applicationHonorificTitleBonuses(array $character): array {
+    $bonuses=[];foreach(normalizeApplicationHonorificTitles($character['honorificTitles']??null)['entries'] as $entry)foreach((array)$entry['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;return $bonuses;
+}
+function applicationDisplayedHonorificTitle(array $entity): string {
+    if(is_string($entity['honorificTitle']??null)){preg_match('/^.{0,120}/us',preg_replace('/[\x00-\x1f]/','',$entity['honorificTitle'])??'',$match);return $match[0]??'';}
+    $titles=normalizeApplicationHonorificTitles($entity['honorificTitles']??null);foreach($titles['entries'] as $entry)if($entry['id']===$titles['displayedId'])return $entry['name'];return '';
+}
+function normalizeApplicationFortune(mixed $value): int { return applicationHonorificInteger($value)&&$value>=0&&$value<=5?(int)$value:2; }
+function applicationCharacterStatTotal(array $character,string $key): float {
+    $temporary=$character['temporaryStats'][$key]??null;$base=$character['stats'][$key]??($key==='spirit'?30:0);
+    if($temporary!==null&&$temporary!==''&&is_numeric($temporary))$base=max(0,min(100,(float)$temporary));
+    return (is_numeric($base)?(float)$base:0)+(applicationHonorificTitleBonuses($character)[$key]??0);
+}
+function applicationEffectiveCharacterStats(array $character,array $bonuses=[]): array {
+    $fatigue=max(0,(int)floor(min(150,(float)($character['fatigue']['current']??0))-50));$titles=applicationHonorificTitleBonuses($character);$rows=[];
+    foreach(applicationCharacterStats($character['stats']??[]) as $key=>$base){
+        $row=['id'=>'character-stat-'.$key,'label'=>applicationStatLabels()[$key]??$key,'value'=>(string)max(1,min(100,applicationCharacterStatTotal($character,(string)$key)+($bonuses[$key]??0)-$fatigue))];
+        if(!empty($titles[$key]))$row['titleBonus']=$titles[$key];if(!empty($bonuses[$key]))$row['timedBonus']=$bonuses[$key];$rows[]=$row;
+    }
+    $row=['id'=>'character-stat-mentalResistance','label'=>'Résistance mentale','value'=>(string)max(1,min(100,(float)($character['resources']['mentalResistance']??$character['secret']['mentalResistance']??0)+($bonuses['mentalResistance']??0)-$fatigue))];if(!empty($bonuses['mentalResistance']))$row['timedBonus']=$bonuses['mentalResistance'];$rows[]=$row;return $rows;
+}
+function applicationIndependentCharacterStats(array $character): array {
+    $rows=applicationEffectiveCharacterStats($character);foreach($rows as &$row){$key=preg_replace('/^character-stat-/','',$row['id']);$row['value']=(string)($key==='mentalResistance'?($character['resources']['mentalResistance']??$character['secret']['mentalResistance']??0):applicationCharacterStatTotal($character,$key));unset($row['titleBonus']);}unset($row);return $rows;
+}
+
 // Scope migration to actual entities, never historical rolls, receipts or snapshots of an action.
 function applicationSpiritDomainPayload(string $key,array $payload):array {
     if(str_starts_with($key,'character:')) {
