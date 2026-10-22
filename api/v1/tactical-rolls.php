@@ -304,13 +304,13 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     } else {
         $source = synchronizeOnlineCharacterToken(['characterId' => $characterId], $source);
     }
-    try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,$activity,$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
+    try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $joker?applicationSpecialSuccessOutcome($spec['threshold']):($spec['threshold'] !== null
-        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat')
-        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId)) : null));
+        ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat', applicationRollCriticalFailureProtected($source,$activity,$sceneId))
+        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId),0,0,true,false,applicationRollCriticalFailureProtected($source,$activity,$sceneId)) : null));
     applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {

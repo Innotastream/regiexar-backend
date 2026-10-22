@@ -66,6 +66,8 @@ function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
     return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    if(isset($entry['requiredWeaponAttackId'])&&(empty($entry['useWeaponDamage'])||!validApplicationDomainIdentifier($entry['requiredWeaponAttackId'],180)))return false;
+    if(isset($entry['singleEnemy'])){if(($entry['effect']??'damage')!=='damage'||!is_array($entry['singleEnemy'])||!is_int($entry['singleEnemy']['damageRepetitions']??null)||$entry['singleEnemy']['damageRepetitions']<1||$entry['singleEnemy']['damageRepetitions']>10)return false;try{if(isset($entry['singleEnemy']['conditionRider'])&&dsRider($entry['singleEnemy']['conditionRider'])===null)return false;}catch(RuntimeException){return false;}}
     if(isset($entry['weaponDamageMultiplier'])&&(!is_int($entry['weaponDamageMultiplier'])||$entry['weaponDamageMultiplier']<1||$entry['weaponDamageMultiplier']>10||empty($entry['useWeaponDamage'])))return false;
     if(isset($entry['manualD100'])&&(!is_bool($entry['manualD100'])||$entry['manualD100']&&!in_array($entry['effect']??'',['movement','healing','enhancement','summoning','metamorphosis'],true)))return false;
     try{applicationOutcomeMessages($entry['outcomeMessages']??null);}catch(RuntimeException){return false;}
@@ -127,6 +129,8 @@ function applicationAbilityEffectFields(array $entry): array {
     if(!empty($entry['manualD100']))$conditions['manualD100']=true;
     if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
     if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMultiplier']??1)>1)$conditions['weaponDamageMultiplier']=$entry['weaponDamageMultiplier'];if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
+    if(!empty($entry['requiredWeaponAttackId']))$conditions['requiredWeaponAttackId']=$entry['requiredWeaponAttackId'];
+    if(isset($entry['singleEnemy']))$conditions['singleEnemy']=['damageRepetitions'=>$entry['singleEnemy']['damageRepetitions'],...(isset($entry['singleEnemy']['conditionRider'])?['conditionRider'=>dsRider($entry['singleEnemy']['conditionRider'])]:[])];
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
     if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
     if(applicationTacticalEffect($entry['tacticalEffect']??null))$conditions['tacticalEffect']=applicationTacticalEffect($entry['tacticalEffect']);
@@ -173,11 +177,19 @@ function applicationCustomAttack(mixed $value): array {
     if ($customStat && (!is_numeric($threshold) || (float) $threshold != (int) $threshold || $threshold < 0 || $threshold > 100 || $label === '' || strlen($label) > 120)) throw new InvalidArgumentException('Statistique personnalisée invalide.');
     return ['name' => $name, 'damageComponents' => $parts, 'customStat' => $customStat, 'threshold' => (int) $threshold, 'statLabel' => $label];
 }
-function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
+function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null,array $state=[]): array {
+    if($state!==[])$target=applicationEnhancedResistanceTarget($target,$state,(string)($attack['sceneId']??$state['activeSceneId']??''));
+    $count=max(1,min(10,(int)($attack['damageRepetitions']??1)));if($count===1)return onlineRollSingleAttackDamage($attack,$target,$rollFormula);
+    $strikes=[];for($i=0;$i<$count;$i++)$strikes[]=onlineRollSingleAttackDamage($attack,$target,$rollFormula);
+    $raw=array_sum(array_column(array_column($strikes,'damage'),'rawDamage'));$final=array_sum(array_column(array_column($strikes,'damage'),'finalDamage'));
+    return ['rolled'=>[...$strikes[0]['rolled'],'total'=>$raw,'strikes'=>array_column($strikes,'rolled'),'breakdown'=>implode(' ; ',array_map(static fn($strike,$index)=>'Frappe '.($index+1).' : '.$strike['rolled']['breakdown'],$strikes,array_keys($strikes)))],
+        'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final)/$raw):0,'strikes'=>array_column($strikes,'damage'),'components'=>array_merge(...array_map(static fn($strike)=>$strike['damage']['components']??[],$strikes))]];
+}
+function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
     $parts = applicationDamageComponents($attack['damageComponents'] ?? []);
     $percent = max(1, min(100, (int) ($attack['damagePercent'] ?? 100)));
     if ($parts === []) {
-        $rolled = onlineRollFormulaWithMode($attack['damageFormula'], 'normal');
+        $rolled = $rollFormula!==null?$rollFormula($attack['damageFormula']):onlineRollFormulaWithMode($attack['damageFormula'], 'normal');
         return ['rolled' => $rolled, 'damage' => onlineAttackDamageSummary((int) round(max(0, (int) $rolled['total']) * $percent / 100), onlineAttackArmorPercent($target, $attack['damageType'] ?? 'physical'))];
     }
     $rollFormula ??= static fn (string $formula): array => onlineRollFormula($formula);

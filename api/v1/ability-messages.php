@@ -12,9 +12,10 @@ function applicationOutcomeMessages(mixed $v):?array {
  if(!$v)return null;if(!is_array($v)||($v['version']??1)!==1)throw new RuntimeException('Messages de compétence invalides.',400);$entries=[];
  foreach(applicationMessageOutcomes() as $k=>$label)if(($v['entries'][$k]['kind']??'')==='message')$entries[$k]=applicationAbilityMessage($v['entries'][$k]);return ['version'=>1,'entries'=>$entries];
 }
-function applicationManualD100Outcome(int $raw,string $code='pending'):array {
+function applicationManualD100Outcome(int $raw,string $code='pending',bool $criticalFailureAsFailure=false):array {
  if($code!=='pending'&&!isset(applicationMessageOutcomes()[$code]))throw new RuntimeException('Choisissez le résultat arbitré par le MJ.',400);
- return ['code'=>$code,'label'=>$code==='pending'?'Arbitrage MJ requis':applicationMessageOutcomes()[$code],'raw'=>$raw,'result'=>$raw,'modifier'=>0,'resultModifier'=>0,'baseThreshold'=>null,'threshold'=>null,'effect'=>false,'success'=>in_array($code,['success','critical-success'],true),'requiresGmValidation'=>$code==='pending','manual'=>true];
+ if($criticalFailureAsFailure&&$code==='critical-failure')$code='failure';
+ return [...($criticalFailureAsFailure?['criticalFailureAsFailure'=>true]:[]),'code'=>$code,'label'=>$code==='pending'?'Arbitrage MJ requis':applicationMessageOutcomes()[$code],'raw'=>$raw,'result'=>$raw,'modifier'=>0,'resultModifier'=>0,'baseThreshold'=>null,'threshold'=>null,'effect'=>false,'success'=>in_array($code,['success','critical-success'],true),'requiresGmValidation'=>$code==='pending','manual'=>true];
 }
 function applicationOutcomeCompletionCue(array $plan,array $cast):array {
  $base=$plan['completionCue']??['version'=>1,'trigger'=>'completed','sound'=>null,'visual'=>['version'=>1,'kind'=>'none']];$message=$plan['outcomeMessages']['entries'][$cast['outcome']['code']??'']??null;

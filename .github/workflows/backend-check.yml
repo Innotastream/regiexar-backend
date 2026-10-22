@@ -128,6 +128,8 @@ jobs:
           php tests/pending-ability-domain-contract.php
           php tests/attack-enhancements-contract.php
           php tests/attack-enhancements-lifecycle.php
+          php tests/champion-aura-combat.php
+          php tests/champion-aura-native.php
           php tests/attack-echoes-lifecycle.php
           php tests/special-success-contract.php
           php tests/strategy-break-contract.php

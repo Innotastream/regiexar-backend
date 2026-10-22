@@ -59,7 +59,7 @@ function onlineDeviceContext(PDO $db,array &$records,array &$pending,array $iden
             $threshold=$statId==='luck'?onlineCharacterLuckThreshold($db,$records,$pending,$owner['id']??''):($stat['value']??null);
             if($statId!=='luck'&&$threshold===null)dsError('La caractéristique de ce test est absente.');
             $rolled=onlineRollFormulaWithMode('1d100','normal',$threshold===null?null:(int)$threshold,$penalty,true);
-            $outcome=classifyOnlineD100Outcome($rolled['rawD100']??null,$threshold===null?null:(int)$threshold,$penalty,0,true,$statId!=='luck');applyOnlineD100ResultToRoll($rolled,$outcome);
+            $outcome=classifyOnlineD100Outcome($rolled['rawD100']??null,$threshold===null?null:(int)$threshold,$penalty,0,true,$statId!=='luck',applicationRollCriticalFailureProtected($source,$state,(string)($state['activeSceneId']??'')));applyOnlineD100ResultToRoll($rolled,$outcome);
             $roll=onlineRollEntry($identity,$rolled,$label,$owner['name']??$token['name'],$outcome);
             $roll['sourceTokenId']=$token['id'];$roll['sourceSceneId']=$state['activeSceneId'];
             if(onlineIdentityIsGm($identity)||!$owner){$roll['visibility']='gm';$roll['revealed']=false;}
@@ -142,7 +142,7 @@ function onlineDeviceAutomaticAttack(PDO $db,array &$records,array &$pending,arr
         'damageFormula'=>(string)$damage,'damageType'=>$device['definition']['damageType'],'damagePercent'=>100,'damageRollMode'=>'normal','onHitConditions'=>[],
         'hit'=>['raw'=>null,'total'=>null,'formula'=>'','statId'=>'','statLabel'=>'Sans jet','breakdown'=>'Lancement sans jet','outcome'=>['automatic'=>true,'success'=>true,'code'=>'success','label'=>'SANS JET']],
         'createdAt'=>(int)floor(microtime(true)*1000)];
-    $rolled=onlineRollAttackDamage($attack,$target);$attack['damage']=$rolled['damage'];$attack['finalDamage']=$rolled['damage']['finalDamage'];
+    $rolled=onlineRollAttackDamage($attack,$target,null,onlineAttackEnhancementState($db,$records,$pending,$sceneId));$attack['damage']=$rolled['damage'];$attack['finalDamage']=$rolled['damage']['finalDamage'];
     $initiative=$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId);
     if($attack['finalDamage']<=0)$attack['status']='blocked';
     elseif($initiative['active']??false){$health=applyOnlineAttackDamage($db,$records,$pending,$key,$target,$attack['finalDamage'],true,[...$attack['damage'],'damageType'=>$attack['damageType']]);$attack=onlineRecordAttackGuard($attack,$health);$attack['status']='applied';}

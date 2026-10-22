@@ -769,7 +769,7 @@ function applicationComplexAbilityPrepareChainBatch(array &$execution, array $st
         $modifier = -min(100, $successes * $step['penaltyPerSuccess']);
         $rolled = $roll('1d100', normalizeOnlineRollMode($rollMode), true);
         $raw = $rolled['rawD100'] ?? $rolled['total'] ?? null;
-        $outcome = ($rolled['joker'] ?? false) === true ? applicationSpecialSuccessOutcome($baseThreshold) : classifyOnlineD100Outcome($raw, $baseThreshold, $modifier, 0, true, true);
+        $outcome = ($rolled['joker'] ?? false) === true ? applicationSpecialSuccessOutcome($baseThreshold) : classifyOnlineD100Outcome($raw, $baseThreshold, $modifier, 0, true, true, !empty($rolled['criticalFailureAsFailure']));
         if ($outcome === null) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
         $state['rolls'][] = [...$rolled, 'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => (int) $raw, 'rawD100' => ($rolled['joker'] ?? false) ? null : (int) $raw,
             'threshold' => $outcome['threshold'], 'success' => $outcome['success'], 'outcome' => $outcome['code'],
@@ -1486,6 +1486,7 @@ function applyApplicationComplexAbilityCommand(
                 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total)];
             if ($step['threshold'] !== null) $result += ['threshold' => $step['threshold'], 'success' => ($rolled['joker'] ?? false) === true || $total <= $step['threshold']];
             if (($rolled['joker'] ?? false) === true) $result['outcomeDetails'] = applicationSpecialSuccessOutcome($step['threshold']);
+            elseif(!empty($rolled['criticalFailureAsFailure'])&&isset($rolled['rawD100'])){$result['outcomeDetails']=classifyOnlineD100Outcome($rolled['rawD100'],$step['threshold'],0,0,true,true,true);if(isset($result['success']))$result['success']=$result['outcomeDetails']['success']??$result['success'];}
             $state['rolls'][] = $result;
             applicationComplexAbilityAppendEvent($execution, ['type' => 'roll', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['title'] . ' · ' . $total,
@@ -1535,7 +1536,7 @@ function applyApplicationComplexAbilityCommand(
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
             $state['rolls'][] = [...$rolled, 'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => $raw, 'threshold' => $threshold,
-                'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null,
+                'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : (!empty($rolled['criticalFailureAsFailure'])?classifyOnlineD100Outcome($raw,$threshold,0,0,true,true,true):null),
                 'success' => $success, 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $raw)];
             $state['awaitingAttack'] = $success;
             if ($success) $state['gateAt'] = $now;
@@ -1618,7 +1619,7 @@ function applyApplicationComplexAbilityCommand(
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
             $target =& $state['targets'][$targetIndex];
-            $target['awarenessRolls'][] = [...$rolled, 'total' => $raw, 'success' => $success, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null];
+            $target['awarenessRolls'][] = [...$rolled, 'total' => $raw, 'success' => $success, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : (!empty($rolled['criticalFailureAsFailure'])?classifyOnlineD100Outcome($raw,$threshold,0,0,true,true,true):null)];
             $target['awarenessRolled'] = true;
             if ($success) $target['aware'] = true;
             $state['awaitingAwareness'] = false;
@@ -1668,12 +1669,13 @@ function applyApplicationComplexAbilityCommand(
             if ($total === null || $total < 1 || $total > 100 || ($rollMode !== 'normal' && count($rolled['attempts'] ?? []) !== 2)) {
                 applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             }
-            $result = ['joker' => ($rolled['joker'] ?? false) === true, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : null,
+            $result = ['joker' => ($rolled['joker'] ?? false) === true, 'outcomeDetails' => ($rolled['joker'] ?? false) ? applicationSpecialSuccessOutcome($threshold) : (!empty($rolled['criticalFailureAsFailure'])?classifyOnlineD100Outcome($total,$threshold,0,0,true,true,true):null),
                 'formula' => ($rolled['joker'] ?? false) ? '1' : '1d100', 'total' => $total, 'threshold' => $threshold, 'success' => ($rolled['joker'] ?? false) === true || $total <= $threshold,
                 'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total),
                 'rollMode' => $rollMode, 'selectedIndex' => $rolled['selectedIndex'] ?? 0,
                 'attempts' => $rolled['attempts'] ?? [['total' => $total, 'rawD100' => $total,
                     'breakdown' => applicationComplexAbilityText($rolled['breakdown'] ?? '', 500, (string) $total)]]];
+            if(!empty($rolled['criticalFailureAsFailure'])&&isset($result['outcomeDetails']['success']))$result['success']=$result['outcomeDetails']['success'];
             $target['rolls'][] = $result; $attackNumber = count($target['rolls']);
             if ($result['success'] && $step['stopOnSuccess']) {
                 $target['status'] = 'succeeded'; $target['parryFromAttack'] = $attackNumber;

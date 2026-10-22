@@ -196,7 +196,7 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
     $entry = $entries[$index]; $private = $entry['_private'];
     if ($decision === 'approve') {
         onlineValidateAbilityContinuation($connection, $records, $table, $entry);
-        if(!empty($entry['cast']['manualOutcome'])){if(!isset(applicationMessageOutcomes()[$arguments['outcomeCode']??'']))rejectOnlineCommand($connection,400,'Choisissez le résultat arbitré par le MJ.','manual_outcome_required');$entry['cast']['outcome']=applicationManualD100Outcome((int)$entry['cast']['outcome']['raw'],$arguments['outcomeCode']);$entry['cast']['success']=$entry['cast']['outcome']['success'];if(isset($entry['cast']['roll']))$entry['cast']['roll']['outcome']=$entry['cast']['outcome'];}
+        if(!empty($entry['cast']['manualOutcome'])){if(!isset(applicationMessageOutcomes()[$arguments['outcomeCode']??'']))rejectOnlineCommand($connection,400,'Choisissez le résultat arbitré par le MJ.','manual_outcome_required');$entry['cast']['outcome']=applicationManualD100Outcome((int)$entry['cast']['outcome']['raw'],$arguments['outcomeCode'],!empty($entry['cast']['outcome']['criticalFailureAsFailure']));$entry['cast']['success']=$entry['cast']['outcome']['success'];if(isset($entry['cast']['roll']))$entry['cast']['roll']['outcome']=$entry['cast']['outcome'];}
         $continuation = ['cast' => $entry['cast'], 'plan' => onlineResumedAbilityPlan($private['plan'], applicationDomainPayload($records, 'initiative:' . $entry['sceneId']), $activity)];
         $result = match ($entry['route']) {
             'ability.use' => onlineUseAbility($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),

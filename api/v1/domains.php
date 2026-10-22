@@ -3075,7 +3075,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             }
             if (!validApplicationAbilityFormula($dot['formula'] ?? null)) { $keep = false; break; }
             $rolled = onlineRollFormulaWithMode($dot['formula'], 'normal');
-            $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent($target, (string) ($dot['damageType'] ?? 'physical')));
+            $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent(applicationEnhancedResistanceTarget($target,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId), (string) ($dot['damageType'] ?? 'physical')));
             $applied = 0;
             if ($summary['finalDamage'] > 0) {
                 $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical']);

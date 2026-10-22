@@ -1,5 +1,11 @@
 <?php
 declare(strict_types=1);
+
+function applicationSingleEnemyAttackFields(array $ability,array $targets,array $source,array $target,callable $controller):array {
+    if(!isset($ability['singleEnemy']))return [];
+    $enemies=array_values(array_filter($targets,static fn($token)=>$token['id']!==$source['id']&&($controller($token)!=='')!==($controller($source)!=='')));
+    return count($enemies)===1&&$enemies[0]['id']===$target['id']?$ability['singleEnemy']:[];
+}
 function applicationTargetIgnoresRange(array $target):bool {
     return in_array('cible',onlineConditionKeys(normalizeOnlineConditions($target['conditions']??null,$target['condition']??'')),true);
 }
@@ -17,7 +23,7 @@ function applicationAbilityRangeCells(array $ability,array $weapons=[],string $r
     if(in_array($ability['reach']??'', ['melee','reach','ranged'],true))return applicationWeaponRangeCells($ability);
     $usesWeapon=!empty($ability['useWeaponDamage']);
     foreach($ability['workflow']['steps']??[] as $step)if(in_array($step['type']??'',['attack-chain','allocated-attacks'],true)&&($step['damageMode']??'')!=='configured')$usesWeapon=true;
-    $weapon=$weapons[0]??[];foreach($weapons as $entry)if(($entry['id']??'')===$requested)$weapon=$entry;
+    $required=$ability['requiredWeaponAttackId']??'';$weapon=$required!==''?[]:($weapons[0]??[]);foreach($weapons as $entry)if(($entry['id']??'')===($required?:$requested))$weapon=$entry;
     return applicationWeaponRangeCells($usesWeapon?$weapon:['reach'=>'ranged']);
 }
 function applicationAbilityTargetInRange(array $ability,array $source,array $target,array $map,array $weapons=[],string $requested=''):bool {
@@ -34,7 +40,8 @@ function applicationWeaponTargetIds(array $weapon,string $primary,mixed $request
     return $ids;
 }
 function applicationSimpleWeaponDamage(array $ability,array $weapons,string $requested=''):array {
-    $id=$requested!==''?$requested:(!empty($ability['mainWeaponOnly'])?($weapons[0]['id']??''):'');$weapon=null;
+    $required=$ability['requiredWeaponAttackId']??'';if($required!==''&&$requested!==''&&$requested!==$required)throw new RuntimeException('Cette compétence utilise uniquement l’arme configurée.',400);
+    $id=$required?:($requested!==''?$requested:(!empty($ability['mainWeaponOnly'])?($weapons[0]['id']??''):''));$weapon=null;
     foreach($weapons as $entry)if($entry['id']===$id){$weapon=$entry;break;}
     if(empty($weapon['formula']))throw new RuntimeException('Choisissez une arme de votre fiche pour cette compétence.',400);
     if(!empty($ability['mainWeaponOnly'])&&$weapon['id']!==($weapons[0]['id']??''))throw new RuntimeException('Cette compétence utilise uniquement l’arme principale.',400);

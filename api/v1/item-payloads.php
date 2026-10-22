@@ -9,7 +9,7 @@ function applicationItemPayload(array &$state,array $template,array &$unit,array
  $family=applicationEffectFamily($a);if($family!==''&&applicationHasEffectImmunity($token,$state,$scene,$family))return;
  if($a['kind']==='damage'){
   $rules=[...$token,...$unit['resources']];foreach(['armor','armorCategory','magicArmor','magicArmorCategory'] as $key)if(isset($unit[$key]))$rules[$key]=$unit[$key];
-  $rolled=onlineRollAttackDamage(['damageComponents'=>$a['components']],$rules,static fn($formula)=>($context['rollFormula'])($formula,$template['name'],$unit['name']));$damage=$rolled['damage'];
+  $rolled=onlineRollAttackDamage(['damageComponents'=>$a['components']],$rules,static fn($formula)=>($context['rollFormula'])($formula,$template['name'],$unit['name']),$state);$damage=$rolled['damage'];
   $guards=[];$first=null;foreach($state['nextAttackGuards']??[] as $g)if($g['sceneId']===$scene&&$g['targetTokenId']===$token['id']&&!empty($clock['active'])&&($g['combatId']??'')===($clock['combatId']??'')&&applicationGuardCoversDamage($g,$damage)){if($first===null)$first=$g;if($g===$first||!empty($first['stackGroup'])&&($g['stackGroup']??'')===$first['stackGroup'])$guards[]=$g;}
   $reduced=applicationMitigateGuardedDamage($damage['finalDamage'],$guards,$damage);$state['nextAttackGuards']=array_values(array_filter($state['nextAttackGuards']??[],static fn($g)=>!in_array($g,$guards,true)));
   $before=$unit['resources']['hp'];$unit['resources']['hp']=max(-1000000000,min($unit['resources']['maxHp'],$before-$reduced['damage']));persistUnitResources($state,$unit);$applied=$before-$unit['resources']['hp'];

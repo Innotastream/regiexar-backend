@@ -55,6 +55,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $rules['controllerPlayerId'] = onlineTokenControllerIdFromRecords($connection, $records, $source);
     $abilities = normalizeOnlineAbilities($rules['abilities'] ?? []);
     $abilityIndex = findEntryIndex($abilities, (string) ($arguments['abilityId'] ?? '')); $ability = $abilityIndex >= 0 ? $abilities[$abilityIndex] : null;
+    if((isset($ability['attackEnhancement']['aura'])||($ability['attackEnhancement']['target']??'')==='self')&&($arguments['targetTokenId']??'')!==$source['id'])rejectOnlineCommand($connection,400,'Cette compétence s’applique sur son lanceur.','ability_self_only');
     $returning = ($arguments['returnForm'] ?? false) === true;
     $metamorphosis = $returning || ($ability['effect'] ?? '') === 'metamorphosis' || ($source['transformation']['requestId'] ?? '') === $requestId;
     $formPlan = null; $target = [];

@@ -3510,7 +3510,7 @@ function onlineAttackArmorPercent(array $target, string $damageType): int
     $profile = $damageType === 'magical'
         ? normalizeOnlineMagicResistance($target['magicArmor'] ?? 0)
         : normalizeOnlineArmorProfile($target['armorCategory'] ?? null, $target['armor'] ?? 0);
-    return (int) $profile['percent'];
+    return max(0,min(100,(int)$profile['percent']+(int)($target['resistanceBonuses'][$damageType]??0)));
 }
 
 function onlineAttackDamageSummary(int $rawDamage, int $armorPercent): array
@@ -3915,7 +3915,7 @@ function onlineApplyOppositionAbility(PDO $connection, array &$records, array &$
     $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
     $plan = onlinePrepareAbilityCasting($connection, $selected['castingAbility'], $target, $sceneId, $initiative, $activity);
     $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, ['success' => true, 'roll' => null], $target, $identity, false);
-    $damage = onlineRollAttackDamage($attack, $target);
+    $damage = onlineRollAttackDamage($attack, $target,null,onlineAttackEnhancementState($connection,$records,$pending,(string)$attack['sceneId']));
     $basis = max(0, (int) ($damage['damage']['finalDamage'] ?? 0));
     $requested = (int) round($basis * $selected['option']['reflectPercent'] / 100);
     $applied = 0;
@@ -4444,8 +4444,8 @@ function applyOnlineAttackConditions(PDO $connection, array &$records, array &$p
     $sourceId=(string)($attack['sourceTokenId']??'');
     $source=$sourceId!==''?($pending[onlineTokenDomainKey($attack['sceneId'],$sourceId)]['payload']??applicationDomainPayload($records,onlineTokenDomainKey($attack['sceneId'],$sourceId))):[];
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
-    $effectState=[...$activity,'initiative'=>$pending['initiative:'.$attack['sceneId']]['payload']??applicationDomainPayload($records,'initiative:'.$attack['sceneId']),'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices')];
-    $needsUnits=(bool)array_filter($activity['attackEnhancements']??[],static fn($effect)=>($effect['mode']??'')==='on-hit-effects'&&($effect['holder']??'')===applicationEnhancementHolder($source)&&($effect['sceneId']??'')===$attack['sceneId']&&($effect['remainingTurns']??0)>0);
+    $effectState=[...onlineAttackEnhancementState($connection,$records,$pending,(string)$attack['sceneId'],$activity),'initiative'=>$pending['initiative:'.$attack['sceneId']]['payload']??applicationDomainPayload($records,'initiative:'.$attack['sceneId']),'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices')];
+    $needsUnits=(bool)array_filter(applicationActiveAttackEnhancements($source,$effectState,(string)$attack['sceneId']),static fn($effect)=>($effect['mode']??'')==='on-hit-effects');
     if($needsUnits)$effectState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),(string)$attack['sceneId']);
     applicationAttackPoisonStacks($effectState,$attack,$source,$target,static fn($p)=>$p.'-'.randomToken(16));
     if($needsUnits){onlineDeviceFlush($effectState,$records,$pending);$activity=$pending['activity']['payload']??$activity;}
@@ -5052,7 +5052,7 @@ function normalizeOnlineD100Modifier(mixed $value): int
     return max(-100, min(100, is_numeric($value) ? (int) $value : 0));
 }
 
-function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0, mixed $resultModifier = 0, bool $remarkable = true, bool $minimumOne = false): ?array
+function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mixed $modifier = 0, mixed $resultModifier = 0, bool $remarkable = true, bool $minimumOne = false, bool $criticalFailureAsFailure = false): ?array
 {
     if (!is_numeric($rawValue)) {
         return null;
@@ -5084,6 +5084,7 @@ function classifyOnlineD100Outcome(mixed $rawValue, mixed $threshold = null, mix
         return [...$common, ...$adjustedResult(false), 'code' => 'special-success', 'label' => 'RÉUSSITE SPÉCIALE', 'success' => true, ...$immediate];
     }
     if ($remarkable && in_array($raw, [66, 77, 88, 99, 100], true)) {
+        if($criticalFailureAsFailure)return [...$common,...$adjustedResult(false),'code'=>'failure','label'=>'ÉCHEC','success'=>false,'effect'=>false,'criticalFailurePrevented'=>true];
         return [...$common, ...$adjustedResult(false), 'code' => 'critical-failure', 'label' => 'ÉCHEC CRITIQUE', 'success' => false, ...$immediate];
     }
     if ($effectiveThreshold === null) {
@@ -6453,7 +6454,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $damageFormula = (string) $weapons[$weaponIndex]['formula'];
                     $damageType = normalizeOnlineDamageType($weapons[$weaponIndex]['damageType'] ?? null);
                     $weaponConditions = $weapons[$weaponIndex]['onHitConditions'] ?? [];
-                    $enhanced = applicationEnhancedBasicAttack($weapons[$weaponIndex], $source, $activity, $sceneId);
+                    $enhanced = applicationEnhancedBasicAttack($weapons[$weaponIndex], $source, onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity), $sceneId);
                     $damageFormula = $enhanced['formula']; $damageType = $enhanced['damageType'];
                     $damageComponents = $enhanced['damageComponents'] ?? [];
                 }
@@ -6462,10 +6463,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $selectedWeapon = [];
                 if (($mechanicsDefinition['useWeaponDamage']??false)===true) {
                     $stored=$source['weaponAttacks']??[];$weaponList=equipmentAttackRows(normalizeOnlineWeaponAttacks($stored,array_column($stored,'formula'),$source['weaponText']??''),$source,$equipmentState);
+                    $enhancementState=onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity);$weaponList=array_map(static fn($weapon)=>applicationEnhancedBasicAttack($weapon,$source,$enhancementState,$sceneId,false),$weaponList);
                     try{$weaponResult=applicationSimpleWeaponDamage($mechanicsDefinition,$weaponList,(string)($arguments['weaponAttackId']??''));}
                     catch(RuntimeException $error){rejectOnlineCommand($connection,400,$error->getMessage(),'ability_weapon_required');}
                     $selectedWeapon=$weaponResult['selectedWeapon'];$damageComponents=$weaponResult['damageComponents'];$damageFormula=$weaponResult['damageFormula'];$damageType=$weaponResult['damageType'];
                 }
+                if($attackKind!=='weapon'){$enhanced=applicationEnhancedAttackDamage(['formula'=>$damageFormula,'damageType'=>$damageType,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[])],$source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId,!empty($mechanicsDefinition['useWeaponDamage']),true,false);$damageFormula=$enhanced['formula'];$damageType=$enhanced['damageType'];$damageComponents=$enhanced['damageComponents']??[];}
                 if(array_key_exists('targetTokenIds',$arguments)&&$attackKind!=='weapon')rejectOnlineCommand($connection,400,'Les cibles multiples de cette arme ne s’appliquent pas à cette compétence.','weapon_targets_invalid');
                 if(array_key_exists('targetTokenIds',$arguments)&&$arguments['targetTokenIds']===null)rejectOnlineCommand($connection,400,'Liste des cibles invalide.','weapon_targets_invalid');
                 try{$requestedWeaponIds=$attackKind==='weapon'&&!validApplicationDamageTargeting($mechanicsDefinition['damageTargeting']??null)?applicationWeaponTargetIds($mechanicsDefinition,(string)$target['id'],array_key_exists('targetTokenIds',$arguments)?$arguments['targetTokenIds']:null,$complexExecutionId!==''):[];}
@@ -6523,11 +6526,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($selfAreaRequest && (!validApplicationDamageTargeting($damageTargeting) || ($damageTargeting['origin'] ?? 'target') !== 'caster' && !$aimedPoint && !$singleAreaTarget)) {
                     rejectOnlineCommand($connection, 403, 'Cette attaque ne peut pas cibler le lanceur.', 'attack_self_forbidden');
                 }
-                if(($attackKind==='ability'||validApplicationDamageTargeting($damageTargeting))&&$complexExecutionId===''&&!applicationAbilityTargetInRange($mechanicsDefinition,$source,$aimedPoint?:$target,$map,$source['weaponAttacks']??[],(string)($arguments['weaponAttackId']??'')))rejectOnlineCommand($connection,409,'Cette cible ou ce point est hors de portée de la compétence.','ability_target_out_of_range');
+                if(($attackKind==='ability'||validApplicationDamageTargeting($damageTargeting))&&$complexExecutionId===''&&!applicationAbilityTargetInRange($mechanicsDefinition,$source,$aimedPoint?:$target,$map,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')))rejectOnlineCommand($connection,409,'Cette cible ou ce point est hors de portée de la compétence.','ability_target_out_of_range');
                 if($complexExecutionId!==''&&$authorizedRangeCells&&!applicationAbilityTargetInRange(['rangeCells'=>$authorizedRangeCells],[...$source,...($strikeSourcePosition??[])],$target,$map))rejectOnlineCommand($connection,409,'Cette cible est hors de portée de la compétence.','ability_target_out_of_range');
                 $primaryAffects = !$aimedPoint && (!validApplicationDamageTargeting($damageTargeting)
                     || applicationDamageAreaAffects($damageTargeting, (string) $source['id'], $sourceController, (string) $target['id'], $targetController));
                 if ($attackKind === 'ability' && $chainDefinition === null) onlineAssertAbilityValidationAvailable($connection, $activity, $abilities[$abilityIndex], $source, true);
+                $attackResultBonus=applicationAttackResultBonus($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId);
+                $liveAreaTargets=array_values(array_filter($areaTargetCandidates?:[$target],static fn($token)=>(float)($token['maxHp']??0)>0&&!onlineTokenIsDead($token,onlineTokenControllerIdFromRecords($connection,$records,$token)!=='')));
+                $isolatedFields=applicationSingleEnemyAttackFields($mechanicsDefinition,$liveAreaTargets,$source,$target,static fn($token)=>onlineTokenControllerIdFromRecords($connection,$records,$token));
                 $selectedStatId = (string) (($arguments['statId'] ?? '') ?: ($attackKind === 'ability' ? ($abilities[$abilityIndex]['castingStatId'] ?? '') : ''));
                 $abilityForAttack = $attackKind === 'ability' && $chainDefinition === null ? $abilities[$abilityIndex] : null;
                 $noCastingRoll = $abilityForAttack !== null && array_key_exists('castingStatId', $abilityForAttack)
@@ -6566,7 +6572,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $hitModifierMode = ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
                 $conditionAttackPenalty=applicationTimedAttackPenalty(onlineDeviceState($connection,$records,$pending),$source,(string)$target['id'],$sceneId)+($chargeStrike['thresholdPenalty']??0);
                 $thresholdModifier = ($hitModifierMode === 'threshold' ? $hitModifierValue : 0) - ($castingPlan['difficultyPenalty'] ?? 0) - $conditionAttackPenalty;
-                $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0)-applicationPredatoryResultBonus($source,(string)$target['id'],'attack');
+                $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus);
                 $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
                 $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                 onlineCloseFixedEscapeWindows($connection,$records,$pending,(string)$source['id'],$sceneId);
@@ -6575,9 +6581,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if($joker)$hitFormula='1';
                 $hitRolled = $chainGate !== null ? applicationComplexAbilityGateRoll($chainGate, $activity['rolls'] ?? [])
                     : ($joker?($castingPlan!==null?applicationSpecialSuccessRoll():onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId)):($hasCastingCheck ? onlineRollFormulaWithMode($hitFormula, $rollMode, $threshold, $thresholdModifier, true) : ['formula' => '0', 'total' => 0, 'breakdown' => 'Sans jet de lancement']));
-                $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true))
-                    : ($joker?applicationSpecialSuccessOutcome($threshold):($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]));
-                if($chainGate!==null&&!($hitOutcome['automatic']??false)&&($conditionAttackPenalty||applicationPredatoryResultBonus($source,(string)$target['id'],'attack')))$hitOutcome=[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$hitOutcome['baseThreshold']??$hitOutcome['threshold'],($hitOutcome['modifier']??0)-$conditionAttackPenalty,($hitOutcome['resultModifier']??0)-applicationPredatoryResultBonus($source,(string)$target['id'],'attack'),true,true)];
+                $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)))
+                    : ($joker?applicationSpecialSuccessOutcome($threshold):($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]));
+                if($chainGate!==null&&!($hitOutcome['automatic']??false)&&($conditionAttackPenalty||(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)))$hitOutcome=[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$hitOutcome['baseThreshold']??$hitOutcome['threshold'],($hitOutcome['modifier']??0)-$conditionAttackPenalty,($hitOutcome['resultModifier']??0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];
                 applyOnlineD100ResultToRoll($hitRolled, $hitOutcome);
                 if ($hasCastingCheck && $hitOutcome !== null) {
                     $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
@@ -6586,7 +6592,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($castingPlan === null && $chainGate === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
                 if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
                 $weaponOutcomes=[];
-                foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty(onlineDeviceState($connection,$records,$pending),$source,$id,$sceneId),($hitOutcome['resultModifier']??0)+applicationPredatoryResultBonus($source,(string)$target['id'],'attack')-applicationPredatoryResultBonus($source,$id,'attack'),true,true)];}
+                foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty(onlineDeviceState($connection,$records,$pending),$source,$id,$sceneId),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
                 $infusionMissed=$weaponOutcomes!==[]?!array_filter($weaponOutcomes,static fn($o)=>!empty($o['success'])):!($hitOutcome['success']??false);
                 if(!empty($infusion['payment'])&&$infusion['refundOnMiss']&&$infusionMissed)onlineDeviceRefund($connection,$records,$pending,$infusion['payment']);
                 $baseDamagePercent=$damagePercent;
@@ -6627,14 +6633,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 400, 'Le modificateur rend la formule de dégâts invalide.', 'invalid_attack_damage');
                 }
                 if ($damageComponents !== [] && $damageModifier !== 0) $damageComponents[0]['formula'] .= ($damageModifier > 0 ? '+' : '') . $damageModifier;
-                $damageSpecification = ['onHitConditions' => $chainDefinition !== null ? [] : ($attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : $weaponConditions), 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', 'damagePercent' => $damagePercent, ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : []), ...($chainDefinition === null && $attackKind === 'ability' && validApplicationDamageOverTime($abilities[$abilityIndex]['damageOverTime'] ?? null) ? ['damageOverTime' => $abilities[$abilityIndex]['damageOverTime']] : [])];
-                if(!empty($chargeStrike['conditionRider'])||!empty($mechanicsDefinition['conditionRider']))$damageSpecification['conditionRider']=$chargeStrike['conditionRider']??$mechanicsDefinition['conditionRider'];
+                $damageSpecification = [...(isset($isolatedFields['damageRepetitions'])?['damageRepetitions'=>$isolatedFields['damageRepetitions']]:[]),'onHitConditions' => $chainDefinition !== null ? [] : ($attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : $weaponConditions), 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', 'damagePercent' => $damagePercent, ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : []), ...($chainDefinition === null && $attackKind === 'ability' && validApplicationDamageOverTime($abilities[$abilityIndex]['damageOverTime'] ?? null) ? ['damageOverTime' => $abilities[$abilityIndex]['damageOverTime']] : [])];
+                if(!empty($isolatedFields['conditionRider'])||!empty($chargeStrike['conditionRider'])||!empty($mechanicsDefinition['conditionRider']))$damageSpecification['conditionRider']=$isolatedFields['conditionRider']??$chargeStrike['conditionRider']??$mechanicsDefinition['conditionRider'];
                 if($projectileGate['checks']!==[])$damageSpecification['projectileGate']=$projectileGate;
                 if($infusion!==null)$damageSpecification['infusion']=['mana'=>$infusion['mana'],'damage'=>$infusion['damage'],'refunded'=>$infusionMissed&&$infusion['refundOnMiss']];
                 $damageRoll = null;
                 $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
                 if (($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0 && !$oppositionRequired && $primaryAffects) {
-                    $damageResult = onlineRollAttackDamage($damageSpecification, $target);
+                    $damageResult = onlineRollAttackDamage([...$damageSpecification,'sceneId'=>$sceneId], $target,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));
                     $damageRolled = $damageResult['rolled']; $damageSummary = $damageResult['damage'];
                     $damageRoll = onlineRollEntry($identity, $damageRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Token'));
                     $damageRoll['visibility'] = 'gm';
@@ -6655,7 +6661,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'playerName' => substr((string) ($identity['display_name'] ?? 'Joueur'), 0, 120),
                     'attackName' => substr($attackName, 0, 120),
                     'attackKind' => $attackKind,
-                    'targetRangeCells'=>$authorizedRangeCells?:($attackKind==='ability'?applicationAbilityRangeCells($mechanicsDefinition,$source['weaponAttacks']??[],(string)($arguments['weaponAttackId']??'')):applicationWeaponRangeCells($mechanicsDefinition)),
+                    'targetRangeCells'=>$authorizedRangeCells?:($attackKind==='ability'?applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')):applicationWeaponRangeCells($mechanicsDefinition)),
                     ...($mechanicsStrikePosition?['strikeTargetPosition'=>$mechanicsStrikePosition]:[]),
                     ...($strikeSourcePosition?['strikeSourcePosition'=>$strikeSourcePosition]:[]),
                     ...(validApplicationDamageTargeting($damageTargeting) ? ['areaRadiusCells' => $damageTargeting['radiusCells']] : []),
@@ -6823,6 +6829,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $targetOutcome=$weaponOutcomes[$areaId]??$hitOutcome;
                         $targetGate=count($weaponTargets)>1?(($targetOutcome['success']??false)?onlineDeviceProjectile($connection,$records,$pending,$identity,$source,$areaTarget,($mechanicsDefinition['projectile']??false)===true,0,$sceneId):['percent'=>100,'checks'=>[],'pending'=>false]):$projectileGate;
                         $areaAttack['hit']=[...$attack['hit'],'outcome'=>$targetOutcome,'total'=>$targetOutcome['result']??$attack['hit']['total']];
+                        $targetIsolated=applicationSingleEnemyAttackFields($mechanicsDefinition,$liveAreaTargets,$source,$areaTarget,static fn($token)=>onlineTokenControllerIdFromRecords($connection,$records,$token));
+                        $areaAttack['damageRepetitions']=$targetIsolated['damageRepetitions']??1;
+                        if(isset($mechanicsDefinition['singleEnemy'])){unset($areaAttack['conditionRider']);if(isset($mechanicsDefinition['conditionRider']))$areaAttack['conditionRider']=$mechanicsDefinition['conditionRider'];if(isset($targetIsolated['conditionRider']))$areaAttack['conditionRider']=$targetIsolated['conditionRider'];}
                         $areaAttack['damagePercent']=(int)round($baseDamagePercent*$targetGate['percent']/100);
                         if($targetGate['checks']!==[])$areaAttack['projectileGate']=$targetGate;
                         if(count($weaponTargets)>1)$areaAttack['weaponAttackParentId']=$attack['id'];
@@ -6833,7 +6842,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         } elseif (empty($targetOutcome['requiresGmValidation'])&&!$targetGate['pending']&&$areaAttack['opposed'] && ($targetOutcome['breaksOpposition'] ?? false) !== true) {
                             $areaAttack['status'] = 'awaiting-opposition';
                         } else {
-                            $areaResult = onlineRollAttackDamage($areaAttack, $areaTarget);
+                            $areaResult = onlineRollAttackDamage($areaAttack, $areaTarget,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));
                             $areaSummary = $areaResult['damage'];
                             $areaRolled = $areaResult['rolled'];
                             $areaRoll = onlineRollEntry($identity, $areaRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Attaquant'));
@@ -7077,7 +7086,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                         $joker=applicationRequestsSpecialSuccess($arguments);
                         $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$target,$sceneId):onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
-                        $outcome = $joker?applicationSpecialSuccessOutcome($threshold):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true);
+                        $outcome = $joker?applicationSpecialSuccessOutcome($threshold):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true,applicationRollCriticalFailureProtected($target,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId));
                         applyOnlineD100ResultToRoll($rolled, $outcome);
                         if ($outcome !== null) {
                             $fatigue = onlineStatFatigueDetails($target, (string) ($stats[$statIndex]['id'] ?? ''), $targetCharacter ?? null);
@@ -7159,7 +7168,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         if (strlen($damageFormula) > 100 || !validOnlineRollFormula($damageFormula)) {
                             rejectOnlineCommand($connection, 409, 'La formule de dégâts mémorisée n’est plus valide.', 'stale_attack_damage');
                         }
-                        $damageResult = onlineRollAttackDamage($attack, $target);
+                        $damageResult = onlineRollAttackDamage($attack, $target,null,onlineAttackEnhancementState($connection,$records,$pending,(string)$attack['sceneId']));
                         $damageRolled = $damageResult['rolled'];
                         $damageType = normalizeOnlineDamageType($attack['damageType'] ?? null);
                         $damageSummary = $damageResult['damage'];
@@ -7538,7 +7547,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $label = 'Touché';
                 $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . (string) $resultModifier : '');
             } elseif ($kind === 'initiative') {
-                $bonus=-applicationEffectiveInitiativeBonus($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId??onlineActiveSceneId($table));
+                $bonus=-applicationEffectiveInitiativeBonus($token,onlineAttackEnhancementState($connection,$records,$pending,$sceneId??onlineActiveSceneId($table)),$sceneId??onlineActiveSceneId($table));
                 $label = 'Initiative';
                 $formula = '1d100' . ($bonus >= 0 ? '+' : '') . $bonus;
             } elseif ($kind === 'damage') {
@@ -7598,8 +7607,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     rejectOnlineCommand($connection, 400, $error->getMessage(), 'invalid_roll');
                 }
                 $outcome = in_array($kind, ['stat', 'hit'], true)
-                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat', $kind === 'stat')
-                    : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $rollCharacterId)) : null);
+                    ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat', $kind === 'stat',applicationRollCriticalFailureProtected($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))
+                    : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $rollCharacterId),0,0,true,false,applicationRollCriticalFailureProtected($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)) : null);
                 if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
                     $outcome['resultCustomized'] = $modifierMode === 'result';
                 }
@@ -7679,7 +7688,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $formula = (string) ($shortcut['formula'] ?? '1d100');
             $rollMode = 'normal';
             if ($kind === 'initiative') {
-                $modifier=-applicationEffectiveInitiativeBonus($character,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),onlineActiveSceneId($table));
+                $modifier=-applicationEffectiveInitiativeBonus($character,onlineAttackEnhancementState($connection,$records,$pending,onlineActiveSceneId($table)),onlineActiveSceneId($table));
                 $formula = '1d100' . ($modifier === 0 ? '' : ($modifier > 0 ? '+' : '') . $modifier);
             }
             $authoritySignature = $requestId !== '' ? onlineShortcutRollAuthoritySignature(

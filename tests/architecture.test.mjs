@@ -208,7 +208,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /normalizeOnlineWeaponAttacks/);
   assert.match(attack, /normalizeOnlineAbilities/);
   assert.match(attack, /findEntryIndex\(\$stats/);
-  assert.match(attack, /onlineRollAttackDamage\(\$damageSpecification, \$target\)/);
+  assert.match(attack, /onlineRollAttackDamage\(\[\.\.\.\$damageSpecification,'sceneId'=>\$sceneId\], \$target,null,onlineAttackEnhancementState\(/);
   assert.match(effects, /foreach \(\$selected\['components'\] as \$(\w+)\)[\s\S]*?onlineAttackArmorPercent\(\$target, \$\1\['type'\]\)/);
   assert.match(effects, /onlineAttackArmorPercent\(\$target, \$attack\['damageType'\] \?\? 'physical'\)/);
   assert.match(effects, /\$final \+= \$summary\['finalDamage'\]/);

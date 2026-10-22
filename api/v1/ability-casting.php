@@ -6,7 +6,7 @@ require_once __DIR__ . '/ability-validation.php';
 require_once __DIR__ . '/combat-round-lifecycle.php';
 
 function validApplicationAbilityCastingFields(array $ability): bool {
-    foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999] as $key => $limit) {
+    foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999, 'activationHpMaxPercent' => 100] as $key => $limit) {
         if (array_key_exists($key, $ability) && (!is_int($ability[$key]) || $ability[$key] < 0 || $ability[$key] > $limit)) return false;
     }
     if (array_key_exists('usesPerCombat', $ability) && (!is_int($ability['usesPerCombat']) || $ability['usesPerCombat'] < 0 || $ability['usesPerCombat'] > 100)) return false;
@@ -23,7 +23,7 @@ function applicationAbilityCastingFields(array $ability): array {
     if (array_key_exists('restRecharge', $ability)) $result['restRecharge'] = in_array($ability['restRecharge'], ['short', 'long'], true) ? $ability['restRecharge'] : 'none';
     if (array_key_exists('usesPerRest', $ability)) $result['usesPerRest'] = max(1, min(100, (int) $ability['usesPerRest']));
     if (array_key_exists('reusableInTurn', $ability)) $result['reusableInTurn'] = $ability['reusableInTurn'] === true;
-    foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999] as $key => $limit) {
+    foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999, 'activationHpMaxPercent' => 100] as $key => $limit) {
         if (array_key_exists($key, $ability)) $result[$key] = max(0, min($limit, is_numeric($ability[$key]) ? (int) $ability[$key] : 0));
     }
     if (array_key_exists('castingStatId', $ability) && ($ability['castingStatId'] === '' || validApplicationDomainIdentifier($ability['castingStatId'], 120))) $result['castingStatId'] = $ability['castingStatId'];
@@ -35,6 +35,13 @@ function applicationAbilityCastingFields(array $ability): array {
     }
     if (array_key_exists('image', $ability)) $result['image'] = validApplicationDomainText($ability['image'], 4096) ? $ability['image'] : null;
     return $result;
+}
+
+function applicationAbilityActivationHealthReason(array $ability, array $source): string {
+    $limit=(int)($ability['activationHpMaxPercent']??0);if($limit<=0)return '';
+    $hp=$source['resources']['hp']??$source['hp']??null;$maximum=$source['resources']['maxHp']??$source['maxHp']??null;
+    return !is_numeric($hp)||!is_numeric($maximum)||(float)$maximum<=0||(float)$hp*100>(float)$maximum*$limit
+        ? 'Activation : '.$limit.' % des PV maximum ou moins' : '';
 }
 
 function applicationAbilityCastingOwner(array $source): array {
@@ -146,6 +153,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     if (floor($manaCost) == $manaCost) $manaCost = (int) $manaCost;
     $availableMana = max(0, min((float) ($source['maxMana'] ?? 0), (float) ($source['mana'] ?? 0)));
     if ($availableMana < $manaCost) throw new RuntimeException('ability_mana_insufficient');
+    if(applicationAbilityActivationHealthReason($ability,$source)!=='')throw new RuntimeException('ability_activation_health');
     $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = (int) ($ability['fatigueCost'] ?? 0);
     if ((float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
     if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
@@ -195,11 +203,13 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
         $statRecords=[];
         $statSource=[...$source,'stats'=>onlineEnhancedStatRows($connection,$statRecords,[],$source,$sceneId,$activity)];
         $plan = applicationAbilityCastingPlan($ability, $statSource, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId, $manaMultiplier);
+        $plan['criticalFailureAsFailure']=applicationRollCriticalFailureProtected($source,onlineAttackEnhancementState($connection,$statRecords,[],$sceneId,$activity),$sceneId);
         if ($stationIndex !== null) $plan['manaProviderDeviceId'] = $station['id'];
         return $plan;
     }
     catch (RuntimeException $error) {
         $messages = ['ability_combat_required' => 'Cette compétence exige un combat actif.', 'ability_combat_exhausted' => 'Toutes les utilisations de cette compétence ont été consommées pendant ce combat.', 'ability_on_cooldown' => 'Cette compétence est encore en recharge.', 'ability_mana_insufficient' => 'Mana insuffisant pour tenter cette compétence.',
+            'ability_activation_health' => 'Cette compétence nécessite un nombre de PV inférieur ou égal à son seuil d’activation.',
             'ability_hp_insufficient' => 'PV insuffisants pour cette compétence.',
             'ability_fatigue_insufficient' => 'Fatigue trop élevée : cette compétence ferait dépasser 150.',
             'ability_cast_stat_missing' => 'La caractéristique de lancement n’existe plus sur cette fiche.', 'ability_cast_invalid' => 'Les règles de lancement sont invalides.'];
@@ -218,8 +228,8 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     if(!empty($plan['manualD100'])){$formula='1d100';$thresholdModifier=0;$resultModifier=0;}
     $rolled = $joker?applicationSpecialSuccessRoll():onlineRollFormulaWithMode($formula, !empty($plan['manualD100'])?'normal':normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
-    $outcome = $joker?applicationSpecialSuccessOutcome($plan['threshold']):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true);
-    if(!empty($plan['manualD100']))$outcome=applicationManualD100Outcome((int)$rolled['rawD100']);
+    $outcome = $joker?applicationSpecialSuccessOutcome($plan['threshold']):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true, !empty($plan['criticalFailureAsFailure']));
+    if(!empty($plan['manualD100']))$outcome=applicationManualD100Outcome((int)$rolled['rawD100'],'pending',!empty($plan['criticalFailureAsFailure']));
     applyOnlineD100ResultToRoll($rolled, $outcome);
     if ($outcome !== null) {
         $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
@@ -513,7 +523,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
     if($continuation===null && (!empty($ability['attackEnhancement'])||!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
-    $extended = ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
+    $extended = ($ability['activationHpMaxPercent'] ?? 0)>0 || ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);
     if ($requestId === '') {

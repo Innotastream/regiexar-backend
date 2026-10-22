@@ -159,6 +159,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
             'outcome' => ['automatic' => true, 'success' => true, 'code' => 'success', 'label' => 'SANS JET', 'raw' => null, 'threshold' => null]],
         'damage' => [], 'finalDamage' => 0, 'onHitConditions' => [], 'createdAt' => $now,
     ];
+    if(empty($execution['echoParentId'])){$enhanced=applicationEnhancedAttackDamage(['formula'=>$attack['damageFormula'],'damageType'=>$attack['damageType']],$source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId);$attack['damageFormula']=$enhanced['formula'];$attack['damageType']=$enhanced['damageType'];if(isset($enhanced['damageComponents']))$attack['damageComponents']=$enhanced['damageComponents'];}
     $parties = onlinePendingAttackParties($connection, $records, $attack);
     $target = $parties['target'];
     if (!is_numeric($target['maxHp'] ?? null) || (float) $target['maxHp'] <= 0 || onlineTokenIsDead($target, $parties['targetController'] !== '')) {
@@ -172,7 +173,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
     $attack['opposed'] = $attack['opposed'] && (float) ($target['hp'] ?? 0) > 0;
     if ($attack['opposed']) $attack['status'] = 'awaiting-opposition';
     else {
-        ['rolled' => $rolled, 'damage' => $damage] = onlineRollAttackDamage($attack, $target);
+        ['rolled' => $rolled, 'damage' => $damage] = onlineRollAttackDamage($attack, $target,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));
         $attack['damage'] = [...$damage, 'formula' => $rolled['formula'], 'breakdown' => $rolled['breakdown']];
         $attack['finalDamage'] = $damage['finalDamage'];
         $attack['damageRoll'] = onlineRollEntry($identity, $rolled, $attack['attackName'] . ' · Dégâts', $attack['sourceName']);
@@ -415,6 +416,7 @@ function onlineUseComplexAbility(
                     $jokerSource = $pending[$sourceKey]['payload'] ?? applicationDomainPayload($records, $sourceKey);
                     $joker = $useJoker && ($jokerRollCount === null || count(array_filter($generatedRolls, static fn($roll) => ($roll['joker'] ?? false) === true)) < $jokerRollCount);
                     $rolled = $joker ? onlineConsumeSpecialSuccess($connection, $records, $pending, $jokerSource, $sceneId) : onlineRollFormulaWithMode($formula, $mode, null, 0, $d100RollUnder);
+                    $rolled['criticalFailureAsFailure']=applicationRollCriticalFailureProtected($jokerSource,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId);
                     $generatedRolls[] = $rolled;
                     return $rolled;
                 },
