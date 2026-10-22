@@ -9,7 +9,7 @@ const XAR_RELEASE_ANNOUNCEMENT_VERSION = '3.7.7';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['3.7.7'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 25;
+const XAR_DATABASE_SCHEMA_VERSION = 24;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
@@ -1123,10 +1123,6 @@ function ensureCurrentSchema(PDO $connection): void
             migrateApplicationSpiritStatistics($connection);
             $version = 24;
         }
-        if ($version < 25 && XAR_DATABASE_SCHEMA_VERSION >= 25) {
-            migrateAtelierSchema($connection);
-            $version = 25;
-        }
     } finally {
         try {
             $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v11')");
@@ -2136,8 +2132,6 @@ require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
 require_once __DIR__ . '/ability-assistant.php';
 require_once __DIR__ . '/image-studio.php';
-require_once __DIR__ . '/atelier.php';
-require_once __DIR__ . '/atelier-gpt.php';
 require_once __DIR__ . '/health-overlays.php';
 
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));

@@ -107,9 +107,7 @@ jobs:
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence
-        run: |
-          php tests/image-studio-idempotence-contract.php
-          php tests/atelier-gpt-worker-contract.php
+        run: php tests/image-studio-idempotence-contract.php
       - name: Authenticated diagnostic logs and expiring shares
         run: php tests/diagnostics-contract.php
       - name: Private PHP warning and failure journal
@@ -163,9 +161,6 @@ jobs:
           grep -Fq 'Local MySQL Esprit migration integration passed.' mysql-spirit-migration.log
           php tests/mysql-assistant-object-plan.php | tee mysql-assistant-object-plan.log
           grep -Fq 'Local MySQL assistant object plan integration passed.' mysql-assistant-object-plan.log
-          node tests/atelier-http-contract.mjs | tee atelier-http-contract.log
-          grep -Fq '"http":"real PHP multipart"' atelier-http-contract.log
-          php tests/mysql-atelier-gpt.php
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

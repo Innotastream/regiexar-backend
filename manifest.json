@@ -10,7 +10,7 @@
   "documentRoot": "regie",
   "privateConfigDirectory": "regie-private",
   "applicationIntegration": "revisioned-domains",
-  "databaseSchemaVersion": 25,
+  "databaseSchemaVersion": 24,
   "minimumApplicationVersion": "1.16.0",
   "imageStudioMinimumApplicationVersion": "2.1.0",
   "abilityAssistantMinimumApplicationVersion": "3.3.5"

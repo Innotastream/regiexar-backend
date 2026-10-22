@@ -122,7 +122,7 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'activity', 'audio', 'detached-combat'\]/);
   assert.equal(JSON.parse(manifest).backendVersion, "0.18.52");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.7.7");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 25);
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });

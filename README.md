@@ -2,7 +2,7 @@
 
 Le verrou de version accompagne la plaque de sélection et le bouton Fiche perso, ainsi que les nouveaux réglages génériques de combat : condition d’activation en pourcentage de PV, bonus combinés aux statistiques et aux dégâts, protection des échecs critiques sur tous les jets, auras mobiles et attaque liée à une arme avec plusieurs dégâts sur une cible isolée. Les calculs et les reçus restent autoritatifs ; aucune règle ne dépend du nom d’un personnage ou d’une compétence.
 
-Build `client-3-7-7-plaque-fiche-20261022-1`, client exact **3.7.7**. Schémas SQL/session/fiche **25/22/10**, sans nouvelle migration de schéma. La configuration ciblée des compétences de Gohachu et de la portée de sa chaîne est consignée séparément, avec sauvegarde et journal de synchronisation. Les données Atelier sont conservées.
+Build `client-3-7-7-plaque-fiche-20261022-1`, client exact **3.7.7**. Schémas SQL/session/fiche **24/22/10**, sans nouvelle migration de schéma. La configuration ciblée des compétences de Gohachu et de la portée de sa chaîne est consignée séparément, avec sauvegarde et journal de synchronisation.
 
 ## Backend 0.18.50 — Régie 3.7.6
 
