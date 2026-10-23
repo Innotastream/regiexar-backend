@@ -1580,10 +1580,12 @@ function readOnlineState(PDO $connection, bool $headOnly = false): never
             ], $headOnly);
         }
     }
-    $record = (string) $identity['effective_mode'] === 'gm'
+    // Common Stream vision only needs the published scene, even when its
+    // capability belongs to an MJ. Keep the complete world for private MJ reads.
+    $record = !$streamPov && (string) $identity['effective_mode'] === 'gm'
         ? domainApplicationStateRecord($connection)
         : playerApplicationStateRecord($connection);
-    $presence = liveOnlinePresence($connection);
+    $presence = $streamPov ? [] : liveOnlinePresence($connection);
     if (!is_array($record) || $record['state'] === []) {
         sendJson(200, ['ok' => true, 'state' => null, 'revision' => 0, 'presence' => $presence], $headOnly);
     }

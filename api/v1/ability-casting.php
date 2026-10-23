@@ -178,6 +178,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
         'usedRound' => $round, 'cooldownRounds' => applicationEffectiveRoundCooldown($ability,$initiative), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => ($initiative['active']??false)===true && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
+        'reducedFailureFatigueRefund' => $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
 }
 
@@ -314,6 +315,29 @@ function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $
     return $id;
 }
 
+function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pending, string $sceneId, string $sourceTokenId, string $characterId, int|float $amount): int|float {
+    if ($amount <= 0) return 0;
+    $key = $characterId !== '' ? 'character:' . $characterId : onlineTokenDomainKey($sceneId, $sourceTokenId);
+    $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+    if ($owner === [] || ($characterId === '' && unitUsesCharacterSheet($owner))) {
+        rejectOnlineCommand($connection, 409, 'Le porteur qui a payé cette tentative n’existe plus ou a changé de fiche.', 'ability_refund_source_changed');
+    }
+    $before = normalizeApplicationFatigue($owner['fatigue'] ?? null)['current'];
+    $owner['fatigue'] = normalizeApplicationFatigue(['current' => $before - $amount]);
+    $owner['_updatedAt'] = (int) floor(microtime(true) * 1000);
+    queueOnlineDomainUpsert($pending, $records, $key, $owner);
+    if ($characterId !== '') {
+        $related = applicationCharacterTokenDomainRecords($connection, $characterId);
+        $records = array_replace($records, $related);
+        foreach ($related as $tokenKey => $record) {
+            $token = $pending[$tokenKey]['payload'] ?? applicationDomainPayload($records, $tokenKey);
+            if (unitUsesCharacterSheet($token) && ($token['characterId'] ?? '') === $characterId)
+                queueOnlineDomainUpsert($pending, $records, $tokenKey, synchronizeOnlineCharacterToken($token, $owner));
+        }
+    }
+    return $before - $owner['fatigue']['current'];
+}
+
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true, bool $payCosts = true, bool $applyRecharge = true): array {
     $clockKey='initiative:'.$plan['sceneId'];
     if(!isset($pending[$clockKey])&&!isset($records[$clockKey]))$records=array_replace(applicationDomainRecords($connection,[$clockKey]),$records);
@@ -396,6 +420,17 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             }
         }
     }
+    }
+    if ($applyRecharge && !($cast['success'] ?? false)
+        && ($plan['reducedFailureFatigueRefund'] ?? $plan['reducedFailureEnabled'] ?? false) === true
+        && ($plan['statId'] ?? '') !== '') {
+        if (!array_key_exists('fatigueRefunded', $cast)) {
+            $gained = max(0, onlineResourceNumber($cast['fatigueGained'] ?? $plan['fatigueGained'] ?? 0));
+            $cast['fatigueRefunded'] = onlineRefundAbilityFatigue($connection, $records, $pending,
+                (string) $plan['sceneId'], (string) ($source['id'] ?? ''), (string) $plan['characterId'], $gained);
+            $cast['fatigueGained'] = max(0, $gained - $cast['fatigueRefunded']);
+        }
+        $plan['fatigueGained'] = $cast['fatigueGained'];
     }
     $cost = onlineResourceNumber($plan['manaCost']);
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');

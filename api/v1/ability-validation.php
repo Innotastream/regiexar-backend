@@ -160,23 +160,8 @@ function onlineRefundAbilityValidation(PDO $connection, array &$records, array &
             $refunded[$resource] = $adjusted['appliedDelta'];
         }
     }
-    if ($fatigue > 0) {
-        $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
-        $before = normalizeApplicationFatigue($owner['fatigue'] ?? null)['current'];
-        $owner['fatigue'] = normalizeApplicationFatigue(['current' => $before - $fatigue]);
-        $refunded['fatigue'] = $before - $owner['fatigue']['current'];
-        $owner['_updatedAt'] = (int) floor(microtime(true) * 1000);
-        queueOnlineDomainUpsert($pending, $records, $key, $owner);
-        if ($characterId !== '') {
-            $related = applicationCharacterTokenDomainRecords($connection, $characterId);
-            $records = array_replace($records, $related);
-            foreach ($related as $tokenKey => $record) {
-                $token = $pending[$tokenKey]['payload'] ?? applicationDomainPayload($records, $tokenKey);
-                if (unitUsesCharacterSheet($token) && ($token['characterId'] ?? '') === $characterId)
-                    queueOnlineDomainUpsert($pending, $records, $tokenKey, synchronizeOnlineCharacterToken($token, $owner));
-            }
-        }
-    }
+    $refunded['fatigue'] = onlineRefundAbilityFatigue($connection, $records, $pending,
+        (string) $entry['sceneId'], (string) $entry['sourceTokenId'], $characterId, $fatigue);
     return $refunded;
 }
 

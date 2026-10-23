@@ -58,6 +58,7 @@ jobs:
         run: |
           php tests/tactical-lifecycle.php
           php tests/stream-roll-projection.php > /dev/null
+          php tests/stream-state-read.php
           php tests/caster-area-footprint.php
       - name: Ability casting costs and cooldowns
         run: php tests/ability-casting-contract.php

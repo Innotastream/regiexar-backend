@@ -1,3 +1,11 @@
+## Version 0.18.54 / client 3.7.9
+
+Lecture publique Stream limitée à la scène diffusée, sans présence MJ inutile, dispositifs et projections de confidentialité préservés. Échec amoindri : remboursement atomique et idempotent de la fatigue uniquement sur le lancement raté, avec validation différée et clones indépendants. Mana et PV restent dépensés ; aucune modification de schéma ni import de fiche.
+
+Build `client-3-7-9-stream-resilience-fatigue-20261024-1`, client exact **3.7.9**.
+
+---
+
 ## Version 0.18.53 / client 3.7.8
 
 Dégagement autoritaire d’un chevauchement existant, empreinte de la monture pour les actions de ses cavaliers et passage groupé préservé. Les portées, zones circulaires et attaques sur trajet partagent la même géométrie, sans modifier l’identité ni les ressources des cavaliers. Droits, brouillard, tours et reçus restent autoritatifs.

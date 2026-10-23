@@ -2837,7 +2837,7 @@ function playerApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
     $clock = domainClockRecord($connection);
-    $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'items', 'activity', 'audio', 'detached-combat']);
+    $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat']);
     $table = applicationDomainPayload($records, 'table');
     $roster = applicationDomainPayload($records, 'roster');
     $sceneId = (string) ($table['activeSceneId'] ?? '');

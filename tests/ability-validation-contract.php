@@ -190,4 +190,58 @@ foreach (['ability.use'=>'healing', 'token.roll'=>'damage', 'ability.complex'=>'
     }
 }
 
-fwrite(STDOUT,"Validation MJ PHP : contrats réussis\n");
+// A reduced failure refunds only its own fatigue, in every casting route and
+// outside combat too. Neither the effect nor another resource is refunded.
+foreach (['ability.use' => 'healing', 'token.roll' => 'damage', 'token.attack' => 'damage', 'ability.complex' => 'complex'] as $route => $effect) {
+    foreach ([false, true] as $active) {
+        for ($attempt = 0; $attempt < 100; $attempt++) {
+            $db = validationFixture($effect, true);
+            $character = $db->payload('character:character-player');
+            $character['stats']['force'] = 0;
+            $character['resources']['mana'] = 40; $character['resources']['maxMana'] = 100;
+            $character['resources']['hp'] = 70;
+            $character['fatigue'] = ['current' => 144.5, 'max' => 150];
+            $character['abilities'][0]['fatigueCost'] = 5;
+            $db->put('character:character-player', $character);
+            $initiative = $db->payload('initiative:scene-one'); $initiative['active'] = $active;
+            $db->put('initiative:scene-one', $initiative);
+            $body = ['sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'tokenId' => 'token-player',
+                'targetTokenId' => $route === 'token.attack' ? 'token-monster' : 'token-player', 'abilityId' => 'ability-validate',
+                'attackId' => 'ability-validate', 'attackKind' => 'ability', 'kind' => 'ability', 'action' => 'start', 'statId' => 'character-stat-force',
+                'requestId' => 'reduced-fatigue-native-request'];
+            $response = runCommand($db, $route, $body);
+            requireTactical(in_array($response->status, [200, 202], true), $route . ': attempt accepted: ' . $response->getMessage());
+            if (empty($response->body['pendingValidation']) && empty($response->body['cast']['pendingValidation'])
+                && ($response->body['cast']['success'] ?? null) === false) break;
+        }
+        requireTactical($attempt < 100, $route . ': bounded ordinary failed cast');
+        $cast = $response->body['cast']; $paid = $db->payload('character:character-player');
+        requireTactical((float)($cast['fatigueRefunded'] ?? -1) === 5.0 && (float)$cast['fatigueGained'] === 0.0
+            && (float)$paid['fatigue']['current'] === 144.5, $route . ': only the five paid fatigue points are refunded: ' . json_encode(['active' => $active, 'cast' => $cast, 'fatigue' => $paid['fatigue']]));
+        requireTactical((float)$paid['resources']['mana'] === 38.0 && (float)$paid['resources']['hp'] === 67.0,
+            $route . ': mana and HP remain spent, with no healing');
+        requireTactical($cast['remainingRounds'] === ($active ? 1 : 0), $route . ': reduced cooldown follows combat only');
+        requireTactical((float)$db->payload('token:scene-one:token-player')['fatigue']['current'] === 144.5,
+            $route . ': linked token follows the refunded sheet');
+        $revision = $db->revision;
+        $replay = runCommand($db, $route, $body);
+        requireTactical($replay->body['deduplicated'] && $db->revision === $revision
+            && (float)$db->payload('character:character-player')['fatigue']['current'] === 144.5, $route . ': replay cannot refund twice');
+    }
+}
+
+[$db, $body, $start] = startValidation('ability.use', 'healing', false, true);
+$sourceKey = 'token:scene-one:' . $body['sourceTokenId'];
+$modelBefore = $db->payload('character:character-player');
+requireTactical((float)$db->payload($sourceKey)['fatigue']['current'] === 149.5, 'Pending critical failure keeps its paid clone fatigue until the GM decision');
+$initiative = $db->payload('initiative:scene-one'); $initiative['active'] = false; $db->put('initiative:scene-one', $initiative);
+$resolved = validationResolve($db, $start->body);
+requireTactical($resolved->status === 200 && (float)($resolved->body['cast']['fatigueRefunded'] ?? -1) === 1.0
+    && (float)$db->payload($sourceKey)['fatigue']['current'] === 148.5, 'Approved critical failure refunds the independent clone even after combat ended');
+requireTactical($db->payload('character:character-player') === $modelBefore && (float)$db->payload($sourceKey)['mana'] === 18.0
+    && (float)$db->payload($sourceKey)['hp'] === 57.0, 'Refund leaves the model, mana and HP untouched');
+$revision = $db->revision;
+requireTactical(validationResolve($db, $start->body)->body['deduplicated'] && $db->revision === $revision,
+    'The late critical failure refund is idempotent');
+
+fwrite(STDOUT,"Validation MJ PHP : contrats réussis, remboursements de fatigue simples/complexes/clones et rejeux vérifiés\n");
