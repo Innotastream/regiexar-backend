@@ -27,6 +27,15 @@ $before=['active'=>true,'combatId'=>'special-test','turnSerial'=>10,'order'=>['t
 
 $db=specialFixture();$m=$db->payload('token:scene-one:token-monster');$m['passiveAbilities']=[['version'=>1,'id'=>'opportunity','kind'=>'opportunity-attack']];$db->put('token:scene-one:token-monster',$m);
 $r=specialMove($db,65);specialCheck($r->status===200,'Leave contact: '.json_encode($r->body));$p=$db->payload('devices')['pendingRolls'][0]??[];specialCheck(($p['type']??'')==='opportunity','Movement queues opportunity');specialCheck($db->payload('character:character-player')['resources']['hp']===100,'No damage before approval');specialCheck(!isset($p['ownerId']),'No player owner on private reaction');
+$privateRolls=$db->payload('devices');$privateRolls['pendingRolls'][]=['id'=>'owned-check','ownerId'=>'character-player','ability'=>['private'=>true],'args'=>['private'=>true]];$privateRolls['pendingRolls'][]=['id'=>'foreign-check','ownerId'=>'another-character'];
+set_error_handler(static function(int $severity,string $message):never {throw new ErrorException($message,0,$severity);});
+try {
+ foreach([null,['id'=>'other-player'],['id'=>'account-player']] as $viewer){
+  $projected=publicDeviceStore($privateRolls,$viewer,[$db->payload('character:character-player')],['sceneId'=>'scene-one','layerId'=>'ground'],static fn()=>false);
+  specialCheck(array_column($projected['pendingRolls'],'id')===(($viewer['id']??'')==='account-player'?['owned-check']:[]),'Ownerless GM reactions and foreign checks never leak to Player or Stream');
+  foreach($projected['pendingRolls'] as $publicRoll)specialCheck(!isset($publicRoll['ability'])&&!isset($publicRoll['args']),'An owned check excludes private execution data');
+ }
+} finally {restore_error_handler();}
 $r=specialMechanics($db,'opportunity.resolve',['validationId'=>$p['id'],'approve'=>true],false);specialCheck($r->status===403,'Player cannot approve opportunity');
 $r=specialMechanics($db,'opportunity.resolve',['validationId'=>$p['id'],'approve'=>true,'opposed'=>false]);specialCheck($r->status===200,'GM approves opportunity: '.json_encode($r->body));
 $reaction=$r->body['attack'];

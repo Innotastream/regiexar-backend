@@ -301,7 +301,7 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
         if($creator)$safe['mana']=$device['mana'];$devices[]=$safe;
     }
     $requests=[];foreach($store['craftRequests']??[] as $request)if(isset($own[$request['characterId']])){$request['abilityName']=$request['ability']['name'];unset($request['ability'],$request['controllerAccountId']);$requests[]=$request;}
-    $rolls=[];foreach($store['pendingRolls']??[] as $roll)if(isset($own[$roll['ownerId']])){unset($roll['ability'],$roll['args'],$roll['cast']['_devicePlan'],$roll['cast']['_deviceIdentity']);$rolls[]=$roll;}
+    $rolls=[];foreach($store['pendingRolls']??[] as $roll)if(isset($roll['ownerId'])&&isset($own[$roll['ownerId']])){unset($roll['ability'],$roll['args'],$roll['cast']['_devicePlan'],$roll['cast']['_deviceIdentity']);$rolls[]=$roll;}
     $conditions=($context['paused']??false)?[]:array_values(array_filter($store['timedConditions']??[],static fn($entry)=>$entry['sceneId']===$context['sceneId']&&in_array($entry['targetTokenId'],$context['visibleTokenIds']??[],true)));
     $sceneId=$context['sceneId']??'';$manualTurn=$store['manualTurns'][$sceneId]??0;
     return ['version'=>1,'devices'=>$devices,'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[]];
