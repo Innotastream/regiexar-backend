@@ -387,6 +387,7 @@ function onlineUseComplexAbility(
         }
     }
     $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, $isGm);
+    $map['tokens']=$tokens;
     $generatedRolls = [];
     $confirmedAttack = null;
     if ($workflowAction === 'confirm-attack') {

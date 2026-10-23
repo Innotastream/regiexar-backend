@@ -16,6 +16,7 @@ function applicationWeaponRangeCells(array $weapon):int {
     return ['melee'=>2,'reach'=>4,'ranged'=>15][applicationWeaponReach($weapon)];
 }
 function applicationWeaponInRange(array $weapon,array $source,array $target,array $map):bool {
+    $source=applicationTokenSpatialFootprint($source,$map);$target=applicationTokenSpatialFootprint($target,$map);
     return ($source['layerId']??'ground')===($target['layerId']??'ground') && (applicationTargetIgnoresRange($target)||dsDistance($source,$target,$map,true,true)<=applicationWeaponRangeCells($weapon)+1e-9);
 }
 function applicationAbilityRangeCells(array $ability,array $weapons=[],string $requested=''):float {
@@ -27,6 +28,7 @@ function applicationAbilityRangeCells(array $ability,array $weapons=[],string $r
     return applicationWeaponRangeCells($usesWeapon?$weapon:['reach'=>'ranged']);
 }
 function applicationAbilityTargetInRange(array $ability,array $source,array $target,array $map,array $weapons=[],string $requested=''):bool {
+    $source=applicationTokenSpatialFootprint($source,$map);$target=applicationTokenSpatialFootprint($target,$map);
     return ($source['id']??'')!==''&&($source['id']??'')===($target['id']??null)||($source['layerId']??'ground')===($target['layerId']??'ground')&&(applicationTargetIgnoresRange($target)||dsDistance($source,$target,$map,true,true)<=applicationAbilityRangeCells($ability,$weapons,$requested)+1e-9);
 }
 function applicationWeaponTargetCount(array $weapon):int {

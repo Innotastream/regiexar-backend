@@ -73,7 +73,34 @@ function applicationPathPositionValidator(array $walls, float $size, float $natu
 
 // One straight segment or two segments with a single bend. There is no A*
 // waypoint chain, and no destination adjustment into another room.
-function findApplicationVisibleTokenPath(array $walls, array $origin, array $goal, float $tokenSize, float $naturalWidth, float $naturalHeight, Closure $visible, int $maximumVisited = 65536): array
+function applicationWallContactRecoveryTester(array $walls, array $origin, float $diameter, float $naturalWidth, float $naturalHeight): Closure
+{
+    $bytes = applicationWallMaskBytes($walls);
+    if ($bytes === null) return static fn(array $point): bool => true;
+    $width = (int) $walls['width']; $height = (int) $walls['height'];
+    $rx = max(.75, $diameter / 2 / $naturalWidth * ($width - 1));
+    $ry = max(.75, $diameter / 2 / $naturalHeight * ($height - 1));
+    $contacts = static function(array $point) use ($bytes,$width,$height,$rx,$ry): array {
+        $cx = $point['x'] / 100 * ($width-1); $cy = $point['y'] / 100 * ($height-1); $result = [];
+        for ($y=max(0,(int)floor($cy-$ry-1)); $y<=min($height-1,(int)ceil($cy+$ry+1)); $y++) {
+            for ($x=max(0,(int)floor($cx-$rx-1)); $x<=min($width-1,(int)ceil($cx+$rx+1)); $x++) {
+                $id=$y*$width+$x;
+                if (!applicationMaskBit($bytes,$id)) continue;
+                $distance=(($x-$cx)/($rx+.5))**2+(($y-$cy)/($ry+.5))**2;
+                if ($distance<=1) $result[$id]=$distance;
+            }
+        }
+        return $result;
+    };
+    $clearance=min([1,...array_values($contacts($origin))]);
+    return static function(array $point) use ($contacts,&$clearance): bool {
+        $current=$contacts($point); $next=min([1,...array_values($current)]);
+        if ($next+1e-9<$clearance) return false;
+        $clearance=$next; return true;
+    };
+}
+
+function findApplicationVisibleTokenPath(array $walls, array $origin, array $goal, float $tokenSize, float $naturalWidth, float $naturalHeight, Closure $visible, int $maximumVisited = 65536, ?Closure $recoveryVisible = null): array
 {
     $walls = applicationMovementWalls($walls);
     $deadline = hrtime(true) + 125000000;
@@ -83,7 +110,6 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     $width = (int) $walls['width']; $height = (int) $walls['height'];
     $diameter = max(10.0, min(220.0, $tokenSize > 0 ? $tokenSize : 40.0)); $radius = $diameter / 2;
     // Every destination and travelled segment keeps the complete footprint.
-    // A one-pixel tolerance is only for escaping an existing edge contact.
     $wallFree = applicationPathPositionValidator($walls, $diameter, $naturalWidth, $naturalHeight);
     $visibleDisk = static fn (array $point): bool => $visible($point['x'], $point['y'], $radius, $naturalWidth, $naturalHeight);
     $inBounds = static fn (array $point): bool => $point['x'] * $naturalWidth / 100 >= $radius && $point['x'] * $naturalWidth / 100 <= $naturalWidth - $radius
@@ -96,17 +122,21 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     $distance = static fn (array $a, array $b): float => hypot(($a['x'] - $b['x']) * $naturalWidth / 100, ($a['y'] - $b['y']) * $naturalHeight / 100);
     $recoveryOrigin = $origin;
     if (!$free($origin)) {
-        $contactFree = applicationPathPositionValidator($walls, $diameter - 2.0, $naturalWidth, $naturalHeight);
-        if (!$inBounds($origin) || !$visibleDisk($origin) || !$contactFree($origin)) return $failed('start-overlaps-wall');
+        $originCell=(int)round($origin['y']/100*($height-1))*$width+(int)round($origin['x']/100*($width-1));
+        if (!$visible($origin['x'],$origin['y']) || ($wallBytes!==null && applicationMaskBit($wallBytes,$originCell))
+            || !($visibleDisk($origin) || ($recoveryVisible!==null && $recoveryVisible($origin['x'],$origin['y'],$radius,$naturalWidth,$naturalHeight)))) return $failed('start-overlaps-wall');
+        $recoveringContact=applicationWallContactRecoveryTester($walls,$origin,$diameter,$naturalWidth,$naturalHeight);
         $recoveryDistance = $distance($origin, $goal);
-        $limit = min($recoveryDistance, $radius + max($naturalWidth / $width, $naturalHeight / $height));
+        $limit = min($recoveryDistance, $diameter + max($naturalWidth / $width, $naturalHeight / $height));
         $steps = max(1, (int) ceil($limit / max(0.25, min($naturalWidth / $width, $naturalHeight / $height) / 2)));
         $recovered = null;
         for ($i = 0; $i <= $steps; $i++) {
             $progress = $recoveryDistance > 0 ? $limit * $i / $steps / $recoveryDistance : 0;
             $point = ['x' => $origin['x'] + ($goal['x'] - $origin['x']) * $progress, 'y' => $origin['y'] + ($goal['y'] - $origin['y']) * $progress];
             $cell = (int) round($point['y'] / 100 * ($height - 1)) * $width + (int) round($point['x'] / 100 * ($width - 1));
-            if (!$visible($point['x'], $point['y']) || ($wallBytes !== null && applicationMaskBit($wallBytes, $cell))) return $failed('start-overlaps-wall');
+            if (!$visible($point['x'], $point['y']) || ($wallBytes !== null && applicationMaskBit($wallBytes, $cell))
+                || ($recoveryVisible!==null && !$recoveryVisible($point['x'],$point['y'],$radius,$naturalWidth,$naturalHeight))
+                || !$recoveringContact($point)) return $failed('start-overlaps-wall');
             if ($free($point)) { $recovered = $point; break; }
         }
         if ($recovered === null) return $failed('start-overlaps-wall');

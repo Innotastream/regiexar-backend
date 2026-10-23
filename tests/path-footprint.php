@@ -19,7 +19,7 @@ $escaped = findApplicationVisibleTokenPath($walls, $touch, $clear, 40, 1600, 900
 if ($escaped['blocked'] || $escaped['x'] !== $clear['x']) throw new RuntimeException('An existing shallow contact cannot escape.');
 $deep = ['x' => $touch['x'] + 0.125, 'y' => 50.0];
 $blocked = findApplicationVisibleTokenPath($walls, $deep, $clear, 40, 1600, 900, $visible);
-if (!$blocked['blocked'] || $blocked['path'] !== []) throw new RuntimeException('A deep wall overlap was treated as decorative contact.');
+if ($blocked['blocked'] || $blocked['x'] !== $clear['x']) throw new RuntimeException('An inherited overlap must be able to retreat on the same side.');
 $hiddenEdge = static fn (float $x, float $y, float $radius = 0): bool => $radius === 0 || $x < 45;
 $blocked = findApplicationVisibleTokenPath($walls, $touch, $clear, 40, 1600, 900, $hiddenEdge);
 if (!$blocked['blocked']) throw new RuntimeException('Contact recovery crossed a hidden footprint.');
@@ -34,4 +34,4 @@ if ($allowed['blocked']) throw new RuntimeException('A shallow vision fringe rej
 $paintedEdge = onlineVisiblePathPointTester($edge, ['enabled' => false]);
 $blocked = findApplicationVisibleTokenPath($openWalls, $start, $goal, 60, 1600, 900, $paintedEdge);
 if (!$blocked['blocked']) throw new RuntimeException('The vision fringe allowance leaked into painted fog.');
-echo "Full path footprints are enforced; only visible, shallow existing contacts may escape.\n";
+echo "Full destinations are enforced; inherited contacts may recede without crossing walls or fog.\n";

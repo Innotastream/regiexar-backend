@@ -891,13 +891,14 @@ function onlineEffectiveTokenControllerId(array $token, array $characterOwners):
 
 function onlineDamageAreaTargets(array $tokens, array $center, array $map, float $radiusCells, bool $fromCenterEdges = false): array
 {
+    $map=[...$map,'tokens'=>!empty($map['tokens'])?$map['tokens']:$tokens];$center=applicationTokenSpatialFootprint($center,$map);
     $width = (float) ($map['naturalWidth'] ?? 0);
     $height = (float) ($map['naturalHeight'] ?? 0);
     $grid = (float) ($map['gridSize'] ?? 0);
     if (!is_finite($radiusCells) || $radiusCells < 0.5 || $radiusCells > 20 || floor($radiusCells*2)!==$radiusCells*2 || $width <= 0 || $height <= 0 || $grid <= 0) return [];
     $layer = onlineTokenLayerId($center, $map);
     return array_values(array_filter($tokens, static function (mixed $token) use ($center, $width, $height, $grid, $radiusCells, $map, $layer, $fromCenterEdges): bool {
-        if (!is_array($token) || ($token['hidden'] ?? false) === true || onlineTokenLayerId($token, $map) !== $layer) return false;
+        if (!is_array($token) || ($token['hidden'] ?? false) === true || onlineTokenLayerId(applicationTokenSpatialFootprint($token,$map), $map) !== $layer) return false;
         return applicationMapDistanceInCells($fromCenterEdges ? $center : ['x'=>$center['x'],'y'=>$center['y'],'layerId'=>$layer],$token,$map,false,true)<=$radiusCells+1e-9;
     }));
 }
@@ -3467,6 +3468,7 @@ function onlinePendingAttackParties(PDO $connection, array &$records, array $att
     }
     $sourceController = onlineTokenControllerIdFromRecords($connection, $records, $source);
     $targetController = onlineTokenControllerIdFromRecords($connection, $records, $target);
+    $map['tokens']=onlineSceneTokensForLights($connection,$records,[],$sceneId);
     $areaAttack = is_numeric($attack['areaRadiusCells'] ?? null) && $attack['areaRadiusCells'] >= 0.5;
     foreach (['source', 'target'] as $partyName) {
         $partyCharacterId = trim((string) (${$partyName}['characterId'] ?? ''));
@@ -5789,7 +5791,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     $visible = onlineVisiblePathPointTester(applicationActiveMapFogState($map), applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50));
                 } else $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $moveSceneId);
                 $resolved = findApplicationVisibleTokenPath($occlusion['walls'], ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)], $desired,
-                    (float) ($token['size'] ?? 40), (float) $occlusion['naturalWidth'], (float) $occlusion['naturalHeight'], $visible);
+                    (float) ($token['size'] ?? 40), (float) $occlusion['naturalWidth'], (float) $occlusion['naturalHeight'], $visible,65536,onlineVisiblePathPointTester(applicationActiveMapFogState($map),['enabled'=>false]));
                 $result['path'] = $resolved['path'];
                 $result['pathReason'] = $resolved['reason'] ?? null;
                 $result['adjustedDestination'] = ($resolved['adjusted'] ?? false) === true;
@@ -6261,6 +6263,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $source = applicationDomainPayload($records, $sourceKey);
                 $target = applicationDomainPayload($records, $targetKey);
                 $map = $isGm && $mechanicsApplied !== null ? $mechanicsApplied['state']['map'] : applicationDomainPayload($records, $mapKey);
+                $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
                 if (($source !== [] && !onlineTokenOnActiveLayer($source, $map)) || ($target !== [] && !onlineTokenOnActiveLayer($target, $map))) {
                     rejectOnlineCommand($connection, 409, 'L’attaquant et la cible doivent être sur le niveau actif.', 'stale_token_layer');
                 }
@@ -6294,7 +6297,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if (onlineTokenIsDead($target, $targetController !== '')) {
                     rejectOnlineCommand($connection, 409, 'Cette cible est déjà morte.', 'target_already_defeated');
                 }
-                $map = applicationDomainPayload($records, $mapKey);
+                $map = [...applicationDomainPayload($records, $mapKey),'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
                 if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
                     rejectOnlineCommand($connection, 403, 'Cette cible n’est pas visible par votre joueur.', 'attack_target_hidden');
                 }

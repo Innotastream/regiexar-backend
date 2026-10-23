@@ -24,6 +24,7 @@ function applicationChargeFinalTarget(array $execution,array $step,array $tokens
     return $target;
 }
 function applicationValidateChargePath(array $state,array $target,array $map,bool $atDestination=false,?array $source=null): void {
+    $target=applicationTokenSpatialFootprint($target,$map);if($source!==null)$source=applicationTokenSpatialFootprint($source,$map);
     $d=applicationComplexMovementDimensions($map);$origin=$state['origin']??null;if(!$origin)applicationChargeFail('Le point de départ de la charge est absent.');
     $anchor=$state['chargeTarget']??$target;
     if(abs($anchor['x']-$target['x'])>1e-5||abs($anchor['y']-$target['y'])>1e-5)applicationChargeFail('La cible finale a bougé. Arrêtez cette charge et choisissez à nouveau sa destination.');
@@ -35,6 +36,7 @@ function applicationValidateChargePath(array $state,array $target,array $map,boo
         if(!$end||hypot(($end['x']-$target['x'])*$d['width']/100,($end['y']-$target['y'])*$d['height']/100)>$reach+1e-5)applicationChargeFail('Terminez la charge au contact de sa cible finale avant de confirmer.');}
 }
 function applicationChargeFirstContact(array $target,array $state,array $map): float {
+    $target=applicationTokenSpatialFootprint($target,$map);
     $d=applicationComplexMovementDimensions($map);$radius=applicationComplexMovementAttackWidth($state,$map)/2+($target['size']??40)/2;$distance=0;$points=$state['points'];
     for($i=1;$i<count($points);$i++){$a=$points[$i-1];$b=$points[$i];$dx=($b['x']-$a['x'])*$d['width']/100;$dy=($b['y']-$a['y'])*$d['height']/100;$length=hypot($dx,$dy);if(!$length)continue;
         $x=($target['x']-$a['x'])*$d['width']/100;$y=($target['y']-$a['y'])*$d['height']/100;$projection=($x*$dx+$y*$dy)/$length;$perpendicular2=max(0,$x*$x+$y*$y-$projection*$projection);

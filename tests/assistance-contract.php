@@ -18,7 +18,7 @@ foreach ($cases as $case) {
             }
         } elseif ($case['kind'] === 'path') {
             $visible = onlineVisiblePathPointTester($case['fog'] ?? [], $case['vision'] ?? []);
-            $result = findApplicationVisibleTokenPath($case['walls'], $case['start'], $case['goal'], $case['size'], 1600.0, 900.0, $visible, 8000);
+            $result = findApplicationVisibleTokenPath($case['walls'], $case['start'], $case['goal'], $case['size'], 1600.0, 900.0, $visible, 8000,onlineVisiblePathPointTester($case['fog']??[],['enabled'=>false]));
         } elseif ($case['kind'] === 'damage') $result = onlineRollAttackDamage($case['attack'], $case['target']);
         elseif ($case['kind'] === 'ability') $result = ['valid' => validApplicationAbilities([$case['ability']]), 'normalized' => normalizeOnlineAbilities([$case['ability']])];
         elseif ($case['kind'] === 'form') $result = planApplicationMetamorphosis($case['source'], $case['characters'], $case['tokens'], $case['ability'], $case['request'], 'owner', false, $case['pendingAttacks'] ?? []);

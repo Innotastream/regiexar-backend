@@ -1,7 +1,16 @@
 <?php
 declare(strict_types=1);
 
+function applicationTokenSpatialFootprint(array $token,array $map):array {
+    $mountId=$token['mountedOnTokenId']??'';
+    if($mountId===''||$mountId===($token['id']??''))return $token;
+    foreach($map['tokens']??[] as $mount)if(($mount['id']??'')===$mountId&&empty($mount['mountedOnTokenId']))
+        return [...$token,'x'=>$mount['x'],'y'=>$mount['y'],'layerId'=>$mount['layerId']??'ground','size'=>$mount['size']??40];
+    return $token;
+}
+
 function applicationMapDistanceInCells(array $a,array $b,array $map,bool $diagonalAsOne=false,bool $fromEdges=false):float {
+    $a=applicationTokenSpatialFootprint($a,$map);$b=applicationTokenSpatialFootprint($b,$map);
     $layer=$a['layerId']??$map['activeLayerId']??'ground';$level=$map['layers'][$layer]??$map;
     if(($b['layerId']??$layer)!==$layer)return INF;
     $grid=(float)($map['gridSize']??0);$width=(float)(($level['naturalWidth']??0)?:($map['naturalWidth']??0));$height=(float)(($level['naturalHeight']??0)?:($map['naturalHeight']??0));
@@ -58,6 +67,7 @@ function applicationComplexMovementAtDestination(array $state, ?array $source): 
         && applicationComplexMovementSamePoint($points[count($points) - 1], applicationComplexMovementPoint($source));
 }
 function applicationTargetTouchesComplexMovement(array $target, array $state, array $map): bool {
+    $target=applicationTokenSpatialFootprint($target,$map);
     $closest=applicationComplexMovementClosestPoint($target,$state,$map);
     $radius = applicationComplexMovementAttackWidth($state,$map) / 2 + (float) ($target['size'] ?? 40) / 2;
     return $closest!==null&&$closest['distance']<=$radius+1e-7;
@@ -66,6 +76,7 @@ function applicationComplexMovementAttackWidth(array $state,array $map):float {
     return !empty($state['attackWidthCells'])?$state['attackWidthCells']*applicationComplexMovementDimensions($map)['grid']:(float)($state['sourceSize']??40);
 }
 function applicationComplexMovementClosestPoint(array $target,array $state,array $map):?array {
+    $target=applicationTokenSpatialFootprint($target,$map);
     if(($state['status']??'')!=='completed'||empty($state['moved'])||count($state['points']??[])<2)return null;
     $d=applicationComplexMovementDimensions($map);$px=$target['x']*$d['width']/100;$py=$target['y']*$d['height']/100;$closest=null;$points=$state['points'];
     for($i=1;$i<count($points);$i++){$ax=$points[$i-1]['x']*$d['width']/100;$ay=$points[$i-1]['y']*$d['height']/100;$dx=$points[$i]['x']*$d['width']/100-$ax;$dy=$points[$i]['y']*$d['height']/100-$ay;

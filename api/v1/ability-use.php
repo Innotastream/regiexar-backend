@@ -46,7 +46,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if ($receipt !== null) return $receipt;
     if ($sceneId === '' || (!$isGm && $sceneId !== onlineActiveSceneId($table))) rejectOnlineCommand($connection, 409, 'La scène a changé. Rouvrez la capacité.', 'stale_scene');
     if (($table['tacticalSync']['paused'] ?? false)) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
-    $map = applicationDomainPayload($records, 'map:' . $sceneId);
+    $map = [...applicationDomainPayload($records, 'map:' . $sceneId), 'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
     $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['sourceTokenId'] ?? ''));
     if ($source === [] || (!empty($arguments['layerId']) && $arguments['layerId'] !== onlineTokenLayerId($source, $map)) || !onlineTokenOnActiveLayer($source, $map) || (!$isGm && (($source['hidden'] ?? false) || onlineTokenControllerIdFromRecords($connection, $records, $source) !== $accountId))) rejectOnlineCommand($connection, 403, 'Ce pion ne vous appartient pas ou a changé de niveau.', 'ability_source_forbidden');
     $owner = applicationAbilityCastingOwner($source);
