@@ -253,6 +253,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $previous=$items['templates'][$index];
         if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$previous)itemFailure('Ce modèle a été modifié par un autre MJ. Rouvrez-le avant de continuer.',409);
         if(!empty($previous['sourceAbilityId'])){
+            if(array_key_exists('instanceConfiguration',$args))itemFailure('Utilisez les réglages du dispositif.',409);
             if(($args['appearanceOnly']??false)!==true)itemFailure('Ce modèle est géré par sa compétence. Seule son apparence peut être modifiée ici.',409);
             $template=normalizeItemTemplate(array_replace($previous,array_intersect_key($args['template'],array_fill_keys(['name','description','image','category'],true))));
             if(itemNameKey($template['name'])!==itemNameKey($previous['name'])&&namedItemTemplate($items,$template['name'],$previous['id']))itemFailure('Un modèle porte déjà ce nom. Précisez un nom différent.',409);
@@ -264,6 +265,11 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
         $template=normalizeItemTemplate($editable);
         if(itemNameKey($template['name'])!==itemNameKey($previous['name'])&&namedItemTemplate($items,$template['name'],$previous['id']))itemFailure('Un modèle porte déjà ce nom. Précisez un nom différent.',409);
+        $configuration=$args['instanceConfiguration']??null;
+        if(array_key_exists('instanceConfiguration',$args)){
+            $ci=is_array($configuration)?array_search($configuration['itemId']??'',array_column($items['instances'],'id'),true):false;
+            if($ci===false||$items['instances'][$ci]['templateId']!==$previous['id']||$items['instances'][$ci]['revision']!==($configuration['expectedItemRevision']??null))itemFailure('Cet exemplaire a changé. Rouvrez son menu avant de le modifier.',409);
+        }
         if(($args['applyEquipmentToInstances']??false)===true){
             $instances=array_filter($items['instances'],static fn($item)=>$item['templateId']===$previous['id']&&in_array($item['location']['kind'],['inventory','ground'],true));
             $expected=$args['expectedInstanceRevisions']??null;
@@ -273,6 +279,12 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         }
         if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
         $items['templates'][$index]=$template;
+        if(array_key_exists('instanceConfiguration',$args)){
+            // Reuse the physical command inside the same transaction and receipt.
+            $configuration['expectedItemRevision']+=(($args['applyEquipmentToInstances']??false)===true?1:0);
+            $configured=applyDynamicItemCommand(array_replace($state,['items'=>$items]),$identity,'item.configure',$configuration,$context);
+            $configured['result']['template']=$template;return $configured;
+        }
         return ['items'=>$items,'result'=>['template'=>$template]];
     }
     if ($command === 'item.spawn') {

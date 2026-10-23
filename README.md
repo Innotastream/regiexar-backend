@@ -2,6 +2,8 @@
 
 Dégagement autoritaire d’un chevauchement existant, empreinte de la monture pour les actions de ses cavaliers et passage groupé préservé. Les portées, zones circulaires et attaques sur trajet partagent la même géométrie, sans modifier l’identité ni les ressources des cavaliers. Droits, brouillard, tours et reçus restent autoritatifs.
 
+L’édition d’un modèle peut enregistrer simultanément la taille et les PV d’un exemplaire ciblé, sous garde de révision et avec un seul reçu. Elle réutilise la commande de configuration physique existante ; un conflit annule l’ensemble de la sauvegarde.
+
 Build `client-3-7-8-passages-montures-20261023-1`, client exact **3.7.8**. Schémas SQL/session/fiche **24/22/10**, sans migration et sans import de fiches.
 
 ## Version 0.18.52 / client 3.7.7
