@@ -39,7 +39,10 @@ $r=specialMove($db,90);specialCheck($r->status===200,'Long ordinary movement acc
 $r=specialMechanics($db,'opportunity.resolve',['validationId'=>$p['id'],'approve'=>true,'opposed'=>false]);specialCheck($r->status===200,'Reaction after long movement: '.json_encode($r->body));
 foreach($db->payload('activity')['pendingAttacks']??[] as $pending)runCommand($db,'token.attack.resolve',['attackId'=>$pending['id'],'decision'=>'approve','confirmed'=>true],true,'account-gm');
 specialCheck($db->payload('token:scene-one:token-player')['x']==90,'Reaction does not move victim back');
-specialCheck($db->payload('character:character-player')['resources']['hp']<100,'Reaction can damage the departing victim');
+$reaction=$r->body['attack'];
+$stored=array_values(array_filter($db->payload('activity')['attackReceipts'],static fn($entry)=>$entry['attack']['id']===$reaction['id']))[0]['attack'];
+$expectedHp=$stored['hit']['outcome']['success']?93:100;
+specialCheck($db->payload('character:character-player')['resources']['hp']===$expectedHp,'Departure contact applies damage only when the actual reaction hits');
 $route=initialApplicationComplexMovementState(['x'=>20,'y'=>50,'size'=>40],1,3);$route=appendApplicationComplexMovementPath($route,['x'=>20,'y'=>50],['x'=>60,'y'=>50],null,$map,20,2);$route['status']='completed';
 specialCheck(applicationComplexMovementAttackWidth($route,$map)===150.0,'Movement attack width is configurable');
 $edge=['id'=>'edge','x'=>40,'y'=>59.5,'size'=>40];$outside=[...$edge,'y'=>59.501];

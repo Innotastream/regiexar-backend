@@ -19,5 +19,5 @@ function applicationManualD100Outcome(int $raw,string $code='pending',bool $crit
 }
 function applicationOutcomeCompletionCue(array $plan,array $cast):array {
  $base=$plan['completionCue']??['version'=>1,'trigger'=>'completed','sound'=>null,'visual'=>['version'=>1,'kind'=>'none']];$message=$plan['outcomeMessages']['entries'][$cast['outcome']['code']??'']??null;
- return $message?[...$base,'visual'=>$message]:(!empty($cast['success'])?$base:['version'=>1,'trigger'=>'completed','sound'=>null,'visual'=>['version'=>1,'kind'=>'none']]);
+ return $message?[...$base,'visual'=>$message]:(!empty($cast['success'])?$base:['version'=>1,'trigger'=>'completed','sound'=>null,'visual'=>['version'=>1,'kind'=>'none'],...(isset($base['icon'])?['icon'=>$base['icon']]:[])]);
 }
