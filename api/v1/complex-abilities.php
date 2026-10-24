@@ -7,6 +7,7 @@ require_once __DIR__ . '/charge-path.php';
 require_once __DIR__ . '/special-success.php';
 require_once __DIR__ . '/complex-chain-critical.php';
 require_once __DIR__ . '/ability-messages.php';
+require_once __DIR__ . '/ability-icon.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -164,6 +165,7 @@ function normalizeApplicationAbilityCompletionCue(mixed $value): array
         'trigger' => 'completed',
         'sound' => $sound,
         'visual' => applicationAbilityMessage($source['visual']??null),
+        ...(applicationAbilityIcon($source['icon']??null)!==null?['icon'=>applicationAbilityIcon($source['icon'])]:[]),
     ];
 }
 
@@ -172,6 +174,7 @@ function validApplicationAbilityCompletionCue(mixed $value): bool
     if (!is_array($value) || array_is_list($value)
         || (int) ($value['version'] ?? 0) !== XAR_ABILITY_COMPLETION_CUE_VERSION
         || ($value['trigger'] ?? '') !== 'completed') return false;
+    if (array_key_exists('icon', $value) && applicationAbilityIcon($value['icon']) === null) return false;
     $visual = $value['visual'] ?? null;
     if (!is_array($visual) || array_is_list($visual)
         || (int) ($visual['version'] ?? 0) !== 1 || !in_array($visual['kind']??'',['none','message'],true)) return false;
@@ -185,6 +188,15 @@ function validApplicationAbilityCompletionCue(mixed $value): bool
         || !is_int($sound['durationMs'] ?? null) || $sound['durationMs'] < 1 || $sound['durationMs'] > XAR_ABILITY_SOUND_MAXIMUM_DURATION_MILLISECONDS) return false;
     $name = $sound['name'] ?? null;
     return is_string($name) && trim($name) !== '' && preg_match('/[\x00\r\n]/', $name) !== 1 && strlen($name) <= 180;
+}
+
+function applicationAbilityCompletionCueFor(array $ability): array
+{
+    $base = is_array($ability['completionCue'] ?? null) ? $ability['completionCue'] : [];
+    return normalizeApplicationAbilityCompletionCue([
+        ...$base,
+        'icon' => ['url' => $ability['image'] ?? '', 'label' => $ability['name'] ?? 'Compétence'],
+    ]);
 }
 
 function normalizeApplicationComplexAbilityChoices(mixed $value, bool $fallback = true): array
@@ -643,7 +655,7 @@ function createApplicationComplexAbilityExecution(array $context): array
             'roll' => is_array($cast['roll'] ?? null) ? $cast['roll'] : null,
         ] : null,
         'onHitConditions' => normalizeOnlineConditions($ability['onHitConditions'] ?? []),
-        'completionCue' => normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null),
+        'completionCue' => applicationAbilityCompletionCueFor($ability),
         'workflow' => $workflow,
         'status' => 'active', 'revision' => 1, 'currentStepIndex' => 0,
         'stepStates' => [], 'events' => [], 'createdAt' => $now, 'updatedAt' => $now, 'endedByFailure' => false,

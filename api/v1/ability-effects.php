@@ -4,6 +4,7 @@ require_once __DIR__ . '/device-state.php';
 require_once __DIR__ . '/attack-enhancements.php';
 require_once __DIR__ . '/terrain-barrier.php';
 require_once __DIR__ . '/tactical-effects.php';
+require_once __DIR__ . '/ability-stat-check.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -75,7 +76,8 @@ function validApplicationAbilityEffects(array $entry): bool {
         || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
     if (array_key_exists('noDefensePossible', $entry) && (!is_bool($entry['noDefensePossible'])
         || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
-    if(array_key_exists('tacticalEffect',$entry)&&applicationTacticalEffect($entry['tacticalEffect'])===null)return false;
+    try{if(array_key_exists('tacticalEffect',$entry)&&applicationTacticalEffect($entry['tacticalEffect'])===null)return false;}
+    catch(RuntimeException){return false;}
     foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(array_key_exists($k,$entry)&&!is_bool($entry[$k]))return false;
     if(isset($entry['weaponDamageMode'])&&!in_array($entry['weaponDamageMode'],['add','replace'],true))return false;
     if(array_key_exists('terrainBarrier',$entry)&&(($entry['effect']??'damage')!=='damage'||applicationTerrainBarrier($entry['terrainBarrier'])===null))return false;
@@ -86,7 +88,13 @@ function validApplicationAbilityEffects(array $entry): bool {
     $effect = $entry['effect'] ?? 'damage';
     foreach (['formDurationTurns' => 1000, 'formBonusHp' => 1000000000] as $field => $maximum) if (array_key_exists($field, $entry)
         && ($effect !== 'metamorphosis' || !is_int($entry[$field]) || $entry[$field] < 0 || $entry[$field] > $maximum)) return false;
-    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device', 'enhancement'], true)) return false;
+    if (!in_array($effect, ['damage', 'healing', 'metamorphosis', 'movement', 'summoning', 'complex', 'opposition', 'device', 'enhancement', 'check'], true)) return false;
+    if (array_key_exists('statCheck',$entry) && ($effect!=='check'||applicationStatCheckDefinition($entry['statCheck'])===null)) return false;
+    if ($effect==='check' && !(applicationStatCheckDefinition($entry['statCheck']??null)!==null
+        && in_array($entry['castingStatId']??'',applicationStatIds(),true)
+        && empty($entry['manualD100']) && empty($entry['useWeaponDamage']) && empty($entry['tacticalEffect'])
+        && empty($entry['conditionRider']) && empty($entry['onHitConditions']) && empty($entry['infusion'])
+        && empty($entry['castingChoices']) && empty($entry['damageOverTime']) && empty($entry['damageTargeting']))) return false;
     foreach (['projectile','useWeaponDamage'] as $key) if (isset($entry[$key]) && !is_bool($entry[$key])) return false;
     try {
         if (isset($entry['infusion'])) dsInfusion($entry['infusion']);
@@ -99,6 +107,7 @@ function validApplicationAbilityEffects(array $entry): bool {
     if (array_key_exists('damageOverTime', $entry) && ($effect !== 'damage' || !validApplicationDamageOverTime($entry['damageOverTime']))) return false;
     if (array_key_exists('damageTargeting', $entry) && ($effect !== 'damage' || !validApplicationDamageTargeting($entry['damageTargeting']))) return false;
     if (array_key_exists('completionCue', $entry) && !validApplicationAbilityCompletionCue($entry['completionCue'])) return false;
+    if ($effect==='check') return true;
     if ($effect==='device') return true;
     if ($effect === 'complex') {
         if (!validApplicationComplexAbilityWorkflow($entry['workflow'] ?? null)) return false;
@@ -137,6 +146,7 @@ function applicationAbilityEffectFields(array $entry): array {
     foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(($entry[$k]??false)===true)$conditions[$k]=true;
     if(applicationTerrainBarrier($entry['terrainBarrier']??null))$conditions['terrainBarrier']=applicationTerrainBarrier($entry['terrainBarrier']);
     if(dsRider($entry['conditionRider']??null)) $conditions['conditionRider']=dsRider($entry['conditionRider']);
+    if($effect==='check') return [...$casting,...$cue,...$conditions,'effect'=>'check','statCheck'=>applicationStatCheckDefinition($entry['statCheck']??null)];
     if($effect==='device') return [...$casting,...$cue,...$conditions,'effect'=>'device','device'=>dsDefinition($entry['device'])];
     if (in_array($effect, ['damage', 'complex'], true) && ($entry['noDefensePossible'] ?? false) === true) $conditions['noDefensePossible'] = true;
     $opposition = validApplicationOppositionAbility($entry['opposition'] ?? null) ? ['opposition' => applicationOppositionAbility($entry['opposition'])] : [];
@@ -283,7 +293,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
+        $serverReceiptKinds = ['ability-check', 'ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;

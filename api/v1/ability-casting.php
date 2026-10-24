@@ -167,6 +167,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         $statId = (string) $stat['id'];
     }
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
+        'fixedResultModifier'=>($ability['effect']??'')==='check'?(applicationStatCheckDefinition($ability['statCheck']??null)['resultModifier']??0):0,
         'manualD100'=>!empty($ability['manualD100']),'outcomeMessages'=>applicationOutcomeMessages($ability['outcomeMessages']??null),
         'attackEnhancement' => applicationAttackEnhancement($ability['attackEnhancement'] ?? null),
         'enhancementInitiative' => ['active' => ($initiative['active'] ?? false) === true, 'combatId' => $combatId, 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)],
@@ -175,7 +176,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'fatigueGained' => min($fatigueCost, 150 - normalizeApplicationFatigue($source['fatigue'] ?? null)['current']),
         'combatId' => $combatId, 'combatUseLimit' => $combatUseLimit, 'combatUseCount' => $combatUseCount,
         'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCost'=>$restUseCost,'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
-        'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? normalizeApplicationAbilityCompletionCue($ability['completionCue'] ?? null) : null,
+        'completionCue' => ($ability['effect'] ?? 'damage') !== 'complex' ? applicationAbilityCompletionCueFor($ability) : null,
         'usedRound' => $round, 'cooldownRounds' => applicationEffectiveRoundCooldown($ability,$initiative), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => ($initiative['active']??false)===true && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'reducedFailureFatigueRefund' => $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
@@ -225,7 +226,7 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
     $thresholdModifier = ($modifierMode === 'threshold' ? $modifierValue : 0) - ($plan['difficultyPenalty'] ?? 0);
-    $resultModifier = $modifierMode === 'result' ? $modifierValue : 0;
+    $resultModifier = ($modifierMode === 'result' ? $modifierValue : 0) + ($plan['fixedResultModifier'] ?? 0);
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     if(!empty($plan['manualD100'])){$formula='1d100';$thresholdModifier=0;$resultModifier=0;}
     $rolled = $joker?applicationSpecialSuccessRoll():onlineRollFormulaWithMode($formula, !empty($plan['manualD100'])?'normal':normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
@@ -236,7 +237,7 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
         $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
     }
-    if ($outcome !== null) $outcome['resultCustomized'] = empty($plan['manualD100'])&&$modifierMode === 'result';
+    if ($outcome !== null) $outcome['resultCustomized'] = empty($plan['manualD100'])&&($modifierMode === 'result'||($plan['fixedResultModifier'] ?? 0)!==0);
     $roll = onlineRollEntry($identity, $rolled, $plan['label'] . ' · Lancement · ' . $plan['statLabel'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $sourceTokenId = $sourceTokenId !== '' ? $sourceTokenId : (string) ($source['id'] ?? '');
     $roll = onlineAbilityRollVisibility($roll, $source, $identity, $sourceVisibleToPlayers, (string) $plan['sceneId'], $sourceTokenId);
@@ -303,7 +304,7 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
 // Apply attempt costs and/or recharge in the same locked transaction. Read
 // pending payloads first so healing oneself never restores resources just spent.
 function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public'): string {
-    if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)&&($cue['visual']['kind']??'')!=='message') return '';
+    if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)&&($cue['visual']['kind']??'')!=='message'&&applicationAbilityIcon($cue['icon']??null)===null) return '';
     $now = (int) floor(microtime(true) * 1000);
     $id = 'cue-' . bin2hex(random_bytes(12));
     $events = array_values(array_filter(is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
@@ -480,7 +481,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $activity['actionTimers'] = $timers;
     }
     $completionCue=applicationOutcomeCompletionCue($plan,$cast);
-    $cueEventId = is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'
+    $cueEventId = is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'||applicationAbilityIcon($completionCue['icon']??null)!==null
         ? appendApplicationAbilityCueEvent($activity, $completionCue, (string) $plan['sceneId'],
             (string) ($cast['roll']['mapEvent']['layerId'] ?? $source['layerId'] ?? 'ground'), (string) ($source['id'] ?? ''),
             ($source['hidden'] ?? false) || ($cast['roll']['visibility'] ?? '') === 'gm' ? 'gm' : 'public') : '';

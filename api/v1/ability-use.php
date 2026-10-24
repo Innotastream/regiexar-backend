@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/ability-stat-check-online.php';
 
 function planApplicationMetamorphosis(array $source, array $characters, array $tokens, ?array $ability, array $request, string $accountId, bool $isGm, array $pendingAttacks = [], array $initiative = []): array {
     if (($source['followCharacter'] ?? true) === false || !empty($source['linkedTokenId']) || empty($source['characterId'])) throw new RuntimeException('La métamorphose nécessite un pion lié à une fiche.');
@@ -72,6 +73,17 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $target=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$arguments['targetTokenId']??''));
         if($target===[]||applicationIsNonCombatant($target)||!onlineTokenOnActiveLayer($target,$map)||(!$isGm&&(($target['hidden']??false)||!onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId))))rejectOnlineCommand($connection,403,'La cible de cette compétence doit être une unité visible.','tactical_target_hidden');
         if(($ability['tacticalEffect']['kind']??'')==='control'&&$source['id']===$target['id'])rejectOnlineCommand($connection,400,'Choisissez une autre unité à contrôler.','tactical_self_control');
+    } elseif (($ability['effect']??'')==='check') {
+        $target=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$arguments['targetTokenId']??''));
+        $targetOwner=applicationAbilityCastingOwner($target);
+        $targetSheet=$targetOwner['characterId']!==''?applicationDomainPayload($records,'character:'.$targetOwner['characterId']):[];
+        $targetRules=$targetSheet!==[]?synchronizeOnlineCharacterToken($target,$targetSheet):$target;
+        $targetRules['controllerPlayerId']=onlineTokenControllerIdFromRecords($connection,$records,$target);
+        if($target===[]||$source['id']===$target['id']||applicationIsNonCombatant($target)||applicationAbilitySourceDefeated($targetRules)
+            ||!onlineTokenOnActiveLayer($target,$map)||(!$isGm&&(($target['hidden']??false)||!onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId))))
+            rejectOnlineCommand($connection,403,'Choisissez une autre unité vivante et visible.','stat_check_target_forbidden');
+        if(count(array_filter(applicationTrimStatChecks($activity['statChecks']??[],(int)floor(microtime(true)*1000)),'applicationStatCheckPending'))>=XAR_STAT_CHECK_MAXIMUM)
+            rejectOnlineCommand($connection,429,'Le MJ doit terminer les duels en attente.','stat_check_capacity');
     } elseif (!in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
         if (!in_array($ability['effect'] ?? '', ['healing', 'enhancement'], true)) rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus.', 'healing_ability_missing');
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
@@ -128,6 +140,14 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         ]);
         $result['activeCharacterId'] = $formPlan['activeCharacterId'];
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'character', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $returning ? 'Reprend sa forme initiale' : 'Change de forme']);
+    } elseif (($ability['effect']??'')==='check') {
+        if($cast['success']){
+            $check=applicationCreateStatCheck('check-'.$requestId,$sceneId,onlineTokenLayerId($source,$map),$source,$target,
+                onlineStatCheckUnitKey($source),onlineStatCheckUnitKey($target),$ability,$cast,(int)floor(microtime(true)*1000));
+            onlineAppendStatCheck($records,$pending,$check);
+            $result['check']=publicApplicationStatCheck($check,$isGm,true,
+                onlineTokenControllerIdFromRecords($connection,$records,$target)===$accountId,false);
+        }
     } elseif ($cast['success'] && in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
         if(!empty($ability['tacticalEffect'])){
             $sk=onlineTokenDomainKey($sceneId,$source['id']);$tk=onlineTokenDomainKey($sceneId,$target['id']);

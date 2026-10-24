@@ -4,7 +4,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
-const PHP_SOURCES = ["api/v1/character-lore.php", "tests/character-lore-contract.php","api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+const PHP_SOURCES = ["api/v1/ability-icon.php","api/v1/ability-stat-check.php","api/v1/ability-stat-check-online.php","tests/ability-stat-check-contract.php","tests/mysql-ability-stat-check.php","api/v1/character-lore.php", "tests/character-lore-contract.php","api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -83,8 +83,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.55'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-7-9-vision-cache-20261024-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.18\.56'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-3-7-10-stat-duels-ability-icons-20261024-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -120,8 +120,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.18.55");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.7.9");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.18.56");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "3.7.10");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -313,7 +313,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(projection, /'lights'/);
   assert.ok(online.indexOf("$connection->commit();") < online.indexOf("$result['mapProjection']"),
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
-  assert.match(online, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.visibility', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.category\.create', 'item\.template\.delete', 'item\.quick\.create', 'item\.equipment\.create', 'item\.equipment\.update', 'item\.equipment\.set', 'item\.equipment\.set\.delete', 'item\.equipment\.equip', 'item\.activate','item\.trap\.resolve','item\.use\.cancel','item\.opposition','item\.opposition\.validate','item\.template\.create', 'item\.template\.update', 'item\.spawn', 'item\.move', 'item\.configure', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.loot', 'item\.favorite\.set', 'item\.consume', 'item\.effects\.rest', 'item\.destroy', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(online, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.visibility', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.category\.create', 'item\.template\.delete', 'item\.quick\.create', 'item\.equipment\.create', 'item\.equipment\.update', 'item\.equipment\.set', 'item\.equipment\.set\.delete', 'item\.equipment\.equip', 'item\.activate','item\.trap\.resolve','item\.use\.cancel','item\.opposition','item\.opposition\.validate','item\.template\.create', 'item\.template\.update', 'item\.spawn', 'item\.move', 'item\.configure', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.loot', 'item\.favorite\.set', 'item\.consume', 'item\.effects\.rest', 'item\.destroy', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'ability\.check\.respond', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
   assert.match(online, /'controllable' => [^\n]*empty\(\$token\['mountedOnTokenId'\]\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
@@ -326,8 +326,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "3.7.9");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["3.7.9"]);
+  assert.equal(manifest.announcedApplicationVersion, "3.7.10");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["3.7.10"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -572,7 +572,7 @@ test("le worker Régie change de poste avec un bail éphémère et clôture l’
 
 test("la commande ping accepte le MJ et le distingue visuellement des joueurs", async () => {
   const [online, domains] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php")]);
-  assert.match(online, /'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
+  assert.match(online, /'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'ability\.check\.respond', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'/);
   assert.match(online, /'author' => \$isGm \? 'MJ'/);
   assert.match(online, /'color' => \$isGm \? '#ffd782' : '#8d72cb'/);
   assert.match(online, /\$requestId = trim/);
@@ -742,7 +742,7 @@ test("l’ancien état global est en lecture seule et les commandes sont ciblée
   assert.match(administrativeDeletion, /character_owner_changed/);
   assert.match(command, /\$command === 'character\.delete' && !\$isGm/);
   assert.match(command, /\$ownerPlayerId = \$selfDelete[\s\S]*?\? \$accountId/);
-  assert.match(command, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.visibility', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.category\.create', 'item\.template\.delete', 'item\.quick\.create', 'item\.equipment\.create', 'item\.equipment\.update', 'item\.equipment\.set', 'item\.equipment\.set\.delete', 'item\.equipment\.equip', 'item\.activate','item\.trap\.resolve','item\.use\.cancel','item\.opposition','item\.opposition\.validate','item\.template\.create', 'item\.template\.update', 'item\.spawn', 'item\.move', 'item\.configure', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.loot', 'item\.favorite\.set', 'item\.consume', 'item\.effects\.rest', 'item\.destroy', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
+  assert.match(command, /\['luck\.reset', 'mechanics\.command', 'passage\.create', 'passage\.visibility', 'passage\.edit', 'passage\.link', 'passage\.remove', 'passage\.use', 'ensure-player', 'admin\.character\.delete', 'token\.move', 'token\.mount', 'rest\.announce', 'item\.category\.create', 'item\.template\.delete', 'item\.quick\.create', 'item\.equipment\.create', 'item\.equipment\.update', 'item\.equipment\.set', 'item\.equipment\.set\.delete', 'item\.equipment\.equip', 'item\.activate','item\.trap\.resolve','item\.use\.cancel','item\.opposition','item\.opposition\.validate','item\.template\.create', 'item\.template\.update', 'item\.spawn', 'item\.move', 'item\.configure', 'item\.transfer', 'item\.drop', 'item\.pickup', 'item\.loot', 'item\.favorite\.set', 'item\.consume', 'item\.effects\.rest', 'item\.destroy', 'tokens\.layers', 'tokens\.transform', 'token\.clone', 'token\.conditions\.update', 'character\.conditions\.update', 'light\.carry', 'token\.resource\.adjust', 'ability\.use', 'ability\.complex', 'ability\.resolve', 'ability\.check\.respond', 'token\.roll', 'roll\.reveal', 'combat\.effect\.remove', 'combat\.dot\.resolve', 'action\.undo', 'token\.attack', 'token\.attack\.oppose', 'token\.attack\.resolve', 'ping'\]/);
   assert.match(command, /player_mode_required/);
   const timerDelete = command.slice(command.indexOf("$command === 'timer.update'"), command.indexOf("$command === 'character.delete'"));
   assert.match(timerDelete, /actionTimerTombstones/);

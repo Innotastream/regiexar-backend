@@ -2015,6 +2015,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
     // a validation, even when it happens to contain the new fields.
     if (array_key_exists('pendingAbilityCasts', $previous)) $payload['pendingAbilityCasts'] = $previous['pendingAbilityCasts'];
     else unset($payload['pendingAbilityCasts']);
+    $payload['statChecks'] = is_array($previous['statChecks'] ?? null) ? $previous['statChecks'] : [];
     // Seules les commandes autoritaires émettent ces sons. Une sauvegarde MJ
     // ancienne ne doit ni effacer ni fabriquer un événement de diffusion.
     $payload['abilityCueEvents'] = is_array($previous['abilityCueEvents'] ?? null)
@@ -2080,7 +2081,7 @@ function validApplicationAbilityCueEvents(mixed $events): bool
             || !is_int($event['createdAt'] ?? null) || !is_int($event['expiresAt'] ?? null)
             || $event['expiresAt'] <= $event['createdAt'] || $event['expiresAt'] - $event['createdAt'] > 30000
             || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
-            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message') return false;
+            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message'&&applicationAbilityIcon($event['completionCue']['icon']??null)===null) return false;
         $seen[$id] = true;
     }
     return true;
@@ -2137,6 +2138,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['pingReceipts'] ?? [], 256)
             || !validApplicationDomainObjectList($payload['pendingAttacks'] ?? [], XAR_PENDING_ATTACK_MAXIMUM)
             || !validApplicationPendingAbilityCasts($payload['pendingAbilityCasts'] ?? [])
+            || !validApplicationStatChecks($payload['statChecks'] ?? [])
             || !validApplicationDomainObjectList($payload['attackReceipts'] ?? [], XAR_ATTACK_RECEIPT_MAXIMUM)
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
@@ -2560,6 +2562,7 @@ function legacyStateToDomains(array $state): array
             'pingReceipts' => is_array($state['pingReceipts'] ?? null) ? $state['pingReceipts'] : [],
             'pendingAttacks' => is_array($state['pendingAttacks'] ?? null) ? $state['pendingAttacks'] : [],
             'pendingAbilityCasts' => is_array($state['pendingAbilityCasts'] ?? null) ? $state['pendingAbilityCasts'] : [],
+            'statChecks' => is_array($state['statChecks'] ?? null) ? $state['statChecks'] : [],
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
@@ -2759,6 +2762,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'pingReceipts' => is_array($activity['pingReceipts'] ?? null) ? $activity['pingReceipts'] : [],
         'pendingAttacks' => is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [],
         'pendingAbilityCasts' => is_array($activity['pendingAbilityCasts'] ?? null) ? $activity['pendingAbilityCasts'] : [],
+        'statChecks' => is_array($activity['statChecks'] ?? null) ? $activity['statChecks'] : [],
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => applicationComplexAbilityResultsFromReceipts(normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []), $activity['attackReceipts'] ?? []),

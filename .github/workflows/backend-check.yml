@@ -61,7 +61,9 @@ jobs:
           php tests/stream-state-read.php
           php tests/caster-area-footprint.php
       - name: Ability casting costs and cooldowns
-        run: php tests/ability-casting-contract.php
+        run: |
+          php tests/ability-casting-contract.php
+          php tests/ability-stat-check-contract.php
       - name: Infusions, devices and individual consent
         run: |
           php tests/device-native-contract.php
@@ -162,6 +164,8 @@ jobs:
           grep -Fq 'Local MySQL device concurrency integration passed.' mysql-devices-concurrency.log
           php tests/mysql-domain-schema.php | tee mysql-domain-schema.log
           grep -Fq 'Local MySQL domain schema integration passed.' mysql-domain-schema.log
+          php tests/mysql-ability-stat-check.php | tee mysql-ability-stat-check.log
+          grep -Fq 'Local MySQL stat check integration passed.' mysql-ability-stat-check.log
           php tests/mysql-luck-reset.php | tee mysql-luck-reset.log
           grep -Fq 'Local MySQL Chance reset integration passed.' mysql-luck-reset.log
           php tests/mysql-spirit-migration.php | tee mysql-spirit-migration.log

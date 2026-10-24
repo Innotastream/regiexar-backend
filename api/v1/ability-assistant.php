@@ -389,7 +389,7 @@ function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?arr
     if (isset($value['tacticalEffect']) && (($value['tacticalEffect']['kind'] ?? '') === 'coating' ? $effect !== 'enhancement' : $effect !== 'movement')) throw new InvalidArgumentException('Choisissez Buff pour la fiole, ou une capacité simple sans dégâts pour l’apparence, le contrôle et la marque.');
     if (($value['manualD100'] ?? false) && !in_array($effect,['movement','healing','enhancement','summoning','metamorphosis'],true)) throw new InvalidArgumentException('Le d100 arbitré nécessite une capacité simple sans attaque.');
     if (($value['maximumWeaponDamage'] ?? false) && !($value['useWeaponDamage'] ?? false)) throw new InvalidArgumentException('Le maximum nécessite les dégâts d’une arme.');
-    if (!in_array($effect, ['damage', 'enhancement', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition', 'device'], true)) {
+    if (!in_array($effect, ['damage', 'enhancement', 'healing', 'movement', 'summoning', 'metamorphosis', 'complex', 'opposition', 'device', 'check'], true)) {
         throw new InvalidArgumentException('Choisissez un effet de capacité pris en charge.');
     }
     $stats = ['', ...applicationStatIds()];

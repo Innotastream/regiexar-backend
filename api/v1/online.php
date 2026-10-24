@@ -1373,6 +1373,15 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     }
     $nowMilliseconds = (int) floor(microtime(true) * 1000);
     $visibleAbilityCueEvents = [];
+    $visibleStatChecks=[];
+    $statCheckTokens=array_column($fullState['map']['tokens']??[],null,'id');
+    foreach($streamPov?[]:($fullState['statChecks']??[]) as $check){
+        if(($check['sceneId']??'')!==$visibleSceneId||($check['layerId']??'')!==$visibleLayerId
+            ||!in_array($check['sourceTokenId']??'', $visibleAttackTokenIds,true)||!in_array($check['targetTokenId']??'', $visibleAttackTokenIds,true))continue;
+        $visibleStatChecks[]=publicApplicationStatCheck($check,false,
+            onlineEffectiveTokenControllerId($statCheckTokens[$check['sourceTokenId']]??[],$characterOwners)===$accountId,
+            onlineEffectiveTokenControllerId($statCheckTokens[$check['targetTokenId']]??[],$characterOwners)===$accountId);
+    }
     $visibleRestEvents = array_values(array_filter(is_array($fullState['restEvents'] ?? null) ? $fullState['restEvents'] : [],
         static fn (mixed $event): bool => is_array($event) && (string) ($event['sceneId'] ?? '') === $visibleSceneId
             && (int) ($event['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000)));
@@ -1382,7 +1391,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             || (int) ($event['expiresAt'] ?? 0) <= $nowMilliseconds
             || ($event['visibility'] ?? 'gm') !== 'public'
             || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
-            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message') continue;
+            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message'&&applicationAbilityIcon($event['completionCue']['icon']??null)===null) continue;
         $visibleAbilityCueEvents[] = array_intersect_key($event,
             array_flip(['id', 'sceneId', 'layerId', 'sourceTokenId', 'visibility', 'createdAt', 'expiresAt', 'completionCue']));
     }
@@ -1518,6 +1527,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'abilityCueEvents' => $visibleAbilityCueEvents,
         'restEvents' => $visibleRestEvents,
         'pendingAbilityCasts' => $visibleAbilityValidations,
+        'statChecks' => $visibleStatChecks,
         'pendingOppositions' => array_slice($pendingOppositions, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'pendingMapAttacks' => array_slice($pendingMapAttacks, 0, XAR_PENDING_ATTACK_MAXIMUM),
         'mapPings' => $visibleMapPings,
@@ -5258,7 +5268,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
+            ['luck.reset', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5839,6 +5849,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $result = onlineResolveAbilityCasting($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'ability.use') {
             $result = onlineUseAbility($connection, $records, $pending, $table, $identity, $arguments, $isGm);
+        } elseif ($command === 'ability.check.respond') {
+            $result = onlineRespondStatCheck($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'ability.complex') {
             $result = onlineUseComplexAbility($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'token.resource.adjust') {
@@ -8197,7 +8209,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
         $publicResultRolls = applicationPublicResultRolls($result);
-        if (!$compactComplex && in_array($command, ['roll', 'token.roll', 'roll.reveal', 'combat.dot.resolve', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve'], true) && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
+        if (!$compactComplex && in_array($command, ['roll', 'token.roll', 'roll.reveal', 'combat.dot.resolve', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond'], true) && ($result['check']['status']??'')!=='awaiting-validation' && ($result['pendingValidation'] ?? false) !== true && ($result['deduplicated'] ?? false) !== true && $publicResultRolls !== []) {
             $discord = tryPostOnlineDiscordText($connection, $configuration, 'dice', onlineDiscordResultRollContent($result));
             $result['discordPosted'] = $discord['posted'];
             $result['discordError'] = $discord['error'];
