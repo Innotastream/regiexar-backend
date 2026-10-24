@@ -21,8 +21,8 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   assert.match(domains, /function applicationComputeVisionMask/);
   assert.match(vision, /\$wallEncountered = false/);
   assert.match(vision, /if \(\$wallEncountered && !\$cellIsWall\)[\s\S]*?break/);
-  assert.match(vision, /\$ellipseContainsCell/);
-  assert.match(vision, /if \(!\$ellipseContainsCell\(\$column, \$row, \$centerX, \$centerY\)\)[\s\S]*?break/);
+  assert.match(vision, /\$ellipseDeltaX = \(\$column - \$centerX\) \/ \$radiusX/);
+  assert.match(vision, /if \(\$ellipseDeltaX \* \$ellipseDeltaX \+ \$ellipseDeltaY \* \$ellipseDeltaY > 1\.0 \+ 1\.0e-12\)[\s\S]*?break/);
   assert.match(vision, /\$firstWallBodyReachesCell/);
   assert.match(vision, /foreach \(\$wallCellIndexes as \$cellIndex\)/);
   assert.match(vision, /if \(\$firstWallBodyReachesCell\(\$centerX, \$centerY, \$column, \$row\)\)/);

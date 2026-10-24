@@ -1,3 +1,13 @@
+## Version 0.18.55 / client 3.7.9
+
+Réutilisation des masques de visibilité par géométrie et par origine, entre requêtes PHP, pour éviter les recalculs complets lors d'un changement sans impact sur la vision. Les mouvements conservent les calculs des unités immobiles. Le calcul à froid réutilise les index de murs et réduit les appels au cœur des boucles, avec comparaison octet par octet à l'ancien moteur. Brouillard, lumières, vision nocturne, dimensions et portée font partie de l'invalidation ; droits et projections restent calculés sur l'état courant.
+
+Cache privé borné hors de la racine publique, fichiers atomiques, contrôle d'intégrité et recalcul en cas d'indisponibilité. Aucun changement de schéma, de fiche ou de client Windows.
+
+Build `client-3-7-9-vision-cache-20261024-1`, client exact **3.7.9**. Inclut les correctifs de 0.18.54 ; basculement groupé unique depuis 0.18.53.
+
+---
+
 ## Version 0.18.54 / client 3.7.9
 
 Lecture publique Stream limitée à la scène diffusée, sans présence MJ inutile, dispositifs et projections de confidentialité préservés. Échec amoindri : remboursement atomique et idempotent de la fatigue uniquement sur le lancement raté, avec validation différée et clones indépendants. Mana et PV restent dépensés ; aucune modification de schéma ni import de fiche.

@@ -116,6 +116,11 @@ jobs:
         run: php tests/runtime-diagnostics-contract.php
       - name: Check short SSE upstream leases
         run: php tests/sse-lease-contract.php
+      - name: Visibility cache geometry, isolation and parallel writers
+        run: |
+          php tests/vision-cache-geometry.php
+          php -n tests/vision-cache-geometry.php
+          php tests/vision-cache-storage.php
       - name: Reliability audit regressions
         run: |
           php tests/backend-future-schema.php

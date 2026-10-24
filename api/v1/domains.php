@@ -19,6 +19,7 @@ require_once __DIR__ . '/dynamic-items.php';
 require_once __DIR__ . '/device-state.php';
 require_once __DIR__ . '/map-passages.php';
 require_once __DIR__ . '/token-spacing.php';
+require_once __DIR__ . '/vision-cache.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -882,6 +883,38 @@ function applicationResolveWallCollision(
 
 function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
 {
+    $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
+    if (!$vision['enabled'] || $origins === []) {
+        return applicationCalculateBaseVisionMask($occlusion, $origins, $gridSize, $distanceExtension);
+    }
+    $combined = null;
+    $metadata = null;
+    foreach (array_slice($origins, 0, 40) as $origin) {
+        if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
+        $geometry = [
+            'walls' => $occlusion['walls'],
+            'naturalWidth' => $occlusion['naturalWidth'] ?? 1600,
+            'naturalHeight' => $occlusion['naturalHeight'] ?? 900,
+            'x' => max(0.0, min(100.0, (float) $origin['x'])),
+            'y' => max(0.0, min(100.0, (float) $origin['y'])),
+            'distance' => applicationOriginVisionDistance($origin, $vision),
+            'extension' => $distanceExtension,
+            'grid' => $gridSize,
+        ];
+        $part = applicationMemoizedVisionMask('base', $geometry,
+            static fn (): array => applicationCalculateBaseVisionMask($occlusion, [$origin], $gridSize, $distanceExtension));
+        $bytes = applicationWallMaskBytes($part);
+        if ($bytes === null) return applicationCalculateBaseVisionMask($occlusion, $origins, $gridSize, $distanceExtension);
+        $metadata ??= $part;
+        $combined = $combined === null ? $bytes : $combined & $bytes;
+    }
+    if ($metadata === null) return applicationCalculateBaseVisionMask($occlusion, [], $gridSize, $distanceExtension);
+    $metadata['mask'] = rtrim(strtr(base64_encode($combined), '+/', '-_'), '=');
+    return $metadata;
+}
+
+function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
+{
     $walls = $occlusion['walls'];
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
     $width = (int) $walls['width'];
@@ -890,13 +923,19 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
         return ['version' => XAR_WALL_MASK_VERSION, 'enabled' => false, 'width' => $width, 'height' => $height, 'mask' => ''];
     }
     $wallBytes = applicationWallMaskBytes($walls) ?? str_repeat("\0", (int) ceil(($width * $height) / 8));
-    $wallCellIndexes = [];
-    if (($walls['mask'] ?? '') !== '') {
-        for ($index = 0; $index < $width * $height; $index += 1) {
-            if (applicationMaskBit($wallBytes, $index)) {
-                $wallCellIndexes[] = $index;
+    static $wallIndexCache = [];
+    $wallKey = $width . ':' . $height . ':' . hash('sha256', $wallBytes);
+    if (isset($wallIndexCache[$wallKey])) {
+        $wallCellIndexes = $wallIndexCache[$wallKey];
+    } else {
+        $wallCellIndexes = [];
+        if (($walls['mask'] ?? '') !== '') {
+            for ($index = 0; $index < $width * $height; $index += 1) {
+                if (applicationMaskBit($wallBytes, $index)) $wallCellIndexes[] = $index;
             }
         }
+        if (count($wallIndexCache) >= 2) array_shift($wallIndexCache);
+        $wallIndexCache[$wallKey] = $wallCellIndexes;
     }
     $hiddenBytes = str_repeat("\xff", (int) ceil(($width * $height) / 8));
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
@@ -925,7 +964,9 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
                 continue;
             }
             $previousIndex = $cellIndex;
-            $cellIsWall = applicationMaskBit($wallBytes, $cellIndex);
+            // The column and row were checked above; avoid a function call
+            // for every pixel crossed by every visibility ray.
+            $cellIsWall = (ord($wallBytes[intdiv($cellIndex, 8)]) & (1 << ($cellIndex % 8))) !== 0;
             if ($wallEncountered && !$cellIsWall) {
                 return false;
             }
@@ -953,11 +994,6 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
         $radiusNatural = (applicationOriginVisionDistance($origin, $vision) + $distanceExtension) * $safeGridSize;
         $radiusX = max(1.0, $radiusNatural / $naturalWidth * max(1, $width - 1));
         $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
-        $ellipseContainsCell = static function (int $column, int $row, float $centerX, float $centerY) use ($radiusX, $radiusY): bool {
-            $deltaX = ($column - $centerX) / $radiusX;
-            $deltaY = ($row - $centerY) / $radiusY;
-            return $deltaX * $deltaX + $deltaY * $deltaY <= 1.0 + 1.0e-12;
-        };
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
         $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
         $clearCell($hiddenBytes, $centerX, $centerY);
@@ -1019,14 +1055,18 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
                     continue;
                 }
                 $previousIndex = $cellIndex;
-                if (!$ellipseContainsCell($column, $row, $centerX, $centerY)) {
+                $ellipseDeltaX = ($column - $centerX) / $radiusX;
+                $ellipseDeltaY = ($row - $centerY) / $radiusY;
+                if ($ellipseDeltaX * $ellipseDeltaX + $ellipseDeltaY * $ellipseDeltaY > 1.0 + 1.0e-12) {
                     break;
                 }
-                $cellIsWall = applicationMaskBit($wallBytes, $cellIndex);
+                $byteIndex = intdiv($cellIndex, 8);
+                $cellBit = 1 << ($cellIndex % 8);
+                $cellIsWall = (ord($wallBytes[$byteIndex]) & $cellBit) !== 0;
                 if ($wallEncountered && !$cellIsWall) {
                     break;
                 }
-                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
+                $hiddenBytes[$byteIndex] = chr(ord($hiddenBytes[$byteIndex]) & ~$cellBit);
                 if ($step > 0 && $cellIsWall) {
                     $wallEncountered = true;
                 }
@@ -1037,16 +1077,20 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
         // exact : seul le premier corps solide rencontré est révélé, jamais un
         // second mur séparé par une cellule libre ni l'espace situé derrière.
         foreach ($wallCellIndexes as $cellIndex) {
-            if (!applicationMaskBit($hiddenBytes, $cellIndex)) {
+            $byteIndex = intdiv($cellIndex, 8);
+            $cellBit = 1 << ($cellIndex % 8);
+            if ((ord($hiddenBytes[$byteIndex]) & $cellBit) === 0) {
                 continue;
             }
             $column = $cellIndex % $width;
             $row = intdiv($cellIndex, $width);
-            if (!$ellipseContainsCell($column, $row, $centerX, $centerY)) {
+            $ellipseDeltaX = ($column - $centerX) / $radiusX;
+            $ellipseDeltaY = ($row - $centerY) / $radiusY;
+            if ($ellipseDeltaX * $ellipseDeltaX + $ellipseDeltaY * $ellipseDeltaY > 1.0 + 1.0e-12) {
                 continue;
             }
             if ($firstWallBodyReachesCell($centerX, $centerY, $column, $row)) {
-                applicationSetMaskBit($hiddenBytes, $cellIndex, false);
+                $hiddenBytes[$byteIndex] = chr(ord($hiddenBytes[$byteIndex]) & ~$cellBit);
             }
         }
     }
@@ -1231,6 +1275,18 @@ function applicationComputeVisionMask(array $occlusion, array $origins, mixed $g
 }
 
 function applicationComputeVisionRenderMask(array $occlusion, array $origins, mixed $gridSize): array
+{
+    $geometry = array_intersect_key($occlusion, array_flip([
+        'walls', 'fog', 'lights', 'vision', 'lightingMode', 'customLighting', 'naturalWidth', 'naturalHeight',
+    ]));
+    $viewerOrigins = array_map(static fn ($origin) => is_array($origin)
+        ? array_intersect_key($origin, array_flip(['x', 'y', 'visionDistance', 'darkVision', 'source', 'environmentAdjusted'])) : $origin,
+        array_slice($origins, 0, 40));
+    return applicationMemoizedVisionMask('render', [$geometry, $viewerOrigins, $gridSize],
+        static fn (): array => applicationCalculateVisionRenderMask($occlusion, $origins, $gridSize));
+}
+
+function applicationCalculateVisionRenderMask(array $occlusion, array $origins, mixed $gridSize): array
 {
     $resolved = applicationResolveVisionRelays($occlusion, $origins, $gridSize);
     $sightOcclusion = [...$occlusion, 'walls' => $resolved['sightWalls']];
