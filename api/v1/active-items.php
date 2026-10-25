@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__.'/item-use-schema.php';
 require_once __DIR__.'/item-payloads.php';
 require_once __DIR__ . '/character-statistics.php';
@@ -12,6 +13,7 @@ function normalizeActiveItem(mixed $v):?array {
  if($v===null)return null;if(!is_array($v)||($v['version']??0)!==1)itemFailure('Ces effets d’objet proviennent d’une version plus récente.');
  if(!is_array($v['effects']??null)||count($v['effects'])>12)itemFailure('Choisissez au maximum douze effets pour cet objet.');$effects=[];
  foreach($v['effects'] as $e){$kind=$e['kind']??'';
+  if($kind==='armor-reduction'){$reduction=applicationArmorReductionDefinition($e);if($reduction===null)itemFailure('Réglez une réduction physique ou magique de 1 à 100 points et sa durée.');$effects[]=$reduction;continue;}
   if($kind==='summon'){if(!itemId($e['templateId']??null))itemFailure('Choisissez un modèle du bestiaire.');$effects[]=['kind'=>'summon','templateId'=>$e['templateId'],'controllable'=>($e['controllable']??true)!==false,'nonCombatant'=>($e['nonCombatant']??false)===true];continue;}
   $payload=normalizeItemPayload($e);if($payload){$effects[]=$payload;continue;}
   if($kind==='heal-max-die'){if(!activeItemInt($e['percent']??null,1,100))itemFailure('Pourcentage de soin invalide.');$bonus=$e['bonusFormula']??'';if(!is_string($bonus)||trim($bonus)!==''&&!validEffectFormula($bonus))itemFailure('Le complément de soin doit être un calcul valide.');$effects[]=['kind'=>$kind,'percent'=>$e['percent'],...(trim($bonus)!==''?['bonusFormula'=>normalizeEffectFormula($bonus)]:[])];}
@@ -28,6 +30,7 @@ function normalizeActiveItem(mixed $v):?array {
   else itemFailure('Cet effet d’objet n’est pas pris en charge.');
  }
  if(!empty($v['ingredientTag'])&&!activeItemTag($v['ingredientTag']))itemFailure('Catégorie d’ingrédient invalide.');
+ foreach($effects as $effect)if(($effect['kind']??'')==='armor-reduction'&&$effect['scope']==='zone'&&($v['targeting']['mode']??'')!=='area')itemFailure('Une réduction d’armure en zone nécessite une cible de type zone circulaire.');
  return ['version'=>1,'useLabel'=>itemText($v['useLabel']??'Utiliser',40),'authority'=>($v['authority']??'')==='gm'?'gm':'owner','effects'=>$effects,...(isset($v['targeting'])?['targeting'=>normalizeItemTargeting($v['targeting'])]:[]),...(isset($v['trap'])?['trap'=>normalizeItemTrap($v['trap'])]:[]),...(($v['reusable']??false)===true?['reusable'=>true]:[]),...(!empty($v['ingredientTag'])?['ingredientTag'=>$v['ingredientTag']]:[])];
 }
 function applicationEffectFamily(mixed $v):string {
@@ -59,9 +62,10 @@ function applicationApplyActiveItem(array &$state,array $template,array &$unit,?
   if(in_array($a['kind'],['damage','dot','condition'],true)){if(!$token)itemFailure('Placez le pion sur la carte pour utiliser cet effet.',409);applicationItemPayload($state,$template,$unit,$token,$a,$index,$context,$result);}
   if($a['kind']==='cleanse')applicationCleanseUnitEffects($state,$unit,$a['families']);
   elseif($a['kind']==='heal-max-die'){$sides=max(1,(int)floor(($unit['resources']['maxHp']??0)*$a['percent']/100));$roll=($context['rollDie'])($sides,$template['name'],$unit['name']);$result['rolls'][]=$roll;$healing=$roll['total'];if(!empty($a['bonusFormula'])){$bonus=($context['rollFormula'])($a['bonusFormula'],$template['name'].' · complément de soin',$unit['name']);$result['rolls'][]=$bonus;$healing+=$bonus['total'];}$old=$unit['resources']['hp'];$unit['resources']['hp']=min($unit['resources']['maxHp'],$old+max(0,$healing));$result['healing']+=$unit['resources']['hp']-$old;}
-  elseif(in_array($a['kind'],['stats','immunity'],true)){
-   $d=$a['kind']==='stats'?$a['duration']:['kind'=>'rounds','turns'=>$a['turns']];$mode=$a['kind']==='stats'?'stats':'immunity';
-   $e=['id'=>($context['id'])('item-effect'),'abilityId'=>'item-'.$template['id'],'holder'=>$holder,'label'=>$template['name'],'sceneId'=>$sceneId,'targetTokenId'=>$token['id']??'','casterTokenId'=>$token['id']??'','abilityImage'=>$template['image']??'','combatId'=>!empty($clock['active'])&&$d['kind']==='rounds'?($clock['combatId']??''):'','lastTurnSerial'=>$clock['turnSerial']??0,'mode'=>$mode,'turns'=>$d['turns']??1,'remainingTurns'=>$d['turns']??1,'stackGroup'=>'item-'.$template['id'],'effectIndex'=>$index,...($mode==='stats'?['bonuses'=>$a['bonuses']]:['family'=>$a['family']]),...($d['kind']==='rests'?['expiry'=>'rests','remainingShortRests'=>$d['shortRests']]:[])];
+  elseif(in_array($a['kind'],['stats','immunity','armor-reduction'],true)){
+   if($a['kind']==='armor-reduction'&&$a['scope']==='zone')itemFailure('Une zone doit être créée depuis la carte.',409);
+   $d=$a['kind']==='stats'?$a['duration']:['kind'=>'rounds','turns'=>$a['turns']];$mode=$a['kind']==='immunity'?'immunity':'stats';
+   $e=['id'=>($context['id'])('item-effect'),'abilityId'=>'item-'.$template['id'],'holder'=>$holder,'label'=>$template['name'],'sceneId'=>$sceneId,'targetTokenId'=>$token['id']??'','casterTokenId'=>$token['id']??'','abilityImage'=>$template['image']??'','combatId'=>!empty($clock['active'])&&$d['kind']==='rounds'?($clock['combatId']??''):'','lastTurnSerial'=>$clock['turnSerial']??0,'mode'=>$mode,'turns'=>$d['turns']??1,'remainingTurns'=>$d['turns']??1,'stackGroup'=>'item-'.$template['id'],'effectIndex'=>$index,...($mode==='stats'?['bonuses'=>$a['kind']==='armor-reduction'?applicationArmorReductionBonuses($a):$a['bonuses']]:['family'=>$a['family']]),...($d['kind']==='rests'?['expiry'=>'rests','remainingShortRests'=>$d['shortRests']]:[])];
    $effects=array_values(array_filter($state['attackEnhancements']??[],static fn($old)=>($old['holder']??'')!==$holder||($old['stackGroup']??'')!==$e['stackGroup']||($old['mode']??'')!==$mode||($old['effectIndex']??$index)!==$index));if(count($effects)>=100)itemFailure('Trop d’effets actifs.',409);$effects[]=$e;$state['attackEnhancements']=$effects;
   }
   elseif($a['kind']==='light'){

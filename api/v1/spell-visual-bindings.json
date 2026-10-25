@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "bindings": {
+    "ability-mania-elemental-breath": {
+      "placement": "cone",
+      "rangeCells": 4,
+      "variants": {
+        "fire": "elemental-fire",
+        "ice": "elemental-ice",
+        "lightning": "elemental-lightning",
+        "acid": "elemental-acid"
+      }
+    }
+  }
+}

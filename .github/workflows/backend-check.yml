@@ -64,6 +64,10 @@ jobs:
         run: |
           php tests/ability-casting-contract.php
           php tests/ability-stat-check-contract.php
+          php tests/spell-visuals.php
+          php tests/elemental-breath.php
+          php tests/elemental-breath-extended.php
+          php tests/audit-v4-combat-identity.php
       - name: Infusions, devices and individual consent
         run: |
           php tests/device-native-contract.php
@@ -104,6 +108,10 @@ jobs:
           php tests/character-honors.php
           php -n tests/character-honors.php
           php tests/item-activations.php
+          php tests/item-destruction.php
+          php tests/armor-reduction.php
+          php tests/movement-effect-projection.php
+          php tests/terrain-effects.php
       - name: Assistant classic abilities and repair
         run: |
           php tests/ability-assistant-contract.php

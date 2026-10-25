@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/item-catalog.php';
+require_once __DIR__.'/item-destruction.php';
 require_once __DIR__.'/item-activations.php';
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/item-physical.php';
@@ -333,6 +334,10 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         foreach($selected as &$item){$item['location']=['kind'=>'inventory','characterId'=>$target['id']];$item['revision']++;$items['instances'][$indices[$item['id']]]=$item;}unset($item);
         return ['items'=>normalizeItemStore($items),'result'=>['item'=>$selected[0],...($batch?['items'=>$selected]:[])]];
     }
+    if($command==='item.destroy'){
+        $destroyed=destroyInventorySelection($state,$items,$identity,$args,$owned,'rememberLinkedItemStock');
+        if($destroyed!==null)return ['items'=>normalizeItemStore($items),'result'=>$destroyed];
+    }
     $index = array_search($args['itemId'] ?? '', array_column($items['instances'], 'id'), true);
     if ($index === false) itemFailure('Objet introuvable.', 404);
     $item = $items['instances'][$index];
@@ -413,7 +418,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             $item['location'] = ['kind' => 'ground', 'sceneId' => $state['activeSceneId'], 'layerId' => $token['layerId'] ?? $state['map']['activeLayerId'] ?? 'ground', 'x' => $token['x'], 'y' => $token['y']];
         } elseif ($command === 'item.consume') {
             $template = $items['templates'][array_search($item['templateId'], array_column($items['templates'], 'id'), true)];
-            if(isset($template['active'])&&(isset($template['active']['targeting'])||isset($template['active']['trap'])||array_filter($template['active']['effects'],static fn($e)=>in_array($e['kind'],['damage','dot','condition','summon'],true)))){$result=applyItemUseCommand($state,$items,$identity,'item.activate',$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
+            if(isset($template['active'])&&(isset($template['active']['targeting'])||isset($template['active']['trap'])||array_filter($template['active']['effects'],static fn($e)=>in_array($e['kind'],['damage','dot','condition','summon','armor-reduction'],true)))){$result=applyItemUseCommand($state,$items,$identity,'item.activate',$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
             if(isset($template['active'])){
                 if(!empty($state['tacticalSync']['paused'])&&!$isGm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
                 if(($args['sceneId']??'')!==$state['activeSceneId'])itemFailure('La scène a changé.',409);$token=null;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===$source['id']&&(!isset($args['tokenId'])||$args['tokenId']===$t['id'])&&($t['layerId']??'ground')===($state['map']['activeLayerId']??'ground')){$token=$t;break;}

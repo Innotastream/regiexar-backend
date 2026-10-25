@@ -7,6 +7,11 @@ function unitUsesCharacterSheet(array $token):bool {
         &&($token['rollUsesCharacterSheet']??true)!==false&&empty($token['independent'])&&empty($token['independentClone'])&&empty($token['linkedTokenId']);
 }
 function unitIdForToken(array $token):string { return unitUsesCharacterSheet($token)?$token['characterId']:(is_string($token['id']??null)&&$token['id']!==''?'unit_'.$token['id']:''); }
+function applicationUnitControllerId(array $token,array $state=[]):string {
+    if(!empty($token['controlEffect']['controllerId']))return (string)$token['controlEffect']['controllerId'];
+    if(!empty($token['characterId'])&&(unitUsesCharacterSheet($token)||!empty($token['linkedTokenId'])))foreach(array_merge($state['characters']??[],$state['myCharacters']??[]) as $character)if(($character['id']??'')===$token['characterId'])return (string)($character['ownerPlayerId']??'');
+    return (string)(!empty($token['controllerPlayerId'])?$token['controllerPlayerId']:($token['ownerPlayerId']??''));
+}
 function unitMaps(array $state):array {
     $sceneId=$state['activeSceneId']??'';$maps=[['sceneId'=>$sceneId,'map'=>$state['map']??[]]];
     foreach($state['scenes']??[] as $scene)if($scene['id']!==$sceneId)$maps[]=['sceneId'=>$scene['id'],'map'=>$scene['combat']['map']??[]];

@@ -97,8 +97,10 @@ $restricted=$state;$restricted['items']['templates'][0]['permissions']=['read'=>
 $projection=publicItemStore($restricted['items'],$state['characters'],$owner,[],fn()=>true);
 itemCheck(!isset($projection['templates'][0]['document']), 'A forbidden read excludes the private document from its owner projection');
 itemRefused(fn()=>applyDynamicItemCommand($restricted,$owner,'item.transfer',$args),403);
-itemRefused(fn()=>applyDynamicItemCommand($restricted,$owner,'item.destroy',$args),403);
+$discarded=applyDynamicItemCommand($restricted,$owner,'item.destroy',$args);
+itemCheck($discarded['items']['instances'][0]['location']['kind']==='destroyed'&&count($discarded['items']['templates'])===count($restricted['items']['templates']),'An owner may discard an inventory instance without deleting its library model or granting physical destruction rights');
 $restricted['items']['instances'][0]['location']=['kind'=>'ground','sceneId'=>'scene','layerId'=>'ground','x'=>50,'y'=>50];
+itemRefused(fn()=>applyDynamicItemCommand($restricted,$owner,'item.destroy',[...$dropArgs,'expectedItemRevision'=>1]),403);
 itemRefused(fn()=>applyDynamicItemCommand($restricted,$owner,'item.pickup',[...$dropArgs,'expectedItemRevision'=>1]),403);
 $restricted['items']['templates'][0]['permissions']['read']=true;
 itemCheck(isset(publicItemStore($restricted['items'],$state['characters'],$owner,['sceneId'=>'scene','layerId'=>'ground'],fn()=>true)['templates'][0]['document']), 'An explicitly readable ground object reveals its document only in sight');

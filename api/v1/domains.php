@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/terrain-effects.php';
 require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/token-groups.php';
@@ -280,6 +281,7 @@ function validApplicationFogState(mixed $value): bool
 
 function validApplicationMapFogState(array $map): bool
 {
+    if(array_key_exists('terrainEffects',$map))try{normalizeApplicationTerrainEffects($map['terrainEffects']);}catch(RuntimeException){return false;}
     try{normalizePassages($map['passages']??null);}catch(RuntimeException $error){return false;}
     if (array_key_exists('lights', $map) && !validApplicationMapLights($map['lights'])) {
         return false;
@@ -2029,7 +2031,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
     }
     foreach ($previous['pendingAttacks'] ?? [] as $attack) if (is_array($attack)) $attacks[$attack['id'] ?? ''] = $attack;
-    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['targetRangeCells'])||!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion'])||!empty($attack['echoDefinitions'])||!empty($attack['echoParentId']));
+    $protected = static fn($attack):bool=>is_array($attack)&&(!empty($attack['targetRangeCells'])||!empty($attack['areaGate'])||!empty($attack['areaGateParentId'])||!empty($attack['deferredAbilityCast'])||!empty($attack['deviceOrigin'])||!empty($attack['projectileGate'])||!empty($attack['conditionRider'])||!empty($attack['infusion'])||!empty($attack['echoDefinitions'])||!empty($attack['echoParentId']));
     $preserve = static function (mixed $attack) use ($attacks,$protected): mixed {
         if (!is_array($attack)) return $attack;
         if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
@@ -2037,7 +2039,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if ($protected($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
-        foreach(['targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
+        foreach(['areaGate','areaGateParentId','targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
         if (!empty($old['echoAttackContext'])) $attack['echoAttackContext'] = $old['echoAttackContext'];
         return $attack;
     };
@@ -2081,7 +2083,7 @@ function validApplicationAbilityCueEvents(mixed $events): bool
             || !is_int($event['createdAt'] ?? null) || !is_int($event['expiresAt'] ?? null)
             || $event['expiresAt'] <= $event['createdAt'] || $event['expiresAt'] - $event['createdAt'] > 30000
             || !validApplicationAbilityCompletionCue($event['completionCue'] ?? null)
-            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message'&&applicationAbilityIcon($event['completionCue']['icon']??null)===null) return false;
+            || !is_array($event['completionCue']['sound'] ?? null)&&($event['completionCue']['visual']['kind']??'')!=='message'&&applicationAbilityIcon($event['completionCue']['icon']??null)===null&&applicationSpellVisual($event['completionCue']['spell']??null)===null) return false;
         $seen[$id] = true;
     }
     return true;

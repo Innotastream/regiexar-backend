@@ -5,6 +5,8 @@ require_once __DIR__ . '/attack-enhancements.php';
 require_once __DIR__ . '/terrain-barrier.php';
 require_once __DIR__ . '/tactical-effects.php';
 require_once __DIR__ . '/ability-stat-check.php';
+require_once __DIR__ . '/cone-area.php';
+require_once __DIR__ . '/area-cast-gate.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -46,6 +48,9 @@ function validApplicationDamageOverTime(mixed $value): bool {
         && is_int($value['turns'] ?? null) && $value['turns'] >= 1 && $value['turns'] <= 20;
 }
 function validApplicationDamageTargeting(mixed $value): bool {
+    if(is_array($value)&&($value['mode']??'')==='area'&&($value['shape']??'')==='cone')return is_int($value['lengthCells']??null)&&$value['lengthCells']>=1&&$value['lengthCells']<=20
+        &&($value['origin']??'point')==='point'&&($value['defenseSelection']??'gm-agility')==='gm-agility'
+        &&!isset($value['singleTargetHalfMana'])&&(!isset($value['affectCaster'])||is_bool($value['affectCaster']))&&(!isset($value['affectAllies'])||is_bool($value['affectAllies']))&&(!isset($value['affectEnemies'])||is_bool($value['affectEnemies']));
     return is_array($value) && ($value['mode'] ?? '') === 'area'
         && (is_int($value['radiusCells'] ?? null) || is_float($value['radiusCells'] ?? null)) && is_finite((float)$value['radiusCells']) && floor($value['radiusCells']*2)===$value['radiusCells']*2.0 && $value['radiusCells'] >= 0.5 && $value['radiusCells'] <= 20
         && (!array_key_exists('origin', $value) || in_array($value['origin'], ['target', 'caster', 'point'], true))
@@ -67,6 +72,12 @@ function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
     return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    try {
+        applicationDamageVariants($entry['damageVariants']??null);
+        applicationAbilityItemRequirement($entry['itemRequirement']??null);
+        if(applicationChanceCastGate($entry['castGate']??null)!==null && (($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['shape']??'')!=='cone'||($entry['castingStatId']??null)!==''||!empty($entry['reducedFailureCooldown'])||!empty($entry['projectile'])))return false;
+    }catch(RuntimeException){return false;}
+    if(is_array($entry['attackEnhancement']??null)&&array_key_exists('fixedArea',$entry['attackEnhancement']))return false;
     if(isset($entry['requiredWeaponAttackId'])&&(empty($entry['useWeaponDamage'])||!validApplicationDomainIdentifier($entry['requiredWeaponAttackId'],180)))return false;
     if(isset($entry['singleEnemy'])){if(($entry['effect']??'damage')!=='damage'||!is_array($entry['singleEnemy'])||!is_int($entry['singleEnemy']['damageRepetitions']??null)||$entry['singleEnemy']['damageRepetitions']<1||$entry['singleEnemy']['damageRepetitions']>10)return false;try{if(isset($entry['singleEnemy']['conditionRider'])&&dsRider($entry['singleEnemy']['conditionRider'])===null)return false;}catch(RuntimeException){return false;}}
     if(isset($entry['weaponDamageMultiplier'])&&(!is_int($entry['weaponDamageMultiplier'])||$entry['weaponDamageMultiplier']<1||$entry['weaponDamageMultiplier']>10||empty($entry['useWeaponDamage'])))return false;
@@ -125,11 +136,16 @@ function validApplicationAbilityEffects(array $entry): bool {
     return $parts !== [] && validApplicationAbilityFormula(applicationCombinedDamageFormula($parts));
 }
 function applicationAbilityEffectFields(array $entry): array {
+    if(is_array($entry['attackEnhancement']??null)&&array_key_exists('fixedArea',$entry['attackEnhancement']))
+        throw new InvalidArgumentException('Une zone fixe se crée depuis le ciblage d’un objet, sans coordonnées dans une compétence.');
     $casting = applicationAbilityCastingFields($entry);
     $effect = $entry['effect'] ?? 'damage';
     $cue = ($effect === 'complex' || array_key_exists('completionCue', $entry))
         ? ['completionCue' => normalizeApplicationAbilityCompletionCue($entry['completionCue'] ?? null)] : [];
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
+    if($gate=applicationChanceCastGate($entry['castGate']??null))$conditions['castGate']=$gate;
+    if($variants=applicationDamageVariants($entry['damageVariants']??null))$conditions['damageVariants']=$variants;
+    if($requirement=applicationAbilityItemRequirement($entry['itemRequirement']??null))$conditions['itemRequirement']=$requirement;
     if (in_array($effect, ['damage', 'healing', 'movement', 'enhancement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
         $conditions['attackEnhancement'] = applicationAttackEnhancement($entry['attackEnhancement']);
     if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
@@ -170,10 +186,11 @@ function applicationAbilityEffectFields(array $entry): array {
     return [...$casting, ...$cue, ...$conditions, ...(array_key_exists('effect', $entry) ? ['effect' => 'damage'] : []), ...($parts !== [] ? ['damageComponents' => $parts] : []),
         ...(validApplicationDamageOverTime($entry['damageOverTime'] ?? null) ? ['damageOverTime' => $entry['damageOverTime']] : []),
         ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => [
-            'mode' => 'area', 'radiusCells' => $entry['damageTargeting']['radiusCells'],
-            'origin' => $entry['damageTargeting']['origin'] ?? 'target',
+            'mode' => 'area', 'radiusCells' => $entry['damageTargeting']['lengthCells']??$entry['damageTargeting']['radiusCells'],
+            ...(($entry['damageTargeting']['shape']??'')==='cone'?['shape'=>'cone','lengthCells'=>$entry['damageTargeting']['lengthCells'],'defenseSelection'=>'gm-agility']:[]),
+            'origin' => $entry['damageTargeting']['origin'] ?? (($entry['damageTargeting']['shape']??'')==='cone'?'point':'target'),
             ...(($entry['damageTargeting']['singleTargetHalfMana']??false)===true?['singleTargetHalfMana'=>true]:[]),
-            'affectCaster' => $entry['damageTargeting']['affectCaster'] ?? true,
+            'affectCaster' => $entry['damageTargeting']['affectCaster'] ?? (($entry['damageTargeting']['shape']??'')!=='cone'),
             'affectAllies' => $entry['damageTargeting']['affectAllies'] ?? true,
             'affectEnemies' => $entry['damageTargeting']['affectEnemies'] ?? true]] : [])];
 }
@@ -325,7 +342,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
             if (is_array($attack['opposition'] ?? null) && isset($old['opposition']['accountId'])) {
                 $attack['opposition']['accountId'] = $old['opposition']['accountId'];
             }
-            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'areaAnchorOnly', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
+            foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'areaAnchorOnly', 'areaGate', 'areaGateParentId', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';

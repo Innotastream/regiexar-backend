@@ -10,7 +10,7 @@ function applicationGuardDamageParts(int $damage, ?array $basis): array
     $parts = is_array($basis['components'] ?? null) && $basis['components'] !== [] ? $basis['components'] : [[...($basis ?? []), 'finalDamage'=>$damage, 'type'=>$basis['damageType'] ?? 'physical']];
     return array_map(static fn(array $part): array => ['type'=>in_array($part['type'] ?? '', ['physical','magical','ignore'], true) ? $part['type'] : 'physical',
         'rawDamage'=>max(0,(int)($part['rawDamage'] ?? $part['finalDamage'] ?? 0)), 'finalDamage'=>max(0,(int)($part['finalDamage'] ?? 0)),
-        'armorPercent'=>max(0,min(100,(int)($part['armorPercent'] ?? 0)))], $parts);
+        'armorPercent'=>min(100,(int)($part['armorPercent'] ?? 0))], $parts);
 }
 function applicationReflectedDamageBasis(array $summary, string $type, int $damage): array
 {

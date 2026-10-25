@@ -1,3 +1,11 @@
+## Version 0.19.0 / client 4.0.0 — magie et terrains
+
+Animations spatiales liées aux attaques par catalogue de données protégé, terrains peints avec projection de visibilité stricte, souffle conique avec garde de Chance et choix MJ des esquives, réductions d’armure persistantes et aperçu de zones pendant le déplacement. Les suppressions d’inventaire permettent de choisir une quantité, avec validation atomique des propriétaires, objets liés, dispositifs et exemplaires en attente. Les composants consommés ne sont jamais remboursés par l’échec amoindri.
+
+Build candidat `client-4-0-0-elemental-effects-20261025-1`, client exact **4.0.0**, schémas SQL/session/fiche **24/22/10** conservés. **Publication autorisée le 25 octobre 2026 après audit global et qualification.** La présence de ces sources ne prouve pas le déploiement : la santé publique et le verrou exact sont contrôlés après basculement. La configuration ciblée de Mania reste à appliquer avec ses gardes lors de cette livraison.
+
+---
+
 ## Version 0.18.55 / client 3.7.9
 
 Réutilisation des masques de visibilité par géométrie et par origine, entre requêtes PHP, pour éviter les recalculs complets lors d'un changement sans impact sur la vision. Les mouvements conservent les calculs des unités immobiles. Le calcul à froid réutilise les index de murs et réduit les appels au cœur des boucles, avec comparaison octet par octet à l'ancien moteur. Brouillard, lumières, vision nocturne, dimensions et portée font partie de l'invalidation ; droits et projections restent calculés sur l'état courant.

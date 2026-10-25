@@ -8,6 +8,7 @@ require_once __DIR__ . '/special-success.php';
 require_once __DIR__ . '/complex-chain-critical.php';
 require_once __DIR__ . '/ability-messages.php';
 require_once __DIR__ . '/ability-icon.php';
+require_once __DIR__ . '/spell-visuals.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -166,6 +167,7 @@ function normalizeApplicationAbilityCompletionCue(mixed $value): array
         'sound' => $sound,
         'visual' => applicationAbilityMessage($source['visual']??null),
         ...(applicationAbilityIcon($source['icon']??null)!==null?['icon'=>applicationAbilityIcon($source['icon'])]:[]),
+        ...(applicationSpellVisual($source['spell']??null)!==null?['spell'=>applicationSpellVisual($source['spell'])]:[]),
     ];
 }
 
@@ -175,6 +177,7 @@ function validApplicationAbilityCompletionCue(mixed $value): bool
         || (int) ($value['version'] ?? 0) !== XAR_ABILITY_COMPLETION_CUE_VERSION
         || ($value['trigger'] ?? '') !== 'completed') return false;
     if (array_key_exists('icon', $value) && applicationAbilityIcon($value['icon']) === null) return false;
+    if (array_key_exists('spell', $value) && applicationSpellVisual($value['spell']) === null) return false;
     $visual = $value['visual'] ?? null;
     if (!is_array($visual) || array_is_list($visual)
         || (int) ($visual['version'] ?? 0) !== 1 || !in_array($visual['kind']??'',['none','message'],true)) return false;
@@ -193,6 +196,7 @@ function validApplicationAbilityCompletionCue(mixed $value): bool
 function applicationAbilityCompletionCueFor(array $ability): array
 {
     $base = is_array($ability['completionCue'] ?? null) ? $ability['completionCue'] : [];
+    unset($base['spell']);
     return normalizeApplicationAbilityCompletionCue([
         ...$base,
         'icon' => ['url' => $ability['image'] ?? '', 'label' => $ability['name'] ?? 'Compétence'],

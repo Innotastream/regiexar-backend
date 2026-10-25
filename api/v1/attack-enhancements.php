@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/unit-authority.php';
 
@@ -57,13 +58,13 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
     $map=($state['activeSceneId']??$state['activeScene']['id']??'')===$sceneId?($state['map']??[]):[];
     if($map===[])foreach($state['scenes']??[] as $scene)if(($scene['id']??'')===$sceneId)$map=$scene['combat']['map']??[];
     foreach($received as $effect){
-        $image = $effect['abilityImage'] ?? null;
-        if (!$image) foreach ($tokens as $caster) if (($caster['id'] ?? '') === ($effect['casterTokenId'] ?? '')) {
+        $fixed=isset($effect['fixedArea']);$image = $fixed?null:($effect['abilityImage'] ?? null);
+        if (!$fixed && !$image) foreach ($tokens as $caster) if (($caster['id'] ?? '') === ($effect['casterTokenId'] ?? '')) {
             $abilities = $caster['abilities'] ?? [];
             if (unitUsesCharacterSheet($caster)) foreach ($state['characters'] ?? [] as $sheet) if ($sheet['id'] === $caster['characterId']) $abilities = $sheet['abilities'] ?? [];
             foreach ($abilities as $ability) if (($ability['id'] ?? '') === ($effect['abilityId'] ?? '')) $image = $ability['image'] ?? null;
         }
-        $result[] = ['id' => (string) $effect['id'], 'label' => (string) ($effect['label'] ?? 'Effet actif'),
+        $result[] = ['id' => (string) $effect['id'], 'label' => $fixed?'Zone d’affaiblissement d’armure':(string) ($effect['label'] ?? 'Effet actif'),
             'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
     }
     return array_slice($result, 0, 100);
@@ -71,7 +72,7 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
 
 function applicationTransferAttackEnhancements(array $effects, array $source, string $fromSceneId, string $toSceneId, array $initiative): array {
     $holder = applicationEnhancementHolder($source);
-    return array_map(static fn(array $effect): array => $effect['sceneId'] === $fromSceneId && $effect['holder'] === $holder
+    return array_map(static fn(array $effect): array => empty($effect['fixedArea']) && $effect['sceneId'] === $fromSceneId && $effect['holder'] === $holder
         ? [...$effect, 'sceneId' => $toSceneId, 'targetTokenId' => $source['id'],
             'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0)]
         : $effect, $effects);
@@ -90,6 +91,10 @@ function applicationAttackEnhancement(mixed $value): ?array {
         if(!$a['affectCaster']&&!$a['affectAllies']&&!$a['affectEnemies'])return null;
         $definition['aura']=array_intersect_key($a,array_flip(['radiusCells','affectCaster','affectAllies','affectEnemies']));
     }
+    if(isset($value['fixedArea'])){
+        $fixed=applicationFixedEffectArea($value['fixedArea']);if($fixed===null||isset($value['aura'])||($definition['mode']??'')!=='stats')return null;
+        $definition['fixedArea']=$fixed;
+    }
     return [...$definition,...(($value['target']??'')==='self'?['target'=>'self']:[]),...(($value['criticalFailureAsFailure']??false)===true?['criticalFailureAsFailure'=>true]:[])];
 }
 
@@ -97,15 +102,16 @@ function applicationActiveAttackEnhancements(array $source,array $state,string $
     if(empty($source['id']))return [];
     return array_values(array_filter($state['attackEnhancements']??[],static fn($effect)=>
         (($effect['sceneId']??'')===$sceneId||($effect['expiry']??'')==='rests')&&($effect['remainingTurns']??0)>0&&applicationAttackEnhancement($effect)!==null
-        &&(($effect['trigger']??'')==='enchanted-weapon'?enchantmentOnUnit($effect,$source,$state):isset($effect['aura'])||($effect['holder']??'')===applicationEnhancementHolder($source))
-        &&(!isset($effect['aura'])||applicationEnhancementAuraAffects($effect,$source,$state,$sceneId))));
+        &&(($effect['trigger']??'')==='enchanted-weapon'?enchantmentOnUnit($effect,$source,$state):isset($effect['aura'])||isset($effect['fixedArea'])||($effect['holder']??'')===applicationEnhancementHolder($source))
+        &&(!isset($effect['aura'])||applicationEnhancementAuraAffects($effect,$source,$state,$sceneId))
+        &&(!isset($effect['fixedArea'])||applicationFixedAreaAffects($effect,$source,$state,$sceneId))));
 }
 function applicationEnhancementAuraAffects(array $effect,array $source,array $state,string $sceneId):bool {
     $map=($state['activeSceneId']??$state['activeScene']['id']??'')===$sceneId?($state['map']??[]):[];
     if($map===[])foreach($state['scenes']??[] as $scene)if(($scene['id']??'')===$sceneId)$map=$scene['combat']['map']??[];
     $tokens=$map['tokens']??[];$caster=null;foreach($tokens as $token)if($token['id']===($effect['casterTokenId']??''))$caster=$token;
     if(!$caster)return false;
-    $controller=static fn($token)=>(string)($token['controllerPlayerId']??$token['ownerPlayerId']??$token['controlEffect']['controllerId']??'');
+    $controller=static fn($token)=>applicationUnitControllerId($token,$state);
     $recipients=isset($source['resources'])?array_values(array_filter($tokens,static fn($token)=>applicationEnhancementHolder($token)===applicationEnhancementHolder($source))):[$source];
     $a=$effect['aura'];$near=onlineDamageAreaTargets($recipients,$caster,$map,(float)$a['radiusCells'],true);
     foreach($recipients as $recipient)foreach($near as $token)if(($token['id']??'')===($recipient['id']??null)&&applicationDamageAreaAffects($a,$caster['id'],$controller($caster),$token['id'],$controller($token)))return true;
@@ -113,7 +119,7 @@ function applicationEnhancementAuraAffects(array $effect,array $source,array $st
 }
 function onlineAttackEnhancementState(PDO $connection,array &$records,array $pending,string $sceneId,?array $activity=null):array {
     $activity??=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
-    if(!array_filter($activity['attackEnhancements']??[],static fn($effect)=>isset($effect['aura'])&&($effect['sceneId']??'')===$sceneId&&($effect['remainingTurns']??0)>0))return $activity;
+    if(!array_filter($activity['attackEnhancements']??[],static fn($effect)=>(isset($effect['aura'])||isset($effect['fixedArea']))&&($effect['sceneId']??'')===$sceneId&&($effect['remainingTurns']??0)>0))return $activity;
     if(!isset($records['map:'.$sceneId]))$records=array_replace($records,applicationDomainRecords($connection,['map:'.$sceneId]));
     $map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);
     $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
@@ -157,13 +163,31 @@ function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, a
         if(($effect['expiry']??'')==='after-next-turn'){if(empty($effect['hasStarted'])){$effect['hasStarted']=true;$remaining[]=$effect;}continue;}
         $effect['remainingTurns']--;if($effect['remainingTurns']>0)$remaining[]=$effect;
     }return $remaining;}
-    if (($previous['active'] ?? false) === true && ($initiative['active'] ?? false) !== true)
-        return array_values(array_filter($effects, static fn(array $effect): bool => $effect['sceneId'] !== $sceneId || ($effect['expiry']??'')==='rests'));
+    if (($previous['active'] ?? false) === true && ($initiative['active'] ?? false) !== true) {
+        $remaining=[];
+        foreach($effects as $effect) {
+            if($effect['sceneId']!==$sceneId||($effect['expiry']??'')==='rests')$remaining[]=$effect;
+            elseif(isset($effect['fixedArea']))$remaining[]=[...$effect,'combatId'=>'','lastRound'=>0];
+        }
+        return $remaining;
+    }
+    if(($initiative['active']??false)===true&&(($previous['active']??false)!==true||($previous['combatId']??'')!==($initiative['combatId']??'')))
+        $effects=array_map(static fn($effect)=>isset($effect['fixedArea'])&&($effect['sceneId']??'')===$sceneId
+            ? [...$effect,'combatId'=>$initiative['combatId']??'','lastRound'=>max(1,(int)($initiative['round']??1))] : $effect,$effects);
     if (($initiative['active'] ?? false) !== true || (int) ($initiative['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) return $effects;
     $tokenId = $initiative['order'][$initiative['currentIndex'] ?? 0] ?? '';
     $remaining = [];
     foreach ($effects as $effect) {
         if ($effect['sceneId'] !== $sceneId || ($effect['expiry']??'')==='rests') { $remaining[] = $effect; continue; }
+        if(isset($effect['fixedArea'])){
+            $round=max(1,(int)($initiative['round']??1));
+            if(($previous['active']??false)!==true||($effect['combatId']??'')!==($initiative['combatId']??'')) {
+                $remaining[]=[...$effect,'combatId'=>$initiative['combatId']??'','lastRound'=>$round];continue;
+            }
+            $last=max((int)($effect['lastRound']??$previous['round']??1),(int)($previous['round']??1));
+            $effect['remainingTurns']-=max(0,$round-$last);$effect['lastRound']=max($last,$round);
+            if($effect['remainingTurns']>0)$remaining[]=$effect;continue;
+        }
         if (($effect['combatId'] ?? '') !== '' && $effect['combatId'] !== ($initiative['combatId'] ?? '')) continue;
         if(($effect['expiry']??'')==='after-next-turn'){if(!empty($effect['hasStarted'])&&($previous['order'][$previous['currentIndex']??0]??'')===$effect['targetTokenId'])continue;if($tokenId===$effect['targetTokenId'])$effect['hasStarted']=true;$remaining[]=$effect;continue;}
         if ($effect['targetTokenId'] === $tokenId && (int) ($effect['lastTurnSerial'] ?? 0) < $initiative['turnSerial']) {

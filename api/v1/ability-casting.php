@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/character-statistics.php';
+require_once __DIR__ . '/area-cast-gate.php';
 
 require_once __DIR__ . '/ability-validation.php';
 require_once __DIR__ . '/combat-round-lifecycle.php';
@@ -110,6 +111,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $attack ? normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0) : 0,
         $attack && ($arguments['opposed'] ?? false) === true,
         ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
+        ...(array_key_exists('variantId',$arguments)?[['variantId'=>$arguments['variantId']]]:[]),
         ...($attack && (array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -205,6 +207,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
         $statRecords=[];
         $statSource=[...$source,'stats'=>onlineEnhancedStatRows($connection,$statRecords,[],$source,$sceneId,$activity)];
         $plan = applicationAbilityCastingPlan($ability, $statSource, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId, $manaMultiplier);
+        if($requirement=applicationAbilityItemRequirement($ability['itemRequirement']??null))$plan['itemRequirement']=$requirement;
         $plan['criticalFailureAsFailure']=applicationRollCriticalFailureProtected($source,onlineAttackEnhancementState($connection,$statRecords,[],$sceneId,$activity),$sceneId);
         if ($stationIndex !== null) $plan['manaProviderDeviceId'] = $station['id'];
         return $plan;
@@ -304,14 +307,14 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
 // Apply attempt costs and/or recharge in the same locked transaction. Read
 // pending payloads first so healing oneself never restores resources just spent.
 function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public'): string {
-    if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)&&($cue['visual']['kind']??'')!=='message'&&applicationAbilityIcon($cue['icon']??null)===null) return '';
+    if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)&&($cue['visual']['kind']??'')!=='message'&&applicationAbilityIcon($cue['icon']??null)===null&&applicationSpellVisual($cue['spell']??null)===null) return '';
     $now = (int) floor(microtime(true) * 1000);
     $id = 'cue-' . bin2hex(random_bytes(12));
     $events = array_values(array_filter(is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > $now));
     $events[] = ['id' => $id, 'sceneId' => $sceneId, 'layerId' => $layerId, 'sourceTokenId' => $sourceTokenId,
         'visibility' => $visibility === 'gm' ? 'gm' : 'public',
-        'createdAt' => $now, 'expiresAt' => $now + (($cue['visual']['kind']??'')==='message'?$cue['visual']['durationMs']:30000), 'completionCue' => $cue];
+        'createdAt' => $now, 'expiresAt' => $now + (applicationSpellVisualDuration($cue['spell']??null)?:((($cue['visual']['kind']??'')==='message'?$cue['visual']['durationMs']:30000))), 'completionCue' => $cue];
     $activity['abilityCueEvents'] = array_slice($events, -40);
     return $id;
 }
@@ -346,6 +349,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     if(($clock['active']??false)!==true){$plan['cooldownRounds']=0;$plan['reducedFailureEnabled']=false;}
     $now = (int) floor(microtime(true) * 1000);
     if ($payCosts) {
+    if(isset($plan['itemRequirement']))$cast['consumedItemIds']=onlineConsumeAbilityItems($connection,$records,$pending,$source,$plan['itemRequirement']);
     onlineCloseFixedEscapeWindows($connection,$records,$pending,(string)($source['id']??''),(string)$plan['sceneId']);
     if(($cast['outcome']['joker']??false)===true)onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$plan['sceneId']);
     onlineRecordCharacterLuckD100(
@@ -481,7 +485,8 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $activity['actionTimers'] = $timers;
     }
     $completionCue=applicationOutcomeCompletionCue($plan,$cast);
-    $cueEventId = is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'||applicationAbilityIcon($completionCue['icon']??null)!==null
+    if(($cast['success']??false)===true&&empty($plan['deferCue'])&&applicationSpellVisual($plan['spellVisual']??null)!==null)$completionCue['spell']=applicationSpellVisual($plan['spellVisual']);
+    $cueEventId = empty($plan['deferCue'])&&(is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'||applicationAbilityIcon($completionCue['icon']??null)!==null||applicationSpellVisual($completionCue['spell']??null)!==null)
         ? appendApplicationAbilityCueEvent($activity, $completionCue, (string) $plan['sceneId'],
             (string) ($cast['roll']['mapEvent']['layerId'] ?? $source['layerId'] ?? 'ground'), (string) ($source['id'] ?? ''),
             ($source['hidden'] ?? false) || ($cast['roll']['visibility'] ?? '') === 'gm' ? 'gm' : 'public') : '';
@@ -558,7 +563,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if ($index < 0) rejectOnlineCommand($connection, 404, 'Cette compétence n’existe plus.', 'token_ability_missing');
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
-    if($continuation===null && (!empty($ability['attackEnhancement'])||!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
+    if($continuation===null && (!empty($ability['castGate'])||!empty($ability['damageVariants'])||!empty($ability['attackEnhancement'])||!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
     $extended = ($ability['activationHpMaxPercent'] ?? 0)>0 || ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);
