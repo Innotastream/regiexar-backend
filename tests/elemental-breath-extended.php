@@ -23,9 +23,26 @@ function extendedAreaFixture():MemoryConnection{
  $db->put('items',['version'=>1,'templates'=>[['id'=>'extended-infusion','kind'=>'object','name'=>'Infusion étendue','description'=>'Composant','image'=>'']],'instances'=>$instances]);return $db;
 }
 function extendedAreaLaunch(MemoryConnection $db,string $source='token-player',string $request='extended-area-attempt-0001'):TestResponse{return runCommand($db,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>$source,'targetTokenId'=>$source,'attackKind'=>'ability','attackId'=>'extended-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'fire','requestId'=>$request]);}
+function extendedAreaFixtureChance(MemoryConnection $db,string $id,int $raw):void{
+ $activity=$db->payload('activity');$outcome=classifyOnlineD100Outcome($raw,50);
+ foreach($activity['pendingAttacks'] as &$attack)if($attack['id']===$id)$attack['areaGate']['chanceOutcome']=$outcome;unset($attack);
+ foreach($activity['attackReceipts'] as &$receipt)if($receipt['attack']['id']===$id)$receipt['attack']['areaGate']['chanceOutcome']=$outcome;unset($receipt);
+ $db->put('activity',$activity);
+}
+// Exercise this recipe's deterministic setup from both initial categories. The
+// real critical-failure behavior and retained costs stay covered in elemental-breath.php.
+foreach([100,70] as $initialChance){
+ $db=extendedAreaFixture();$created=extendedAreaLaunch($db);extendedBreathCheck($created->status===200,'La préparation contrôlée doit ouvrir le tableau');$id=$db->payload('activity')['pendingAttacks'][0]['id'];
+ extendedAreaFixtureChance($db,$id,$initialChance);$initial=$db->payload('activity');$expected=$initialChance===100?'critical-failure':'failure';
+ extendedBreathCheck($initial['pendingAttacks'][0]['areaGate']['chanceOutcome']['code']===$expected&&$initial['attackReceipts'][0]['attack']['areaGate']['chanceOutcome']['code']===$expected,'La catégorie initiale contrôlée existe dans les deux copies');
+ extendedAreaFixtureChance($db,$id,70);
+ $resolved=runCommand($db,'token.attack.area.resolve',['attackId'=>$id,'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>['extended-ally-clone']],true,'account-gm');$child=null;foreach($resolved->body['areaAttacks']??[] as $attack)if($attack['targetTokenId']==='extended-ally-clone')$child=$attack;
+ extendedBreathCheck($resolved->status===200&&($child['status']??'')==='awaiting-opposition','La recette neutralise aussi le reçu autoritaire après Chance '.$initialChance);
+}
 $db=extendedAreaFixture();$created=extendedAreaLaunch($db);extendedBreathCheck($created->status===200,'Le lanceur doit ouvrir le tableau : '.json_encode($created->body));$activity=$db->payload('activity');$gate=$activity['pendingAttacks'][0];
 // This recipe targets defense/projection, independently of the random Chance category.
-$activity['pendingAttacks'][0]['areaGate']['chanceOutcome']=classifyOnlineD100Outcome(70,50);$db->put('activity',$activity);
+// Resolution reads the receipt, not the pending/display copy alone.
+extendedAreaFixtureChance($db,$gate['id'],70);
 $resolved=runCommand($db,'token.attack.area.resolve',['attackId'=>$gate['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>['extended-ally-clone']],true,'account-gm');extendedBreathCheck($resolved->status===200,'La table doit accepter une esquive alliée : '.json_encode($resolved->body));$child=null;foreach($resolved->body['areaAttacks']??[] as $attack)if($attack['targetTokenId']==='extended-ally-clone')$child=$attack;extendedBreathCheck(($child['status']??'')==='awaiting-opposition','L’allié du même propriétaire attend son opposition');
 $state=domainsToApplicationState(applicationDomainRecords($db),$db->revision);$view=publicPlayerState($state,['id'=>'account-player','display_name'=>'Joueur'],[]);$prompt=null;foreach($view['pendingOppositions']??[] as $attack)if($attack['id']===$child['id'])$prompt=$attack;
 extendedBreathCheck(is_array($prompt),'Le même compte voit l’esquive de son clone allié');extendedBreathCheck(($prompt['defenseStatId']??'')==='character-stat-agility'&&($prompt['defenseRollMode']??'')==='normal','La projection n’offre que l’Agilité normale');
