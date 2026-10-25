@@ -1,3 +1,11 @@
+## Version 0.19.1 / client 4.0.1 — teintes des terrains
+
+Les matières Acide et Foudre et la teinte par zone sont validées et projetées par le serveur. Les traits de même matière ne sont fusionnés que s’ils partagent la même teinte ; les parties masquées et les identifiants privés restent exclus. Une teinte nulle conserve la représentation historique sans nouveau champ. Les droits MJ, limites et schémas SQL/session/fiche 24/22/10 restent inchangés.
+
+Build `client-4-0-1-terrain-hue-vfx-20261025-1`, client exact 4.0.1. Aucun import de fiche ou ajout de stock ; ne pas rejouer la dotation de Mania déjà appliquée en 4.0.0. Qualification, déploiement et politique publique sont constatés séparément.
+
+---
+
 ## Version 0.19.0 / client 4.0.0 — magie et terrains
 
 Animations spatiales liées aux attaques par catalogue de données protégé, terrains peints avec projection de visibilité stricte, souffle conique avec garde de Chance et choix MJ des esquives, réductions d’armure persistantes et aperçu de zones pendant le déplacement. Les suppressions d’inventaire permettent de choisir une quantité, avec validation atomique des propriétaires, objets liés, dispositifs et exemplaires en attente. Les composants consommés ne sont jamais remboursés par l’échec amoindri.
