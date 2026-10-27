@@ -6837,7 +6837,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         break;
                     }
                 }
-                $areaAttackResults = [];
+                $areaAttackResults = []; $areaVisualAttacks = [];
                 if (count($weaponTargets)>1 || $areaTargetCandidates !== [] && ($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0) {
                     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                     foreach ($areaTargetCandidates as $areaCandidate) {
@@ -6926,6 +6926,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                             'requestSignature' => $attackRequestSignature,
                             'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS, 'attack' => $areaAttack];
                         $areaAttackResults[] = $isGm ? $areaAttack : publicOnlineAttackResult($areaAttack, true, false);
+                        $areaVisualAttacks[] = $areaAttack;
                     }
                     $activity = $pending['activity']['payload'] ?? $activity;
                 }
@@ -6936,6 +6937,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,
                     'attack' => $attack,
                 ];
+                appendApplicationAttackVisualEvent($activity,$attack,$map,$equipmentState['items']??[],$areaVisualAttacks);
                 $activity['attackReceipts'] = $receipts;
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 $attackActivityDetail = onlineAttackHistoryDetail($attack, false);
@@ -7371,6 +7373,13 @@ function commandOnlineState(PDO $connection, array $configuration): never
             } else {
                 $attack['status'] = 'rejected';
                 $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+            }
+            if($decision==='approve'&&!empty($attack['hit']['outcome']['requiresGmValidation'])){
+                $visualState=onlineEquipmentState($connection,$records,$pending,(string)$attack['sceneId']);
+                $visualMap=[...$visualState['map'],'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,(string)$attack['sceneId'])];
+                $activity=$pending['activity']['payload']??$activity;
+                appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$visualState['items'],[],true);
+                queueOnlineDomainUpsert($pending,$records,'activity',$activity);
             }
             unset($attack['deferredAbilityCast'], $attack['oppositionAbility'], $attack['cast']['pendingValidation']);
             $attack = applyOnlineAttackConditions($connection, $records, $pending, $attack);

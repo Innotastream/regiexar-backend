@@ -11,6 +11,17 @@ $fields=applicationAbilityEffectFields(breathAbility());breathCheck(isset($field
 $map=['gridSize'=>50,'naturalWidth'=>1000,'naturalHeight'=>1000,'activeLayerId'=>'ground'];$source=['id'=>'source','x'=>10,'y'=>50,'size'=>50,'layerId'=>'ground'];$target=['id'=>'large','x'=>36,'y'=>50,'size'=>100,'layerId'=>'ground'];
 breathCheck(count(applicationConeAreaTargets([$target],$source,['x'=>90,'y'=>50],$map,4))===1,'Large footprint must intersect the last cone row');
 breathCheck(applicationConeAreaTargets([['id'=>'behind','x'=>5,'y'=>50,'size'=>20]],$source,['x'=>90,'y'=>50],$map,4)===[],'Cone must not extend behind the source');
+foreach([40,200,400] as $size)foreach([[1,0],[-1,0],[0,1],[0,-1],[M_SQRT1_2,M_SQRT1_2]] as [$ux,$uy]){
+ $large=[...$source,'x'=>50,'y'=>50,'size'=>$size];$radius=$size/2;$g=applicationConeAreaGeometry($large,['x'=>50+$ux*40,'y'=>50+$uy*40],$map,4);
+ breathCheck($g!==null&&abs($g['x']-(500+$ux*$radius))<1e-8&&abs($g['y']-(500+$uy*$radius))<1e-8,'A large caster emits from its real edge in every direction');
+ breathCheck(applicationConeAreaGeometry($large,['x'=>50+$ux*$radius*.8/10,'y'=>50+$uy*$radius*.8/10],$map,4)===null,'A caster cannot aim inside its own body');
+}
+$mount=[...$source,'id'=>'mount','x'=>50,'y'=>50,'size'=>300];$rider=[...$source,'id'=>'rider','x'=>5,'y'=>5,'size'=>20,'mountedOnTokenId'=>'mount'];$mountedMap=[...$map,'tokens'=>[$mount,$rider]];
+breathCheck(applicationConeAreaGeometry($rider,['x'=>80,'y'=>50],$mountedMap,4)['x']===650.0&&applicationConeAreaGeometry($rider,['x'=>55,'y'=>50],$mountedMap,4)===null,'A mounted caster uses its mount footprint');
+$invalidDb=breathFixture();$invalidToken=$invalidDb->payload('token:scene-one:token-player');$invalidMap=$invalidDb->payload('map:scene-one');$invalidBefore=$invalidDb->domains;
+$inside=['x'=>$invalidToken['x']+($invalidToken['size']??40)/4/(float)$invalidMap['naturalWidth']*100,'y'=>$invalidToken['y']];
+$invalidCast=runCommand($invalidDb,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'ability-mania-elemental-breath','targetPoint'=>$inside,'variantId'=>'fire','requestId'=>'inside-caster-body-0001']);
+breathCheck($invalidCast->status===400&&$invalidDb->domains===$invalidBefore,'A point inside the body is refused before costs, components or rolls');
 $db=breathFixture();$created=runCommand($db,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'ability-mania-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'acid','requestId'=>'elemental-breath-attempt-0001']);
 breathCheck($created->status===200,'Gate creation failed: '.json_encode($created->body));
 $attack=$db->payload('activity')['pendingAttacks'][0];breathCheck(($attack['validationKind']??'')==='area-gate'&&$attack['damageType']==='physical','Chance must defer the entire cone with selected damage nature');

@@ -1,3 +1,9 @@
+## Version 0.19.2 / client 4.0.2 — visée et animations de combat
+
+Sources préparées le 27 octobre 2026, build `client-4-0-2-targeted-melee-vfx-20261027-1`. Les zones et cônes conservent leur confirmation avant lancement ; les attaques de mêlée émettent un seul événement visuel autoritatif par frappe, avec projection stricte des deux pions visibles. Les profils suivent les modèles des armes effectivement sélectionnées. Les compétences à dégâts configurés utilisent leurs affectations propres. Aucun import, stock, migration SQL ou déploiement n’est commandé par ce push.
+
+---
+
 ## Version 0.19.1 / client 4.0.1 — teintes des terrains
 
 Les matières Acide et Foudre et la teinte par zone sont validées et projetées par le serveur. Les traits de même matière ne sont fusionnés que s’ils partagent la même teinte ; les parties masquées et les identifiants privés restent exclus. Une teinte nulle conserve la représentation historique sans nouveau champ. Les droits MJ, limites et schémas SQL/session/fiche 24/22/10 restent inchangés.

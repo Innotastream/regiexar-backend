@@ -65,6 +65,7 @@ jobs:
           php tests/ability-casting-contract.php
           php tests/ability-stat-check-contract.php
           php tests/spell-visuals.php
+          php tests/melee-visuals.php
           php tests/elemental-breath.php
           php tests/elemental-breath-extended.php
           php tests/audit-v4-combat-identity.php

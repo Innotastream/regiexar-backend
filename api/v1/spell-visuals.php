@@ -1,9 +1,12 @@
 <?php
 declare(strict_types=1);
-function applicationSpellVisualDuration(mixed $value): int { $spell=applicationSpellVisual($value);return $spell===null?0:(['elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400][$spell['presetId']]??0); }
+require_once __DIR__.'/melee-visuals.php';
+function applicationSpellVisualCatalogue(): array { return ['elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
+function applicationSpellVisualDuration(mixed $value): int { $spell=applicationSpellVisual($value);return $spell===null?0:($spell['placement']==='melee'?applicationMeleeVisualCatalogue()[$spell['presetId']]+1600:(applicationSpellVisualCatalogue()[$spell['presetId']]??0)); }
 
 function applicationSpellVisual(mixed $value): ?array {
-    if(!is_array($value)||($value['version']??null)!==1||!in_array($value['presetId']??null,['elemental-fire','elemental-ice','elemental-lightning','elemental-acid'],true)
+    if(is_array($value)&&($value['placement']??'')==='melee')return applicationMeleeVisual($value);
+    if(!is_array($value)||($value['version']??null)!==1||!is_string($value['presetId']??null)||!array_key_exists($value['presetId'],applicationSpellVisualCatalogue())
         ||!is_string($value['sceneId']??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value['sceneId'])!==1
         ||!in_array($value['layerId']??null,['ground','upper','basement'],true)||!in_array($value['placement']??null,['source','target','area','cone'],true))return null;
     $point=static fn($p)=>is_array($p)&&array_reduce(['x','y'],static fn($ok,$key)=>$ok&&(is_int($p[$key]??null)||is_float($p[$key]??null))&&is_finite((float)$p[$key])&&$p[$key]>=0&&$p[$key]<=100,true);
@@ -36,6 +39,7 @@ function applicationPublicSpellVisual(mixed $value,array $context): ?array {
     if($spell===null||!empty($context['paused'])||$spell['sceneId']!==($context['sceneId']??'')||$spell['layerId']!==($context['layerId']??'')
         ||empty($context['sourceTokenId'])||!in_array($context['sourceTokenId'],$ids,true)||!$visible($spell['source']['x'],$spell['source']['y']))return null;
     if(!empty($spell['followAnchor'])&&!in_array($spell['anchorTokenId'],$ids,true))return null;
+    if($spell['placement']==='melee'&&($spell['sourceTokenId']!==$context['sourceTokenId']||!in_array($spell['targetTokenId'],$ids,true)||!$visible($spell['targetPoint']['x'],$spell['targetPoint']['y'])))return null;
     if(in_array($spell['placement'],['target','area'],true)&&!$visible($spell['targetPoint']['x'],$spell['targetPoint']['y']))return null;
     return $spell;
 }

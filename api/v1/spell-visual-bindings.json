@@ -8,7 +8,9 @@
         "fire": "elemental-fire",
         "ice": "elemental-ice",
         "lightning": "elemental-lightning",
-        "acid": "elemental-acid"
+        "acid": "elemental-acid",
+        "darkness": "elemental-darkness",
+        "roots": "elemental-roots"
       }
     }
   }

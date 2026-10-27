@@ -6,7 +6,7 @@ function applicationConeAreaGeometry(array $source,array $point,array $map,int $
     $width=(float)($level['naturalWidth']??$map['naturalWidth']??0);$height=(float)($level['naturalHeight']??$map['naturalHeight']??0);$grid=(float)($map['gridSize']??0);
     if($length<1||$length>20||$width<=0||$height<=0||$grid<=0)return null;
     $sx=(float)$source['x']*$width/100;$sy=(float)$source['y']*$height/100;$dx=((float)$point['x']-(float)$source['x'])*$width/100;$dy=((float)$point['y']-(float)$source['y'])*$height/100;$distance=hypot($dx,$dy);
-    if(!is_finite($distance)||$distance<1e-6)return null;$ux=$dx/$distance;$uy=$dy/$distance;$offset=max(0,(float)($source['size']??40))/2;
+    $offset=max(0,(float)($source['size']??40))/2;if(!is_finite($distance)||$distance<=max(1e-6,$offset+1e-6))return null;$ux=$dx/$distance;$uy=$dy/$distance;
     return ['width'=>$width,'height'=>$height,'grid'=>$grid,'layerId'=>$layer,'x'=>$sx+$ux*$offset,'y'=>$sy+$uy*$offset,'ux'=>$ux,'uy'=>$uy,'length'=>$length];
 }
 function applicationConeAreaTargets(array $tokens,array $source,array $point,array $map,int $length): array {
