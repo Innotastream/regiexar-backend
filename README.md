@@ -1,3 +1,11 @@
+## Version 0.19.3 / client 4.1.0 — mains et armes d’inventaire
+
+Comparaison des chargements normalisés sans dépendre de l’ordre des clés JSON. Les compétences résolvent les armes réellement possédées par leur unité sans modifier les mains persistées ; les attaques de base gardent leur exigence d’équipement. Projection des armes utilisables depuis l’inventaire réservée au propriétaire. Schéma SQL 24 conservé.
+
+Émo-sphère utilise le registre commun d’effets cumulables : Protection vaut 25 % par stack, consomme jusqu’à 100 points par impact physique ou magique et conserve le surplus. Les dégâts ignorant l’armure passent sans consommation. La commande MJ `combat.effect.stack` ajuste un stack à la fois avec autorité et reçu idempotent. Les fiches concurrentes ne restaurent pas une réserve déjà dépensée. Les événements visuels attendent la résolution des dégâts ; la cristallisation reste transitoire. Candidat local, sans push ni déploiement.
+
+Les oppositions peuvent configurer un coût à la tentative et un effet déclenché par la réussite du jet, indépendamment du gagnant du duel. Riposte désarmante utilise Agilité, 5 fatigue, 3 tours, 2 usages par repos court et aucun échec amoindri. Un jet d’Agilité réussi désarme un tour complet, même si l’attaque inflige ses dégâts ; les remarquables conservent leur validation MJ. Les règles et le visuel sont des données protégées, les primitives d’opposition et d’état temporisé restent communes.
+
 ## Version 0.19.2 / client 4.0.2 — visée et animations de combat
 
 Sources préparées le 27 octobre 2026, build `client-4-0-2-targeted-melee-vfx-20261027-1`. Les zones et cônes conservent leur confirmation avant lancement ; les attaques de mêlée émettent un seul événement visuel autoritatif par frappe, avec projection stricte des deux pions visibles. Les profils suivent les modèles des armes effectivement sélectionnées. Les compétences à dégâts configurés utilisent leurs affectations propres. Aucun import, stock, migration SQL ou déploiement n’est commandé par ce push.

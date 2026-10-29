@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__.'/ability-movement-lock.php';
 require_once __DIR__.'/device-items.php';
 
 function onlineTokenLayerId(array $token, array $map = []): string
@@ -192,13 +193,14 @@ function applyOnlineTokenGroupCommand(PDO $connection, array &$records, array &$
     $sceneId = (string) ($arguments['sceneId'] ?? '');
     if (!validApplicationDomainKey('map:' . $sceneId)) rejectOnlineCommand($connection, 400, 'Scène invalide.', 'invalid_scene');
     $mapKey = 'map:' . $sceneId;
-    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]), onlineSceneTokenRecords($connection, $sceneId));
+    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey, 'activity']), onlineSceneTokenRecords($connection, $sceneId));
     $map = applicationDomainPayload($records, $mapKey);
     if (!is_int($arguments['mapRevision'] ?? null) || $arguments['mapRevision'] !== (int) ($records[$mapKey]['revision'] ?? 0)) rejectOnlineCommand($connection, 409, 'La carte ou ses murs ont changé. Réessayez après actualisation.', 'stale_map');
     $map['tokens'] = [];
     foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $map['tokens'][] = applicationDomainPayload($records, $key);
     try { $placements = planApplicationTokenGroupTransform($map, $arguments); }
     catch (DomainException $error) { rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'group_transform_refused'); }
+    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens']);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
     $tokens = []; $domains = [];
     foreach ($placements as $placement) {
         $key = onlineTokenDomainKey($sceneId, $placement['id']);
@@ -261,13 +263,14 @@ function applyOnlineTokenLayersCommand(PDO $connection, array &$records, array &
     $sceneId = (string) ($arguments['sceneId'] ?? '');
     if (!validApplicationDomainKey('map:' . $sceneId)) rejectOnlineCommand($connection, 400, 'Scène invalide.', 'invalid_scene');
     $mapKey = 'map:' . $sceneId;
-    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]), onlineSceneTokenRecords($connection, $sceneId));
+    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey, 'activity']), onlineSceneTokenRecords($connection, $sceneId));
     $map = applicationDomainPayload($records, $mapKey);
     if (!is_int($arguments['mapRevision'] ?? null) || $arguments['mapRevision'] !== (int) ($records[$mapKey]['revision'] ?? 0)) rejectOnlineCommand($connection, 409, 'La carte ou ses murs ont changé. Réessayez après actualisation.', 'stale_map');
     $map['tokens'] = [];
     foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $map['tokens'][] = applicationDomainPayload($records, $key);
     try { $placements = planApplicationTokenLayers($map, $arguments); }
     catch (DomainException $error) { rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'token_layers_refused'); }
+    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens']);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
     $tokens = []; $domains = [];
     foreach ($placements as $placement) {
         $key = onlineTokenDomainKey($sceneId, $placement['id']);

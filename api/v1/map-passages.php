@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/ability-movement-lock.php';
 require_once __DIR__.'/attack-enhancements.php';
 
 const PASSAGE_USE_RANGE_CELLS=2.5;
@@ -112,6 +113,7 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if(!$isGm&&($state['tacticalSync']['paused']??false))passageFailure('La table est temporairement verrouillée par le MJ.',423);
         if(!$isGm&&($sceneId!==$state['activeSceneId']||$entry['layerId']!==($map['activeLayerId']??'ground')))passageFailure('Ce passage n’est plus sur la carte diffusée.');
         $index=array_search($args['tokenId']??'',array_column($map['tokens']??[],'id'),true);if($index===false)passageFailure('Ce pion n’existe plus.',404);$token=$map['tokens'][$index];
+        $movementLock=applicationAbilityMovementLock($state['abilityExecutions']??[],$sceneId,$token['id'],$map['tokens']);if($movementLock!==null)passageFailure($movementLock['label']);
         $controllerOf=static function(array $unit)use($state,$context):string{
             if(isset($context['controller']))return (string)($context['controller'])($unit);
             $controller=$unit['controllerPlayerId']??'';if(unitUsesCharacterSheet($unit))foreach($state['characters']??[] as $sheet)if($sheet['id']===$unit['characterId'])$controller=$sheet['ownerPlayerId']??$controller;

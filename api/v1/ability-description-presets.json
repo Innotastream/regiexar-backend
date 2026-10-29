@@ -1,0 +1,75 @@
+{
+  "ability-3c2a4c7c-74e8-4110-96a1-468e4ce52132": {
+    "from": [
+      "Riposte et désarme l'adversaire."
+    ],
+    "template": "Opposez un jet d’Agilité à l’attaque reçue, puis parez et ripostez.\n\nUne réussite de votre jet désarme l’ennemi pendant un tour complet, même si son résultat est meilleur et que ses dégâts passent. Un échec de votre jet fait échouer la défense. Aucun échec amoindri.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2": {
+    "from": [
+      "Une activation par combat et par repos long, 15 fatigue, dure jusqu’à la fin du combat. Une blessure subie par un allié ou ennemi sous Hémorragie à 4 cases du lanceur, ou une nouvelle application d’Hémorragie dans ce rayon, crée une orbe (un seul gain pour la même attaque). Maximum 3 orbes simultanées. Aucun gain passif. Au tour du lanceur, une orbe explose au contact pour 1d2 dégâts physiques ou se durcit pour protéger une cible : 20 % de réduction sur ses prochains dégâts physiques ou magiques, cumulable par addition avec les autres orbes et l’armure/résistance applicable, plafonné à 100 %. Les orbes utilisées disparaissent ; les protections inutilisées expirent en fin de combat. Pour l’explosion, choisir si la cible peut se défendre. L’orbe est consommé dès le lancement, même si la défense réussit ; dans ce cas, aucun dégât n’est infligé. Un gain sur blessure exige une perte réelle de PV."
+    ],
+    "template": "Jusqu’à trois orbes de sang gravitent autour du pion. Une blessure réelle ou une nouvelle Hémorragie à quatre cases peut créer une orbe selon les règles de la compétence.\n\nExplosion : une orbe rejoint la cible et explose. Elle est consommée même si la défense réussit.\n\nProtection : une orbe ajoute un stack de 25 % de réduction physique et magique. Un impact consomme jusqu’à 100 points de protection ; le surplus protège de l’impact suivant. Les dégâts ignorant l’armure passent et ne consomment pas Protection.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-2947f35f-c023-43ae-b5b5-f5d95725ebed": {
+    "from": [
+      "Jet d’Esprit / Social, 5 fatigue, deux utilisations par repos court. Sur une réussite, les adversaires dans un rayon de trois cases sont intimidés pendant trois de leurs tours : −15 au seuil de leurs attaques contre le lanceur, quelle que soit la statistique. Une réussite critique ajoute Peur (Effrayé) pour la même durée. Aucun effet Doute ni modification du moral."
+    ],
+    "template": "Les ennemis dans un rayon de trois cases deviennent Intimidés pendant trois de leurs tours : −15 au seuil de leurs attaques contre le lanceur.\n\nUne réussite critique ajoute Effrayé pour la même durée, après validation du MJ.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
+    "from": [
+      "Touche automatiquement / dégâts de base x2"
+    ],
+    "template": "Une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-c2d11a48-40e5-46a6-b43a-05405d1a5362": {
+    "from": [
+      "Enchaînez jusqu’à quatre frappes avec votre arme équipée sur une même cible. Le premier jet compte pour la première frappe et pour l’unique opposition éventuelle. Une opposition réussie arrête le combo avec un échec amoindri ; sinon, chaque réussite ajoute −10 au seuil de la frappe suivante. Votre premier échec arrête le combo. Recharge de cinq rounds, sans limite par repos."
+    ],
+    "template": "Enchaînez jusqu’à quatre frappes sur une même cible. Le jet initial compte pour la première frappe et l’unique opposition possible.\n\nChaque réussite ajoute un malus cumulatif de 10 au seuil de la frappe suivante. Une opposition gagnante ou votre premier échec arrête l’enchaînement.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-9832cd85-12b9-48b6-8908-5ad6f19b944a": {
+    "from": [
+      "Ouvre un déplacement à effectuer et à confirmer sur la carte, limité à cinq cases, sans attaque d’opportunité. Le trajet respecte les murs et les autres règles de déplacement."
+    ],
+    "template": "Déplacez le pion jusqu’à cinq cases, sans attaque d’opportunité, puis confirmez son arrivée.\n\nLe trajet respecte les murs et les règles de déplacement. Cette compétence n’ajoute pas d’attaque.",
+    "defaults": {
+      "rangeCells": 8
+    },
+    "names": [
+      "Replis expéditif cd3 (mouvement gratuit (sans opportunité) + atq)"
+    ],
+    "name": "Repli expéditif"
+  },
+  "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {
+    "from": [
+      "Fourreaux jumeaux d’éole :\nLes armes qui sont dégainés a partir de ces fourreaux sont insufflés quelques instants des énergies du vent, le coup porté avec peut se propager dans la direction ou il est éxécuté au-delà de la portée initiale avec des dégats de type magie/tranchant. (boost dégât + 12 irréductible par arme / portée x4)"
+    ],
+    "template": "Deux frappes de rapière envoient deux crocs éthérés vers la même cible.\n\nPortée : {rangeCells} cases. Vous pouvez infuser du mana pour renforcer les dégâts ignorant l’armure. Le mana infusé reste dépensé en cas d’échec.",
+    "defaults": {
+      "rangeCells": 8
+    }
+  },
+  "ability-2cd21fa7-4e03-4167-b6e0-ccd87c3f4f43": {
+    "from": [
+      "Lance simplement un d100, sans statistique ni modificateur. Le MJ arbitre le résultat et les conséquences manuellement. À sa décision, affiche pendant cinq secondes le message configuré pour la réussite critique, la réussite ou l’échec critique. Coûte 5 fatigue, deux utilisations par repos court."
+    ],
+    "template": "Lancez un d100 brut, sans statistique ni modificateur. Le MJ lit le résultat de son tableau et arbitre les conséquences.\n\nAprès son arbitrage, une anomalie se rassemble autour du pion, puis l’illustration s’éveille et laisse brièvement déborder sa magie. Les trois manifestations restent Magie sauvage, Magie sauvage angélique et Magie sauvage démoniaque, selon le résultat choisi par le MJ. L’animation ne détermine ni les dégâts ni les autres conséquences du tableau."
+  }
+}

@@ -86,6 +86,7 @@ function applicationComplexMovementClosestPoint(array $target,array $state,array
 }
 function applicationComplexAbilityStrikeOrigin(array $execution,array $step,array $target,array $map):?array {
     $origin=null;foreach($execution['workflow']['steps']??[] as $entry)if(($entry['id']??'')===($step['sourceStepId']??''))$origin=$entry;
+    if(!empty($origin['charge']['staged'])){foreach($map['tokens']??[]as$t)if($t['id']===$execution['sourceTokenId'])return ['x'=>$t['x'],'y'=>$t['y'],'size'=>$t['size']??40,'layerId'=>$execution['layerId']];return null;}
     $targeting=($step['type']??'')==='targets'?$step:(($origin['type']??'')==='targets'?$origin:null);
     $movementId=($targeting['sourceMovementStepId']??'')?:(!empty($origin['charge'])?$origin['id']:'');$movement=$execution['stepStates'][$movementId]??[];
     $closest=applicationComplexMovementClosestPoint($target,$movement,$map);if($closest===null)return null;
@@ -100,7 +101,7 @@ function applicationComplexAbilityTargetEligible(array $execution, array $step, 
     $targeting=($step['type']??'')==='targets'?$step:(($origin['type']??'')==='targets'?$origin:$step);$strikeOrigin=applicationComplexAbilityStrikeOrigin($execution,$step,$target,$map);
     if((!empty($targeting['sourceMovementStepId'])||!empty($origin['charge']))&&$strikeOrigin===null)return false;
     if (!applicationComplexAbilityTargetInRange($strikeOrigin!==null?[...($source??[]),...$strikeOrigin]:$source, $target, $map, $range)) return false;
-    if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => false, 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? '')))) return false;
+    if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => !empty($source['friendlyFire']), 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? '')))) return false;
     return empty($targeting['sourceMovementStepId']) || applicationTargetTouchesComplexMovement($target, $execution['stepStates'][$targeting['sourceMovementStepId']] ?? [], $map);
 }
 function recordApplicationComplexAbilityMovement(array $executions, array $context): array {

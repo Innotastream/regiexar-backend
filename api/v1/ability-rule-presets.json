@@ -1,0 +1,30 @@
+{
+  "ability-3c2a4c7c-74e8-4110-96a1-468e4ce52132": {
+    "fatigueCost": 5,
+    "cooldownRounds": 3,
+    "usesPerRest": 2,
+    "restRecharge": "short",
+    "opposition": {
+      "statId": "character-stat-agility",
+      "options": [
+        {
+          "id": "riposte",
+          "label": "Contre et désarmement",
+          "manaCost": 0,
+          "reflectPercent": 0
+        }
+      ],
+      "consumeOnAttempt": true,
+      "successTrigger": "roll"
+    },
+    "conditionRider": {
+      "version": 1,
+      "label": "Désarmé",
+      "turns": 1,
+      "resistance": false,
+      "expiry": "end-next-turn"
+    },
+    "castingStatId": "character-stat-agility",
+    "reducedFailureCooldown": false
+  }
+}

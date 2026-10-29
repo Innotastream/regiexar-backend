@@ -4,6 +4,8 @@ require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/complex-movement.php';
 require_once __DIR__ . '/charge-path.php';
+require_once __DIR__ . '/charge-travel.php';
+require_once __DIR__ . '/ability-movement-lock.php';
 require_once __DIR__ . '/special-success.php';
 require_once __DIR__ . '/complex-chain-critical.php';
 require_once __DIR__ . '/ability-messages.php';
@@ -854,7 +856,7 @@ function applicationComplexAbilityPlacedMarkers(mixed $value, string $sceneId = 
         if (($token['layerId'] ?? 'ground') !== $layerId || !($initiative['active'] ?? false)) continue;
         $matching = array_values(array_filter($guards, static fn(array $guard): bool => ($guard['sceneId'] ?? '') === $sceneId && ($guard['targetTokenId'] ?? '') === ($token['id'] ?? '') && ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? '')));
         if ($matching === []) continue;
-        $first = $matching[0]; $percent = max(1, min(100, (int) ($first['percent'] ?? 0)));
+        $first = $matching[0];if(!empty($first['budget']))continue; $percent = max(1, min(100, (int) ($first['percent'] ?? 0)));
         if (($first['stackGroup'] ?? '') !== '') foreach (array_slice($matching, 1) as $guard) if (($guard['stackGroup'] ?? '') === $first['stackGroup']) $percent = min(100, $percent + max(1, min(100, (int) ($guard['percent'] ?? 0))));
         $markers[] = ['id' => 'guard-display-' . $token['id'], 'visual' => 'guard', 'percent' => $percent,
             'x' => (float) $token['x'], 'y' => (float) $token['y'], 'label' => 'Protection · ' . $percent . ' %',
@@ -1016,6 +1018,7 @@ function applicationComplexAbilityTargetInRange(?array $source,?array $target,ar
 function applicationComplexAbilityTargetRangeCells(array $execution,array $step,?array $source,string $attackId=''):float {
     $steps=$execution['workflow']['steps']??[];$origin=null;$targeting=null;$strikes=null;
     foreach($steps as $entry)if(($entry['id']??'')===($step['sourceStepId']??''))$origin=$entry;
+    if(($origin['charge']['pathRange']??'')==='weapon')return applicationAbilityRangeCells(['useWeaponDamage'=>true],$source['weaponAttacks']??[],$attackId);
     if(($step['type']??'')==='targets')$targeting=$step;elseif(($origin['type']??'')==='targets')$targeting=$origin;
     else foreach($steps as $entry)if(($entry['id']??'')===($origin['charge']['targetStepId']??''))$targeting=$entry;
     if(!empty($targeting['rangeCells']))return (float)$targeting['rangeCells'];
@@ -1383,9 +1386,17 @@ function applyApplicationComplexAbilityCommand(
                 'stepId' => $step['id'], 'label' => $step['title'] . ' · ' . count($selected) . ' protégé(s)',
                 'detail' => $step['percent'] . ' % sur la prochaine attaque de chacun'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
+        } elseif($step['type']==='movement'&&!empty($step['charge']['staged'])&&$action==='plan-charge'){
+            $state=[...$state,...applicationPlanStagedCharge($execution,$step,applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']),$tokens,$map,$now)];
         } elseif ($step['type'] === 'movement' && $action === 'confirm-movement') {
-            if (!applicationComplexMovementAtDestination($state, applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']))) applicationComplexAbilityFail('Déplacez le pion avant de confirmer cette étape.', 'complex_ability_movement_required');
+            if(!empty($step['charge']['staged'])){
+                $preview=applicationPlanStagedCharge($execution,$step,applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']),$tokens,$map,$now);$ids=array_column($preview['allocations'],'tokenId');$choices=$command['defenses']??null;$defenses=[];
+                if(!is_array($choices)||!array_is_list($choices)||count($choices)!==count($ids))applicationComplexAbilityFail('Les cibles de la charge ont changé. Actualisez le récapitulatif.','complex_ability_charge_targets_changed');
+                foreach($choices as$c){if(!is_array($c)||!in_array($c['tokenId']??null,$ids,true)||isset($defenses[$c['tokenId']])||!is_bool($c['opposed']??null))applicationComplexAbilityFail('Les cibles de la charge ont changé. Actualisez le récapitulatif.','complex_ability_charge_targets_changed');$defenses[$c['tokenId']]=$c['opposed'];}
+                $state=[...$state,...$preview,'chargeDefenses'=>$defenses];
+            }elseif (!applicationComplexMovementAtDestination($state, applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']))) applicationComplexAbilityFail('Déplacez le pion avant de confirmer cette étape.', 'complex_ability_movement_required');
             if(!empty($step['charge']))$state=[...$state,...applicationChargeAttackPlan($execution,$step,$state,applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']),$tokens,$map)];
+            $state['movementLockUntil']=$now+900;
             applicationComplexAbilityAppendEvent($execution, ['type' => 'movement', 'actorId' => $actorId, 'actorName' => $actorName, 'stepId' => $step['id'], 'label' => $step['title'], 'detail' => round($state['distanceMeters'], 2) . ' m parcourus'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
             if(!empty($step['charge'])){$next=$execution['workflow']['steps'][$execution['currentStepIndex']];$nextState=&$execution['stepStates'][$next['id']];applicationComplexAbilityInitializeAllocatedTargets($execution,$next,$nextState,$tokens);unset($nextState);}

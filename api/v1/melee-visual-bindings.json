@@ -3,21 +3,102 @@
   "profiles": {
     "heavy-incandescent-blade": "requiem-grand-cleave",
     "barbed-chain": "barbed-chain-lash",
-    "ethereal-twin-blades": "ethereal-alternating"
+    "ethereal-twin-blades": "ethereal-alternating",
+    "light-halberd": "light-halberd-cleave",
+    "paired-chitin-legs": "paired-chitin-injection"
   },
+  "combinations": [
+    {
+      "profiles": [
+        "ethereal-twin-blades",
+        "ethereal-twin-blades"
+      ],
+      "presetId": "ethereal-weapon-cross"
+    },
+    {
+      "profiles": [
+        "flame-sabre",
+        "frost-sabre"
+      ],
+      "presetId": "elemental-sabre-cross"
+    }
+  ],
   "equipmentTemplates": {
+    "v370-template-d810e782aa535bc6422e6ebf": "flame-sabre",
+    "v370-template-82f161523d5dbfa66b734000": "frost-sabre",
+    "v370-template-6aacb2d60e4cfeec7227d9b6": "flame-sabre",
+    "v370-template-871109782031b043f4adb048": "frost-sabre",
     "v370-template-84fc48fb4fdac5e664d1f4c7": "heavy-incandescent-blade",
     "v370-template-ba453c81f7db362b597b1b23": "heavy-incandescent-blade",
     "v370-template-6f8e72ba624ecbbe481091a0": "barbed-chain",
     "v370-template-75838b12ba6af869c39b8483": "ethereal-twin-blades",
     "v370-template-c79714649db68628fb7a5655": "ethereal-twin-blades",
     "v370-template-928081e83ab067b4c9186111": "ethereal-twin-blades",
-    "v370-template-f43cc10b70c24ca180211282": "ethereal-twin-blades"
+    "v370-template-f43cc10b70c24ca180211282": "ethereal-twin-blades",
+    "v370-template-ff5583e4ecc48f222b3241f1": "light-halberd",
+    "v370-template-36549b30586340cdecebeb0e": "light-halberd"
   },
   "abilities": {
-    "ability-c2d11a48-40e5-46a6-b43a-05405d1a5362": {"profile": "ethereal-twin-blades", "presetId": "ethereal-alternating", "requiresEquipment": false},
-    "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {"profile": "ethereal-twin-blades", "presetId": "ethereal-dash-cross", "requiresEquipment": false},
-    "ability-367fe911-08bd-4656-821c-f05fe688e184": {"profile": "heavy-incandescent-blade", "presetId": "requiem-overhead"},
-    "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {"profile": "barbed-chain", "presetId": "barbed-chain-sweep"}
+    "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {
+      "presetId": "ethereal-ground-fangs",
+      "requiresEquipment": false,
+      "resolvedDamageOnly": true
+    },
+    "ability-7BG1hkmR6vBEbTLL": {
+      "presetByProfile": {
+        "flame-sabre": "sabre-fire-flurry",
+        "frost-sabre": "sabre-frost-flurry"
+      },
+      "equipmentCount": 1,
+      "resolvedDamageOnly": true
+    },
+    "ability-c2d11a48-40e5-46a6-b43a-05405d1a5362": {
+      "profile": "ethereal-twin-blades",
+      "presetId": "ethereal-alternating",
+      "requiresEquipment": false
+    },
+    "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
+      "profile": "ethereal-twin-blades",
+      "presetId": "ethereal-dash-cross",
+      "requiresEquipment": false
+    },
+    "ability-367fe911-08bd-4656-821c-f05fe688e184": {
+      "profile": "heavy-incandescent-blade",
+      "presetId": "requiem-overhead"
+    },
+    "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {
+      "profile": "barbed-chain",
+      "presetId": "barbed-chain-sweep"
+    },
+    "ability-3c2a4c7c-74e8-4110-96a1-468e4ce52132": {
+      "presetChoices": [
+        "sabre-fire-counter",
+        "sabre-frost-counter"
+      ],
+      "requiresEquipment": false
+    },
+    "ability-0eaec688-fbcd-49cf-8e85-b6e1e7c8fa25": {
+      "presetByProfile": {
+        "light-halberd": "light-halberd-divine",
+        "paired-chitin-legs": "paired-chitin-divine"
+      },
+      "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    },
+    "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
+      "presetByProfile": {
+        "light-halberd": "charge-halberd-cleave"
+      },
+      "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    }
+  },
+  "naturalWeapons": {
+    "character-X4kmpvnbF9rQgNGc": {
+      "weapon-2": "paired-chitin-legs"
+    },
+    "unit_token-P-CK3ZtFhBidBd0rf3mlyA": {
+      "weapon-2": "paired-chitin-legs"
+    }
   }
 }

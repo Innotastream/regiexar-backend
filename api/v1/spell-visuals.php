@@ -1,10 +1,12 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/melee-visuals.php';
-function applicationSpellVisualCatalogue(): array { return ['elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
-function applicationSpellVisualDuration(mixed $value): int { $spell=applicationSpellVisual($value);return $spell===null?0:($spell['placement']==='melee'?applicationMeleeVisualCatalogue()[$spell['presetId']]+1600:(applicationSpellVisualCatalogue()[$spell['presetId']]??0)); }
+require_once __DIR__.'/token-dash.php';
+function applicationSpellVisualCatalogue(): array { return ['compact-force-wave'=>2150,'force-wall-shatter'=>1250,'intimidation-red'=>2300,'blood-burst'=>1290,'blood-crystal'=>1640,'elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
+function applicationSpellVisualDuration(mixed $value): int { $spell=applicationSpellVisual($value);return $spell===null?0:($spell['placement']==='dash'?($spell['presetId']==='token-body-charge'?2400:2500):($spell['placement']==='melee'?applicationMeleeVisualCatalogue()[$spell['presetId']]+1600+applicationMeleeVisualDeliverySlack($spell['presetId']):(applicationSpellVisualCatalogue()[$spell['presetId']]??0)+(in_array($spell['presetId'],['blood-burst','blood-crystal','force-wall-shatter','compact-force-wave'],true)?1600:0))); }
 
 function applicationSpellVisual(mixed $value): ?array {
+    if(is_array($value)&&($value['placement']??'')==='dash')return applicationTokenDash($value);
     if(is_array($value)&&($value['placement']??'')==='melee')return applicationMeleeVisual($value);
     if(!is_array($value)||($value['version']??null)!==1||!is_string($value['presetId']??null)||!array_key_exists($value['presetId'],applicationSpellVisualCatalogue())
         ||!is_string($value['sceneId']??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value['sceneId'])!==1
@@ -14,24 +16,39 @@ function applicationSpellVisual(mixed $value): ?array {
     $cone=$value['placement']==='cone';$size=$value[$cone?'rangeCells':'radiusCells']??null;
     if((!is_int($size)&&!is_float($size))||!is_finite((float)$size)||$size<($cone?1:.5)||$size>20||($cone?floor($size)!=$size:floor($size*2)!=$size*2))return null;
     if($value['placement']!=='source'&&!$point($value['targetPoint']??null))return null;
+    if(isset($value['wallImpact'])&&($value['presetId']!=='compact-force-wave'||!$point($value['wallImpact'])))return null;
     $result=['version'=>1,'presetId'=>$value['presetId'],'sceneId'=>$value['sceneId'],'layerId'=>$value['layerId'],'placement'=>$value['placement'],
         'source'=>['x'=>$source['x'],'y'=>$source['y'],'size'=>$source['size']],$cone?'rangeCells':'radiusCells'=>$size];
     if($value['placement']!=='source')$result['targetPoint']=array_intersect_key($value['targetPoint'],array_flip(['x','y']));
-    if($value['placement']==='source'&&($value['followAnchor']??false)===true&&is_string($value['anchorTokenId']??null)&&preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value['anchorTokenId'])){$result['followAnchor']=true;$result['anchorTokenId']=$value['anchorTokenId'];}
+    if(isset($value['wallImpact']))$result['wallImpact']=array_intersect_key($value['wallImpact'],array_flip(['x','y']));
+    if(in_array($value['placement'],['source','target'],true)&&($value['followAnchor']??false)===true&&is_string($value['anchorTokenId']??null)&&preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value['anchorTokenId'])){$result['followAnchor']=true;$result['anchorTokenId']=$value['anchorTokenId'];}
     return $result;
 }
 
-function applicationTrustedSpellVisual(array $ability,array $context): ?array {
+function applicationSpellVisualBindings(): array {
     static $configuration=null;
     if($configuration===null){$data=json_decode((string)file_get_contents(__DIR__.'/spell-visual-bindings.json'),true);$configuration=is_array($data)?$data:[];}
-    $binding=$configuration['bindings'][$ability['id']??'']??null;$source=$context['source']??null;$map=$context['map']??null;
-    if(!is_array($binding)||!is_array($source)||!is_array($map))return null;
+    return $configuration['bindings']??[];
+}
+function applicationTrustedSpellVisual(array $ability,array $context): ?array {
+    $binding=applicationSpellVisualBindings()[$ability['id']??'']??null;$source=$context['source']??null;$map=$context['map']??null;
+    if(!is_array($binding)||!empty($binding['movementStepId'])||!is_array($source)||!is_array($map))return null;
     $footprint=function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($source,$map):$source;
+    $target=!empty($binding['followTarget'])&&!empty($context['targetPoint']['id'])?(function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($context['targetPoint'],$map):$context['targetPoint']):null;
+    if($target!==null&&($target['layerId']??'ground')!==($footprint['layerId']??'ground'))return null;
+    $fitRadius=!empty($binding['fitTarget'])&&$target!==null?min(20,max(.5,ceil((($target['size']??40)/2/max(.001,$map['gridSize']??0)+.4)*2)/2)):null;
     return applicationSpellVisual(['version'=>1,'presetId'=>isset($binding['variants'])?($binding['variants'][$context['variantId']??'']??''):($binding['presetId']??''),
         'sceneId'=>$context['sceneId']??'','layerId'=>$footprint['layerId']??$map['activeLayerId']??'ground','placement'=>$binding['placement']??'',
-        'source'=>['x'=>$footprint['x']??null,'y'=>$footprint['y']??null,'size'=>$footprint['size']??40],'targetPoint'=>$context['targetPoint']??null,
-        'rangeCells'=>$ability['damageTargeting']['lengthCells']??$ability['rangeCells']??$binding['rangeCells']??null,'radiusCells'=>$ability['damageTargeting']['radiusCells']??$binding['radiusCells']??2,
-        'followAnchor'=>($binding['followAnchor']??false)===true,'anchorTokenId'=>$source['id']??'']);
+        'source'=>['x'=>$footprint['x']??null,'y'=>$footprint['y']??null,'size'=>$footprint['size']??40],'targetPoint'=>$target!==null?['x'=>$target['x'],'y'=>$target['y']]:($context['targetPoint']??null),
+        ...(!empty($binding['handlesKnockbackImpact'])&&!empty($context['wallImpact'])?['wallImpact'=>$context['wallImpact']]:[]),
+        'rangeCells'=>$ability['damageTargeting']['lengthCells']??$ability['rangeCells']??$binding['rangeCells']??null,'radiusCells'=>$fitRadius??$ability['damageTargeting']['radiusCells']??$binding['radiusCells']??2,
+        'followAnchor'=>($binding['followAnchor']??false)===true||$target!==null,'anchorTokenId'=>$target!==null?$context['targetPoint']['id']:($source['id']??'')]);
+}
+function applicationTrustedDamageSpellVisual(array $attack,array $context): ?array {
+    if(empty(applicationSpellVisualBindings()[$attack['attackId']??'']['onResolvedDamage'])||($attack['hit']['outcome']['success']??false)!==true||!in_array($attack['status']??'',['applied','blocked'],true)||!empty($attack['hit']['outcome']['requiresGmValidation'])&&empty($context['approved']))return null;
+    $source=null;$target=null;foreach($context['map']['tokens']??[] as $token){if($token['id']===$attack['sourceTokenId'])$source=$token;if($token['id']===$attack['targetTokenId'])$target=$token;}
+    if($source===null||$target===null)return null;
+    return applicationTrustedSpellVisual(['id'=>$attack['attackId']],['map'=>$context['map'],'sceneId'=>$attack['sceneId'],'source'=>$source,'targetPoint'=>$target,'variantId'=>'damage','wallImpact'=>$attack['knockbackApplied']['impact']??null]);
 }
 
 function applicationPublicSpellVisual(mixed $value,array $context): ?array {
@@ -39,6 +56,8 @@ function applicationPublicSpellVisual(mixed $value,array $context): ?array {
     if($spell===null||!empty($context['paused'])||$spell['sceneId']!==($context['sceneId']??'')||$spell['layerId']!==($context['layerId']??'')
         ||empty($context['sourceTokenId'])||!in_array($context['sourceTokenId'],$ids,true)||!$visible($spell['source']['x'],$spell['source']['y']))return null;
     if(!empty($spell['followAnchor'])&&!in_array($spell['anchorTokenId'],$ids,true))return null;
+    if(isset($spell['wallImpact'])&&!$visible($spell['wallImpact']['x'],$spell['wallImpact']['y']))unset($spell['wallImpact']);
+    if($spell['placement']==='dash'){if($spell['sourceTokenId']!==$context['sourceTokenId']||isset($spell['impact'])&&(!in_array($spell['impact']['targetTokenId'],$ids,true)||!$visible($spell['impact']['point']['x'],$spell['impact']['point']['y'])))return null;foreach($spell['path']as$p)if(!$visible($p['x'],$p['y']))return null;}
     if($spell['placement']==='melee'&&($spell['sourceTokenId']!==$context['sourceTokenId']||!in_array($spell['targetTokenId'],$ids,true)||!$visible($spell['targetPoint']['x'],$spell['targetPoint']['y'])))return null;
     if(in_array($spell['placement'],['target','area'],true)&&!$visible($spell['targetPoint']['x'],$spell['targetPoint']['y']))return null;
     return $spell;

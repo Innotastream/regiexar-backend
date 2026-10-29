@@ -67,6 +67,8 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
         $result[] = ['id' => (string) $effect['id'], 'label' => $fixed?'Zone d’affaiblissement d’armure':(string) ($effect['label'] ?? 'Effet actif'),
             'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
     }
+    $protection=0;foreach($state['nextAttackGuards']??[] as $guard)if(($guard['effectId']??'')==='protection'&&($guard['sceneId']??'')===$sceneId&&($guard['targetTokenId']??'')===($token['id']??''))$protection+=(int)$guard['percent'];
+    if($protection>0){$attacks=(int)ceil($protection/100);$result[]=['id'=>'status-protection-'.$token['id'],'label'=>'Protection · réserve '.$protection.' %','remainingTurns'=>$attacks,'remainingAttacks'=>$attacks,'symbol'=>'🛡','image'=>null];}
     return array_slice($result, 0, 100);
 }
 
@@ -113,7 +115,7 @@ function applicationEnhancementAuraAffects(array $effect,array $source,array $st
     if(!$caster)return false;
     $controller=static fn($token)=>applicationUnitControllerId($token,$state);
     $recipients=isset($source['resources'])?array_values(array_filter($tokens,static fn($token)=>applicationEnhancementHolder($token)===applicationEnhancementHolder($source))):[$source];
-    $a=$effect['aura'];$near=onlineDamageAreaTargets($recipients,$caster,$map,(float)$a['radiusCells'],true);
+    $a=[...$effect['aura'],'affectAllies'=>!empty($caster['friendlyFire'])||$effect['aura']['affectAllies']];$near=onlineDamageAreaTargets($recipients,$caster,$map,(float)$a['radiusCells'],true);
     foreach($recipients as $recipient)foreach($near as $token)if(($token['id']??'')===($recipient['id']??null)&&applicationDamageAreaAffects($a,$caster['id'],$controller($caster),$token['id'],$controller($token)))return true;
     return false;
 }

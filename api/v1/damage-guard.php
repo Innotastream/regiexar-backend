@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/stackable-effects.php';
 function applicationGuardDamageTypes(mixed $value): array
 {
     $types = is_array($value) ? array_values(array_intersect(['physical','magical','ignore'], $value)) : [];
@@ -43,4 +44,11 @@ function applicationMitigateGuardedDamage(int $damage, array $guards, ?array $ba
     }
     $remaining=min($damage,$final);
     return ['damage'=>$remaining,'prevented'=>$damage-$remaining];
+}
+function applicationConsumeGuardIndices(array $guards,array $indices): array {
+    $budget=!empty($guards[$indices[0]??-1]['budget'])?100:PHP_INT_MAX;$next=[];
+    foreach($guards as $index=>$guard){if(!in_array($index,$indices,true)||$budget<=0){$next[]=$guard;continue;}
+        $percent=max(1,min(100,(int)($guard['percent']??0)));$used=min($budget,$percent);$budget-=$used;
+        if($percent>$used)$next[]=[...$guard,'percent'=>$percent-$used];
+    }return $next;
 }

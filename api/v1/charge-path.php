@@ -9,8 +9,12 @@ function applicationCharge(mixed $v): ?array {
     return ['version'=>1,'targetStepId'=>substr(preg_replace('/[^A-Za-z0-9_-]/','',(string)($v['targetStepId']??'')),0,80),
         'statId'=>preg_match('/^character-stat-(force|dexterity|agility|spiritSocial|intelligence|spirit|instinct)$/D',(string)($v['statId']??'')) ? $v['statId'] : 'character-stat-force',
         'pathPenalty'=>$integer($v['pathPenalty']??null,0,100,10),'finalAttacks'=>$integer($v['finalAttacks']??null,1,12,2),'allowOpposition'=>($v['allowOpposition']??true)!==false,
+        ...(($v['pathTargets']??'')==='enemies'?['pathTargets'=>'enemies']:[]),...(($v['pathRange']??'')==='weapon'?['pathRange'=>'weapon']:[]),
+        ...(($v['pushAside']??false)===true?['pushAside'=>true]:[]),...(($v['staged']??false)===true?['staged'=>true]:[]),
         'finalCondition'=>dsRider($v['finalCondition']??null)];
 }
+function applicationChargeEnemy(array $source,array $target):bool {$controller=static fn($t)=>($t['controllerAccountId']??'')?:($t['controllerPlayerId']??'')?:(!empty($t['playerControlled'])?'player':'');return $source['id']!==$target['id']&&(!empty($source['friendlyFire'])||(bool)$controller($source)!==(bool)$controller($target));}
+function applicationChargeWeaponRange(array $source):int {return ['melee'=>2,'reach'=>4,'ranged'=>15][applicationWeaponReach($source['weaponAttacks'][0]??[])];}
 function applicationChargeFail(string $message): never { applicationComplexAbilityFail($message,'complex_ability_charge_invalid'); }
 function applicationChargeDistanceMeters(array $a,array $b,array $map): float {
     $d=applicationComplexMovementDimensions($map);$x=abs($b['x']-$a['x'])*$d['width']/(100*$d['grid']);$y=abs($b['y']-$a['y'])*$d['height']/(100*$d['grid']);
@@ -35,27 +39,34 @@ function applicationValidateChargePath(array $state,array $target,array $map,boo
     if($atDestination){$points=$state['points']??[];$end=$points[count($points)-1]??null;$reach=max($d['grid'],($source['size']??40)/2+($target['size']??40)/2);
         if(!$end||hypot(($end['x']-$target['x'])*$d['width']/100,($end['y']-$target['y'])*$d['height']/100)>$reach+1e-5)applicationChargeFail('Terminez la charge au contact de sa cible finale avant de confirmer.');}
 }
-function applicationChargeFirstContact(array $target,array $state,array $map): float {
+function applicationChargeFirstContact(array $target,array $state,array $map,float $rangeCells=0): float {
     $target=applicationTokenSpatialFootprint($target,$map);
     $d=applicationComplexMovementDimensions($map);$radius=applicationComplexMovementAttackWidth($state,$map)/2+($target['size']??40)/2;$distance=0;$points=$state['points'];
     for($i=1;$i<count($points);$i++){$a=$points[$i-1];$b=$points[$i];$dx=($b['x']-$a['x'])*$d['width']/100;$dy=($b['y']-$a['y'])*$d['height']/100;$length=hypot($dx,$dy);if(!$length)continue;
-        $x=($target['x']-$a['x'])*$d['width']/100;$y=($target['y']-$a['y'])*$d['height']/100;$projection=($x*$dx+$y*$dy)/$length;$perpendicular2=max(0,$x*$x+$y*$y-$projection*$projection);
+        $x=($target['x']-$a['x'])*$d['width']/100;$y=($target['y']-$a['y'])*$d['height']/100;
+        if($rangeCells>0){$reach=$rangeCells*$d['grid']+($state['sourceSize']??40)/2+($target['size']??40)/2;$enter=0;$exit=1;
+            foreach([[$x,$dx],[$y,$dy]]as[$offset,$delta]){if(abs($delta)<1e-9){if(abs($offset)>$reach+1e-7){$enter=2;break;}}else{$p=($offset-$reach)/$delta;$q=($offset+$reach)/$delta;if($p>$q)[$p,$q]=[$q,$p];$enter=max($enter,$p);$exit=min($exit,$q);}}
+            if($enter<=$exit+1e-9&&$exit>=0&&$enter<=1)return $distance+max(0,$enter)*$length;$distance+=$length;continue;}
+        $projection=($x*$dx+$y*$dy)/$length;$perpendicular2=max(0,$x*$x+$y*$y-$projection*$projection);
         if($perpendicular2<=$radius*$radius+1e-7){$half=sqrt(max(0,$radius*$radius-$perpendicular2));$enter=$projection-$half;$exit=$projection+$half;
             if($exit>=-1e-7&&$enter<=$length+1e-7)return $distance+max(0,$enter);}$distance+=$length;}
     return INF;
 }
+function applicationChargePathPointAtDistance(array $state,array $map,float $distance):array {$d=applicationComplexMovementDimensions($map);for($i=1;$i<count($state['points']);$i++){$a=$state['points'][$i-1];$b=$state['points'][$i];$length=hypot(($b['x']-$a['x'])*$d['width']/100,($b['y']-$a['y'])*$d['height']/100);if($distance<=$length+1e-7){$t=min(1,$distance/($length?:1));return ['x'=>$a['x']+($b['x']-$a['x'])*$t,'y'=>$a['y']+($b['y']-$a['y'])*$t];}$distance-=$length;}return $state['points'][array_key_last($state['points'])];}
 function applicationChargeAttackPlan(array $execution,array $step,array $state,array $source,array $tokens,array $map): array {
     $final=applicationChargeFinalTarget($execution,$step,$tokens);applicationValidateChargePath($state,$final,$map,true,$source);$weapon=$source['weaponAttacks'][0]??null;
     if(empty($weapon['id']))applicationChargeFail('L’unité qui charge doit avoir une arme principale configurée.');
     if(!array_filter($source['stats']??[],static fn($s)=>($s['id']??'')===$step['charge']['statId']&&is_numeric($s['value']??null)))applicationChargeFail('La statistique de la charge est absente de cette unité.');
     $crossed=[];foreach($tokens as $t){if($t['id']===$source['id']||$t['id']===$final['id']||!is_numeric($t['x']??null)||!is_numeric($t['y']??null)||!empty($t['hidden'])||!empty($t['dimSilhouette'])||($t['layerId']??'ground')!==$execution['layerId']||($t['hp']??0)<=0||($t['maxHp']??0)<=0)continue;
-        $distance=applicationChargeFirstContact($t,$state,$map);if(is_finite($distance))$crossed[]=['token'=>$t,'distance'=>$distance];}
+        if(($step['charge']['pathTargets']??'')==='enemies'&&!applicationChargeEnemy($source,$t))continue;
+        $distance=applicationChargeFirstContact($t,$state,$map,($step['charge']['pathRange']??'')==='weapon'?applicationChargeWeaponRange($source):0);if(is_finite($distance))$crossed[]=['token'=>$t,'distance'=>$distance];}
     usort($crossed,static fn($a,$b)=>($a['distance']<=>$b['distance'])?:strcmp($a['token']['id'],$b['token']['id']));
     if(count($crossed)+$step['charge']['finalAttacks']>100)applicationChargeFail('Ce trajet contient trop de frappes pour une seule charge.');
     $opposed=empty($execution['noDefensePossible'])&&$step['charge']['allowOpposition']&&($execution['stepStates'][$step['charge']['targetStepId']]['opposed']??true)!==false;
-    $allocations=[];$plan=[];foreach($crossed as $i=>$row){$t=$row['token'];$allocations[]=['tokenId'=>$t['id'],'targetName'=>$t['name']??'Cible','count'=>1];$plan[]=['tokenId'=>$t['id'],'attackId'=>$weapon['id'],'statId'=>$step['charge']['statId'],'opposed'=>$opposed,'thresholdPenalty'=>min(100,($i+1)*$step['charge']['pathPenalty']),'charge'=>true];}
+    $allocations=[];$plan=[];foreach($crossed as $i=>$row){$t=$row['token'];$allocations[]=['tokenId'=>$t['id'],'targetName'=>$t['name']??'Cible','count'=>1];$plan[]=['tokenId'=>$t['id'],'attackId'=>$weapon['id'],'statId'=>$step['charge']['statId'],'opposed'=>$opposed&&($state['chargeDefenses'][$t['id']]??true)!==false,'thresholdPenalty'=>min(100,($i+1)*$step['charge']['pathPenalty']),'charge'=>true,...(!empty($step['charge']['staged'])?['movePoint'=>applicationChargePathPointAtDistance($state,$map,$row['distance']),'finalContact'=>false]:[])];}
     $allocations[]=['tokenId'=>$final['id'],'targetName'=>$final['name']??'Cible','count'=>$step['charge']['finalAttacks']];
-    for($i=0;$i<$step['charge']['finalAttacks'];$i++)$plan[]=['tokenId'=>$final['id'],'attackId'=>$weapon['id'],'statId'=>$step['charge']['statId'],'opposed'=>$opposed,'thresholdPenalty'=>0,'charge'=>true,
+    for($i=0;$i<$step['charge']['finalAttacks'];$i++)$plan[]=['tokenId'=>$final['id'],'attackId'=>$weapon['id'],'statId'=>$step['charge']['statId'],'opposed'=>$opposed&&($state['chargeDefenses'][$final['id']]??true)!==false,'thresholdPenalty'=>0,'charge'=>true,
+        ...(!empty($step['charge']['staged'])?['movePoint'=>applicationChargePathPointAtDistance($state,$map,INF),'finalContact'=>true]:[]),
         ...($i===$step['charge']['finalAttacks']-1&&!empty($step['charge']['finalCondition'])?['conditionRider'=>$step['charge']['finalCondition']]:[])];
     return ['allocations'=>$allocations,'attackPlan'=>$plan];
 }

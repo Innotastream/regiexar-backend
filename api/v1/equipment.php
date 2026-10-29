@@ -54,6 +54,10 @@ function normalizeEquipmentLoadouts(mixed $value=[]):array {
     return $result;
 }
 function equipmentLoadout(array $items,string $unitId):array{return $items['equipmentLoadouts'][$unitId]??['sets'=>[],'equippedItemIds'=>[],'activeSetId'=>''];}
+function equipmentLoadoutMatches(mixed $expected,array $current):bool {
+    try{return normalizeEquipmentLoadouts(['comparison'=>$expected])['comparison']===normalizeEquipmentLoadouts(['comparison'=>$current])['comparison'];}
+    catch(RuntimeException){return false;}
+}
 function equipmentInventory(array $items,string $unitId):array {
     $templates=array_column($items['templates']??[],null,'id');$result=[];
     foreach($items['instances']??[] as $item)if(($item['location']['kind']??'')==='inventory'&&($item['location']['characterId']??'')===$unitId){$template=$templates[$item['templateId']]??[];$equipment=$item['equipment']??$template['equipment']??null;if($equipment!==null)$result[]=['id'=>$item['id'],'name'=>$item['name']??$template['name'],...normalizeEquipment($equipment)];}
@@ -82,14 +86,14 @@ function normalizeEquipmentBinding(mixed $value):?array {
     if($value===null)return null;if(!is_array($value)||!in_array($value['kind']??'',['item','set'],true)||!equipmentId($value['id']??null))equipmentFailure('Choisissez une arme ou un set valide.',400);
     return ['kind'=>$value['kind'],'id'=>$value['id']];
 }
-function resolveEquipmentAttack(array $attack,array $source,array $state,bool $strict=true):array {
+function resolveEquipmentAttack(array $attack,array $source,array $state,bool $strict=true,bool $fromInventory=false):array {
     if(($attack['naturalWeapon']??false)===true)return [...$attack,'naturalWeapon'=>true,'equipmentItemIds'=>[]];
     $binding=normalizeEquipmentBinding($attack['equipmentBinding']??null);if($binding===null)return $attack;
     $unitId=equipmentUnitId($source);$items=$state['items']??[];$loadout=equipmentLoadout($items,$unitId);$torch=carriedTorch($state,$source)!==null;$ids=[];
     if($binding['kind']==='item')$ids=[$binding['id']];else foreach($loadout['sets'] as $set)if($set['id']===$binding['id'])$ids=$set['itemIds'];
-    $available=array_column(effectiveEquipment($items,$unitId,$torch),null,'id');$selected=[];foreach($ids as $id)if(($available[$id]['kind']??'')==='weapon')$selected[]=$available[$id];
-    if($selected===[]){if(!$strict)return [...$attack,'disabled'=>true,'equipmentItemIds'=>[]];equipmentFailure($torch?'Cette arme est suspendue pendant que vous portez la torche.':'L’arme ou le set de cette attaque doit être porté et équipé.');}
-    if($binding['kind']==='set'&&$loadout['activeSetId']!==$binding['id']){if(!$strict)return [...$attack,'disabled'=>true,'equipmentItemIds'=>[]];equipmentFailure('Équipez ce set avant de l’utiliser.');}
+    $available=array_column($fromInventory?equipmentInventory($items,$unitId):effectiveEquipment($items,$unitId,$torch),null,'id');$selected=[];foreach($ids as $id)if(($available[$id]['kind']??'')==='weapon')$selected[]=$available[$id];
+    if($selected===[]||$fromInventory&&$binding['kind']==='set'&&(count($selected)!==2||array_filter($selected,static fn($item)=>$item['hands']!==1)!==[])){if(!$strict)return [...$attack,'disabled'=>true,'equipmentItemIds'=>[]];equipmentFailure($fromInventory?'L’arme ou le set requis doit être présent dans votre inventaire.':($torch?'Cette arme est suspendue pendant que vous portez la torche.':'L’arme ou le set de cette attaque doit être porté et équipé.'));}
+    if(!$fromInventory&&$binding['kind']==='set'&&$loadout['activeSetId']!==$binding['id']){if(!$strict)return [...$attack,'disabled'=>true,'equipmentItemIds'=>[]];equipmentFailure('Équipez ce set avant de l’utiliser.');}
     $byType=[];foreach($selected as $item){$type=$item['damageType'];$byType[$type]=['type'=>$type,'formula'=>isset($byType[$type])?sumEffectFormulas([$byType[$type]['formula'],$item['formula']]):$item['formula']];}$parts=array_values($byType);$formula=sumEffectFormulas(array_column($parts,'formula'));
     if(!validApplicationAbilityFormula($formula))equipmentFailure('Les dégâts cumulés de ce set dépassent la formule autorisée.');
     $reach='ranged';foreach(['melee','reach','ranged'] as $kind)if(in_array($kind,array_column($selected,'reach'),true)){$reach=$kind;break;}
@@ -113,6 +117,23 @@ function equipmentAttackRows(array $attacks,array $source,array $state):array {
     return $rows;
 }
 function enchantableWeapons(array $state,array $source):array {return array_values(array_filter(effectiveEquipment($state['items']??[],equipmentUnitId($source),carriedTorch($state,$source)!==null),static fn($item)=>$item['kind']==='weapon'&&!$item['projectile']));}
+function abilityEquipmentAttackRows(array $attacks,array $source,array $state):array {
+    $unitId=equipmentUnitId($source);$items=$state['items']??[];$definitions=null;
+    foreach($state['characters']??[] as $character)if(($character['id']??'')===$unitId){$definitions=$character['weaponAttacks']??null;break;}
+    $definitions??=$source['abilityWeaponAttacks']??$attacks;$rows=[];
+    $add=static function(array $attack)use(&$rows,$source,$state):void{$resolved=resolveEquipmentAttack($attack,$source,$state,false,true);if(empty($resolved['disabled'])&&!isset($rows[$resolved['id']]))$rows[$resolved['id']]=$resolved;};
+    foreach(equipmentAttackRows($definitions,$source,$state) as $attack)$add($attack);
+    foreach($definitions as $attack)$add($attack);
+    foreach(equipmentInventory($items,$unitId) as $item){
+        if($item['kind']!=='weapon')continue;$found=false;foreach($rows as $row)if(($row['equipmentBinding']['kind']??'')==='item'&&($row['equipmentBinding']['id']??'')===$item['id'])$found=true;
+        if(!$found)$add(['id'=>'equipment-'.$item['id'],'name'=>$item['name'],'equipmentBinding'=>['kind'=>'item','id'=>$item['id']],'onHitConditions'=>[]]);
+    }
+    foreach(equipmentLoadout($items,$unitId)['sets'] as $set){
+        $found=false;foreach($rows as $row)if(($row['equipmentBinding']['kind']??'')==='set'&&($row['equipmentBinding']['id']??'')===$set['id'])$found=true;
+        if(!$found)$add(['id'=>'equipment-'.$set['id'],'name'=>$set['name'],'equipmentBinding'=>['kind'=>'set','id'=>$set['id']],'onHitConditions'=>[]]);
+    }
+    return array_values($rows);
+}
 function requireEnchantedWeapon(array $state,array $recipient,string $itemId):array {
     foreach(enchantableWeapons($state,$recipient) as $item)if($item['id']===$itemId)return ['enchantedItemId'=>$item['id'],'enchantedItemName'=>$item['name']];
     equipmentFailure('Choisissez une arme fabriquée portée et utilisable par le bénéficiaire. Les armes naturelles et les projectiles sont exclus.');
@@ -176,7 +197,7 @@ function applyEquipmentCommand(array $state,array $items,array $identity,string 
         $equipment=normalizeEquipment($args['equipment']??null);if($equipment===null)equipmentFailure('Définissez cet équipement.',400);
         $item['name']=$name;$item['equipment']=$equipment;$item['revision']++;$items['instances'][$index]=$item;return ['items'=>$items,'result'=>['item'=>$item]];
     }
-    if(($args['expectedLoadout']??null)!==$previous)equipmentFailure('Les équipements ont changé. Rouvrez leur configuration.');
+    if(!equipmentLoadoutMatches($args['expectedLoadout']??null,$previous))equipmentFailure('Les équipements ont changé. Rouvrez leur configuration.');
     $next=$previous;
     if($command==='item.equipment.set'){
         validateEquipmentSlots($items,$unitId,$args['itemIds']??null,true);

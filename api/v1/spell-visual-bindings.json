@@ -1,6 +1,27 @@
 {
   "version": 1,
   "bindings": {
+    "ability-9832cd85-12b9-48b6-8908-5ad6f19b944a": {
+      "placement": "dash",
+      "presetId": "token-afterimage-dash",
+      "movementStepId": "repli-deplacement"
+    },
+    "ability-2947f35f-c023-43ae-b5b5-f5d95725ebed": {
+      "placement": "source",
+      "presetId": "intimidation-red",
+      "radiusCells": 3,
+      "followAnchor": true
+    },
+    "ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2": {
+      "placement": "target",
+      "followTarget": true,
+      "fitTarget": true,
+      "onResolvedDamage": true,
+      "variants": {
+        "damage": "blood-burst",
+        "guard": "blood-crystal"
+      }
+    },
     "ability-mania-elemental-breath": {
       "placement": "cone",
       "rangeCells": 4,
@@ -12,6 +33,14 @@
         "darkness": "elemental-darkness",
         "roots": "elemental-roots"
       }
+    },
+    "ability-db5723cf-d4e4-4518-8b1f-52a0ca8967ee": {
+      "placement": "target",
+      "presetId": "compact-force-wave",
+      "followTarget": true,
+      "fitTarget": true,
+      "onResolvedDamage": true,
+      "handlesKnockbackImpact": true
     }
   }
 }

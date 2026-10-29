@@ -29,6 +29,8 @@ function applicationAbilityRangeCells(array $ability,array $weapons=[],string $r
 }
 function applicationAbilityTargetInRange(array $ability,array $source,array $target,array $map,array $weapons=[],string $requested=''):bool {
     $source=applicationTokenSpatialFootprint($source,$map);$target=applicationTokenSpatialFootprint($target,$map);
+    $minimum=($ability['minimumReach']??'')==='reach'?2:(($ability['minimumReach']??'')==='ranged'?4:0);
+    if($minimum&&dsDistance($source,$target,$map,true,true)<=$minimum+1e-9)return false;
     return ($source['id']??'')!==''&&($source['id']??'')===($target['id']??null)||($source['layerId']??'ground')===($target['layerId']??'ground')&&(applicationTargetIgnoresRange($target)||dsDistance($source,$target,$map,true,true)<=applicationAbilityRangeCells($ability,$weapons,$requested)+1e-9);
 }
 function applicationWeaponTargetCount(array $weapon):int {

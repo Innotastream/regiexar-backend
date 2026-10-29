@@ -66,6 +66,18 @@ jobs:
           php tests/ability-stat-check-contract.php
           php tests/spell-visuals.php
           php tests/melee-visuals.php
+          php tests/ethereal-fangs.php
+          php tests/token-dash.php
+          php tests/melee-contact-variants.php
+          php tests/divine-strike.php
+          php tests/brute-force.php
+          php tests/riposte.php
+          php tests/stackable-effects.php
+          php tests/body-charge.php
+          php tests/body-charge-undo.php
+          php tests/combat-undo.php
+          php tests/ability-movement-lock.php
+          php tests/friendly-fire.php
           php tests/elemental-breath.php
           php tests/elemental-breath-extended.php
           php tests/audit-v4-combat-identity.php
@@ -79,6 +91,7 @@ jobs:
       - name: Unit inventories, independent clones and linked passages
         run: |
           php tests/unit-inventory-contract.php
+          php tests/equipment-inventory-use.php
           php tests/map-passages-contract.php
           php tests/mounted-actions.php
           php tests/fog-sight-contract.php

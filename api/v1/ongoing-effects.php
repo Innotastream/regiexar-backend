@@ -85,6 +85,28 @@ function onlineGmRevealRoll(PDO $connection, array &$records, array &$pending, a
     return ['roll' => onlinePublicRevealedRoll($roll), 'deduplicated' => false];
 }
 
+function onlineStackableEffectCommand(PDO $connection,array &$records,array &$pending,array $identity,array $arguments): array {
+    if(($identity['effective_mode']??'')!=='gm'||($identity['permanent_role']??'')!=='gm')rejectOnlineCommand($connection,403,'Cette action est réservée au MJ.','gm_required');
+    $sceneId=(string)($arguments['sceneId']??'');$tokenId=(string)($arguments['tokenId']??'');$effectId=(string)($arguments['effectId']??'');$delta=$arguments['delta']??null;$requestId=(string)($arguments['requestId']??'');
+    if(preg_match('/^[A-Za-z0-9_-]{16,80}$/D',$requestId)!==1||!is_int($delta)||!in_array($delta,[-1,1],true)||!isset(applicationStackableEffects()[$effectId]))rejectOnlineCommand($connection,400,'Ajustement d’effet invalide.','effect_stack_invalid');
+    $signature=hash('sha256',json_encode([$sceneId,$tokenId,$effectId,$delta],JSON_THROW_ON_ERROR));$now=(int)floor(microtime(true)*1000);
+    $records=array_replace($records,applicationDomainRecords($connection,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+    $receipts=array_values(array_filter($activity['resourceReceipts']??[],static fn($r)=>($r['expiresAt']??0)>$now));
+    foreach($receipts as $receipt)if(($receipt['requestId']??'')===$requestId){
+        if(($receipt['accountId']??'')!==$identity['id'])rejectOnlineCommand($connection,403,'Cette action appartient à un autre MJ.','effect_receipt_forbidden');
+        if(($receipt['kind']??'')!=='effect-stack'||($receipt['requestSignature']??'')!==$signature)rejectOnlineCommand($connection,409,'Cette référence a déjà un autre contenu.','effect_request_mismatch');
+        return [...$receipt['result'],'deduplicated'=>true];
+    }
+    if(count($receipts)>=XAR_RESOURCE_RECEIPT_MAXIMUM)rejectOnlineCommand($connection,429,'Le journal de sécurité est plein.','effect_receipt_capacity');
+    $target=onlineOngoingEffectTarget($connection,$records,$pending,$sceneId,$tokenId);if($target===[])rejectOnlineCommand($connection,404,'Ce pion n’existe plus dans cette scène.','effect_target_missing');
+    try{$guards=applicationAdjustStackableEffects($activity['nextAttackGuards']??[],$effectId,$sceneId,$tokenId,$delta,'guard-'.randomToken(12));}catch(RuntimeException $error){rejectOnlineCommand($connection,409,$error->getMessage(),'effect_stack_capacity');}
+    $percent=0;foreach($guards as $g)if(($g['effectId']??'')===$effectId&&$g['sceneId']===$sceneId&&$g['targetTokenId']===$tokenId)$percent+=$g['percent'];
+    $definition=applicationStackableEffects()[$effectId];$result=['sceneId'=>$sceneId,'tokenId'=>$tokenId,'effectId'=>$effectId,'percent'=>$percent,'stacks'=>$percent/$definition['perStack']];
+    $activity['nextAttackGuards']=$guards;queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    $action=onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'effect-stack','characterName'=>$target['name']??'Cible','summary'=>$definition['label'].' : '.$result['stacks'].' stack(s)','detail'=>($delta>0?'+1':'−1').' · réserve '.$percent.' %']);
+    $activity=$pending['activity']['payload']??$activity;$receipts[]=['kind'=>'effect-stack','requestId'=>$requestId,'accountId'=>$identity['id'],'requestSignature'=>$signature,'sourceKey'=>$tokenId,'actionId'=>$action['id'],'expiresAt'=>$now+XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS,'result'=>$result];
+    $activity['resourceReceipts']=$receipts;queueOnlineDomainUpsert($pending,$records,'activity',$activity);return [...$result,'deduplicated'=>false];
+}
 function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pending, array $table, array $identity, array $arguments, bool $resolve): array {
     if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm') rejectOnlineCommand($connection, 403, 'Cette action est réservée au MJ.', 'gm_required');
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));

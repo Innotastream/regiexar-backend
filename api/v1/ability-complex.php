@@ -45,7 +45,7 @@ function onlineComplexAbilitySceneTokens(
             && !onlineAttackTargetVisible($connection, $records, $map, $token, $accountId, $sceneId)) continue;
         $token['controllerAccountId'] = onlineTokenControllerIdFromRecords($connection, $records, $token);
         $token['stats']=onlineEnhancedStatRows($connection,$records,[],$token,$sceneId);
-        $token['weaponAttacks']=equipmentAttackRows($token['weaponAttacks']??[],$token,onlineEquipmentState($connection,$records,[],$sceneId,$map));
+        $token['weaponAttacks']=abilityEquipmentAttackRows($token['weaponAttacks']??[],$token,onlineEquipmentState($connection,$records,[],$sceneId,$map));
         $tokens[] = $token;
     }
     return $tokens;
@@ -206,7 +206,12 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         'summary' => $attack['sourceName'] . ' attaque ' . $attack['targetName'] . ' avec ' . $attack['attackName'],
         'detail' => $attack['status'] === 'awaiting-opposition' ? 'Orbe consommé · jet de défense demandé' : onlineAttackHistoryDetail($attack)]);
     if ($attack['status'] === 'applied') onlineAppendAppliedDamageAction($connection, $records, $pending, $identity, $attack);
-    return onlineApplyAttackEchoes($connection, $records, $pending, $attack);
+    $attack=onlineApplyAttackEchoes($connection, $records, $pending, $attack);
+    if(applicationAttackVisualWaitsForDamage($activity,$attack)&&in_array($attack['status'],['applied','blocked'],true)){
+        $visualState=onlineEquipmentState($connection,$records,$pending,$sceneId);$visualMap=[...$visualState['map'],'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
+        $activity=$pending['activity']['payload']??$activity;appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$visualState['items']);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    }
+    return $attack;
 }
 
 function onlineUseComplexAbility(
@@ -294,6 +299,7 @@ function onlineUseComplexAbility(
             rejectOnlineCommand($connection, 429, 'La table contient déjà trop de compétences complexes actives.', 'complex_ability_active_capacity');
         }
         if ($continuation === null) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
+        if(array_filter($ability['workflow']['steps']??[],static fn($s)=>($s['type']??'')==='movement')){$lock=applicationAbilityMovementLock($activity['abilityExecutions'],$sceneId,$source['id'],onlineSceneTokensForLights($connection,$records,$pending,$sceneId));if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
         $plan = $continuation['plan'] ?? onlinePrepareAbilityCasting(
             $connection, $ability, $rules, $sceneId,
             applicationDomainPayload($records, 'initiative:' . $sceneId), $activity
@@ -315,7 +321,7 @@ function onlineUseComplexAbility(
                     'sourcePosition' => $source, 'sourceTokenId' => $source['id'] ?? '', 'sourceName' => $source['name'] ?? 'Personnage',
                     'characterId' => $owner['characterId'] ?? '',
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
-                    'controllerName' => $identity['display_name'] ?? '', 'ability' => $ability, 'cast' => $cast, 'now' => $now,
+                    'controllerName' => $identity['display_name'] ?? '', 'ability' => applicationConfiguredStackableAbility($ability), 'cast' => $cast, 'now' => $now,
                     'targetTokenId' => $arguments['targetTokenId'] ?? '',
                     'combatId' => $persistent ? $combatId : '',
                 ]);
@@ -387,7 +393,15 @@ function onlineUseComplexAbility(
         }
     }
     $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, $isGm);
-    $map['tokens']=$tokens;
+    $staged=count(array_filter($current['workflow']['steps'],static fn($s)=>!empty($s['charge']['staged'])))>0;
+    if($staged){
+        $visibleIds=array_column($tokens,'id');foreach(onlineSceneTokensForLights($connection,$records,$pending,$sceneId)as$t)if(!in_array($t['id'],$visibleIds,true))$tokens[]=[...$t,'hidden'=>true];
+        $source=applicationComplexAbilityTokenById($tokens,$current['sourceTokenId']);$occlusion=applicationActiveMapOcclusionState($map,$tokens);
+        if($isGm){$character=applicationDomainPayload($records,'character:'.($source['characterId']??''));$origins=[['x'=>$source['x'],'y'=>$source['y'],'visionDistance'=>onlineTokenVisionDistance($source,$character?:null),'darkVision'=>onlineTokenDarkVision($source,$character?:null),'source'=>'token']];$map['_chargeVisible']=onlineVisiblePathPointTester(applicationActiveMapFogState($map),applicationComputeVisionMask($occlusion,$origins,$map['gridSize']??50));}
+        else $map['_chargeVisible']=onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId);
+    }
+    $chargeTravel=applicationStagedChargeTravel($current,$workflowCommand,$tokens,[...$map,'tokens'=>$tokens,'_abilityExecutions'=>$activity['abilityExecutions']??[]]);$tokens=applicationChargeTravelTokens($tokens,$chargeTravel);
+    $map['tokens']=$tokens;$map['_abilityExecutions']=$activity['abilityExecutions']??[];
     $generatedRolls = [];
     $confirmedAttack = null;
     if ($workflowAction === 'confirm-attack') {
@@ -425,6 +439,15 @@ function onlineUseComplexAbility(
         );
     } catch (ApplicationComplexAbilityException $error) {
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
+    }
+    if($chargeTravel!==null){
+        foreach($next['workflow']['steps']as$movement)if(!empty($movement['charge']['staged']))$next['stepStates'][$movement['id']]['movementLockUntil']=$now+1800;
+        $source=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$current['sourceTokenId']));
+        $opportunities=applicationMovementAvoidsOpportunity($activity['abilityExecutions']??[],$sceneId,$source['id'])?[]:applicationOpportunityRequests([...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)],$source,$chargeTravel['from'],$chargeTravel['to'],[$chargeTravel['from'],$chargeTravel['to']],$sceneId,static fn($t)=>onlineTokenControllerIdFromRecords($connection,$records,$t),static function($t)use($records){$owner=applicationAbilityCastingOwner($t)['characterId'];return $owner!==''?(applicationDomainPayload($records,'character:'.$owner)['passiveAbilities']??$t['passiveAbilities']??null):($t['passiveAbilities']??null);});
+        if($opportunities!==[]){$store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());if(count($store['pendingRolls'])+count($opportunities)>1000)rejectOnlineCommand($connection,429,'Traitez les réactions en attente.','opportunity_queue_full');$store['pendingRolls']=[...$store['pendingRolls'],...$opportunities];queueOnlineDomainUpsert($pending,$records,'devices',$store);}
+        $trap=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$sceneId);if(queueItemTrapPassages($trap,$source,$chargeTravel['from'],$chargeTravel['to'],[$chargeTravel['from'],$chargeTravel['to']],static fn($p)=>$p.'-'.randomToken(16)))queueOnlineDomainUpsert($pending,$records,'items',$trap['items']);
+        foreach($chargeTravel['moves']as$move){$key=onlineTokenDomainKey($sceneId,$move['tokenId']);$token=applicationDomainPayload($records,$key);if($token!==[])queueOnlineDomainUpsert($pending,$records,$key,[...$token,...$move['to'],'_movedAt'=>$now]);}
+        appendApplicationChargeTravelCue($activity,$current,$chargeTravel);
     }
     $effectResult = null;
     $counterUse = null;
@@ -470,16 +493,23 @@ function onlineUseComplexAbility(
                 }
                 $guards = array_values(array_filter(is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
                     static fn(mixed $guard): bool => is_array($guard) && (($guard['sceneId'] ?? '') !== $sceneId
-                        || ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? ''))));
+                        || ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? '')||($guard['lifecycle']??'')==='status')));
                 if (count($guards) >= 60) rejectOnlineCommand($connection, 409, 'Trop de protections attendent déjà une attaque.', 'complex_ability_guard_capacity');
-                $guards[] = ['id' => 'guard-' . randomToken(12), 'sceneId' => $sceneId,
+                $stackable=applicationConfiguredStackableEffect((string)$next['abilityId'],'guard');
+                $guards[] = $stackable!==null?applicationMakeStackableEffect($stackable,$sceneId,(string)$target['id'],'guard-'.randomToken(12)):['id' => 'guard-' . randomToken(12), 'sceneId' => $sceneId,
                     'targetTokenId' => (string) $target['id'], 'combatId' => (string) ($initiative['combatId'] ?? ''),
                     'percent' => $effect['percent'], 'sourceExecutionId' => $next['id'], 'lifecycle' => ($effect['persistAfterEnd'] ?? false) ? 'next-attack' : 'execution',
                     'stackGroup' => ($effect['stackable'] ?? false) ? (string) $next['abilityId'] : '', 'trigger' => $effect['trigger'] ?? 'attack', 'damageTypes' => $effect['damageTypes'], 'armorStacking' => $effect['armorStacking']];
                 $activity['nextAttackGuards'] = $guards;
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 $effectResult = ['kind' => 'guard', 'targetTokenId' => $target['id'], 'targetName' => $target['name'] ?? 'Cible',
-                    'percent' => $effect['percent']];
+                    'percent' => $stackable!==null?applicationStackableEffects()[$stackable]['perStack']:$effect['percent']];
+                if(isset(applicationSpellVisualBindings()[$next['abilityId']]['variants']['guard'])){
+                    $visualSource=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$next['sourceTokenId']));
+                    $visualMap=[...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
+                    $spell=applicationTrustedSpellVisual(['id'=>$next['abilityId']],['sceneId'=>$sceneId,'map'=>$visualMap,'source'=>$visualSource,'targetPoint'=>$target,'variantId'=>'guard']);
+                    if($spell!==null){appendApplicationAbilityCueEvent($activity,['version'=>1,'spell'=>$spell],$sceneId,$next['layerId'],$next['sourceTokenId'],!empty($visualSource['hidden'])?'gm':'public');queueOnlineDomainUpsert($pending,$records,'activity',$activity);}
+                }
             } else {
                 $counterUse = $use;
             }
@@ -496,6 +526,12 @@ function onlineUseComplexAbility(
             (applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $next['sourceTokenId'] ?? ''))['hidden'] ?? false) ? 'gm' : 'public');
     }
     $activity = $pending['activity']['payload'] ?? $activity;
+    if($workflowAction==='confirm-movement'&&($currentStep['type']??'')==='movement'){
+        $movementSource=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$next['sourceTokenId']??''));
+        $movementMap=[...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
+        $movementSpell=applicationTrustedMovementSpellVisual($next,['stepId'=>$currentStep['id'],'source'=>$movementSource,'map'=>$movementMap]);
+        if($movementSpell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['version'=>1,'spell'=>$movementSpell]),$sceneId,$next['layerId'],$next['sourceTokenId'],!empty($movementSource['hidden'])?'gm':'public');
+    }
     if (($current['status'] ?? '') === 'active' && ($next['status'] ?? '') !== 'active') {
         $activity['nextAttackGuards'] = array_values(array_filter(
             is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],

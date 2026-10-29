@@ -31,7 +31,7 @@ function applicationPublicMovementEffectZones(array $state,array $sourceMap,arra
         $fixed=applicationFixedEffectArea($effect['fixedArea']??null);$caster=null;
         if(isset($effect['aura']))foreach($tokens as $token)if(($token['id']??'')===($effect['casterTokenId']??'')){$caster=$token;break;}
         $center=$fixed??$point($caster);if($center===null||$center['layerId']!==$layerId||$fixed===null&&!isset($effect['aura'])||!$visible($center['x'],$center['y'])||$fixed===null&&!isset($clear[$caster['id']??'']))continue;
-        $ids=[];foreach($candidates as $token)if($fixed!==null||applicationDamageAreaAffects($effect['aura'],$caster['id'],$controller($caster),$token['id'],$controller($token)))$ids[]=$token['id'];
+        $ids=[];foreach($candidates as $token)if($fixed!==null||applicationDamageAreaAffects([...$effect['aura'],'affectAllies'=>!empty($caster['friendlyFire'])||$effect['aura']['affectAllies']],$caster['id'],$controller($caster),$token['id'],$controller($token)))$ids[]=$token['id'];
         if($ids===[])continue;
         $result[]=['id'=>$effect['id'],'sceneId'=>$sceneId,...$center,'radiusCells'=>$fixed['radiusCells']??$effect['aura']['radiusCells'],'origin'=>$fixed!==null?'fixed':'token','geometry'=>'footprints',...($fixed===null?['sourceTokenId'=>$caster['id']]:[]),'polarity'=>applicationEffectZonePolarity($effect),'recipientTokenIds'=>$ids];
     }

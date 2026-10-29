@@ -1,0 +1,164 @@
+{
+  "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
+    "presetId": "body-charge",
+    "revision": 1,
+    "effect": "complex",
+    "values": {
+      "effect": "complex",
+      "formula": "0",
+      "castingStatId": "",
+      "projectile": false,
+      "manaCost": 0,
+      "hpCost": 0,
+      "fatigueCost": 10,
+      "restRecharge": "short",
+      "usesPerRest": 1,
+      "reducedFailureCooldown": false,
+      "onHitConditions": [],
+      "workflow": {
+        "version": 8,
+        "steps": [
+          {
+            "id": "charge-target",
+            "type": "targets",
+            "title": "Choisir la cible finale",
+            "minTargets": 1,
+            "maxTargets": 1,
+            "allocationTotal": 0,
+            "rangeCells": 0,
+            "rangeMeters": 20,
+            "targetRelation": "enemies"
+          },
+          {
+            "id": "charge-movement",
+            "type": "movement",
+            "title": "Charger vers la cible",
+            "maximumMeters": 20,
+            "charge": {
+              "version": 1,
+              "targetStepId": "charge-target",
+              "statId": "character-stat-force",
+              "pathPenalty": 10,
+              "finalAttacks": 1,
+              "finalCondition": {
+                "version": 1,
+                "label": "Étourdi",
+                "turns": 1,
+                "trigger": "attempt",
+                "resistance": false,
+                "blocksMovement": true,
+                "blocksActions": true,
+                "expiry": "end-next-turn",
+                "immunityLabel": "Étourdi",
+                "fallbackLabel": "Déstabilisé",
+                "fallbackTurns": 1,
+                "fallbackExpiry": "end-next-turn",
+                "fallbackBlocksMovement": false,
+                "fallbackBlocksActions": false
+              },
+              "staged": true,
+              "pushAside": true,
+              "pathRange": "weapon",
+              "pathTargets": "enemies"
+            }
+          },
+          {
+            "id": "charge-strikes",
+            "type": "allocated-attacks",
+            "title": "Frappes de la charge",
+            "sourceStepId": "charge-movement",
+            "awarenessMode": "none",
+            "damageMode": "weapon",
+            "damagePercent": 100
+          }
+        ]
+      },
+      "description": "Charge en ligne droite jusqu’à 20 mètres. Les ennemis qui entrent dans l’allonge de la hallebarde subissent chacun une frappe de Force, avec un malus cumulatif de 10 par ennemi sur le trajet. Les pions en collision sont écartés sur un côté libre.\n\nÀ l’arrivée, percute la cible avec le corps puis lui porte une seule frappe, sans le malus cumulatif du trajet. La cible est Étourdie jusqu’à la fin de son prochain tour complet, même si la frappe finale échoue. Une cible insensible à l’assommement reçoit Déstabilisé pour la même durée, sans malus supplémentaire.\n\nL’aperçu du trajet et des ennemis précède la validation. Après acceptation, choisissez les défenses de chaque cible dans le récapitulatif. Aucun jet préalable au lancement."
+    }
+  },
+  "ability-0eaec688-fbcd-49cf-8e85-b6e1e7c8fa25": {
+    "presetId": "divine-strike",
+    "revision": 1,
+    "values": {
+      "useWeaponDamage": true,
+      "mainWeaponOnly": true,
+      "weaponDamageMode": "add",
+      "weaponDamageMultiplier": 1,
+      "formula": "1d40+10",
+      "damageType": "ignore",
+      "damageComponents": [
+        {
+          "type": "ignore",
+          "formula": "1d40+10"
+        }
+      ],
+      "castingStatId": "character-stat-force",
+      "noDefensePossible": false,
+      "projectile": false,
+      "manaCost": 20,
+      "hpCost": 0,
+      "fatigueCost": 5,
+      "cooldownRounds": 3,
+      "usesPerRest": 2,
+      "restRecharge": "short",
+      "usesPerCombat": 0,
+      "reducedFailureCooldown": true,
+      "reusableInTurn": false,
+      "difficultyIncrement": 0,
+      "description": "Imprègne la hallebarde d’énergie divine avant de l’abattre sur la cible.\n\nAjoute 1d40+10 dégâts ignorant l’armure aux dégâts physiques de la hallebarde, actuellement 1d40+6."
+    }
+  },
+  "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {
+    "rangeCells": 8,
+    "reach": "reach",
+    "reducedFailureCooldown": true,
+    "infusion": {
+      "version": 1,
+      "enabled": true,
+      "ratio": 1,
+      "minimumMana": 0,
+      "refundOnMiss": false
+    }
+  },
+  "ability-db5723cf-d4e4-4518-8b1f-52a0ca8967ee": {
+    "presetId": "brute-force",
+    "revision": 1,
+    "values": {
+      "effect": "damage",
+      "formula": "1d40+10",
+      "damageType": "magical",
+      "damageComponents": [
+        {
+          "type": "magical",
+          "formula": "1d40+10"
+        }
+      ],
+      "manaCost": 10,
+      "castingStatId": "character-stat-intelligence",
+      "castingChoices": [
+        "character-stat-intelligence"
+      ],
+      "usesPerRest": 2,
+      "restRecharge": "short",
+      "cooldownRounds": 3,
+      "reducedFailureCooldown": true,
+      "projectile": true,
+      "reach": "ranged",
+      "minimumReach": "reach",
+      "damageTargeting": {
+        "mode": "single",
+        "radiusCells": 0
+      },
+      "knockback": {
+        "version": 1,
+        "dieSides": 40,
+        "bandSize": 10,
+        "cellsPerBand": 2,
+        "maximumCells": 8,
+        "pushAside": true,
+        "sideStepCells": 1
+      },
+      "description": "Sort monocible utilisable dès la portée Allonge, hors de la portée Mêlée. Un jet d’Intelligence précède les dégâts.\n\nInflige 1d40+10 dégâts magiques et repousse la cible à l’opposé du lanceur selon le résultat brut du même d40, avant le +10 : 1–10 = 2 cases ; 11–20 = 4 cases ; 21–30 = 6 cases ; 31–40 = 8 cases. Aucun dé supplémentaire.\n\nLa poussée traverse le brouillard, mais s’arrête devant les murs avec un fracassement visuel sans dégâts supplémentaires. Une unité déjà présente se décale sur un côté libre ; si elle ne peut pas se dégager, la poussée s’arrête avant le chevauchement. Sans grille, les distances utilisent l’échelle de la carte et les positions restent libres."
+    }
+  }
+}

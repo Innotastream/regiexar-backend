@@ -48,6 +48,7 @@ function dsRider(mixed $value): ?array {
         ...(($value['trigger']??'')==='attempt'?['trigger'=>'attempt']:[]),
         ...(!empty($value['attackPenalty'])?['attackPenalty'=>dsInt($value['attackPenalty'],1,100,15)]:[]),
         ...(($value['expiry']??'')==='end-next-turn'?['expiry'=>'end-next-turn']:[]),
+        ...(($value['fallbackExpiry']??'')==='end-next-turn'?['fallbackExpiry'=>'end-next-turn']:[]),
         ...(trim((string)($value['criticalLabel']??''))!==''?['criticalLabel'=>dsTextSlice(trim($value['criticalLabel']),0,240)]:[]),
         ...(is_array($value['escape']??null)&&is_array($value['escape']['penalties']??null)&&array_is_list($value['escape']['penalties'])&&count($value['escape']['penalties'])>=1&&count($value['escape']['penalties'])<=100
             &&count(array_filter($value['escape']['penalties'],static fn($p)=>is_int($p)&&$p>=-100&&$p<=100))===count($value['escape']['penalties'])

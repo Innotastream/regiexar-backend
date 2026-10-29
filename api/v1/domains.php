@@ -1458,6 +1458,7 @@ function validApplicationTokenDomain(array $payload): bool
     }
     if (array_key_exists('conditions', $payload) && !validApplicationConditions($payload['conditions'])) return false;
     if (array_key_exists('conditionImmunities', $payload) && !validApplicationConditions($payload['conditionImmunities'])) return false;
+    if(array_key_exists('friendlyFire',$payload)&&!is_bool($payload['friendlyFire']))return false;
     if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('image', $payload)
         && $payload['image'] !== null
@@ -1763,6 +1764,7 @@ function validApplicationCharacterDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('conditionImmunities', $payload) && !validApplicationConditions($payload['conditionImmunities'])) return false;
+    if(array_key_exists('friendlyFire',$payload)&&!is_bool($payload['friendlyFire']))return false;
     if (array_key_exists('healthOverride', $payload) && !in_array($payload['healthOverride'], [null, 'dead'], true)) return false;
     if (array_key_exists('hitThreshold', $payload)
         && $payload['hitThreshold'] !== null
@@ -2153,6 +2155,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
             || !validApplicationDomainObjectList($payload['restEvents'] ?? [], 10)
             || !validApplicationDomainObjectList($payload['playerActions'] ?? [], XAR_PLAYER_ACTION_MAXIMUM)
+            || !validApplicationDomainObjectList($payload['combatActions'] ?? [], 120)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
         sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
@@ -2452,6 +2455,9 @@ function prepareApplicationDomainUpsert(
     }
     if ($key === 'activity' && $protectAgainstStaleEntityWrite && is_array($payload)) {
         $payload = preserveApplicationPendingAbilityValidation($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
+        if(!empty($current['payload']['combatActions']))$payload['combatActions']=$current['payload']['combatActions'];else unset($payload['combatActions']);
+        $authoritativeActions=array_column($current['payload']['playerActions']??[],null,'id');
+        foreach($payload['playerActions']??[]as$i=>$entry){foreach(['combatActionId','combatUndone']as$field){unset($payload['playerActions'][$i][$field]);if(array_key_exists($field,$authoritativeActions[$entry['id']??'']??[]))$payload['playerActions'][$i][$field]=$authoritativeActions[$entry['id']][$field];}}
     }
     $payload = validatedDomainPayload($key, $payload);
     if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
@@ -2576,6 +2582,7 @@ function legacyStateToDomains(array $state): array
             'abilityCueEvents' => is_array($state['abilityCueEvents'] ?? null) ? $state['abilityCueEvents'] : [],
             'restEvents' => is_array($state['restEvents'] ?? null) ? $state['restEvents'] : [],
             'playerActions' => is_array($state['playerActions'] ?? null) ? $state['playerActions'] : [],
+            ...(!empty($state['combatActions'])?['combatActions'=>$state['combatActions']]:[]),
             'shortcuts' => is_array($state['shortcuts'] ?? null) ? $state['shortcuts'] : [],
             'rolls' => is_array($state['rolls'] ?? null) ? $state['rolls'] : [],
         ],
@@ -2776,6 +2783,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'abilityCueEvents' => is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         'restEvents' => is_array($activity['restEvents'] ?? null) ? $activity['restEvents'] : [],
         'playerActions' => is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
+        ...(!empty($activity['combatActions'])?['combatActions'=>$activity['combatActions']]:[]),
         'tokenLibrary' => is_array($library['tokenLibrary'] ?? null) ? $library['tokenLibrary'] : [],
         'characterGroups'=>is_array($library['characterGroups']??null)?$library['characterGroups']:[],
         'characterDirectoryOrder'=>is_array($library['characterDirectoryOrder']??null)?$library['characterDirectoryOrder']:[],
