@@ -1,0 +1,42 @@
+{
+  "item-template-d8d0bc28-14c8-424e-b4cc-03703883943f": {
+    "name": "Potion de soin petit",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-soin-petite.png",
+    "potionColor": "#e2232c"
+  },
+  "v370-template-727a86a4f1b7c3acfeb269c0": {
+    "name": "Potion de soin moyenne",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-soin-moyenne.png",
+    "potionColor": "#e2232c"
+  },
+  "item-template-23001d85-298d-414c-8be9-2405e7a288e5": {
+    "name": "Potion de soin grande",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-soin-grande.png",
+    "potionColor": "#e2232c"
+  },
+  "v370-template-2a90c43778585c7813aec86b": {
+    "name": "Antidote",
+    "kind": "potion",
+    "image": "/assets/item-art/antidote.png",
+    "potionColor": "#17cbbb"
+  },
+  "v370-template-fad0fbf7691b2b40a2a9a7dc": {
+    "name": "Fiole de poison mortel",
+    "kind": "object",
+    "image": "/assets/item-art/poison-mortel.png",
+    "potionColor": "#83e31d"
+  },
+  "v370-template-e8b39e7fd0dccc6b6add1b5f": {
+    "name": "Fiole indestructible",
+    "kind": "object",
+    "image": "/assets/item-art/fiole-indestructible.png"
+  },
+  "item-template-mania-reagent-capsule": {
+    "name": "Capsule de réactif",
+    "kind": "object",
+    "image": "/assets/item-art/capsule-reactif.png"
+  }
+}

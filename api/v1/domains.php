@@ -21,6 +21,9 @@ require_once __DIR__ . '/device-state.php';
 require_once __DIR__ . '/map-passages.php';
 require_once __DIR__ . '/token-spacing.php';
 require_once __DIR__ . '/vision-cache.php';
+require_once __DIR__ . '/ability-movement-leases.php';
+require_once __DIR__ . '/vision-zones.php';
+require_once __DIR__ . '/mist-vision.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -282,6 +285,7 @@ function validApplicationFogState(mixed $value): bool
 function validApplicationMapFogState(array $map): bool
 {
     if(array_key_exists('terrainEffects',$map))try{normalizeApplicationTerrainEffects($map['terrainEffects']);}catch(RuntimeException){return false;}
+    if(array_key_exists('visionZones',$map))try{normalizeApplicationVisionZones($map['visionZones']);}catch(RuntimeException){return false;}
     try{normalizePassages($map['passages']??null);}catch(RuntimeException $error){return false;}
     if (array_key_exists('lights', $map) && !validApplicationMapLights($map['lights'])) {
         return false;
@@ -2147,6 +2151,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['resourceReceipts'] ?? [], XAR_RESOURCE_RECEIPT_MAXIMUM)
             || count($payload['resourceReceipts'] ?? []) + count($payload['pendingAbilityCasts'] ?? []) > XAR_RESOURCE_RECEIPT_MAXIMUM
             || !validApplicationComplexAbilityExecutions($payload['abilityExecutions'] ?? [])
+            || !validApplicationAbilityMovementLeases($payload['abilityMovementLeases'] ?? [])
             || !validApplicationDomainObjectList($payload['pendingDotResolutions'] ?? [], XAR_PENDING_DOT_RESOLUTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['rollRevelations'] ?? [], 500)
             || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [], 100)
@@ -2574,6 +2579,7 @@ function legacyStateToDomains(array $state): array
             'attackReceipts' => is_array($state['attackReceipts'] ?? null) ? $state['attackReceipts'] : [],
             'resourceReceipts' => is_array($state['resourceReceipts'] ?? null) ? $state['resourceReceipts'] : [],
             'abilityExecutions' => normalizeApplicationComplexAbilityExecutions($state['abilityExecutions'] ?? []),
+            'abilityMovementLeases' => normalizeAbilityMovementLeases($state['abilityMovementLeases'] ?? []),
             'damageOverTime' => is_array($state['damageOverTime'] ?? null) ? $state['damageOverTime'] : [],
             'attackEnhancements' => is_array($state['attackEnhancements'] ?? null) ? $state['attackEnhancements'] : [],
             'pendingDotResolutions' => is_array($state['pendingDotResolutions'] ?? null) ? $state['pendingDotResolutions'] : [],
@@ -2775,6 +2781,7 @@ function domainsToApplicationState(array $records, int $revision, ?string $updat
         'attackReceipts' => is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
         'resourceReceipts' => is_array($activity['resourceReceipts'] ?? null) ? $activity['resourceReceipts'] : [],
         'abilityExecutions' => applicationComplexAbilityResultsFromReceipts(normalizeApplicationComplexAbilityExecutions($activity['abilityExecutions'] ?? []), $activity['attackReceipts'] ?? []),
+        'abilityMovementLeases' => normalizeAbilityMovementLeases($activity['abilityMovementLeases'] ?? []),
         'damageOverTime' => is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [],
         'attackEnhancements' => is_array($activity['attackEnhancements'] ?? null) ? $activity['attackEnhancements'] : [],
         'pendingDotResolutions' => is_array($activity['pendingDotResolutions'] ?? null) ? $activity['pendingDotResolutions'] : [],
@@ -3087,6 +3094,16 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
 
 function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, array &$pending, array $identity, ?array $manual = null): void
 {
+    $zoneClocks=[];
+    foreach($pending as $key=>$change)if(str_starts_with((string)$key,'initiative:')&&($change['operation']??'')==='upsert')$zoneClocks[]=[substr((string)$key,11),$change['current']['payload']??[],$change['payload']??[],false,0];
+    if($manual!==null)$zoneClocks=[[(string)$manual['sceneId'],[],applicationDomainPayload($records,'initiative:'.$manual['sceneId']),true,(int)$manual['turn']]];
+    foreach($zoneClocks as [$zoneScene,$zonePrevious,$zoneNext,$zoneManual,$zoneTurn]){
+        $mapKey='map:'.$zoneScene;if(!isset($records[$mapKey]))$records=array_replace($records,applicationDomainRecords($connection,[$mapKey]));
+        $zoneMap=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);if(!array_key_exists('visionZones',$zoneMap))continue;
+        $zoneTokens=onlineSceneTokensForLights($connection,$records,$pending,$zoneScene);
+        $advanced=applicationAdvanceVisionZones($zoneMap['visionZones'],$zoneScene,$zonePrevious,$zoneNext,['manual'=>$zoneManual,'manualTurn'=>$zoneTurn,'tokens'=>$zoneTokens]);
+        if($advanced!==$zoneMap['visionZones']){$zoneMap['visionZones']=$advanced;queueOnlineDomainUpsert($pending,$records,$mapKey,$zoneMap);}
+    }
     $turns = [];
     $endedScenes = [];
     foreach ($pending as $key => $change) {
@@ -3123,7 +3140,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
         }
     }
-    $remaining = [];
+    $remaining = [];$effectVisualMaps=[];
     foreach ($dots as $dot) {
         if (!is_array($dot) || isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) continue;
         $keep = true;
@@ -3162,6 +3179,13 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
                 'sourceTokenId' => $tokenId, 'anchorTokenId' => $tokenId,
                 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
             $activity = $pending['activity']['payload'] ?? $activity;
+            if($applied>0&&!empty(applicationSpellVisualBindings()[$dot['sourceAbilityId']??'']['enhancementEvents']['periodic'])){
+                if(!isset($effectVisualMaps[$sceneId])){$visualState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$sceneId);$effectVisualMaps[$sceneId]=$visualState['map'];}
+                $spell=applicationTrustedEnhancementSpellVisual($dot,['phase'=>'periodic','map'=>$effectVisualMaps[$sceneId],'sceneId'=>$sceneId,'targetPoint'=>$target]);
+                if($spell!==null){$clockKey=$manualTurn>0?'manual:'.$manualTurn:($initiative['combatId']??'').':turn:'.$initiative['turnSerial'];
+                    appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),$sceneId,$spell['layerId'],$tokenId,$roll['visibility']??'public',
+                        'cue-effect-'.substr(hash('sha256','periodic:'.$sceneId.':'.$tokenId.':'.$spell['presetId'].':'.$clockKey),0,32));}
+            }
             $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);

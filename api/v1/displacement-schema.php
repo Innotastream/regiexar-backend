@@ -1,5 +1,10 @@
 <?php
 declare(strict_types=1);
+function applicationAttackApproach(mixed $value):?array {
+    if($value===null)return null;
+    if(!is_array($value)||($value['version']??1)!==1||($value['mode']??'')!=='contact'||!is_int($value['durationMs']??null)||$value['durationMs']<100||$value['durationMs']>10000)throw new RuntimeException('Renseignez une approche au contact et sa durée valides.',422);
+    return ['version'=>1,'mode'=>'contact','durationMs'=>$value['durationMs']];
+}
 function applicationKnockback(mixed $value): ?array {
     if ($value===null) return null;
     if (!is_array($value)||($value['version']??1)!==1) throw new RuntimeException('Cette poussée provient d’une version plus récente.',422);

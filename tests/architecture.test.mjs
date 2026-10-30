@@ -5,7 +5,7 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
 
-const expectedSharedGmCommands = "luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.activate item.trap.resolve item.use.cancel item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
+const expectedSharedGmCommands = "luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
 function assertSharedGmCommands(source) {
   const guard = source.match(/if \(\$isGm && !in_array\(\$command, \['strategy-break','table-tokens'\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
   assert.ok(guard, "la liste commune doit rester sous le contrôle du mode MJ");
@@ -98,8 +98,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.3'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-1-0-combat-animations-20261029-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.4'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-0-combat-inventory-mist-20261030-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -135,8 +135,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.3");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.1.0");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.4");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.2.0");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -332,7 +332,9 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
     "la projection joueur doit être reconstruite depuis l’état engagé, jamais depuis l’optimisme de la requête");
   assertSharedGmCommands(online);
   assert.match(online, /'temporaryMovementAllowed' => \$temporaryMovementAllowed/);
-  assert.match(online, /'controllable' => [^\n]*empty\(\$token\['mountedOnTokenId'\]\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
+  assert.match(online, /'controllable' => [^\n]*\(empty\(\$token\['mountedOnTokenId'\]\)\|\|\$mountedMovementAllowed\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
+  assert.match(online, /\$mountedMovementStep=!empty\(\$token\['mountedOnTokenId'\]\)\?applicationActiveAbilityMovementStep\(/);
+  assert.match(online, /\$mountedMovementAllowed=empty\(\$body\['immovable'\]\)&&applicationAbilityMovementLock\(/);
   assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
   assert.match(domains, /function validApplicationMovementOverrides/);
   assert.match(domains, /\$allowed !== true/);
@@ -343,8 +345,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.1.0");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.1.0"]);
+  assert.equal(manifest.announcedApplicationVersion, "4.2.0");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.2.0"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);

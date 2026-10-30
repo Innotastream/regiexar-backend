@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/ability-mount-movement.php';
 
 function applicationTokenSpatialFootprint(array $token,array $map):array {
     $mountId=$token['mountedOnTokenId']??'';
@@ -34,6 +35,7 @@ function applicationComplexMovementDimensions(array $map): array {
         'height' => ($map['naturalHeight'] ?? 0) > 0 ? (float) $map['naturalHeight'] : 900,
         'grid' => ($map['gridSize'] ?? 0) > 0 ? (float) $map['gridSize'] : 50];
 }
+function applicationComplexMovementDistanceCells(array $state,array $map):float{$d=applicationComplexMovementDimensions($map);$points=array_map('applicationComplexMovementPoint',$state['points']??[]);$cells=0;for($i=1;$i<count($points);$i++)$cells+=max(abs($points[$i]['x']-$points[$i-1]['x'])*$d['width']/(100*$d['grid']),abs($points[$i]['y']-$points[$i-1]['y'])*$d['height']/(100*$d['grid']));return (float)$cells;}
 function initialApplicationComplexMovementState(array $source, int $now,float $attackWidthCells=0): array {
     $point = applicationComplexMovementPoint($source);
     return ['status' => 'pending', 'origin' => $point, 'points' => [$point], 'sourceSize' => max(0, (float) ($source['size'] ?? 40)),
@@ -49,7 +51,7 @@ function appendApplicationComplexMovementPath(array $state, array $start, array 
     $path = is_array($acceptedPath) && $acceptedPath !== [] ? array_map('applicationComplexMovementPoint', $acceptedPath) : [$from, $to];
     if (!applicationComplexMovementSamePoint($path[0], $from) || !applicationComplexMovementSamePoint($path[count($path) - 1], $to))
         applicationComplexAbilityFail('Le trajet du déplacement n’a pas été confirmé.', 'complex_ability_movement_invalid');
-    $dimensions = applicationComplexMovementDimensions($map); $distance = (float) ($state['distanceMeters'] ?? 0);$cells=(float)($state['distanceCells']??0);
+    $dimensions = applicationComplexMovementDimensions($map); $distance = (float) ($state['distanceMeters'] ?? 0);$cells=applicationComplexMovementDistanceCells($state,$map);
     for ($i = 1; $i < count($path); $i++) {
         if (applicationComplexMovementSamePoint($path[$i - 1], $path[$i])) continue;
         $dx = abs($path[$i]['x'] - $path[$i - 1]['x']) * $dimensions['width'] / (100 * $dimensions['grid']);
@@ -100,7 +102,9 @@ function applicationComplexAbilityTargetEligible(array $execution, array $step, 
     $origin=null;foreach($execution['workflow']['steps']??[] as $entry)if(($entry['id']??'')===($step['sourceStepId']??''))$origin=$entry;
     $targeting=($step['type']??'')==='targets'?$step:(($origin['type']??'')==='targets'?$origin:$step);$strikeOrigin=applicationComplexAbilityStrikeOrigin($execution,$step,$target,$map);
     if((!empty($targeting['sourceMovementStepId'])||!empty($origin['charge']))&&$strikeOrigin===null)return false;
-    if (!applicationComplexAbilityTargetInRange($strikeOrigin!==null?[...($source??[]),...$strikeOrigin]:$source, $target, $map, $range)) return false;
+    $approaching=null;foreach($execution['workflow']['steps'] as $entry)if(($entry['charge']['targetStepId']??null)===$step['id'])$approaching=$entry;
+    $rangeSource=$approaching!==null&&$source!==null?applicationAbilityMovementSource($source,$map,($approaching['mountedMovement']??false)===true):$source;
+    if (!applicationComplexAbilityTargetInRange($strikeOrigin!==null?[...($source??[]),...$strikeOrigin]:$rangeSource, $target, $map, $range)) return false;
     if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => !empty($source['friendlyFire']), 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? '')))) return false;
     return empty($targeting['sourceMovementStepId']) || applicationTargetTouchesComplexMovement($target, $execution['stepStates'][$targeting['sourceMovementStepId']] ?? [], $map);
 }

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/token-dash.php';
 function applicationMeleeVisualCatalogue(): array {
     return ['charge-halberd-cleave'=>995,'light-halberd-cleave'=>975,'light-halberd-divine'=>1075,'paired-chitin-injection'=>865,'paired-chitin-divine'=>865,'ethereal-ground-fangs'=>2380,'sabre-fire-counter'=>1180,'sabre-frost-counter'=>1180,'sabre-fire-flurry'=>320,'sabre-frost-flurry'=>320,'elemental-sabre-cross'=>770,'ethereal-weapon-cross'=>770,'barbed-chain-lash'=>1040,'barbed-chain-sweep'=>1260,'ethereal-alternating'=>510,'ethereal-weave'=>585,
         'ethereal-instant'=>370,'ethereal-cross'=>440,'ethereal-dash-cross'=>1210,'requiem-judgement'=>1115,'requiem-grand-cleave'=>1065,'requiem-overhead'=>1270];
@@ -17,7 +18,9 @@ function applicationMeleeVisual(mixed $value): ?array {
         $p=$value[$key]??null;if(!is_array($p))return null;
         foreach(['x','y','size'] as $axis)if((!is_int($p[$axis]??null)&&!is_float($p[$axis]??null))||!is_finite((float)$p[$axis])||$p[$axis]<($axis==='size'?10:0)||$p[$axis]>($axis==='size'?10000:100))return null;
     }
-    return ['version'=>1,'placement'=>'melee','presetId'=>$value['presetId'],'sceneId'=>$value['sceneId'],'layerId'=>$value['layerId'],
+    $movement=array_key_exists('movementDash',$value)?applicationTokenDash($value['movementDash']):null;
+    if(array_key_exists('movementDash',$value)&&($movement===null||$movement['presetId']!=='token-fulgurant-dash'||$movement['sceneId']!==$value['sceneId']||$movement['layerId']!==$value['layerId']||$movement['sourceTokenId']!==$value['sourceTokenId']||abs($movement['path'][count($movement['path'])-1]['x']-$value['source']['x'])>1e-5||abs($movement['path'][count($movement['path'])-1]['y']-$value['source']['y'])>1e-5))return null;
+    return ['version'=>1,'placement'=>'melee','presetId'=>$value['presetId'],'sceneId'=>$value['sceneId'],'layerId'=>$value['layerId'],...($movement!==null?['movementDash'=>$movement]:[]),
         'sourceTokenId'=>$value['sourceTokenId'],'targetTokenId'=>$value['targetTokenId'],'source'=>array_intersect_key($value['source'],array_flip(['x','y','size'])),
         'targetPoint'=>array_intersect_key($value['targetPoint'],array_flip(['x','y','size'])),'strikeIndex'=>$value['strikeIndex']];
 }
@@ -33,6 +36,7 @@ function applicationMeleeVisualVariant(mixed $key,array $choices): ?string {
 function applicationTrustedMeleeVisual(array $attack,array $context): ?array {
     if(($attack['hit']['outcome']['success']??false)!==true||empty($context['approved'])&&!empty($attack['hit']['outcome']['requiresGmValidation'])
         ||!empty($attack['areaGate']['pending'])||!empty($attack['projectileGate']['pending']))return null;
+    if(isset($attack['attackApproach'])&&!isset($attack['approachApplied']))return null;
     $weapon=$attack['echoAttackContext']??[];
     $bindings=$context['bindings']??applicationMeleeVisualBindings();$profiles=[];
     $source=null;$target=null;$map=$context['map']??[];
@@ -65,10 +69,12 @@ function applicationTrustedMeleeVisual(array $attack,array $context): ?array {
     if(isset($binding['presetByProfile'])&&$boundPreset===null&&empty($binding['fallbackToWeapon']))return null;
 
     $a=function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($source,$map):$source;
+    if(isset($attack['approachApplied']['to']))$a=[...$a,...$attack['approachApplied']['to']];
     $b=function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($target,$map):$target;
     $layer=$a['layerId']??'ground';if(($b['layerId']??'ground')!==$layer)return null;
     $point=static fn($p)=>['x'=>$p['x']??null,'y'=>$p['y']??null,'size'=>$p['size']??40];
-    return applicationMeleeVisual(['version'=>1,'placement'=>'melee','presetId'=>$boundPreset??$combination??$bindings['profiles'][$profile]??'',
+    $movement=$attack['approachApplied']??null;
+    return applicationMeleeVisual(['version'=>1,'placement'=>'melee','presetId'=>$boundPreset??$combination??$bindings['profiles'][$profile]??'',...(!empty($movement['moved'])?['movementDash'=>['version'=>1,'placement'=>'dash','presetId'=>'token-fulgurant-dash','sceneId'=>$attack['sceneId'],'layerId'=>$layer,'sourceTokenId'=>$source['id'],'source'=>$point($movement['from']),'path'=>$movement['path'],'startedAt'=>$movement['startedAt'],...(($movement['mountedMovement']??false)===true?['mountedMovement'=>true]:[])]]:[]),
         'sceneId'=>$attack['sceneId'],'layerId'=>$layer,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],
         'source'=>$point($a),'targetPoint'=>$point($b),'strikeIndex'=>$context['strikeIndex']??0]);
 }

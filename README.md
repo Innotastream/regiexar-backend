@@ -1,3 +1,11 @@
+## Version 0.19.4 / client 4.2.0 — combats, inventaire et brume
+
+Build `client-4-2-0-combat-inventory-mist-20261030-1`. La connexion impose le client exact 4.2.0 ; le schéma SQL 24 est conservé. Les nouvelles sources réunissent les animations et liaisons autoritaires du venin, de la sacoche et de la brume, le déplacement réel de Foudroiement et les corrections d’inventaire et d’annulation qualifiées localement.
+
+Les déplacements de compétences descendent le cavalier au départ effectif, sauf compatibilité monture explicitement configurée. Les baux de mouvement, la portée commune des charges et les empreintes physiques empêchent les déplacements concurrents ; la brume réduit la lecture des unités sans bloquer le déplacement normal. Les copies d’objets restent réservées au MJ, les fioles réutilisables conservent leur identité et les annulations respectent les actions plus récentes. Le Stream reste muet.
+
+Cette entrée décrit le candidat préparé ; le push, la CI, le déploiement OVH et la certification Store restent des preuves distinctes. Le dépôt Store autorisé peut être poursuivi si l’authentification OVH est indisponible. La disponibilité publique et la bascule du serveur doivent être constatées séparément.
+
 ## Version 0.19.3 / client 4.1.0 — mains et armes d’inventaire
 
 Comparaison des chargements normalisés sans dépendre de l’ordre des clés JSON. Les compétences résolvent les armes réellement possédées par leur unité sans modifier les mains persistées ; les attaques de base gardent leur exigence d’équipement. Projection des armes utilisables depuis l’inventaire réservée au propriétaire. Schéma SQL 24 conservé.
@@ -523,11 +531,11 @@ La 0.7 exige une clé de chiffrement indépendante pour toute nouvelle écriture
 
 La lecture essaie la clé courante, jusqu’à quatre anciennes clés, puis l’ancien dérivé du mot de passe SQL uniquement pour migrer les valeurs existantes. La prochaine écriture rechiffre avec la clé indépendante. Sans clé indépendante valide, une écriture de réglages est refusée ; aucune nouvelle donnée n’est chiffrée avec le mot de passe SQL.
 
-La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `3.4.7`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=3.4.7`, `latestVersion=3.4.7` et `allowedVersions=["3.4.7"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
+La politique de connexion est définie exclusivement par `XAR_RELEASE_ALLOWED_CLIENT_VERSIONS` et la version annoncée `XAR_RELEASE_ANNOUNCEMENT_VERSION`, toutes deux reflétées dans le manifeste. Le bloc privé `client` ne peut pas désactiver cette protection. Cette livraison admet exactement `4.2.0`, avec `enforce=true`, `exactVersion=true`, `minimumVersion=4.2.0`, `latestVersion=4.2.0` et `allowedVersions=["4.2.0"]`. Les versions antérieures, futures et suffixées restent refusées pour la connexion.
 
-Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 3.4.7 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
+Le refus de connexion ne bloque jamais la mise à jour : `/api/v1/health` reste public, annonce 4.2.0 et fournit l’identifiant Store. Un ancien launcher peut donc détecter la mise à jour et ouvrir Microsoft Store, mais il ne peut plus se connecter à la Régie avant installation du MSIX courant.
 
-Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `3.4.6 / 3.4.7 / 3.4.8 / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
+Avant toute remise du MSIX, qualifier l’artefact original, déployer le backend demandé puis vérifier la santé et la matrice `4.1.0 / 4.2.0 / 4.2.1 / absente / mal formée = 426 / 401 / 426 / 426 / 426`. Il reste interdit de remettre un MSIX plus récent que la santé publique. Chaque nouvelle version remplace explicitement cette valeur unique.
 
 ## Comptes et sessions
 

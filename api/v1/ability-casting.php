@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/area-cast-gate.php';
+require_once __DIR__.'/ability-costs.php';
 
 require_once __DIR__ . '/ability-validation.php';
 require_once __DIR__ . '/combat-round-lifecycle.php';
@@ -13,7 +14,7 @@ function validApplicationAbilityCastingFields(array $ability): bool {
     if (array_key_exists('usesPerCombat', $ability) && (!is_int($ability['usesPerCombat']) || $ability['usesPerCombat'] < 0 || $ability['usesPerCombat'] > 100)) return false;
     if (array_key_exists('restRecharge', $ability) && !in_array($ability['restRecharge'], ['none', 'short', 'long'], true)) return false;
     if (array_key_exists('usesPerRest', $ability) && (!is_int($ability['usesPerRest']) || $ability['usesPerRest'] < 1 || $ability['usesPerRest'] > 100)) return false;
-    foreach (['reusableInTurn', 'reducedFailureCooldown'] as $key) if (array_key_exists($key, $ability) && !is_bool($ability[$key])) return false;
+    foreach (['reusableInTurn', 'reducedFailureCooldown', 'manualAction','fatigueCostIncludesPassive'] as $key) if (array_key_exists($key, $ability) && !is_bool($ability[$key])) return false;
     if (array_key_exists('castingStatId', $ability) && $ability['castingStatId'] !== '' && !validApplicationDomainIdentifier($ability['castingStatId'], 120)) return false;
     return !array_key_exists('image', $ability) || $ability['image'] === null || validApplicationDomainText($ability['image'], 4096);
 }
@@ -24,6 +25,8 @@ function applicationAbilityCastingFields(array $ability): array {
     if (array_key_exists('restRecharge', $ability)) $result['restRecharge'] = in_array($ability['restRecharge'], ['short', 'long'], true) ? $ability['restRecharge'] : 'none';
     if (array_key_exists('usesPerRest', $ability)) $result['usesPerRest'] = max(1, min(100, (int) $ability['usesPerRest']));
     if (array_key_exists('reusableInTurn', $ability)) $result['reusableInTurn'] = $ability['reusableInTurn'] === true;
+    if (array_key_exists('manualAction', $ability)) $result['manualAction'] = $ability['manualAction'] === true;
+    if (array_key_exists('fatigueCostIncludesPassive', $ability)) $result['fatigueCostIncludesPassive'] = $ability['fatigueCostIncludesPassive'] === true;
     foreach (['manaCost' => 1000000000, 'hpCost' => 1000000000, 'fatigueCost' => 1000000000, 'difficultyIncrement' => 100, 'cooldownRounds' => 999, 'activationHpMaxPercent' => 100] as $key => $limit) {
         if (array_key_exists($key, $ability)) $result[$key] = max(0, min($limit, is_numeric($ability[$key]) ? (int) $ability[$key] : 0));
     }
@@ -100,6 +103,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $attack ? (string) ($arguments['statId'] ?? '') : '',
         $attack && ($arguments['statId'] ?? '') === 'weapon-skill' ? ($arguments['weaponSkill'] ?? null) : null,
         (string) ($arguments['targetTokenId'] ?? ''),
+        ...(array_key_exists('approachPoint',$arguments)?[['approachPoint'=>$arguments['approachPoint']??null]]:[]),
         ...(array_key_exists('targetPoint',$arguments)||array_key_exists('targetingMode',$arguments)?[['targetPoint'=>$arguments['targetPoint']??null,'targetingMode'=>$arguments['targetingMode']??'area']]:[]),
         ...(array_key_exists('consumableItemId',$arguments)?[['consumableItemId'=>$arguments['consumableItemId']]]:[]),
         ...(array_key_exists('enchantedItemId',$arguments)?[['enchantedItemId'=>$arguments['enchantedItemId']]]:[]),
@@ -156,7 +160,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     $availableMana = max(0, min((float) ($source['maxMana'] ?? 0), (float) ($source['mana'] ?? 0)));
     if ($availableMana < $manaCost) throw new RuntimeException('ability_mana_insufficient');
     if(applicationAbilityActivationHealthReason($ability,$source)!=='')throw new RuntimeException('ability_activation_health');
-    $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = (int) ($ability['fatigueCost'] ?? 0);
+    $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = applicationAbilityFatigueCost($ability,$source);
     if ((float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
     if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
     // Absence preserves the old attack-dialogue statistic; an explicit empty
@@ -306,10 +310,11 @@ function onlineAppendAbilityRollActions(PDO $connection, array &$records, array 
 
 // Apply attempt costs and/or recharge in the same locked transaction. Read
 // pending payloads first so healing oneself never restores resources just spent.
-function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public'): string {
+function appendApplicationAbilityCueEvent(array &$activity, mixed $cue, string $sceneId, string $layerId, string $sourceTokenId, string $visibility = 'public', string $eventId = ''): string {
     if (!is_array($cue) || !validApplicationAbilityCompletionCue($cue) || !is_array($cue['sound'] ?? null)&&($cue['visual']['kind']??'')!=='message'&&applicationAbilityIcon($cue['icon']??null)===null&&applicationSpellVisual($cue['spell']??null)===null) return '';
     $now = (int) floor(microtime(true) * 1000);
-    $id = 'cue-' . bin2hex(random_bytes(12));
+    $id = $eventId !== '' ? $eventId : 'cue-' . bin2hex(random_bytes(12));
+    foreach($activity['abilityCueEvents']??[] as $event)if(($event['id']??'')===$id)return $id;
     $events = array_values(array_filter(is_array($activity['abilityCueEvents'] ?? null) ? $activity['abilityCueEvents'] : [],
         static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > $now));
     $events[] = ['id' => $id, 'sceneId' => $sceneId, 'layerId' => $layerId, 'sourceTokenId' => $sourceTokenId,

@@ -3,7 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/displacement-schema.php';
 require_once __DIR__.'/charge-travel.php';
 
-function applicationPlanAttackKnockback(array $attack,array $map,array $executions=[]): ?array {
+function applicationPlanAttackKnockback(array $attack,array $map,array $executions=[],array $leases=[]): ?array {
     $config=applicationKnockback($attack['knockback']??null);$roll=$attack['damage']['knockbackRoll']??null;
     if($config===null||$roll===null||isset($attack['knockbackApplied'])||!empty($attack['areaAnchorOnly'])||!in_array($attack['status']??'',['applied','blocked'],true))return null;
     $raw=$roll['raw']??null;if(!is_int($raw)||$raw<1||$raw>$config['dieSides']||($roll['dieSides']??null)!==$config['dieSides'])return null;
@@ -13,8 +13,8 @@ function applicationPlanAttackKnockback(array $attack,array $map,array $executio
     $group=$body===null?[]:array_values(array_filter($tokens,static fn($t)=>$t['id']===$body['id']||($t['mountedOnTokenId']??'')===$body['id']));
     $blocked=static fn()=>['raw'=>$raw,'requestedCells'=>$requested,'movedCells'=>0,'blocked'=>true,'moves'=>[]];
     if($source===null||$body===null||$source['id']===$recipient['id']||$source['id']===$body['id']||$group===[]||($source['layerId']??'ground')!==($body['layerId']??'ground'))return $blocked();
-    foreach($group as$t)if(!empty($t['immovable'])||!empty($t['terrainBarrier'])||!empty($t['fixedStructure'])||applicationAbilityMovementLock($executions,$attack['sceneId'],$t['id'],$tokens)!==null)return $blocked();
-    $layer=$body['layerId']??'ground';$level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'activeLayerId'=>$layer,'fog'=>null,'visionMask'=>null,'sceneId'=>$attack['sceneId'],'_abilityExecutions'=>$executions];
+    foreach($group as$t)if(!empty($t['immovable'])||!empty($t['terrainBarrier'])||!empty($t['fixedStructure'])||applicationAbilityMovementLock($executions,$attack['sceneId'],$t['id'],$tokens,null,$leases)!==null)return $blocked();
+    $layer=$body['layerId']??'ground';$level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'activeLayerId'=>$layer,'fog'=>null,'visionMask'=>null,'sceneId'=>$attack['sceneId'],'_abilityExecutions'=>$executions,'_abilityMovementLeases'=>$leases];
     $width=(float)($level['naturalWidth']??0);$height=(float)($level['naturalHeight']??0);$grid=(float)($level['gridSize']??0);
     if(!($width>0&&$height>0&&$grid>0))return $blocked();
     $dx=($body['x']-$source['x'])*$width/100;$dy=($body['y']-$source['y'])*$height/100;$length=hypot($dx,$dy);if(!($length>0))return $blocked();$ux=$dx/$length;$uy=$dy/$length;
@@ -44,7 +44,7 @@ function applicationPlanAttackKnockback(array $attack,array $map,array $executio
 function onlineApplyAttackKnockback(PDO $db,array &$records,array &$pending,array $attack):array {
     if(empty($attack['knockback'])||isset($attack['knockbackApplied'])||!isset($attack['damage']['knockbackRoll'])||!in_array($attack['status']??'',['applied','blocked'],true))return $attack;
     $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),(string)$attack['sceneId']);
-    $plan=applicationPlanAttackKnockback($attack,$state['map'],$state['abilityExecutions']??[]);if($plan===null)return $attack;
+    $plan=applicationPlanAttackKnockback($attack,$state['map'],$state['abilityExecutions']??[],$state['abilityMovementLeases']??[]);if($plan===null)return $attack;
     $attack['knockbackApplied']=$plan;$now=(int)floor(microtime(true)*1000);$trap=false;
     foreach($plan['moves'] as $move){
         $key=onlineTokenDomainKey($attack['sceneId'],$move['tokenId']);$token=$pending[$key]['payload']??applicationDomainPayload($records,$key);

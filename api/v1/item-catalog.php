@@ -15,6 +15,7 @@ function normalizeItemCategories(mixed $value=[]):array {
 function deleteItemTemplate(array &$items,array &$state,array $args):array {
     $index=array_search($args['templateId']??'',array_column($items['templates'],'id'),true);
     if($index===false)itemFailure('Ce modèle n’existe plus.',404);$template=$items['templates'][$index];
+    foreach($items['instances'] as $item)if(($item['vesselContentTemplateId']??'')===$template['id']||($item['vesselRequest']['potionTemplateId']??'')===$template['id'])itemFailure('Une fiole utilise ce modèle ou attend sa transformation. Traitez-la avant de supprimer cette potion.',409);
     if(normalizeItemTemplate(is_array($args['expectedTemplate']??null)?$args['expectedTemplate']:[])!==$template)itemFailure('Ce modèle a changé. Relisez la confirmation de suppression.',409);
     $copies=array_values(array_filter($items['instances'],static fn($i)=>$i['templateId']===$template['id']));$expected=$args['expectedInstanceRevisions']??null;
     if(!is_array($expected)||count($expected)!==count($copies))itemFailure('Les exemplaires ont changé. Relisez leurs emplacements avant de supprimer.',409);

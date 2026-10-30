@@ -1,0 +1,18 @@
+{
+  "ability-mania-elemental-breath": {
+    "base": 10,
+    "inclusive": 11
+  },
+  "ability-2570d5e3-58d0-4b44-aa7b-5c5627e1fa32": {
+    "base": 5,
+    "inclusive": 6
+  },
+  "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
+    "base": 10,
+    "inclusive": 11
+  },
+  "ability-38ab61ec-4a78-4dbf-8101-75acaeb911ca": {
+    "base": 10,
+    "inclusive": 11
+  }
+}

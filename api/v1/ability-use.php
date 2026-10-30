@@ -91,6 +91,13 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             $ability['effect'] === 'enhancement' ? 'Le bénéficiaire du buff n’est plus visible. Rouvrez la capacité.' : 'La cible du soin n’est pas visible.', 'healing_target_hidden');
     }
     if($target!==[]&&!$returning&&!applicationAbilityTargetInRange($ability,$source,$target,$map,$rules['weaponAttacks']??[]))rejectOnlineCommand($connection,409,'Cette cible est hors de portée de la compétence.','ability_target_out_of_range');
+    $zonePoint=null;
+    if(isset($ability['visionZone'])){
+        $zonePoint=applicationAreaTargetPoint($arguments['targetPoint']??null,onlineTokenLayerId($source,$map));
+        if($zonePoint===null||!applicationAbilityTargetInRange($ability,$source,$zonePoint,$map,$rules['weaponAttacks']??[]))rejectOnlineCommand($connection,409,'Choisissez un point à portée pour la nappe de brume.','vision_zone_point_invalid');
+        if(count($map['visionZones']??[])>=64)rejectOnlineCommand($connection,429,'La carte contient déjà trop de nappes de vision.','vision_zone_capacity');
+        if(!$isGm){$visible=onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId);if(!$visible($zonePoint['x'],$zonePoint['y']))rejectOnlineCommand($connection,403,'Le point choisi n’est pas visible.','vision_zone_point_hidden');}
+    }
     if(($ability['tacticalEffect']['kind']??'')==='coating'){
         if((onlineTokenControllerIdFromRecords($connection,$records,$source)!=='')!==(onlineTokenControllerIdFromRecords($connection,$records,$target)!==''))rejectOnlineCommand($connection,403,'Ce poison s’applique sur votre arme ou celle d’un allié.','coating_target_forbidden');
         $items=$pending['items']['payload']??applicationDomainPayload($records,'items');
@@ -99,6 +106,9 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    if($continuation===null&&$plan!==null&&empty(applicationSpellVisualBindings()[$ability['id']??'']['onResolvedDamage'])){
+        $plan['spellVisual']=applicationTrustedSpellVisual($ability,['sceneId'=>$sceneId,'source'=>$source,'map'=>$map,'targetPoint'=>$zonePoint??($target!==[]?$target:null),'variantId'=>$arguments['variantId']??'']);
+    }
     if (($ability['effect'] ?? '') === 'enhancement') $plan['enhancementRecipient'] = $target;
     if(($plan['attackEnhancement']['trigger']??'')==='enchanted-weapon'&&($continuation===null||($continuation['cast']['success']??false))){
         $equipmentState=onlineEquipmentState($connection,$records,$pending,$sceneId,$map);
@@ -149,6 +159,12 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
                 onlineTokenControllerIdFromRecords($connection,$records,$target)===$accountId,false);
         }
     } elseif ($cast['success'] && in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
+        if(isset($ability['visionZone'])){
+            $mapKey='map:'.$sceneId;$zoneMap=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);
+            $devices=$pending['devices']['payload']??applicationDomainPayload($records,'devices');
+            $zone=applicationCreateVisionZone([...$ability['visionZone'],'id'=>'vision-'.$requestId,'sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map),'sourceTokenId'=>$source['id'],'targetPoint'=>$zonePoint,'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),'manualTurn'=>(int)($devices['manualTurns'][$sceneId]??0)]);
+            $zoneMap['visionZones']=[...($zoneMap['visionZones']??[]),$zone];queueOnlineDomainUpsert($pending,$records,$mapKey,$zoneMap);
+        }
         if(!empty($ability['tacticalEffect'])){
             $sk=onlineTokenDomainKey($sceneId,$source['id']);$tk=onlineTokenDomainKey($sceneId,$target['id']);
             $ss=$pending[$sk]['payload']??$source;$tt=$pending[$tk]['payload']??$target;

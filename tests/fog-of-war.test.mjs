@@ -39,7 +39,9 @@ test("la projection masque les pions sous la brume tout en relayant les pings du
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function requestedOnlineStateRevision"));
   assert.match(projection, /\$fog = applicationActiveMapFogState/);
   assert.match(projection, /\$occlusion = applicationActiveMapOcclusionState/);
-  assert.match(projection, /\$visionMask = applicationComputeVisionRenderMask/);
+  assert.match(projection, /\$baseVisionMask = applicationComputeVisionRenderMask/);
+  assert.match(projection, /\$visionMask=applicationApplyMistVisionMask\(\$baseVisionMask,\$mistVision\)/);
+  assert.match(projection, /\$baseStrictPointIsHidden = static fn[\s\S]*?applicationVisionCoversPoint\(\$baseVisionMask, \$x, \$y\)/);
   assert.match(projection, /\$viewerIsIsolated/);
   assert.match(projection, /\$vision\['shared'\]/);
   assert.match(projection, /\$isolatedPlayerIds\[\$controllerId\]/);
@@ -64,10 +66,11 @@ test("la commande de déplacement arbitre le trajet Joueur et la destination MJ 
   assert.match(movement, /applicationComputeVisionMask\(\$occlusion, \$origins/);
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map, \$sceneTokens\)/);
   assert.match(movement, /findApplicationVisibleTokenPath\(/);
-  assert.match(movement, /\$token\['x'\] = \$resolved\['x'\]/);
+  assert.match(movement, /foreach\(\$sceneMountTokens as \$moved\)if\(in_array\(\$moved\['id'\],\$movingIds,true\)\)\{\$moved\['x'\]=\$resolved\['x'\];\$moved\['y'\]=\$resolved\['y'\]/);
+  assert.match(movement, /if\(\$moved\['id'\]===\$storedMovementToken\['id'\]\)\$token=\$moved/);
   assert.match(movement, /\$positionChanged/);
-  assert.match(movement, /if \(\$positionChanged\)[\s\S]*?\$token\['_movedAt'\]/);
-  assert.doesNotMatch(movement, /\$token\['_movedAt'\][\s\S]*?if \(\$positionChanged\)/);
+  assert.match(movement, /if \(\$positionChanged\)[\s\S]*?\$moved\['_movedAt'\]/);
+  assert.doesNotMatch(movement, /\$moved\['_movedAt'\][\s\S]*?if \(\$positionChanged\)/);
   assert.match(movement, /\$result\['blockedByWall'\] = \$resolved\['blocked'\]/);
   assert.match(movement, /\$result\['positionChanged'\] = \$positionChanged/);
   assert.match(movement, /\$result\['tokenDomain'\]/);

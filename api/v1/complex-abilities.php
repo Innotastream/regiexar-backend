@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/combat-range-policy.php';
 require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/complex-movement.php';
@@ -362,7 +363,9 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
             if((is_int($raw['attackWidthCells']??null)||is_float($raw['attackWidthCells']??null))&&is_finite((float)$raw['attackWidthCells'])&&$raw['attackWidthCells']>0&&$raw['attackWidthCells']<=40)$step['attackWidthCells']=$raw['attackWidthCells'];
             if(!empty($raw['charge']))$step['charge']=applicationCharge($raw['charge']);
             if(($raw['avoidsOpportunity']??false)===true)$step['avoidsOpportunity']=true;
+            if(array_key_exists('mountedMovement',$raw))$step['mountedMovement']=$raw['mountedMovement']===true;
             if(is_int($raw['maximumCells']??null)&&$raw['maximumCells']>0&&$raw['maximumCells']<=100)$step['maximumCells']=$raw['maximumCells'];
+            if(!empty($step['charge'])){$step['maximumCells']=min($step['maximumCells']??applicationChargeRangeCells(),applicationChargeRangeCells());foreach($steps as &$previous)if($previous['id']===$step['charge']['targetStepId']){$previous['rangeCells']=$step['maximumCells'];unset($previous['rangeMeters']);}unset($previous);}
         } elseif ($type === 'targets') {
             $minimum = applicationComplexAbilityInteger($raw['minTargets'] ?? null, 0, 20, 1);
             $step['minTargets'] = $minimum;
@@ -489,7 +492,7 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
         if($step['type']==='movement'&&!empty($step['charge'])){
             $target=null;foreach(array_slice($workflow['steps'],0,$index) as $s)if($s['id']===$step['charge']['targetStepId']&&$s['type']==='targets')$target=$s;
             $next=$workflow['steps'][$index+1]??[];
-            if(!$target||$target['minTargets']!==1||$target['maxTargets']!==1||$target['allocationTotal']||!empty($step['maximumCells'])||($next['type']??'')!=='allocated-attacks'||$next['sourceStepId']!==$step['id']||$next['damageMode']!=='weapon'||$next['awarenessMode']!=='none')return 'Une charge demande une cible unique précédente, une limite en mètres, puis des frappes réparties avec l’arme sans vigilance.';
+            if(!$target||$target['minTargets']!==1||$target['maxTargets']!==1||$target['allocationTotal']||($next['type']??'')!=='allocated-attacks'||$next['sourceStepId']!==$step['id']||$next['damageMode']!=='weapon'||$next['awarenessMode']!=='none')return 'Une charge demande une cible unique précédente, une portée limitée à À distance, puis des frappes réparties avec l’arme sans vigilance.';
         }
         if ($step['type'] === 'targets' && $step['sourceMovementStepId'] !== '') {
             $movements = array_filter(array_slice($workflow['steps'], 0, $index), static fn(array $entry): bool => $entry['id'] === $step['sourceMovementStepId'] && $entry['type'] === 'movement');
@@ -630,6 +633,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         foreach ($workflow['steps'] as &$step) if ($step['type'] === 'attack-chain') $step['allowOpposition'] = false;
         unset($step);
     }
+    if(($ability['mountedMovement']??false)===true){foreach($workflow['steps'] as &$movement)if($movement['type']==='movement'&&!array_key_exists('mountedMovement',$movement))$movement['mountedMovement']=true;unset($movement);}
     $first = $workflow['steps'][0];
     $cast = is_array($context['cast'] ?? null) ? $context['cast'] : [];
     foreach ($workflow['steps'] as $configuredStep) if ($configuredStep['type'] === 'allocated-attacks' && $configuredStep['damageMode'] === 'configured' && $configuredStep['hitMode'] !== 'automatic' && (($ability['castingStatId'] ?? '') !== $configuredStep['statId'] || !($cast['success'] ?? false) || ($cast['statId'] ?? '') !== $configuredStep['statId'] || !is_array($cast['outcome'] ?? null))) applicationComplexAbilityFail('Cette série exige un jet de lancement de la même statistique.', 'complex_ability_definition_invalid', 400);

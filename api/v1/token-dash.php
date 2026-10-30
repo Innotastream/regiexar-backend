@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 function applicationTokenDash(mixed $value): ?array {
-    if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='dash'||!in_array($value['presetId']??'',['token-afterimage-dash','token-body-charge'],true)||!in_array($value['layerId']??'',['ground','upper','basement'],true))return null;
+    if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='dash'||!in_array($value['presetId']??'',['token-afterimage-dash','token-body-charge','token-fulgurant-dash'],true)||!in_array($value['layerId']??'',['ground','upper','basement'],true))return null;
     foreach(['sceneId','sourceTokenId']as$key)if(!is_string($value[$key]??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value[$key])!==1)return null;
     $point=static fn($p)=>is_array($p)&&array_reduce(['x','y'],static fn($ok,$key)=>$ok&&(is_int($p[$key]??null)||is_float($p[$key]??null))&&is_finite((float)$p[$key])&&$p[$key]>=0&&$p[$key]<=100,true);
     $source=$value['source']??null;$path=$value['path']??null;
@@ -10,8 +10,10 @@ function applicationTokenDash(mixed $value): ?array {
     $impact=($value['presetId']??'')==='token-body-charge'?($value['impact']??null):null;
     if($impact!==null&&(!is_array($impact)||!is_string($impact['targetTokenId']??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$impact['targetTokenId'])!==1||$impact['targetTokenId']===$value['sourceTokenId']||!$point($impact['point']??null)||!is_numeric($impact['point']['size']??null)||$impact['point']['size']<10||$impact['point']['size']>10000))return null;
     if(abs($source['x']-$path[0]['x'])>1e-5||abs($source['y']-$path[0]['y'])>1e-5||$impact===null&&!array_filter($path,static fn($p)=>abs($p['x']-$source['x'])>1e-5||abs($p['y']-$source['y'])>1e-5))return null;
+    if(isset($value['startedAt'])&&(($value['presetId']??'')!=='token-fulgurant-dash'||!is_int($value['startedAt'])||$value['startedAt']<0))return null;
+    if(array_key_exists('mountedMovement',$value)&&!is_bool($value['mountedMovement']))return null;
     return ['version'=>1,'placement'=>'dash','presetId'=>$value['presetId'],'sceneId'=>$value['sceneId'],'layerId'=>$value['layerId'],'sourceTokenId'=>$value['sourceTokenId'],
-        'source'=>['x'=>$source['x'],'y'=>$source['y'],'size'=>$source['size']],'path'=>array_map(static fn($p)=>['x'=>$p['x'],'y'=>$p['y']],$path),...($impact!==null?['impact'=>['targetTokenId'=>$impact['targetTokenId'],'point'=>['x'=>$impact['point']['x'],'y'=>$impact['point']['y'],'size'=>$impact['point']['size']]]]:[])];
+        'source'=>['x'=>$source['x'],'y'=>$source['y'],'size'=>$source['size']],'path'=>array_map(static fn($p)=>['x'=>$p['x'],'y'=>$p['y']],$path),...(isset($value['startedAt'])?['startedAt'=>$value['startedAt']]:[]),...(($value['mountedMovement']??false)===true?['mountedMovement'=>true]:[]),...($impact!==null?['impact'=>['targetTokenId'=>$impact['targetTokenId'],'point'=>['x'=>$impact['point']['x'],'y'=>$impact['point']['y'],'size'=>$impact['point']['size']]]]:[])];
 }
 function applicationTrustedMovementSpellVisual(array $execution,array $context): ?array {
     $binding=applicationSpellVisualBindings()[$execution['abilityId']??'']??null;$stepId=$context['stepId']??'';$movement=$execution['stepStates'][$stepId]??null;$source=$context['source']??null;$map=$context['map']??null;$step=null;

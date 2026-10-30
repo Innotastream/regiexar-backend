@@ -1,8 +1,166 @@
 {
+  "ability-b848c2c0-e2bd-4fbd-91f4-9bbcaceefd97": {
+    "presetId": "mist-vision",
+    "revision": 1,
+    "effect": "damage",
+    "values": {
+      "effect": "movement",
+      "formula": "0",
+      "manualAction": false,
+      "manualD100": false,
+      "outcomeMessages": null,
+      "manaCost": 15,
+      "hpCost": 0,
+      "fatigueCost": 6,
+      "fatigueCostIncludesPassive": true,
+      "cooldownRounds": 5,
+      "usesPerRest": 2,
+      "restRecharge": "short",
+      "usesPerCombat": 0,
+      "castingStatId": "character-stat-intelligence",
+      "castingChoices": [
+        "character-stat-intelligence"
+      ],
+      "reducedFailureCooldown": true,
+      "reusableInTurn": false,
+      "rangeCells": 15,
+      "projectile": false,
+      "useWeaponDamage": false,
+      "damageComponents": [],
+      "damageTargeting": {
+        "mode": "single",
+        "radiusCells": 0
+      },
+      "damageOverTime": null,
+      "onHitConditions": [],
+      "conditionRider": null,
+      "tacticalEffect": null,
+      "attackEnhancement": null,
+      "opposition": null,
+      "infusion": null,
+      "castGate": null,
+      "attackApproach": null,
+      "knockback": null,
+      "itemRequirement": {
+        "templateId": "item-template-mania-reagent-capsule",
+        "quantity": 1,
+        "consumeOn": "attempt"
+      },
+      "visionZone": {
+        "version": 1,
+        "kind": "mist",
+        "radiusCells": 4,
+        "turns": 3
+      },
+      "description": "Choisissez un point à portée À distance. Après un jet d’Intelligence réussi, y déploie une nappe de brume magique de huit cases de diamètre pendant trois tours du lanceur. La brume limite la vision sans infliger de dégâts ni ajouter l’état Aveuglé.\n\nCoût : 15 mana, 6 fatigue (passif compris) et une Capsule de réactif consommée dès la tentative. Recharge : cinq tours. Deux utilisations par repos court. Échec amoindri : fatigue remboursée et recharge réduite à un tour ; la capsule reste consommée."
+    }
+  },
+  "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
+    "presetId": "contact-dash",
+    "revision": 2,
+    "effect": "damage",
+    "rangeUpgradeOnly": true,
+    "values": {
+      "rangeCells": 15,
+      "attackApproach": {
+        "version": 1,
+        "mode": "contact",
+        "durationMs": 1210
+      }
+    }
+  },
+  "ability-9d9973fa-0555-4807-bbd6-af6f1adf640d": {
+    "presetId": "manual-double-potion",
+    "revision": 2,
+    "effect": "movement",
+    "values": {
+      "effect": "movement",
+      "manualAction": true,
+      "formula": "0",
+      "castingStatId": "",
+      "castingChoices": [],
+      "manualD100": false,
+      "outcomeMessages": null,
+      "manaCost": 0,
+      "hpCost": 0,
+      "fatigueCost": 6,
+      "fatigueCostIncludesPassive": true,
+      "cooldownRounds": 3,
+      "usesPerRest": 2,
+      "restRecharge": "short",
+      "usesPerCombat": 0,
+      "reducedFailureCooldown": false,
+      "reusableInTurn": false,
+      "difficultyIncrement": 0,
+      "activationHpMaxPercent": 0,
+      "projectile": false,
+      "useWeaponDamage": false,
+      "tacticalEffect": null,
+      "conditionRider": null,
+      "attackEnhancement": null,
+      "opposition": null,
+      "itemRequirement": null,
+      "castGate": null,
+      "infusion": null,
+      "onHitConditions": [],
+      "description": "Après activation, peut lancer ou utiliser deux potions durant son tour ; chaque geste reste effectué manuellement.\n\nL’activation ne choisit aucune potion, ne la lance ni ne l’utilise, et ne consomme aucun objet à votre place."
+    }
+  },
+  "ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189": {
+    "effect": "enhancement",
+    "attackEnhancementTrigger": "melee-weapon",
+    "attackEnhancementWeaponIds": [
+      "weapon-2"
+    ]
+  },
+  "ability-db5723cf-d4e4-4518-8b1f-52a0ca8967ee": {
+    "presetId": "brute-force",
+    "revision": 1,
+    "values": {
+      "effect": "damage",
+      "formula": "1d40+10",
+      "damageType": "magical",
+      "damageComponents": [
+        {
+          "type": "magical",
+          "formula": "1d40+10"
+        }
+      ],
+      "manaCost": 10,
+      "castingStatId": "character-stat-intelligence",
+      "castingChoices": [
+        "character-stat-intelligence"
+      ],
+      "usesPerRest": 2,
+      "restRecharge": "short",
+      "cooldownRounds": 3,
+      "reducedFailureCooldown": true,
+      "projectile": true,
+      "reach": "ranged",
+      "minimumReach": "reach",
+      "damageTargeting": {
+        "mode": "single",
+        "radiusCells": 0
+      },
+      "knockback": {
+        "version": 1,
+        "dieSides": 40,
+        "bandSize": 10,
+        "cellsPerBand": 2,
+        "maximumCells": 8,
+        "pushAside": true,
+        "sideStepCells": 1
+      },
+      "description": "Sort monocible utilisable dès la portée Allonge, hors de la portée Mêlée. Un jet d’Intelligence précède les dégâts.\n\nInflige 1d40+10 dégâts magiques et repousse la cible à l’opposé du lanceur selon le résultat brut du même d40, avant le +10 : 1–10 = 2 cases ; 11–20 = 4 cases ; 21–30 = 6 cases ; 31–40 = 8 cases. Aucun dé supplémentaire.\n\nLa poussée traverse le brouillard, mais s’arrête devant les murs avec un fracassement visuel sans dégâts supplémentaires. Une unité déjà présente se décale sur un côté libre ; si elle ne peut pas se dégager, la poussée s’arrête avant le chevauchement. Sans grille, les distances utilisent l’échelle de la carte et les positions restent libres."
+    }
+  },
   "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
     "presetId": "body-charge",
-    "revision": 1,
+    "revision": 2,
     "effect": "complex",
+    "rangeUpgradeOnly": true,
+    "rangeDescriptionFrom": "Charge en ligne droite jusqu’à 20 mètres.",
+    "rangeDescriptionTo": "Charge en ligne droite jusqu’à 15 cases (portée À distance).",
     "values": {
       "effect": "complex",
       "formula": "0",
@@ -25,8 +183,7 @@
             "minTargets": 1,
             "maxTargets": 1,
             "allocationTotal": 0,
-            "rangeCells": 0,
-            "rangeMeters": 20,
+            "rangeCells": 15,
             "targetRelation": "enemies"
           },
           {
@@ -34,6 +191,7 @@
             "type": "movement",
             "title": "Charger vers la cible",
             "maximumMeters": 20,
+            "maximumCells": 15,
             "charge": {
               "version": 1,
               "targetStepId": "charge-target",
@@ -73,7 +231,8 @@
           }
         ]
       },
-      "description": "Charge en ligne droite jusqu’à 20 mètres. Les ennemis qui entrent dans l’allonge de la hallebarde subissent chacun une frappe de Force, avec un malus cumulatif de 10 par ennemi sur le trajet. Les pions en collision sont écartés sur un côté libre.\n\nÀ l’arrivée, percute la cible avec le corps puis lui porte une seule frappe, sans le malus cumulatif du trajet. La cible est Étourdie jusqu’à la fin de son prochain tour complet, même si la frappe finale échoue. Une cible insensible à l’assommement reçoit Déstabilisé pour la même durée, sans malus supplémentaire.\n\nL’aperçu du trajet et des ennemis précède la validation. Après acceptation, choisissez les défenses de chaque cible dans le récapitulatif. Aucun jet préalable au lancement."
+      "description": "Charge en ligne droite jusqu’à 15 cases (portée À distance). Les ennemis qui entrent dans l’allonge de la hallebarde subissent chacun une frappe de Force, avec un malus cumulatif de 10 par ennemi sur le trajet. Les pions en collision sont écartés sur un côté libre.\n\nÀ l’arrivée, percute la cible avec le corps puis lui porte une seule frappe, sans le malus cumulatif du trajet. La cible est Étourdie jusqu’à la fin de son prochain tour complet, même si la frappe finale échoue. Une cible insensible à l’assommement reçoit Déstabilisé pour la même durée, sans malus supplémentaire.\n\nL’aperçu du trajet et des ennemis précède la validation. Après acceptation, choisissez les défenses de chaque cible dans le récapitulatif. Aucun jet préalable au lancement.",
+      "rangeCells": 15
     }
   },
   "ability-0eaec688-fbcd-49cf-8e85-b6e1e7c8fa25": {
@@ -118,47 +277,6 @@
       "ratio": 1,
       "minimumMana": 0,
       "refundOnMiss": false
-    }
-  },
-  "ability-db5723cf-d4e4-4518-8b1f-52a0ca8967ee": {
-    "presetId": "brute-force",
-    "revision": 1,
-    "values": {
-      "effect": "damage",
-      "formula": "1d40+10",
-      "damageType": "magical",
-      "damageComponents": [
-        {
-          "type": "magical",
-          "formula": "1d40+10"
-        }
-      ],
-      "manaCost": 10,
-      "castingStatId": "character-stat-intelligence",
-      "castingChoices": [
-        "character-stat-intelligence"
-      ],
-      "usesPerRest": 2,
-      "restRecharge": "short",
-      "cooldownRounds": 3,
-      "reducedFailureCooldown": true,
-      "projectile": true,
-      "reach": "ranged",
-      "minimumReach": "reach",
-      "damageTargeting": {
-        "mode": "single",
-        "radiusCells": 0
-      },
-      "knockback": {
-        "version": 1,
-        "dieSides": 40,
-        "bandSize": 10,
-        "cellsPerBand": 2,
-        "maximumCells": 8,
-        "pushAside": true,
-        "sideStepCells": 1
-      },
-      "description": "Sort monocible utilisable dès la portée Allonge, hors de la portée Mêlée. Un jet d’Intelligence précède les dégâts.\n\nInflige 1d40+10 dégâts magiques et repousse la cible à l’opposé du lanceur selon le résultat brut du même d40, avant le +10 : 1–10 = 2 cases ; 11–20 = 4 cases ; 21–30 = 6 cases ; 31–40 = 8 cases. Aucun dé supplémentaire.\n\nLa poussée traverse le brouillard, mais s’arrête devant les murs avec un fracassement visuel sans dégâts supplémentaires. Une unité déjà présente se décale sur un côté libre ; si elle ne peut pas se dégager, la poussée s’arrête avant le chevauchement. Sans grille, les distances utilisent l’échelle de la carte et les positions restent libres."
     }
   }
 }

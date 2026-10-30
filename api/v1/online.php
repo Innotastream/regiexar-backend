@@ -3,6 +3,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/friendly-fire.php';
 require_once __DIR__.'/attack-knockback.php';
+require_once __DIR__.'/attack-approach.php';
 require_once __DIR__.'/combat-undo.php';
 require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/terrain-effects.php';
@@ -974,7 +975,7 @@ function applyOnlineMountCommand(PDO $connection, array &$records, array &$pendi
     $accountId = (string) $identity['id'];
     if (!$isGm && (($rider['hidden'] ?? false) === true || onlineTokenControllerIdFromRecords($connection, $records, $rider) !== $accountId)) rejectOnlineCommand($connection, 403, 'Ce cavalier ne vous appartient pas.', 'mount_rider_forbidden');
     $tokens = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
-    foreach([$rider['id'],$mount['id']]as$id){$lock=applicationAbilityMovementLock($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$sceneId,$id,$tokens);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
+    foreach([$rider['id'],$mount['id']]as$id){$lock=applicationAbilityMovementLock($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$sceneId,$id,$tokens,null,$pending['activity']['payload']['abilityMovementLeases']??applicationDomainPayload($records,'activity')['abilityMovementLeases']??[]);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
     $boarding = ($arguments['mount'] ?? false) === true;
     if ($boarding) {
         if (($mount['mountable'] ?? false) !== true || ($mount['hidden'] ?? false) === true || !empty($rider['mountedOnTokenId'])
@@ -1046,7 +1047,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     if ($streamPov) { $vision['shared'] = true; $vision['isolatedPlayerIds'] = []; }
     $isolatedPlayerIds = array_fill_keys($vision['isolatedPlayerIds'], true);
     $viewerIsIsolated = isset($isolatedPlayerIds[$accountId]);
-    $visionOrigins = [];
+    $visionOrigins = []; $mistObservers=[];
     foreach (($map['tokens'] ?? []) as $candidateToken) {
         if (!is_array($candidateToken) || ($candidateToken['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidateToken, $map)) {
             continue;
@@ -1057,20 +1058,26 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             : $controllerId === $accountId;
         if ($sharesWithViewer) {
             $visionCharacter = $charactersById[(string) ($candidateToken['characterId'] ?? '')] ?? null;
-            $visionOrigins[] = [
+            $origin = [
                 'x' => $candidateToken['x'] ?? 50,
                 'y' => $candidateToken['y'] ?? 50,
                 'visionDistance' => onlineTokenVisionDistance($candidateToken, $visionCharacter),
                 'darkVision' => onlineTokenDarkVision($candidateToken, $visionCharacter),
                 'source' => 'token',
             ];
+            $visionOrigins[]=$origin;
+            if(!empty($map['visionZones'])){$physical=applicationTokenSpatialFootprint($candidateToken,$map);$mistObservers[]=[...$origin,'size'=>$physical['size']??40,'mask'=>applicationComputeVisionRenderMask($occlusion,[$origin],$map['gridSize']??50)];}
         }
     }
-    $visionMask = applicationComputeVisionRenderMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
-    $strictPointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
-        || applicationVisionCoversPoint($visionMask, $x, $y);
+    $baseVisionMask = applicationComputeVisionRenderMask($occlusion, $visionOrigins, $map['gridSize'] ?? 50);
+    $mistSceneId=$paused?($fullState['tacticalSync']['publishedActiveScene']['id']??''):($fullState['activeSceneId']??$fullState['activeScene']['id']??'');
+    $mistVision=applicationCreateMistVision($map['visionZones']??[],[...$map,'lightingMode'=>$occlusion['lightingMode']??'normal','customLighting'=>$occlusion['customLighting']??[]],$mistObservers,['sceneId'=>$mistSceneId,'layerId'=>$visibleLayerId]);
+    $visionMask=applicationApplyMistVisionMask($baseVisionMask,$mistVision);
+    $baseStrictPointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
+        || applicationVisionCoversPoint($baseVisionMask, $x, $y);
+    $strictPointIsHidden = static fn (mixed $x,mixed $y): bool => $baseStrictPointIsHidden($x,$y)||applicationMistShadowAtPoint($mistVision,(float)$x,(float)$y);
     $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
-        || applicationVisionTokenCoversPoint($visionMask, $x, $y);
+        || applicationVisionTokenCoversPoint($baseVisionMask, $x, $y);
     $visibleLights = array_values(array_filter($occlusion['lights'], static fn (array $light): bool =>
         !applicationLightCenterBlocked($occlusion, $light)
         && !$strictPointIsHidden($light['x'], $light['y'])));
@@ -1085,11 +1092,14 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         $movementController = $pilot !== null ? onlineEffectiveTokenControllerId($pilot, $characterOwners) : $effectiveControllerId;
         $movementOwned = $movementController !== '' && $movementController === $accountId;
         $movementTokenId = (string) ($pilot['id'] ?? $token['id'] ?? '');
+        $mountedMovementStep=!empty($token['mountedOnTokenId'])?applicationActiveAbilityMovementStep($fullState['abilityExecutions']??[],$mistSceneId,(string)$token['id']):null;$mountedMovementAllowed=false;
+        if($mountedMovementStep!==null){$body=applicationAbilityMovementSource($token,$map,($mountedMovementStep['mountedMovement']??false)===true);$bodyController=onlineEffectiveTokenControllerId($body,$characterOwners);$bodyPilot=$bodyController===''?onlineMountPilot($map['tokens']??[],$body):null;$movementController=($mountedMovementStep['mountedMovement']??false)===true?($bodyController!==''?$bodyController:($bodyPilot!==null?onlineEffectiveTokenControllerId($bodyPilot,$characterOwners):'')):$effectiveControllerId;$movementOwned=$movementController!==''&&$movementController===$accountId;$movementTokenId=(string)$token['id'];$mountedMovementAllowed=empty($body['immovable'])&&applicationAbilityMovementLock($fullState['abilityExecutions']??[],$mistSceneId,(string)$token['id'],$map['tokens']??[],null,$fullState['abilityMovementLeases']??[])===null;}
         if (!$owned && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y))) {
             continue;
         }
+        $mistVisibility=applicationMistTokenVisibility($mistVision,$token);if($mistVisibility==='hidden')continue;
         // The faded perimeter detects a presence without revealing its sheet.
-        if (applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y)) && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$strictPointIsHidden($x,$y))) {
+        if ($mistVisibility==='silhouette'||applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y)) && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$baseStrictPointIsHidden($x,$y))) {
             $tokens[] = [
                 'id' => $token['id'] ?? null,
                 'layerId' => onlineTokenLayerId($token, $map),
@@ -1149,7 +1159,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             ...(!empty($token['fixedStructure'])?['fixedStructure'=>['version'=>1]]:[]),
             ...(applicationIsNonCombatant($token)?['nonCombatant'=>true]:[]),
             'immovable' => ($token['immovable'] ?? false) === true,
-            'controllable' => ($token['immovable'] ?? false) !== true && empty($token['mountedOnTokenId']) && $movementOwned && !$paused
+            'controllable' => ($token['immovable'] ?? false) !== true && (empty($token['mountedOnTokenId'])||$mountedMovementAllowed) && $movementOwned && !$paused
                 && (!$active || $movementTokenId === $activeTokenId || $temporaryMovementAllowed || ($movementOverrides[$movementTokenId] ?? false) === true),
         ];
         if ($details) {
@@ -1325,6 +1335,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     }
     $map['passages']=publicPassages($fullState,$map,$visibleLayerId,static fn($entry)=>!$strictPointIsHidden($entry['x'],$entry['y']));
     if(array_key_exists('terrainEffects',$map))$map['terrainEffects']=applicationPublicTerrainEffects($map,$visibleLayerId,static fn($x,$y)=>!$strictPointIsHidden($x,$y));
+    if(array_key_exists('visionZones',$map))$map['visionZones']=applicationPublicVisionZones($map['visionZones'],['sceneId'=>$visibleSceneId,'layerId'=>$visibleLayerId,'visible'=>static fn($x,$y)=>!$baseStrictPointIsHidden($x,$y)]);
     foreach ($map['tokens'] as &$visibleToken) if (empty($visibleToken['dimSilhouette'])) $visibleToken['buffVisuals'] = applicationTokenBuffVisuals($visibleToken, $fullState, $visibleSceneId);
     unset($visibleToken);
     $visibleActionTimers = [];
@@ -1528,6 +1539,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'devices' => $visibleDevices,
         'actionTimers' => $visibleActionTimers,
         'abilityExecutions' => $visibleAbilityExecutions,
+        'abilityMovementLeases'=>publicAbilityMovementLeases($fullState['abilityMovementLeases']??[],['sceneId'=>$visibleSceneId,'visibleTokenIds'=>array_keys($clearlyVisibleIds)]),
         'damageOverTime' => $visibleDamageOverTime,
         'armorReductionZones' => $paused ? [] : applicationPublicArmorReductionZones($fullState['attackEnhancements'] ?? [],$visibleSceneId,$visibleLayerId,static fn($x,$y)=>!$strictPointIsHidden($x,$y)),
         ...($movementEffectZones!==[]?['movementEffectZones'=>$movementEffectZones]:[]),
@@ -3796,6 +3808,7 @@ function onlineAttackRequestSignature(string $sceneId, array $arguments, ?bool $
         $sceneId,
         (string) ($arguments['sourceTokenId'] ?? ''),
         (string) ($arguments['targetTokenId'] ?? ''),
+        ...(array_key_exists('approachPoint',$arguments)?[['approachPoint'=>$arguments['approachPoint']??null]]:[]),
         ...(array_key_exists('targetTokenIds',$arguments)?[['targetTokenIds'=>$arguments['targetTokenIds']]]:[]),
         ...(array_key_exists('targetPoint',$arguments)||array_key_exists('targetingMode',$arguments)?[['targetPoint'=>$arguments['targetPoint']??null,'targetingMode'=>$arguments['targetingMode']??'area']]:[]),
         $kind,
@@ -4426,7 +4439,36 @@ function onlineGainBleedingCharges(PDO $connection, array &$records, array &$pen
     }
 }
 
+function onlineAttackApproachPlan(PDO $connection,array &$records,array &$pending,array $attack,?string $actorId=null,?bool $isGm=null):?array {
+    try {
+    if(empty($attack['attackApproach']))return null;$actorId??=(string)($attack['accountId']??'');$isGm??=($attack['attackerRole']??'')==='gm';$sceneId=$attack['sceneId'];
+    $map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);$tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$byId=array_column($tokens,null,'id');$source=$byId[$attack['sourceTokenId']]??null;$target=$byId[$attack['targetTokenId']]??null;
+    if($source===null||$target===null)throw new RuntimeException('Le lanceur ou la cible a quitté la scène.',409);
+    $bodyId=$source['mountedOnTokenId']??$source['id'];$body=$byId[$bodyId]??$source;
+    if(!$isGm&&!empty($source['mountedOnTokenId'])&&($attack['mountedMovement']??false)===true){$controller=onlineTokenControllerIdFromRecords($connection,$records,$body);$pilot=$controller===''?onlineMountPilot($tokens,$body):null;if($pilot!==null)$controller=onlineTokenControllerIdFromRecords($connection,$records,$pilot);if($controller!==$actorId)throw new RuntimeException('Vous ne pilotez pas cette monture.',403);}
+    $state=onlineDeviceState($connection,$records,$pending);$movementGroup=!empty($source['mountedOnTokenId'])&&($attack['mountedMovement']??false)!==true?[$source]:array_values(array_filter($tokens,static fn($token)=>$token['id']===$bodyId||($token['mountedOnTokenId']??'')===$bodyId));if(!$isGm)foreach($movementGroup as $token)foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&!empty($condition['blocksMovement'])&&($condition['remainingTurns']??0)>0&&($condition['targetTokenId']===$token['id']||unitUsesCharacterSheet($token)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))throw new RuntimeException('Ce personnage est immobilisé jusqu’à la fin de son effet.',423);
+    $movementSource=applicationAttackApproachMovementSource($source,[...$map,'tokens'=>$tokens],($attack['mountedMovement']??false)===true);
+    if(!empty($attack['targetRangeCells'])&&!applicationAbilityTargetInRange(['rangeCells'=>$attack['targetRangeCells'],...(isset($attack['minimumReach'])?['minimumReach'=>$attack['minimumReach']]:[])],$movementSource,$target,[...$map,'tokens'=>$tokens]))throw new RuntimeException('La cible est hors de portée de la compétence.',409);
+    $layer=$body['layerId']??'ground';$level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'activeLayerId'=>$layer];unset($level['layers']);$visibleRecords=array_replace($records,$pending);
+    if(!$isGm&&(!empty($target['hidden'])||!empty($target['dimSilhouette'])||!onlineAttackTargetVisible($connection,$visibleRecords,$level,$target,$actorId,$sceneId)))throw new RuntimeException('La cible n’est plus visible.',403);
+    $level['_chargeVisible']=$isGm?static fn()=>true:onlineMapMovementVisibility($connection,$visibleRecords,$level,$actorId,$sceneId);$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+    return applicationPlanAttackApproach($attack,$level,$activity['abilityExecutions']??[],$activity['abilityMovementLeases']??[]);
+    } catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()>=400&&$error->getCode()<600?(int)$error->getCode():409,$error->getMessage(),'attack_approach_blocked');}
+}
+function onlineApplyAttackApproach(PDO $connection,array &$records,array &$pending,array $attack):array {
+    if(empty($attack['attackApproach'])||isset($attack['approachApplied'])||isset($attack['echoParentId'])||!empty($attack['areaAnchorOnly'])||!in_array($attack['status']??'',['applied','blocked'],true))return $attack;
+    $plan=onlineAttackApproachPlan($connection,$records,$pending,$attack);if($plan===null)return $attack;$now=(int)floor(microtime(true)*1000);$leaseId='approach-'.$attack['id'];$expiresAt=$now+$plan['durationMs']+1600;
+    $attack['approachApplied']=[...$plan,'startedAt'=>$now,...(!empty($plan['moved'])?['leaseId'=>$leaseId,'expiresAt'=>$expiresAt]:[])];if(empty($plan['moved']))return $attack;
+    $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$activity['abilityMovementLeases']=normalizeAbilityMovementLeases([...array_values(array_filter($activity['abilityMovementLeases']??[],static fn($lease)=>$lease['expiresAt']>$now&&$lease['id']!==$leaseId)),['id'=>$leaseId,'sceneId'=>$attack['sceneId'],'sourceTokenId'=>$attack['sourceTokenId'],'tokenIds'=>array_column($plan['moves'],'tokenId'),'expiresAt'=>$expiresAt]]);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    $sceneId=$attack['sceneId'];$map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);$tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$source=array_column($tokens,null,'id')[$plan['physicalTokenId']];
+    $opportunities=applicationOpportunityRequests([...$map,'tokens'=>$tokens],$source,$plan['from'],$plan['to'],$plan['path'],$sceneId,static fn($token)=>onlineTokenControllerIdFromRecords($connection,$records,$token),static function($token)use($records){$owner=applicationAbilityCastingOwner($token)['characterId'];return $owner!==''?(applicationDomainPayload($records,'character:'.$owner)['passiveAbilities']??$token['passiveAbilities']??null):($token['passiveAbilities']??null);});
+    if($opportunities!==[]){$store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());if(count($store['pendingRolls'])+count($opportunities)>1000)throw new RuntimeException('Traitez les réactions en attente.',429);$store['pendingRolls']=[...$store['pendingRolls'],...$opportunities];queueOnlineDomainUpsert($pending,$records,'devices',$store);}
+    $trap=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$sceneId);if(queueItemTrapPassages($trap,$source,$plan['from'],$plan['to'],$plan['path'],static fn($prefix)=>$prefix.'-'.randomToken(16)))queueOnlineDomainUpsert($pending,$records,'items',$trap['items']);
+    foreach($plan['moves']as$move){$key=onlineTokenDomainKey($sceneId,$move['tokenId']);$token=$pending[$key]['payload']??applicationDomainPayload($records,$key);if($token!==[]){if(in_array($token['id'],$plan['dismountTokenIds']??[],true))unset($token['mountedOnTokenId'],$token['mountedAt']);queueOnlineDomainUpsert($pending,$records,$key,[...$token,'x'=>$move['to']['x'],'y'=>$move['to']['y'],'_movedAt'=>$now,'_updatedAt'=>$now]);}}
+    return $attack;
+}
 function applyOnlineAttackConditions(PDO $connection, array &$records, array &$pending, array $attack): array {
+    $attack=onlineApplyAttackApproach($connection,$records,$pending,$attack);
     $attack = onlineStructureContact($connection,$records,$pending,$attack);
     $attack = onlineApplyTerrainBarrier($connection,$records,$pending,$attack);
     $attack = onlineDeviceRider($connection, $records, $pending, $attack);
@@ -4496,6 +4538,15 @@ function applyOnlineAttackConditions(PDO $connection, array &$records, array &$p
     applicationAttackPoisonStacks($effectState,$attack,$source,$target,static fn($p)=>$p.'-'.randomToken(16));
     if($needsUnits){onlineDeviceFlush($effectState,$records,$pending);$activity=$pending['activity']['payload']??$activity;}
     $activity['damageOverTime']=$effectState['damageOverTime']??[];$activity['attackEnhancements']=$effectState['attackEnhancements']??[];
+    if(!empty($attack['poisonApplications'])){
+        $mapKey='map:'.$attack['sceneId'];if(!isset($records[$mapKey]))$records=array_replace($records,applicationDomainRecords($connection,[$mapKey]));
+        $visualMap=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);$visualMap['tokens']=onlineSceneTokensForLights($connection,$records,$pending,(string)$attack['sceneId']);
+        foreach(applicationTrustedPoisonImpactVisuals($attack,['map'=>$visualMap,'approved'=>true])as$effect){
+            $venom=$effect['spell'];appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$venom]),
+                $venom['sceneId'],$venom['layerId'],$attack['sourceTokenId'],$attack['visibility']??'public','cue-effect-'.substr(hash('sha256','hit:'.$effect['key']),0,32));
+        }
+    }
+
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
     return $attack;
 }
@@ -5301,7 +5352,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens'], true) && !in_array(
             $command,
-            ['luck.reset', 'unit.friendly-fire', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.effect.stack', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'token.attack.area.resolve', 'ping'],
+            ['luck.reset', 'unit.friendly-fire', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.vessel.request','item.vessel.resolve','item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.effect.stack', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'token.attack.area.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5323,7 +5374,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($attacks !== []) $result['attacks'] = $attacks;
                 onlineDeviceRememberResult($records, $pending, $arguments['arguments']['requestId'], $result);
             }
-        } elseif (in_array($command, ['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
+        } elseif (in_array($command, ['item.vessel.request','item.vessel.resolve','item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy'], true)) {
             $result = onlineItemCommand($connection, $records, $pending, $table, $identity, $command, $arguments, $isGm);
             dsAssertItemLimits(onlineDeviceState($connection,$records,$pending));
             $commandActionAlreadyLogged = true;
@@ -5771,19 +5822,23 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $token = $tokenKey === '' ? [] : applicationDomainPayload($records, $tokenKey);
             if (!$isGm && $token !== [] && !onlineTokenOnActiveLayer($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Ce pion n’est plus sur le niveau actif.', 'stale_token_layer');
             if (!empty($arguments['layerId']) && $arguments['layerId'] !== onlineTokenLayerId($token, applicationDomainPayload($records, $mapKey))) rejectOnlineCommand($connection, 409, 'Le pion a changé de niveau pendant le déplacement.', 'stale_token_layer');
-            if (!empty($token['mountedOnTokenId'])) rejectOnlineCommand($connection, 409, 'Descendez de la monture avant de déplacer le cavalier.', 'rider_mounted');
             $records = onlineSceneTokenRecords($connection, $moveSceneId, $records);
             $sceneMountTokens = onlineSceneTokensForLights($connection, $records, $pending, $moveSceneId);
-            $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $token);
-            $pilot = $effectiveControllerId === '' ? onlineMountPilot($sceneMountTokens, $token) : null;
+            $storedMovementToken=$token;$abilityMovementStep=applicationActiveAbilityMovementStep($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$moveSceneId,(string)($token['id']??''));
+            $mountedAbilityMovement=!empty($token['mountedOnTokenId'])&&$abilityMovementStep!==null;
+            $movementBody=$mountedAbilityMovement?applicationAbilityMovementSource($token,['tokens'=>$sceneMountTokens],($abilityMovementStep['mountedMovement']??false)===true):$token;
+            if($mountedAbilityMovement){$token=[...$token,'x'=>$movementBody['x'],'y'=>$movementBody['y'],'size'=>$movementBody['size']??40];unset($token['mountedOnTokenId'],$token['mountedAt']);}
+            elseif(!empty($token['mountedOnTokenId']))rejectOnlineCommand($connection,409,'Descendez de la monture avant de déplacer le cavalier.','rider_mounted');
+            $effectiveControllerId = $token === [] ? '' : onlineTokenControllerIdFromRecords($connection, $records, $mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true?$movementBody:$token);
+            $pilot = $effectiveControllerId === '' ? onlineMountPilot($sceneMountTokens, $mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true?$movementBody:$token) : null;
             $movementControllerId = $pilot !== null ? onlineTokenControllerIdFromRecords($connection, $records, $pilot) : $effectiveControllerId;
             if ($token === [] || (!$isGm
                 && ($movementControllerId !== $accountId || ($token['hidden'] ?? false) === true))) {
                 rejectOnlineCommand($connection, 403, 'Déplacement refusé.', 'token_forbidden');
             }
-            $abilityMoveLock=applicationAbilityMovementLock($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$moveSceneId,$token['id'],onlineSceneTokensForLights($connection,$records,$pending,$moveSceneId));if($abilityMoveLock!==null)rejectOnlineCommand($connection,409,$abilityMoveLock['label'],'ability_movement_locked');
-            if (($token['immovable'] ?? false) === true) rejectOnlineCommand($connection, 409, 'Ce pion est inamovible.', 'token_immovable');
-            if(!$isGm){$records=array_replace($records,applicationDomainRecords($connection,['devices']));foreach(applicationDomainPayload($records,'devices',dsEmpty())['timedConditions'] as $condition)if($condition['sceneId']===$moveSceneId&&($condition['targetTokenId']===($token['id']??'')||!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??''))&&$condition['blocksMovement'])rejectOnlineCommand($connection,423,'Ce pion est immobilisé jusqu’à la fin de son effet.','timed_immobilization');}
+            $abilityMoveLock=applicationAbilityMovementLock($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$moveSceneId,$token['id'],onlineSceneTokensForLights($connection,$records,$pending,$moveSceneId),null,$pending['activity']['payload']['abilityMovementLeases']??applicationDomainPayload($records,'activity')['abilityMovementLeases']??[]);if($abilityMoveLock!==null)rejectOnlineCommand($connection,409,$abilityMoveLock['label'],'ability_movement_locked');
+            if (($token['immovable'] ?? false) === true||$mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true&&($movementBody['immovable']??false)===true) rejectOnlineCommand($connection, 409, 'Ce pion est inamovible.', 'token_immovable');
+            if(!$isGm){$records=array_replace($records,applicationDomainRecords($connection,['devices']));$movingGroup=$mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true?array_values(array_filter($sceneMountTokens,static fn($mover)=>in_array($mover['id'],applicationAbilityMovementTokenIds($storedMovementToken,['tokens'=>$sceneMountTokens],true),true))):[$storedMovementToken];foreach($movingGroup as $mover)foreach(applicationDomainPayload($records,'devices',dsEmpty())['timedConditions'] as $condition)if($condition['sceneId']===$moveSceneId&&($condition['targetTokenId']===($mover['id']??'')||unitUsesCharacterSheet($mover)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($mover['characterId']??''))&&$condition['blocksMovement']&&($condition['remainingTurns']??0)>0)rejectOnlineCommand($connection,423,'Ce pion est immobilisé jusqu’à la fin de son effet.','timed_immobilization');}
             $initiative = applicationDomainPayload($records, $initiativeKey);
             if (!$isGm && ($initiative['active'] ?? false) === true) {
                 $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
@@ -5846,7 +5901,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $result['pathReason'] = $resolved['reason'] ?? null;
                 $result['adjustedDestination'] = ($resolved['adjusted'] ?? false) === true;
             }
-            if(!$isGm||($arguments['separate']??false)===true||($arguments['assisted']??false)===true){
+            if((!$isGm||($arguments['separate']??false)===true||($arguments['assisted']??false)===true)&&!($mountedAbilityMovement&&(float)$token['x']===(float)$resolved['x']&&(float)$token['y']===(float)$resolved['y'])){
                 $resolved=separateOnlineTokenPosition($token,$resolved,$map,$sceneTokens,(!$isGm||($arguments['assisted']??false)===true)?$visible:null);
                 if($resolved['separated']??false){$result['path']=$resolved['path']??null;$result['adjustedDestination']=true;}
             }
@@ -5862,19 +5917,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if($opportunities!==[]){$deviceStore=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());if(count($deviceStore['pendingRolls'])+count($opportunities)>1000)rejectOnlineCommand($connection,429,'Traitez les réactions en attente avant ce déplacement.','opportunity_queue_full');$deviceStore['pendingRolls']=[...$deviceStore['pendingRolls'],...$opportunities];queueOnlineDomainUpsert($pending,$records,'devices',$deviceStore);}
                 $trapState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$moveSceneId);$trapState['map']=[...$map,'tokens'=>$sceneMountTokens];
                 if(queueItemTrapPassages($trapState,$token,$token,$resolved,$resolved['path']??null,static fn($prefix)=>$prefix.'-'.randomToken(16)))queueOnlineDomainUpsert($pending,$records,'items',$trapState['items']);
-                $token['x'] = $resolved['x'];
-                $token['y'] = $resolved['y'];
-                $token['_movedAt'] = (int) floor(microtime(true) * 1000);
-                queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
-                foreach (onlineMountedRiders($sceneMountTokens, $token) as $rider) {
-                    if (!onlineTokenOnActiveLayer($rider, $map)) continue;
-                    $riderKey = onlineTokenDomainKey($moveSceneId, $rider['id'] ?? '');
-                    if ($riderKey === '') continue;
-                    $rider['x'] = $token['x'];
-                    $rider['y'] = $token['y'];
-                    $rider['_movedAt'] = $token['_movedAt'];
-                    queueOnlineDomainUpsert($pending, $records, $riderKey, $rider);
-                }
+                $movingIds=$mountedAbilityMovement?applicationAbilityMovementTokenIds($storedMovementToken,['tokens'=>$sceneMountTokens],($abilityMovementStep['mountedMovement']??false)===true):[$token['id'],...array_column(onlineMountedRiders($sceneMountTokens,$token),'id')];
+                foreach($sceneMountTokens as $moved)if(in_array($moved['id'],$movingIds,true)){$moved['x']=$resolved['x'];$moved['y']=$resolved['y'];$moved['_movedAt']=(int)floor(microtime(true)*1000);if($mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)!==true&&$moved['id']===$storedMovementToken['id'])unset($moved['mountedOnTokenId'],$moved['mountedAt']);queueOnlineDomainUpsert($pending,$records,onlineTokenDomainKey($moveSceneId,$moved['id']),$moved);if($moved['id']===$storedMovementToken['id'])$token=$moved;}
             }
             $result['token'] = $token;
             $result['blockedByWall'] = $resolved['blocked'];
@@ -6620,6 +6664,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     if ($selectedStatId === '') rejectOnlineCommand($connection, 400, 'Choisissez une statistique d’attaque.', 'attack_stat_required');
                     $abilityForAttack['castingStatId'] = $selectedStatId;
                 }
+                $approachContext=!empty($mechanicsDefinition['attackApproach'])?['sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'attackApproach'=>$mechanicsDefinition['attackApproach'],'mountedMovement'=>($mechanicsDefinition['mountedMovement']??false)===true,'approachPoint'=>$arguments['approachPoint']??null,'targetRangeCells'=>applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')),...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[])]:null;
+                if($approachContext!==null)onlineAttackApproachPlan($connection,$records,$pending,$approachContext,$accountId,$isGm);
                 $castingPlan = $abilityForAttack !== null ? onlinePrepareAbilityCasting($connection, $abilityForAttack, $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, $selectedStatId, onlineDeviceState($connection,$records,$pending), $singleAreaTarget?0.5:1) : null;
                 if($castingPlan!==null&&empty(applicationSpellVisualBindings()[$abilityForAttack['id']??'']['onResolvedDamage']))$castingPlan['spellVisual']=applicationTrustedSpellVisual($abilityForAttack,['sceneId'=>$sceneId,'source'=>$source,'targetPoint'=>$aimedPoint??['x'=>$target['x'],'y'=>$target['y']],'variantId'=>$arguments['variantId']??'','map'=>$map]);
                 if(!empty($abilityForAttack['castGate'])){
@@ -6731,6 +6777,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                     'playerName' => substr((string) ($identity['display_name'] ?? 'Joueur'), 0, 120),
                     'attackName' => substr($attackName, 0, 120),
                     'attackKind' => $attackKind,
+                    ...($approachContext!==null?['attackApproach'=>$approachContext['attackApproach'],...(!empty($approachContext['mountedMovement'])?['mountedMovement'=>true]:[]),'approachPoint'=>['x'=>$arguments['approachPoint']['x'],'y'=>$arguments['approachPoint']['y']]]:[]),
                     'targetRangeCells'=>$authorizedRangeCells?:($attackKind==='ability'?applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')):applicationWeaponRangeCells($mechanicsDefinition)),
                     ...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[]),
                     ...($mechanicsStrikePosition?['strikeTargetPosition'=>$mechanicsStrikePosition]:[]),
@@ -6889,7 +6936,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         }
                         if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
                         $areaAttack = $attack;
-                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
+                        foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
                         $areaAttack['id'] = 'attack-' . randomToken(12);
                         $areaAttack['requestId'] = 'area-' . randomToken(12);
                         $areaAttack['targetTokenId'] = $areaId;

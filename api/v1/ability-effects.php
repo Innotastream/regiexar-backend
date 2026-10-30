@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/stackable-effects.php';
+require_once __DIR__.'/vision-zones.php';
 require_once __DIR__.'/displacement-schema.php';
 require_once __DIR__.'/ability-rule-presets.php';
 require_once __DIR__ . '/device-state.php';
@@ -76,8 +77,10 @@ function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
     return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
 }
 function validApplicationAbilityEffects(array $entry): bool {
+    if(isset($entry['mountedMovement'])&&!is_bool($entry['mountedMovement']))return false;
     if(array_key_exists('rulePreset',$entry)&&applicationAbilityRulePreset($entry['rulePreset'])===null)return false;
     try {
+        if(applicationVisionZoneDefinition($entry['visionZone']??null)!==null&&($entry['effect']??'damage')!=='movement')return false;
         applicationDamageVariants($entry['damageVariants']??null);
         applicationAbilityItemRequirement($entry['itemRequirement']??null);
         if(applicationChanceCastGate($entry['castGate']??null)!==null && (($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['shape']??'')!=='cone'||($entry['castingStatId']??null)!==''||!empty($entry['reducedFailureCooldown'])||!empty($entry['projectile'])))return false;
@@ -101,6 +104,7 @@ function validApplicationAbilityEffects(array $entry): bool {
     if(array_key_exists('rangeCells',$entry)&&(!is_numeric($entry['rangeCells'])||$entry['rangeCells']<0||$entry['rangeCells']>1000))return false;
     if(isset($entry['minimumReach'])&&!in_array($entry['minimumReach'],['reach','ranged'],true))return false;
     try{if(isset($entry['knockback'])&&(($entry['effect']??'damage')!=='damage'||applicationKnockback($entry['knockback'])===null))return false;}catch(RuntimeException){return false;}
+    try{if(isset($entry['attackApproach'])&&(($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['mode']??'')==='area'||applicationAttackApproach($entry['attackApproach'])===null))return false;}catch(RuntimeException){return false;}
     if(array_key_exists('reach',$entry)&&!in_array($entry['reach'],['melee','reach','ranged'],true))return false;
     if (array_key_exists('onHitConditions', $entry) && !validApplicationConditions($entry['onHitConditions'])) return false;
     $effect = $entry['effect'] ?? 'damage';
@@ -153,12 +157,15 @@ function applicationAbilityEffectFields(array $entry): array {
     if($gate=applicationChanceCastGate($entry['castGate']??null))$conditions['castGate']=$gate;
     if($variants=applicationDamageVariants($entry['damageVariants']??null))$conditions['damageVariants']=$variants;
     if($requirement=applicationAbilityItemRequirement($entry['itemRequirement']??null))$conditions['itemRequirement']=$requirement;
+    if($visionZone=applicationVisionZoneDefinition($entry['visionZone']??null))$conditions['visionZone']=$visionZone;
     if (in_array($effect, ['damage', 'healing', 'movement', 'enhancement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
         $conditions['attackEnhancement'] = applicationAttackEnhancement($entry['attackEnhancement']);
     if(array_key_exists('projectile',$entry)) $conditions['projectile']=$entry['projectile']===true;
+    if(array_key_exists('mountedMovement',$entry)) $conditions['mountedMovement']=$entry['mountedMovement']===true;
     if(is_numeric($entry['rangeCells']??null)&&$entry['rangeCells']>0)$conditions['rangeCells']=$entry['rangeCells'];
     if(in_array($entry['minimumReach']??'',['reach','ranged'],true))$conditions['minimumReach']=$entry['minimumReach'];
     if($effect==='damage'&&applicationKnockback($entry['knockback']??null)!==null)$conditions['knockback']=applicationKnockback($entry['knockback']);
+    if($effect==='damage'&&applicationAttackApproach($entry['attackApproach']??null)!==null)$conditions['attackApproach']=applicationAttackApproach($entry['attackApproach']);
     if(in_array($entry['reach']??'', ['melee','reach','ranged'],true))$conditions['reach']=$entry['reach'];
     if(!empty($entry['manualD100']))$conditions['manualD100']=true;
     if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
@@ -292,7 +299,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
         $old = $byId[$entry['id'] ?? ''] ?? [];
         if (($entry['effect'] ?? $old['effect'] ?? '') === 'metamorphosis') foreach (['formDurationTurns', 'formBonusHp'] as $field)
             if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
-        foreach (['manaCost', 'hpCost', 'fatigueCost', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['manaCost', 'hpCost', 'fatigueCost','fatigueCostIncludesPassive','mountedMovement','rulePreset', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         if (!array_key_exists('completionCue', $entry) && array_key_exists('completionCue', $old)) $entry['completionCue'] = $old['completionCue'];
         if (($entry['effect'] ?? $old['effect'] ?? '') === 'complex' && is_array($old['workflow'] ?? null)
             && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
@@ -303,6 +310,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     }, $incoming);
 }
 function preserveApplicationAbilityExtensions(string $key, array $payload, array $previous): array {
+    if(str_starts_with($key,'map:')){if(array_key_exists('visionZones',$previous))$payload['visionZones']=$previous['visionZones'];else unset($payload['visionZones']);}
     if (str_starts_with($key, 'token:') && ($previous['immovable'] ?? false) === true && ($payload['immovable'] ?? true) === true
         && (($payload['x'] ?? $previous['x']) != $previous['x'] || ($payload['y'] ?? $previous['y']) != $previous['y'] || ($payload['layerId'] ?? 'ground') !== ($previous['layerId'] ?? 'ground'))) sendError(409, 'Ce pion est inamovible. Désactivez cette option pour le déplacer.', 'token_immovable');
     if (str_starts_with($key, 'character:') || str_starts_with($key, 'token:')) {

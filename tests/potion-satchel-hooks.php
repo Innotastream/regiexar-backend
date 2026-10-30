@@ -1,0 +1,26 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../api/v1/domains.php';
+require_once __DIR__.'/../api/v1/online.php';
+$input=json_decode((string)stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR);$checks=0;
+$check=static function(bool $v,string $m)use(&$checks){if(!$v)throw new RuntimeException($m);$checks++;};
+$id='ability-9d9973fa-0555-4807-bbd6-af6f1adf640d';$context=$input['context'];
+$spell=applicationTrustedSpellVisual(['id'=>$id,'name'=>'Nom libre','completionCue'=>['spell'=>['presetId'=>'untrusted']]],$context);
+$check($spell==$input['spell'],'Dessin identique aux octets publics Node');
+$check($spell['placement']==='source'&&$spell['anchorTokenId']==='caster','Ancrage au lanceur');
+$check($spell['radiusCells']==4&&$spell['followAnchor']===true,'Rayon et suivi du pion');
+$rider=[...$context['source'],'id'=>'clone','mountedOnTokenId'=>'mount'];
+$mount=['id'=>'mount','x'=>60,'y'=>45,'size'=>150,'layerId'=>'upper'];
+$mounted=applicationTrustedSpellVisual(['id'=>$id],[...$context,'source'=>$rider,'map'=>[...$context['map'],'tokens'=>[$rider,$mount]]]);
+$check($mounted['source']===['x'=>60,'y'=>45,'size'=>150]&&$mounted['anchorTokenId']==='clone'&&$mounted['layerId']==='upper','Empreinte de monture, ancre du cavalier');
+$check($mounted['radiusCells']==4.5,'Budget adapte a la monture');
+$giant=applicationTrustedSpellVisual(['id'=>$id],[...$context,'source'=>[...$context['source'],'size'=>10000]]);
+$check($giant['radiusCells']==20,'Empreinte geante bornee');
+$check(applicationSpellVisualDuration($spell)===5000,'3400ms visibles plus1600ms de livraison');
+$check(applicationTrustedSpellVisual(['id'=>'unknown','completionCue'=>['spell'=>$spell]],$context)===null,'Aucune animation inventée par une fiche');
+$check(applicationSpellVisual([...$spell,'presetId'=>'unknown'])===null,'Catalogue verrouillé');
+$public=['sceneId'=>'lobby','layerId'=>'ground','sourceTokenId'=>'caster','visibleTokenIds'=>['caster'],'visible'=>static fn()=>true];
+$check(applicationPublicSpellVisual($spell,$public)!==null,'Sacoche publique sur lanceur visible');
+foreach([['sceneId'=>'other'],['layerId'=>'upper'],['paused'=>true],['visibleTokenIds'=>[]],['visible'=>static fn()=>false]]as$patch)$check(applicationPublicSpellVisual($spell,[...$public,...$patch])===null,'Masque, scène, niveau ou pause honoré');
+$cue=normalizeApplicationAbilityCompletionCue(['spell'=>$spell]);$check(($cue['sound']??null)===null,'Aucun son ajouté');
+echo json_encode(['ok'=>true,'checks'=>$checks,'spell'=>$spell,'duration'=>applicationSpellVisualDuration($spell)],JSON_THROW_ON_ERROR);

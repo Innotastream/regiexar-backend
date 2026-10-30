@@ -2,16 +2,18 @@
 declare(strict_types=1);
 require_once __DIR__ . '/character-statistics.php';
 function applicationPassiveKinds():array {return ['opportunity-attack'=>['name'=>'Attaque d’opportunité','description'=>'Lorsqu’un ennemi quitte une case adjacente, propose au MJ une attaque avec l’arme principale.'],
-    'mental-control-resistance'=>['name'=>'Boss : résistance au contrôle mental','description'=>'Un contrôle mental réussi devient une simple influence de même durée. Le contrôleur du pion ne change pas.']];}
+    'mental-control-resistance'=>['name'=>'Boss : résistance au contrôle mental','description'=>'Un contrôle mental réussi devient une simple influence de même durée. Le contrôleur du pion ne change pas.'],
+    'ability-fatigue-surcharge'=>['name'=>'Fatigue supplémentaire des compétences','description'=>'L’activation d’une compétence coûte une fatigue supplémentaire. Les coûts indiqués comme déjà majorés ne sont pas augmentés une seconde fois.']];}
 function applicationPassiveAbilities(mixed $v):array {
     if($v===null)return [];if(!is_array($v)||!array_is_list($v)||count($v)>100)throw new RuntimeException('La liste des compétences passives est invalide.',400);
     $kinds=applicationPassiveKinds();$seen=[];$r=[];
     foreach($v as $e){if(!is_array($e)||($e['version']??0)!==1||!isset($kinds[$e['kind']??'']))throw new RuntimeException('Ce passif utilise une version ou une mécanique non prise en charge.',400);
         $id=(string)($e['id']??$e['kind']);if(!preg_match('/^[A-Za-z0-9_-]{1,120}$/D',$id)||isset($seen[$id]))throw new RuntimeException('Identité de passif invalide.',400);$seen[$id]=true;
         $p=['version'=>1,'id'=>$id,'kind'=>$e['kind'],'name'=>substr((string)($e['name']??$kinds[$e['kind']]['name']),0,120),'description'=>substr((string)($e['description']??$kinds[$e['kind']]['description']),0,4000),'enabled'=>($e['enabled']??true)!==false];
-        if($e['kind']==='opportunity-attack'){$p['reachCells']=is_int($e['reachCells']??null)&&$e['reachCells']>=1&&$e['reachCells']<=20?$e['reachCells']:1;$p['statId']=in_array($e['statId']??'',applicationStatIds(),true)?$e['statId']:'character-stat-force';}$r[]=$p;
+        if($e['kind']==='opportunity-attack'){$p['reachCells']=is_int($e['reachCells']??null)&&$e['reachCells']>=1&&$e['reachCells']<=20?$e['reachCells']:1;$p['statId']=in_array($e['statId']??'',applicationStatIds(),true)?$e['statId']:'character-stat-force';}if($e['kind']==='ability-fatigue-surcharge')$p['amount']=is_int($e['amount']??null)&&$e['amount']>=0&&$e['amount']<=100?$e['amount']:1;$r[]=$p;
     }return $r;
 }
+function applicationConfiguredPassiveAbilities(array $source):array{static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/passive-ability-presets.json'),true,512,JSON_THROW_ON_ERROR);$values=applicationPassiveAbilities($source['passiveAbilities']??null);$origin=($source['characterId']??'')?:((($source['cloneSourceCharacterId']??'')?:($source['id']??'')));$preset=$presets[$origin]??null;if($preset!==null&&!in_array($preset['kind'],array_column($values,'kind'),true))$values=applicationPassiveAbilities([...$values,$preset]);return $values;}
 function applicationHasPassive(array $source,string $kind):bool {foreach(applicationPassiveAbilities($source['passiveAbilities']??null) as $p)if($p['enabled']&&$p['kind']===$kind)return true;return false;}
 function applicationMovementAvoidsOpportunity(array $executions,string $scene,string $token):bool {foreach($executions as $e){$step=$e['workflow']['steps'][$e['currentStepIndex']??-1]??[];if(($e['status']??'')==='active'&&($e['sceneId']??'')===$scene&&($e['sourceTokenId']??'')===$token&&($step['type']??'')==='movement'&&($step['avoidsOpportunity']??false)===true)return true;}return false;}
 function applicationOpportunityRequests(array $map,array $mover,array $start,array $destination,mixed $path,string $sceneId,callable $controller,callable $passives):array {

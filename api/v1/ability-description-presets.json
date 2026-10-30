@@ -28,9 +28,10 @@
   },
   "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
     "from": [
-      "Touche automatiquement / dégâts de base x2"
+      "Touche automatiquement / dégâts de base x2",
+      "Une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée."
     ],
-    "template": "Une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.",
+    "template": "Choisissez une position libre au contact de la cible, puis rejoignez-la en un éclair avant de porter une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.\n\nLe déplacement respecte les murs et l’empreinte des pions. La charge est limitée à la portée « À distance ». Une rémanence accompagne le trajet, suivie de la double coupe en X.",
     "defaults": {
       "rangeCells": 8
     }
@@ -71,5 +72,13 @@
       "Lance simplement un d100, sans statistique ni modificateur. Le MJ arbitre le résultat et les conséquences manuellement. À sa décision, affiche pendant cinq secondes le message configuré pour la réussite critique, la réussite ou l’échec critique. Coûte 5 fatigue, deux utilisations par repos court."
     ],
     "template": "Lancez un d100 brut, sans statistique ni modificateur. Le MJ lit le résultat de son tableau et arbitre les conséquences.\n\nAprès son arbitrage, une anomalie se rassemble autour du pion, puis l’illustration s’éveille et laisse brièvement déborder sa magie. Les trois manifestations restent Magie sauvage, Magie sauvage angélique et Magie sauvage démoniaque, selon le résultat choisi par le MJ. L’animation ne détermine ni les dégâts ni les autres conséquences du tableau."
+  },
+  "ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189": {
+    "from": [
+      "Activation : dix fatigue, une utilisation par repos long. Pendant cinq tours, chaque attaque qui touche applique une charge de Poison mortel par cible et par tour. Plusieurs cibles peuvent être affectées. Chaque charge inflige 1d20 de dégâts de poison par tour pendant cinq tours, dès le tour suivant, sans réinitialiser les autres charges.",
+      "Activation : dix fatigue, une utilisation par repos long. Pendant cinq tours, les attaques de mêlée qui touchent appliquent une charge de Poison mortel par cible et par tour, y compris les compétences de combat utilisant une arme ou une attaque naturelle. Les projectiles et les dégâts purement magiques ne transmettent pas ce poison. Plusieurs cibles peuvent être affectées. Chaque charge inflige 1d20 de dégâts de poison par tour pendant cinq tours, dès le tour suivant, sans réinitialiser les autres charges.",
+      "Pendant 5 tours, vos attaques de mêlée qui touchent appliquent Poison mortel : attaques d’arme, attaques naturelles et compétences de combat direct. Les projectiles et les dégâts purement magiques ne transmettent pas le poison.\n\nUne seule charge par cible et par tour. Chaque charge inflige 1d20 dégâts de poison par tour pendant 5 tours, dès le tour suivant. Les durées des autres charges ne sont pas réinitialisées."
+    ],
+    "template": "Pendant {attackEnhancement.turns} tours, seuls vos coups de pattes qui touchent appliquent Poison mortel, y compris les compétences de combat direct exécutées avec ces pattes. La hallebarde, les autres armes, les projectiles et les dégâts purement magiques ne transmettent pas ce poison.\n\nUne seule charge par cible et par tour. Chaque charge inflige {attackEnhancement.dot.formula} dégâts de poison par tour pendant {attackEnhancement.dot.turns} tours, dès le tour suivant. Les durées des autres charges ne sont pas réinitialisées."
   }
 }

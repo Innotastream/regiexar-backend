@@ -164,6 +164,18 @@ jobs:
           php tests/strategy-break-contract.php
           php tests/table-comfort-contract.php
           php tests/morale-summary-contract.php
+      - name: Combat movement, mist, venom and inventory regressions
+        run: |
+          php tests/ability-mounted-movement.php
+          php tests/attack-approach.php
+          php tests/charge-mount-authority.php
+          php tests/fulgurant-throw.php
+          php tests/ground-item-copy.php
+          php tests/item-undo-authority.php
+          php tests/mist-vision-casting.php
+          php tests/perfidious-poison-contact.php
+          php tests/potion-vessels.php
+          php tests/venom-visual-hooks.php
       - name: Real SQL media concurrency and heartbeat
         env:
           XAR_TEST_MYSQL_ALLOW_LOCAL: '1'

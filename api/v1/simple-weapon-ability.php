@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/combat-range-policy.php';
 
 function applicationSingleEnemyAttackFields(array $ability,array $targets,array $source,array $target,callable $controller):array {
     if(!isset($ability['singleEnemy']))return [];
@@ -13,7 +14,7 @@ function applicationWeaponReach(array $weapon):string {
     return in_array($weapon['reach']??'', ['melee','reach','ranged'],true)?$weapon['reach']:(!empty($weapon['projectile'])?'ranged':'melee');
 }
 function applicationWeaponRangeCells(array $weapon):int {
-    return ['melee'=>2,'reach'=>4,'ranged'=>15][applicationWeaponReach($weapon)];
+    return applicationSharedReachPolicy()[applicationWeaponReach($weapon)];
 }
 function applicationWeaponInRange(array $weapon,array $source,array $target,array $map):bool {
     $source=applicationTokenSpatialFootprint($source,$map);$target=applicationTokenSpatialFootprint($target,$map);

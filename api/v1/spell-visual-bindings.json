@@ -41,6 +41,42 @@
       "fitTarget": true,
       "onResolvedDamage": true,
       "handlesKnockbackImpact": true
+    },
+    "ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189": {
+      "placement": "source",
+      "presetId": "venom-awakening",
+      "radiusCells": 1.5,
+      "followAnchor": true,
+      "enhancementEvents": {
+        "hit": {
+          "placement": "target",
+          "presetId": "venom-ramifications",
+          "followTarget": true,
+          "fitTarget": true
+        },
+        "periodic": {
+          "placement": "target",
+          "presetId": "venom-affliction",
+          "followTarget": true,
+          "fitTarget": true
+        }
+      }
+    },
+    "ability-b848c2c0-e2bd-4fbd-91f4-9bbcaceefd97": {
+      "placement": "source",
+      "presetId": "mist-capsule",
+      "radiusCells": 2,
+      "followAnchor": true,
+      "fitSource": true,
+      "sourcePaddingCells": 2
+    },
+    "ability-9d9973fa-0555-4807-bbd6-af6f1adf640d": {
+      "placement": "source",
+      "presetId": "potion-satchel",
+      "radiusCells": 3,
+      "followAnchor": true,
+      "fitSource": true,
+      "sourcePaddingCells": 3
     }
   }
 }

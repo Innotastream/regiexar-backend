@@ -5,12 +5,16 @@ require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/unit-authority.php';
 
 require_once __DIR__.'/active-items.php';
+require_once __DIR__.'/ability-rule-presets.php';
 function applicationAttackEnhancementDefinition(mixed $value): ?array {
     if(is_array($value)&&($value['mode']??'')==='on-hit-effects'){$p=normalizeItemPayload($value['payload']??null);return $p&&in_array($p['kind'],['dot','condition'],true)&&activeItemInt($value['turns']??null,1,999)&&in_array($value['trigger']??'',['all-attacks','melee-weapon','main-weapon'],true)?['mode'=>'on-hit-effects','turns'=>$value['turns'],'trigger'=>$value['trigger'],'requiresHit'=>true,...((applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])) ? ['family'=>applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])]:[]),'payload'=>$p]:null;}
     if(is_array($value)&&($value['mode']??'')==='immunity')return activeItemTag($value['family']??null)&&activeItemInt($value['turns']??null,1,999)?['mode'=>'immunity','family'=>$value['family'],'turns'=>$value['turns']]:null;
     if(is_array($value)&&($value['mode']??'')==='on-attack-dot'){
         $d=$value['dot']??[];if(!activeItemInt($value['turns']??null,1,999)||!validApplicationAbilityFormula($d['formula']??'')||!activeItemInt($d['turns']??null,1,20))return null;
-        return ['mode'=>'on-attack-dot','turns'=>$value['turns'],'family'=>'poison','dot'=>['label'=>substr($d['label']??'Poison',0,120),'formula'=>$d['formula'],'turns'=>$d['turns'],'family'=>'poison','damageType'=>'ignore'],'perTargetPerTurn'=>1,'requiresHit'=>true];
+        if(isset($value['trigger'])&&!in_array($value['trigger'],['all-attacks','melee-weapon'],true))return null;
+        if(isset($value['weaponIds'])&&(!is_array($value['weaponIds'])||!array_is_list($value['weaponIds'])||count($value['weaponIds'])>30||count(array_unique($value['weaponIds'],SORT_REGULAR))!==count($value['weaponIds'])))return null;
+        foreach($value['weaponIds']??[] as $weaponId)if(!is_string($weaponId)||preg_match('/^[A-Za-z0-9_-]{1,120}$/D',$weaponId)!==1)return null;
+        return ['mode'=>'on-attack-dot','turns'=>$value['turns'],...(isset($value['trigger'])?['trigger'=>$value['trigger']]:[]),...(isset($value['weaponIds'])?['weaponIds'=>$value['weaponIds']]:[]),'family'=>'poison','dot'=>['label'=>substr($d['label']??'Poison',0,120),'formula'=>$d['formula'],'turns'=>$d['turns'],'family'=>'poison','damageType'=>'ignore'],'perTargetPerTurn'=>1,'requiresHit'=>true];
     }
     if(is_array($value)&&($value['mode']??'')==='stats'){
         if(!is_int($value['turns']??null)||$value['turns']<1||$value['turns']>999||!is_array($value['bonuses']??null))return null;
@@ -35,9 +39,15 @@ function applicationAttackEnhancementDefinition(mixed $value): ?array {
 }
 
 function applicationAttackTriggersEnhancement(array $effect, array $attack): bool {
+    $effect=applicationConfiguredAttackEnhancement((string)($effect['abilityId']??''),$effect);
+    if(!empty($effect['weaponIds'])&&!in_array($attack['echoAttackContext']['weaponId']??'', $effect['weaponIds'],true))return false;
     if(!empty($effect['requiresHit'])&&(empty($attack['hit']['outcome']['success'])||in_array($attack['status']??'',['missed','defended','cancelled','rejected'],true)))return false;
     if(($effect['trigger']??'')==='enchanted-weapon')return ($attack['echoAttackContext']['weaponBased']??false)===true&&($attack['echoAttackContext']['naturalWeapon']??false)!==true&&($attack['echoAttackContext']['projectile']??false)!==true&&in_array($effect['enchantedItemId']??null,$attack['echoAttackContext']['equipmentItemIds']??[],true);
     if(($effect['trigger']??'')==='main-weapon')return ($attack['echoAttackContext']['weaponBased']??false)===true&&($attack['echoAttackContext']['projectile']??false)!==true&&($attack['echoAttackContext']['weaponId']??'')===($effect['weaponId']??null);
+    if(($effect['trigger']??'')==='melee-weapon'&&($effect['mode']??'')==='on-attack-dot'){
+        $context=$attack['echoAttackContext']??[];$parts=$attack['damageComponents']??[];if($parts===[])$parts=[['type'=>$attack['damageType']??'physical']];
+        return ($context['weaponBased']??false)===true&&($context['projectile']??false)!==true&&($context['reach']??'')!=='ranged'&&array_filter($parts,static fn($part)=>in_array($part['type']??'',['physical','ignore'],true))!==[];
+    }
     return ($effect['trigger'] ?? '') !== 'melee-weapon'
         || (($attack['echoAttackContext']['weaponBased'] ?? false) === true && ($attack['echoAttackContext']['projectile'] ?? false) !== true);
 }
@@ -65,8 +75,10 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
             foreach ($abilities as $ability) if (($ability['id'] ?? '') === ($effect['abilityId'] ?? '')) $image = $ability['image'] ?? null;
         }
         $result[] = ['id' => (string) $effect['id'], 'label' => $fixed?'Zone d’affaiblissement d’armure':(string) ($effect['label'] ?? 'Effet actif'),
-            'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
+            'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...(($effect['mode']??'')==='on-attack-dot'&&(applicationAttackEnhancement($effect)['trigger']??'')==='melee-weapon'&&($effect['targetTokenId']??'')===($token['id']??'')?['skin'=>'venom-source']:[]),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
     }
+    $poisonTurns=0;foreach($state['damageOverTime']??[] as $dot)if(($dot['family']??'')==='poison'&&($dot['sceneId']??'')===$sceneId&&($dot['targetTokenId']??'')===($token['id']??'')&&($dot['remainingTurns']??0)>0)$poisonTurns=max($poisonTurns,(int)$dot['remainingTurns']);
+    if($poisonTurns>0)$result[]=['id'=>'status-poison-'.$token['id'],'label'=>'Empoisonné','remainingTurns'=>min(999,$poisonTurns),'skin'=>'venom-target','symbol'=>'☠','image'=>null];
     $protection=0;foreach($state['nextAttackGuards']??[] as $guard)if(($guard['effectId']??'')==='protection'&&($guard['sceneId']??'')===$sceneId&&($guard['targetTokenId']??'')===($token['id']??''))$protection+=(int)$guard['percent'];
     if($protection>0){$attacks=(int)ceil($protection/100);$result[]=['id'=>'status-protection-'.$token['id'],'label'=>'Protection · réserve '.$protection.' %','remainingTurns'=>$attacks,'remainingAttacks'=>$attacks,'symbol'=>'🛡','image'=>null];}
     return array_slice($result, 0, 100);
@@ -81,7 +93,7 @@ function applicationTransferAttackEnhancements(array $effects, array $source, st
 }
 
 function applicationAttackEnhancement(mixed $value): ?array {
-    $definition=applicationAttackEnhancementDefinition($value);if($definition===null)return null;
+    $definition=applicationAttackEnhancementDefinition(is_array($value)?applicationConfiguredAttackEnhancement((string)($value['abilityId']??''),$value):$value);if($definition===null)return null;
     if(isset($value['bonuses'])&&($definition['mode']??'')!=='stats'){
         $stats=applicationAttackEnhancementDefinition(['mode'=>'stats','turns'=>$definition['turns'],'bonuses'=>$value['bonuses']]);
         if($stats===null)return null;$definition['bonuses']=$stats['bonuses'];

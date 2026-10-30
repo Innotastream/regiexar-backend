@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/item-use-schema.php';
 require_once __DIR__.'/armor-reduction.php';
+require_once __DIR__.'/potion-vessels.php';
 function itemDefinitionCanonical(mixed $v):mixed {if(!is_array($v))return $v;if(!array_is_list($v))ksort($v);return array_map('itemDefinitionCanonical',$v);}
 function sameItemDefinition(mixed $a,mixed $b):bool{return itemDefinitionCanonical($a)===itemDefinitionCanonical($b);}
 function normalizeItemUses(mixed $value=[]):array {
@@ -36,7 +37,7 @@ function itemUseTargets(array $state,array $active,array $source,array $args,arr
 }
 function finishItemUse(array &$state,array &$items,array $use,array $actor,array $context):array {
  $ii=-1;$template=null;foreach($items['instances'] as $i=>$item)if($item['id']===$use['itemId']){$ii=$i;break;}if($ii<0)itemFailure('Cet objet n’existe plus.',409);$item=$items['instances'][$ii];
- foreach($items['templates'] as $t)if($t['id']===$item['templateId']){$template=$t;break;}
+ foreach($items['templates'] as $t)if($t['id']===$item['templateId']){$template=effectivePotionVesselTemplate($t,$item,$items);break;}
  if($item['revision']!==$use['itemRevision']||!$template||!sameItemDefinition($template['active']??null,$use['definition']??null))itemFailure('L’objet ou ses effets ont changé. Annulez cette activation et rouvrez-la.',409);
  $result=['used'=>true,'itemName'=>$template['name'],'rolls'=>[],'messages'=>[],'healing'=>0,'damage'=>0];$targets=[];
  foreach($use['targets'] as $entry)if($entry['status']==='affected'){$token=null;foreach($state['map']['tokens'] as $t)if($t['id']===$entry['tokenId']&&($t['layerId']??'ground')===$use['layerId']){$token=$t;break;}if(!$token)itemFailure('Une cible a quitté ce niveau. Annulez puis relancez l’objet.',409);$targets[]=$token;}
@@ -49,8 +50,9 @@ function finishItemUse(array &$state,array &$items,array $use,array $actor,array
  foreach($targets as $token){$unit=unitById($state,unitIdForToken($token));$r=$effectTemplate['active']['effects']?applicationApplyActiveItem($state,$effectTemplate,$unit,$token,[...$actor,'role'=>'gm'],[...$context,'sourceTokenId'=>$use['sourceTokenId']??'']):['rolls'=>[],'messages'=>[],'healing'=>0];persistUnitResources($state,$unit);$result['rolls']=[...$result['rolls'],...$r['rolls']];$result['messages']=[...$result['messages'],...$r['messages']];$result['healing']+=$r['healing'];$result['damage']+=$r['damage']??0;}
  foreach($summons as $a){$owner=unitById($state,$use['sourceUnitId']??'',false);$new=applicationSummonItemToken($state,$a,$use['summonPoint']??$targets[0]??$use['sourcePoint'],$owner['ownerPlayerId']??$use['controllerAccountId']??'',($context['id'])('token'));$result['summonedTokenIds'][]=$new['id'];}
  $messages=[];foreach($result['messages'] as $m)$messages[json_encode($m)]=$m;$result['messages']=array_values($messages);
- if($item['location']['kind']==='ground'&&!empty($use['definition']['trap']['destroyAfterTrigger'])){$item['location']=['kind'=>'destroyed'];if(isset($item['health']))$item['health']['current']=0;}
- elseif($item['location']['kind']==='inventory'&&empty($use['definition']['reusable']))$item['location']=['kind'=>'consumed','characterId'=>$item['location']['characterId']];
+ $vesselEmptied=emptyPotionVessel($item,$template);
+ if(!$vesselEmptied&&$item['location']['kind']==='ground'&&!empty($use['definition']['trap']['destroyAfterTrigger'])){$item['location']=['kind'=>'destroyed'];if(isset($item['health']))$item['health']['current']=0;}
+ elseif(!$vesselEmptied&&$item['location']['kind']==='inventory'&&empty($use['definition']['reusable']))$item['location']=['kind'=>'consumed','characterId'=>$item['location']['characterId']];
  $item['revision']++;$items['instances'][$ii]=$item;$items['pendingUses']=array_values(array_filter($items['pendingUses']??[],static fn($u)=>$u['id']!==$use['id']));return [...$result,'item'=>$item];
 }
 function applyItemUseCommand(array &$state,array &$items,array $actor,string $command,array $args,array $context):array {
@@ -58,7 +60,7 @@ function applyItemUseCommand(array &$state,array &$items,array $actor,string $co
  if(!empty($state['tacticalSync']['paused'])&&!$gm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
  if($command==='item.activate'){
   $item=null;foreach($items['instances'] as $i)if($i['id']===($args['itemId']??'')){$item=$i;break;}if(!$item||$item['revision']!==($args['expectedItemRevision']??null))itemFailure('Cet objet a changé.',409);
-  $template=null;foreach($items['templates'] as $t)if($t['id']===$item['templateId']){$template=$t;break;}$active=normalizeActiveItem($template['active']??null);if(empty($active['effects']))itemFailure('Cet objet n’a pas d’action utilisable.',409);
+  $template=null;foreach($items['templates'] as $t)if($t['id']===$item['templateId']){$template=effectivePotionVesselTemplate($t,$item,$items);break;}if(isset($item['vesselRequest']))itemFailure('Cette fiole attend la validation de sa transformation par le MJ.',409);$active=normalizeActiveItem($template['active']??null);if(empty($active['effects']))itemFailure('Cet objet n’a pas d’action utilisable.',409);
   if($active['authority']==='gm'&&!$gm)itemFailure('L’utilisation de cet objet est réservée au MJ.',403);
   foreach($items['pendingUses'] as $u)if($u['itemId']===$item['id'])itemFailure('Cet exemplaire attend déjà la résolution de son effet.',409);
   $source=itemUseSource($state,$item,$args,$actor);$summons=array_filter($active['effects'],static fn($e)=>$e['kind']==='summon');$point=null;
@@ -102,7 +104,7 @@ function queueItemTrapPassages(array &$state,array $mover,array $start,array $de
  $points=[$start,...($path??[]),$destination];$queued=[];$pendingUses=$state['items']['pendingUses']??[];
  $distance=static function($p,$a,$b)use($w,$h){$x=($p['x']-$a['x'])*$w/100;$y=($p['y']-$a['y'])*$h/100;$dx=($b['x']-$a['x'])*$w/100;$dy=($b['y']-$a['y'])*$h/100;$t=max(0,min(1,($x*$dx+$y*$dy)/($dx*$dx+$dy*$dy?:1)));return hypot($x-$dx*$t,$y-$dy*$t);};
  foreach($state['items']['instances'] as $item){if($item['location']['kind']!=='ground'||$item['location']['sceneId']!==$state['activeSceneId']||$item['location']['layerId']!==$layer||array_filter($pendingUses,static fn($u)=>$u['itemId']===$item['id']))continue;
-  $template=null;foreach($state['items']['templates'] as $t)if($t['id']===$item['templateId']){$template=$t;break;}$active=$template['active']??null;$trap=$active['trap']??null;if(empty($trap['onPassage'])||empty($active['effects']))continue;
+  $template=null;foreach($state['items']['templates'] as $t)if($t['id']===$item['templateId']){$template=effectivePotionVesselTemplate($t,$item,$state['items']);break;}$active=$template['active']??null;$trap=$active['trap']??null;if(empty($trap['onPassage'])||empty($active['effects']))continue;
   $radius=(($item['size']??$template['size']??40)+($mover['size']??40))/2+$trap['radiusCells']*$grid;if($distance($item['location'],$start,$start)<=$radius+1e-8)continue;$cross=false;foreach($points as $n=>$p)if($n>0&&$distance($item['location'],$points[$n-1],$p)<=$radius+1e-8){$cross=true;break;}if(!$cross)continue;
   if(count($pendingUses)+count($queued)>=100)itemFailure('Traitez les déclenchements de pièges en attente.',429);$use=['id'=>$id('item-use'),'itemId'=>$item['id'],'itemRevision'=>$item['revision'],'sceneId'=>$state['activeSceneId'],'layerId'=>$layer,'name'=>$template['name'],'definition'=>$active,'sourceTokenId'=>'item-origin-'.$item['id'],'phase'=>'trigger','accountId'=>'','role'=>'gm','crossingPoint'=>['x'=>$item['location']['x'],'y'=>$item['location']['y']],...(applicationHasArmorReductionZone($active)?['areaPoint'=>['x'=>$item['location']['x'],'y'=>$item['location']['y'],'layerId'=>$layer]]:[]),'targets'=>[['tokenId'=>$mover['id'],'status'=>'pending']]];$queued[]=$use;
  }if($queued)$state['items']['pendingUses']=[...$pendingUses,...$queued];return array_column($queued,'id');

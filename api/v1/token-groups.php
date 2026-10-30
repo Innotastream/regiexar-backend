@@ -200,7 +200,7 @@ function applyOnlineTokenGroupCommand(PDO $connection, array &$records, array &$
     foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $map['tokens'][] = applicationDomainPayload($records, $key);
     try { $placements = planApplicationTokenGroupTransform($map, $arguments); }
     catch (DomainException $error) { rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'group_transform_refused'); }
-    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens']);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
+    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens'],null,$movementActivity['abilityMovementLeases']??[]);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
     $tokens = []; $domains = [];
     foreach ($placements as $placement) {
         $key = onlineTokenDomainKey($sceneId, $placement['id']);
@@ -270,7 +270,7 @@ function applyOnlineTokenLayersCommand(PDO $connection, array &$records, array &
     foreach ($records as $key => $record) if (str_starts_with($key, 'token:' . $sceneId . ':')) $map['tokens'][] = applicationDomainPayload($records, $key);
     try { $placements = planApplicationTokenLayers($map, $arguments); }
     catch (DomainException $error) { rejectOnlineCommand($connection, $error->getCode(), $error->getMessage(), 'token_layers_refused'); }
-    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens']);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
+    $movementActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');foreach($placements as$p){$lock=applicationAbilityMovementLock($movementActivity['abilityExecutions']??[],$sceneId,$p['id'],$map['tokens'],null,$movementActivity['abilityMovementLeases']??[]);if($lock!==null)rejectOnlineCommand($connection,409,$lock['label'],'ability_movement_locked');}
     $tokens = []; $domains = [];
     foreach ($placements as $placement) {
         $key = onlineTokenDomainKey($sceneId, $placement['id']);
