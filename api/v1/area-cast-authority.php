@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/area-cast-gate.php';
 require_once __DIR__.'/spell-visuals.php';
+require_once __DIR__.'/deferred-defense-authority.php';
 
 function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending,array $identity,array $arguments,array $context,?callable $rollChance=null): array {
     extract($context,EXTR_SKIP);
@@ -19,6 +20,7 @@ function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending
     applyOnlineD100ResultToRoll($rolled,$outcome);
     $outcome['result']??=$rolled['rawD100']??$rolled['total'];
     $roll=onlineRollEntry($identity,$rolled,$ability['name'].' · Chance',(string)$source['name'],$outcome);
+    onlineAwardNaturalJoker($connection,$records,$pending,$source,$roll,$outcome,$sceneId);
     $roll=onlineAbilityRollVisibility($roll,$source,$identity,$visible,$sceneId,$source['id']);
     $roll['mapEvent']=['kind'=>'roll','label'=>'Chance','value'=>$outcome['result'],'sceneId'=>$sceneId,'layerId'=>$layerId,'tokenId'=>$source['id'],'sourceTokenId'=>$source['id'],'anchorTokenId'=>$source['id']];
     onlineRecordCharacterLuckD100($connection,$records,$pending,$identity,$luckId,$rolled);
@@ -29,6 +31,8 @@ function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending
     $now=(int)floor(microtime(true)*1000);
     $attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>$layerId,'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Zone du souffle','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!$visible?'gm':'public','attackId'=>$ability['id'],'attackName'=>$ability['name'],'attackKind'=>'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'areaRadiusCells'=>$ability['damageTargeting']['lengthCells'],'targetPoint'=>$targetPoint,'damageType'=>$damageType,'damageFormula'=>$damageFormula,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[]),'damagePercent'=>100,'damageRollMode'=>'normal','damage'=>[],'finalDamage'=>0,'opposed'=>false,'hit'=>['raw'=>$rolled['rawD100'],'total'=>$rolled['total'],'formula'=>'1d100','statId'=>'luck','statLabel'=>'Chance','outcome'=>$outcome,'rollId'=>$roll['id']],'hitRoll'=>$roll,'cast'=>$cast,'createdAt'=>$now,'areaGate'=>['version'=>1,'ability'=>$ability,'variantId'=>$arguments['variantId']??'','sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$targetPoint,'targetTokenIds'=>array_column($targets,'id'),'chanceOutcome'=>$outcome]];
     $attack['areaGate']['sourceUnitId']=unitIdForToken($source);$attack['areaGate']['sourceControllerId']=onlineTokenControllerIdFromRecords($connection,$records,$source);
+    $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$attack['areaGate']['kind']='chance';$attack['areaGate']['defenseStatId']='character-stat-agility';$attack['areaGate']['defenseEligibleTokenIds']=[];$attack['areaGate']['sourceParty']=onlineDefenseParty($connection,$records,$source,$map);$attack['areaGate']['targetParties']=[];
+    foreach($targets as$target){$attack['areaGate']['targetParties'][$target['id']]=onlineDefenseParty($connection,$records,$target,$map);if(($ability['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0)$attack['areaGate']['defenseEligibleTokenIds'][]=$target['id'];}
     $attack['areaGate']['targetUnitIds']=[];foreach($targets as $target)$attack['areaGate']['targetUnitIds'][$target['id']]=unitIdForToken($target);
     $activity=$pending['activity']['payload']??$activity;$activity['pendingAttacks'][]=$attack;
     $receipts[]=['requestId'=>$arguments['requestId'],'accountId'=>$identity['id'],'requestSignature'=>onlineAttackRequestSignature($sceneId,$arguments,true),'expiresAt'=>$now+XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,'attack'=>$attack];$activity['attackReceipts']=$receipts;
@@ -46,10 +50,13 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$receiptIndex=null;$attack=null;
     foreach($activity['attackReceipts']??[] as $i=>$receipt)if(($receipt['attack']['id']??'')===($arguments['attackId']??'')){$receiptIndex=$i;$attack=$receipt['attack'];break;}
     if(!is_array($attack['areaGate']??null))throw new RuntimeException('Cette zone n’attend pas de décision.',404);
-    $allowed=applicationApprovedAreaDefenseIds($attack['areaGate'],$arguments['defenseTokenIds']??[]);$signature=json_encode([$arguments['decision'],$allowed],JSON_THROW_ON_ERROR);
+    if(($attack['areaGate']['kind']??'')==='device-damage')return onlineResolveDeviceDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
+    if(!empty($attack['areaGate']['deferred']))return onlineResolveDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
+    $allowed=applicationApprovedAreaDefenseIds([...$attack['areaGate'],'targetTokenIds'=>$attack['areaGate']['defenseEligibleTokenIds']??$attack['areaGate']['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=json_encode([$arguments['decision'],$allowed],JSON_THROW_ON_ERROR);
     if(isset($attack['areaGate']['resolutionSignature'])){if($attack['areaGate']['resolutionSignature']!==$signature)throw new RuntimeException('Cette zone a déjà été résolue avec un autre choix.',409);$children=[];foreach($activity['attackReceipts'] as $receipt)if(($receipt['attack']['areaGateParentId']??'')===$attack['id'])$children[]=$receipt['attack'];return ['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>true];}
     $sceneId=$attack['sceneId'];$children=[];$canFire=$arguments['decision']==='approve'&&($attack['areaGate']['chanceOutcome']['code']??'')!=='critical-failure';
     if($canFire){
+        if(isset($attack['areaGate']['sourceParty']))onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);
         $records=array_replace($records,applicationDomainRecords($connection,['map:'.$sceneId,'initiative:'.$sceneId]));$map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);
         $tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$source=null;foreach($tokens as $token)if($token['id']===$attack['sourceTokenId'])$source=$token;
         if(!$source)throw new RuntimeException('Le lanceur n’existe plus. Refusez cette tentative.',409);

@@ -137,13 +137,24 @@ function fixture(): MemoryConnection
         'luck' => ['characters' => []],
         'token:scene-one:token-player' => ['id' => 'token-player', 'characterId' => 'character-player', 'controllerPlayerId' => 'stale-controller', 'name' => 'Personnage', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
         'token:scene-two:token-copy' => ['id' => 'token-copy', 'characterId' => 'character-player', 'name' => 'Copie', 'hp' => 99, 'maxHp' => 100, 'conditions' => [], 'x' => 20, 'y' => 50],
-        'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi']],
+        'token:scene-one:token-independent' => ['id' => 'token-independent', 'characterId' => 'character-player', 'followCharacter' => false, 'hp' => 40, 'maxHp' => 40, 'conditions' => ['Endormi'], 'x'=>95, 'y'=>95],
         'token:scene-one:token-monster' => ['id' => 'token-monster', 'name' => 'Créature', 'hp' => 40, 'maxHp' => 40, 'frameVariant' => 'boss', 'x' => 28.5, 'y' => 50,
             'stats' => [['id' => 'monster-force', 'label' => 'Force', 'value' => '70']], 'weaponAttacks' => [['id' => 'monster-claw', 'formula' => '1d6', 'damageType' => 'physical']]],
         'token:scene-one:token-monster-two' => ['id' => 'token-monster-two', 'name' => 'Seconde créature', 'hp' => 35, 'maxHp' => 35, 'x' => 28.75, 'y' => 50,
             'stats' => [['id' => 'monster-two-force', 'label' => 'Force', 'value' => '60']], 'weaponAttacks' => [['id' => 'monster-two-claw', 'formula' => '1d4', 'damageType' => 'physical']]],
         'activity' => ['actionTimers' => [], 'actionTimerTombstones' => [], 'mapPings' => [], 'shortcuts' => [], 'rolls' => [], 'playerActions' => [], 'pendingAttacks' => [], 'attackReceipts' => []],
     ]);
+}
+
+// Explicit fixture MJ decision: preserve the original attack/children transport
+// after the new pre-action defense selection; no product shortcut is installed.
+function fixtureApproveDefenseGate(MemoryConnection $db,TestResponse $result,bool $allowDefenses=false):TestResponse {
+    if($result->status!==200||empty($result->body['pendingAreaGate']))return $result;
+    $parent=null;foreach($db->payload('activity')['attackReceipts']??[]as$receipt)if(($receipt['attack']['id']??'')===($result->body['attack']['id']??''))$parent=$receipt['attack'];
+    if($parent===null)throw new RuntimeException('Fixture defense parent missing');
+    $result=runCommand($db,'token.attack.area.resolve',['requestId'=>'fixture-defense-'.randomToken(16),'attackId'=>$parent['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>$allowDefenses?($parent['areaGate']['defenseEligibleTokenIds']??$parent['areaGate']['targetTokenIds']):[]],true,'account-gm');
+    if($result->status===200&&($parent['areaGate']['kind']??'')==='defense-selection'&&!empty($result->body['areaAttacks'])){$children=$result->body['areaAttacks'];$primary=0;foreach($children as$i=>$child)if(($child['requestId']??'')==='release-'.$parent['id']){$primary=$i;break;}$result->body['attack']=$children[$primary];array_splice($children,$primary,1);$result->body['areaAttacks']=$children;}
+    return $result;
 }
 
 function deletionFixture(): MemoryConnection

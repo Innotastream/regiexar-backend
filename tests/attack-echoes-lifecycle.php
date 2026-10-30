@@ -119,6 +119,7 @@ foreach([true,false] as $affectCaster) {
     $db->put('character:character-player',$character);
     foreach(['token-player','token-monster','token-monster-two'] as $id){$token=$db->payload('token:scene-one:'.$id);$token['x']=40;$token['y']=50;$db->put('token:scene-one:'.$id,$token);}
     $response=runCommand($db,'token.attack',['requestId'=>'echo-area-spell-00001','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'area']);
+    $response=fixtureApproveDefenseGate($db,$response);requireTactical($response->status===200,'MJ confirms the area before echoes: '.$response->getMessage());
     requireTactical($response->status===200,'Area cast: '.$response->getMessage());
     $echoes=array_values(array_filter(array_column($db->payload('activity')['attackReceipts'],'attack'),static fn($a)=>!empty($a['echoParentId'])));
     requireTactical(count($echoes)>1 && in_array('token-player',array_column($echoes,'targetTokenId'),true)===$affectCaster,'Area echo preserves caster inclusion: '.json_encode([$affectCaster,array_column($echoes,'targetTokenId'),array_map(static fn($r)=>[$r['attack']['targetTokenId'],$r['attack']['status'],$r['attack']['areaAnchorOnly']??false],$db->payload('activity')['attackReceipts'])]));

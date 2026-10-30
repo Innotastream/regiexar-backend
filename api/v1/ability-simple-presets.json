@@ -1,4 +1,17 @@
 {
+  "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {
+    "presetId": "moon-beam-footprint",
+    "revision": 1,
+    "effect": "damage",
+    "targetingUpgradeOnly": true,
+    "values": {
+      "damageTargeting": {
+        "mode": "area",
+        "origin": "point",
+        "radiusCells": 4
+      }
+    }
+  },
   "ability-b848c2c0-e2bd-4fbd-91f4-9bbcaceefd97": {
     "presetId": "mist-vision",
     "revision": 1,
@@ -57,7 +70,7 @@
   },
   "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
     "presetId": "contact-dash",
-    "revision": 2,
+    "revision": 3,
     "effect": "damage",
     "rangeUpgradeOnly": true,
     "values": {
@@ -66,7 +79,12 @@
         "version": 1,
         "mode": "contact",
         "durationMs": 1210
-      }
+      },
+      "noDefensePossible": true
+    },
+    "rangeUpgradeRevision": 2,
+    "upgradeValues": {
+      "noDefensePossible": true
     }
   },
   "ability-9d9973fa-0555-4807-bbd6-af6f1adf640d": {
@@ -277,6 +295,32 @@
       "ratio": 1,
       "minimumMana": 0,
       "refundOnMiss": false
+    }
+  },
+  "leihr-vengeance-trass": {
+    "presetId": "trass-unlimited-beam",
+    "revision": 1,
+    "effect": "device",
+    "deviceUpgradeOnly": true,
+    "values": {
+      "device": {
+        "unlimitedRange": true,
+        "affectUnseen": true
+      },
+      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
+    }
+  },
+  "ability-3edf1e55-7d28-405f-9f7b-fe6045b9002b": {
+    "presetId": "trass-unlimited-beam",
+    "revision": 1,
+    "effect": "device",
+    "deviceUpgradeOnly": true,
+    "values": {
+      "device": {
+        "unlimitedRange": true,
+        "affectUnseen": true
+      },
+      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
     }
   }
 }

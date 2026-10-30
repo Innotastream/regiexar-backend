@@ -49,7 +49,7 @@ function applicationAbilityActivationHealthReason(array $ability, array $source)
 }
 
 function applicationAbilityCastingOwner(array $source): array {
-    $characterId = ($source['followCharacter'] ?? true) !== false && empty($source['linkedTokenId']) ? (string) ($source['characterId'] ?? '') : '';
+    $characterId = unitUsesCharacterSheet($source) ? (string) ($source['characterId'] ?? '') : '';
     return ['characterId' => $characterId, 'tokenId' => $characterId === '' ? (string) ($source['id'] ?? '') : ''];
 }
 
@@ -337,15 +337,20 @@ function appendApplicationAttackVisualEvent(array &$activity,array $attack,array
         $preceding=[];foreach($activity['attackReceipts']??[] as $receipt){$entry=$receipt['attack']??[];if(($entry['complexExecutionId']??null)===$execution['id']&&empty($entry['echoParentId']))$preceding[]=$entry;}
         $strikeIndex=count($preceding);foreach($preceding as $index=>$entry)if(($entry['id']??'')===($attack['id']??null)){$strikeIndex=$index;break;}
     }
+    $weaponChildren=array_values(array_filter($alternatives,static fn($entry)=>($entry['weaponAttackParentId']??null)===($attack['id']??'')));
     $candidate=$attack;
     if(!empty($attack['areaAnchorOnly'])){
         $candidate=null;foreach($alternatives as $entry)if(($entry['targetTokenId']??'')!==$attack['sourceTokenId']){$candidate=$entry;break;}
     }
-    if($candidate===null)return;
-    $spell=applicationTrustedMeleeVisual($candidate,['map'=>$map,'items'=>$items,'abilityId'=>$execution['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):''),
-        'strikeIndex'=>$strikeIndex,'approved'=>$approved,'deferredOnly'=>$deferredOnly])??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'approved'=>$approved]);
-    if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),
-        $attack['sceneId'],$attack['layerId'],$attack['sourceTokenId'],$attack['visibility']??'public');
+    $candidates=$weaponChildren!==[]?[$attack,...$weaponChildren]:[$candidate];$seen=[];
+    foreach($candidates as $index=>$candidate){
+        if($candidate===null||isset($seen[$candidate['id']??'']))continue;$seen[$candidate['id']??'']=true;
+        $spell=applicationTrustedMeleeVisual($candidate,['map'=>$map,'items'=>$items,'abilityId'=>$execution['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):''),
+            'strikeIndex'=>$strikeIndex+$index,'approved'=>$approved,'deferredOnly'=>$deferredOnly])??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'approved'=>$approved]);
+        if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),
+            $attack['sceneId'],$attack['layerId'],$attack['sourceTokenId'],$candidate['visibility']??$attack['visibility']??'public',
+            $weaponChildren!==[]||!empty($candidate['weaponAttackParentId'])?'attack-visual-'.$candidate['id']:'');
+    }
 }
 
 function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pending, string $sceneId, string $sourceTokenId, string $characterId, int|float $amount): int|float {
@@ -412,7 +417,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             $records = array_replace($records, $related);
             foreach ($related as $key => $record) {
                 $token = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
-                if (($token['characterId'] ?? '') !== $plan['characterId'] || ($token['followCharacter'] ?? true) === false || !empty($token['linkedTokenId'])) continue;
+                if (($token['characterId'] ?? '') !== $plan['characterId'] || !unitUsesCharacterSheet($token)) continue;
                 $token['mana'] = $mana - $cost; $token['_updatedAt'] = $now;
                 if (($pending[$key]['payload']['resourcePulse']['resource'] ?? '') !== 'hp') $token['resourcePulse'] = $pulse;
                 queueOnlineDomainUpsert($pending, $records, $key, $token);
@@ -449,12 +454,13 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             $records = array_replace($records, $related);
             foreach ($related as $tokenKey => $record) {
                 $token = $pending[$tokenKey]['payload'] ?? applicationDomainPayload($records, $tokenKey);
-                if (($token['characterId'] ?? '') !== $plan['characterId'] || ($token['followCharacter'] ?? true) === false || !empty($token['linkedTokenId'])) continue;
+                if (($token['characterId'] ?? '') !== $plan['characterId'] || !unitUsesCharacterSheet($token)) continue;
                 queueOnlineDomainUpsert($pending, $records, $tokenKey, synchronizeOnlineCharacterToken($token, $value));
             }
         }
     }
     }
+    if($payCosts&&is_array($cast['roll']??null))onlineAwardNaturalJoker($connection,$records,$pending,$source,$cast['roll'],$cast['outcome']??null,(string)$plan['sceneId']);
     if ($applyRecharge && !($cast['success'] ?? false)
         && ($plan['reducedFailureFatigueRefund'] ?? $plan['reducedFailureEnabled'] ?? false) === true
         && ($plan['statId'] ?? '') !== '') {

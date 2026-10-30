@@ -1,6 +1,7 @@
 {
   "version": 1,
   "bindings": {
+    "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {"placement": "area", "presetId": "moonlight-density", "radiusCells": 4},
     "ability-9832cd85-12b9-48b6-8908-5ad6f19b944a": {
       "placement": "dash",
       "presetId": "token-afterimage-dash",

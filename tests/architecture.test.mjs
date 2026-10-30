@@ -5,9 +5,9 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
 
-const expectedSharedGmCommands = "luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
+const expectedSharedGmCommands = "timer.delete luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
 function assertSharedGmCommands(source) {
-  const guard = source.match(/if \(\$isGm && !in_array\(\$command, \['strategy-break','table-tokens'\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
+  const guard = source.match(/if \(\$isGm && !in_array\(\$command, \['strategy-break','table-tokens','map.time-weather'\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
   assert.ok(guard, "la liste commune doit rester sous le contrôle du mode MJ");
   const actual = [...guard[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
   assert.equal(new Set(actual).size, actual.length, "aucune commande commune en double");
@@ -15,6 +15,8 @@ function assertSharedGmCommands(source) {
 }
 
 const PHP_SOURCES = ["api/v1/ability-icon.php","api/v1/ability-stat-check.php","api/v1/ability-stat-check-online.php","tests/ability-stat-check-contract.php","tests/mysql-ability-stat-check.php","api/v1/character-lore.php", "tests/character-lore-contract.php","api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
+
+PHP_SOURCES.push("api/v1/targeted-attack-authority.php","api/v1/deferred-defense-authority.php","api/v1/device-defense-gates.php","api/v1/complex-defense-gate.php","api/v1/weapon-turn-limits.php","tests/gm-defense-selection.php","tests/weapon-turn-authority.php");
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -98,8 +100,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.4'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-0-combat-inventory-mist-20261030-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.5'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-1-oppositions-waiting-20261030-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -135,8 +137,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.4");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.2.0");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.5");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.2.1");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -210,7 +212,9 @@ test("un jet de capacité journalise le même calcul pour le MJ et le joueur san
 
 test("les attaques ciblées et opposées restent autoritaires sans divulguer l’armure", async () => {
   const [online, domains, effects] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php"), read("api/v1/ability-effects.php")]);
-  const attack = online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
+  assert.ok(online.includes("require_once __DIR__.'/targeted-attack-authority.php'"));
+  assert.match(online,/\$result=onlinePerformTargetAttack\(/);
+  const attack = await read("api/v1/targeted-attack-authority.php") + online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
   const oppose = attack.slice(attack.indexOf("} elseif ($command === 'token.attack.oppose')"), attack.indexOf("} elseif ($command === 'token.attack.resolve')"));
   const applyDamage = online.slice(online.indexOf("function applyOnlineAttackDamage"), online.indexOf("function onlineAttackDiscordContent"));
   assert.match(attack, /onlineTokenControllerIdFromRecords/);
@@ -345,8 +349,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.2.0");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.2.0"]);
+  assert.equal(manifest.announcedApplicationVersion, "4.2.1");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.2.1"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -1050,11 +1054,12 @@ test("la projection joueur borne les événements éphémères à la scène visi
 });
 
 test("les jets et attaques de carte conservent leur niveau de création", async () => {
-  const [online, casting, domains] = await Promise.all([
+  const [onlineAdapter, casting, domains] = await Promise.all([
     read("api/v1/online.php"),
     read("api/v1/ability-casting.php"),
     read("api/v1/domains.php")
   ]);
+  const online=onlineAdapter+await read("api/v1/targeted-attack-authority.php");
   const visibility = online.slice(online.indexOf("function onlinePersistedLayerId"), online.indexOf("function requireIdentity"));
   assert.match(visibility, /array_key_exists\('layerId', \$value\)[\s\S]*?return 'ground'/);
   assert.match(visibility, /\$eventLayerId !== \$activeLayerId/);
@@ -1133,4 +1138,11 @@ test("le workflow backend épingle l’action de lecture du dépôt", async () =
   assert.match(workflow, /context="backend-check"/);
   assert.match(workflow, /GITHUB_RUN_ID/);
   assert.match(workflow, /\$\{\{ job\.status \}\}/);
+});
+
+
+test("la transformation Temps partage le routeur avec un contrôle MJ effectif propre", async () => {
+  const [online, weather] = await Promise.all([read("api/v1/online.php"), read("api/v1/map-time-weather.php")]);
+  assert.match(online, /if\(\$command==='map\.time-weather'\)\{try\{\$result=onlineMapTimeWeatherCommand\(/);
+  assert.match(weather, /function onlineMapTimeWeatherCommand\([^)]*\):array \{\s*if\(!onlineIdentityIsGm\(\$identity\)\)throw new RuntimeException\([^;]+,403\);/);
 });

@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__.'/map-time-weather.php';
 
 const XAR_IMAGE_STUDIO_SESSION_SECONDS = 43200;
 const XAR_IMAGE_STUDIO_MAX_REFERENCES = 5;
@@ -618,6 +619,7 @@ function imageStudioMessagePayload(array $row, bool $administratorView = false):
         'aspect' => (string) $row['aspect'],
         'executionMode' => (string) ($row['execution_mode'] ?? 'local'),
         'references' => $references,
+        ...(applicationStudioMapTimeWeatherContext($row)!==null?['mapTimeWeather'=>applicationStudioMapTimeWeatherContext($row)]:[]),
         'status' => (string) $row['status'],
         'parentMessageId' => $row['parent_message_id'] === null ? null : (string) $row['parent_message_id'],
         'mediaId' => $row['media_id'] === null ? null : (string) $row['media_id'],
@@ -879,6 +881,7 @@ function heartbeatImageStudioRegieWorker(PDO $connection): never
         }
         throw $error;
     }
+    onlineReconcileFailedStudioMaps($connection,$identity);
     sendJson(200, [
         'ok' => true,
         'service' => imageStudioRegieServicePayload($connection, $identity),
@@ -1018,6 +1021,7 @@ function claimImageStudioRegieJob(PDO $connection): never
         }
         throw $error;
     }
+    onlineReconcileFailedStudioMaps($connection,$identity);
     $message = $messageId === null ? null : ($jobType === 'ability-assistant'
         ? abilityAssistantMessageRecord($connection, $messageId) : imageStudioMessageRecord($connection, $messageId));
     $job = !is_array($message) ? null : ($jobType === 'ability-assistant'
@@ -1042,7 +1046,8 @@ function replayImageStudioMessage(PDO $connection, string $id, array $request): 
         'operation' => (string) $message['operation'],
         'aspect' => (string) $message['aspect'],
         'executionMode' => (string) ($message['execution_mode'] ?? 'local'),
-        'references' => jsonColumn($message['references_json'] ?? '[]'),
+        'references' => array_map(static function($r){unset($r['mapTimeWeather']);return $r;},jsonColumn($message['references_json'] ?? '[]')),
+        ...(applicationStudioMapTimeWeatherContext($message)!==null?['mapTimeWeather'=>applicationStudioMapTimeWeatherContext($message)]:[]),
         'parentMessageId' => (string) ($message['parent_message_id'] ?? ''),
     ];
     if (onlineCanonicalRequestValue($stored) !== onlineCanonicalRequestValue($request)) {
@@ -1078,8 +1083,10 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         sendError(400, 'Identifiant de demande invalide.', 'invalid_client_request');
     }
     $references = normalizedImageStudioReferences($payload['references'] ?? []);
+    $mapTimeWeather=isset($payload['mapTimeWeather'])?applicationMapTimeWeatherContext($payload['mapTimeWeather']):null;
+    if(isset($payload['mapTimeWeather'])&&($mapTimeWeather===null||$operation!=='edit'))sendError(400,'Contexte réservé à une édition de carte valide.','invalid_map_time_weather');
     foreach ($references as $reference) {
-        if (isset($reference['mediaId'])) {
+        if (isset($reference['mediaId'])&&$mapTimeWeather===null) {
             assertImageStudioReferenceMediaAccess($connection, $identity, (string) $reference['mediaId']);
         }
     }
@@ -1100,6 +1107,7 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
 
     $accountId = (string) $identity['id'];
     $request = compact('conversationId', 'prompt', 'operation', 'aspect', 'executionMode', 'references', 'parentMessageId');
+    if($mapTimeWeather!==null)$request['mapTimeWeather']=$mapTimeWeather;
     if ($clientRequestId !== '') {
         $duplicate = $connection->prepare(
             'SELECT id FROM image_studio_messages WHERE author_account_id = :account_id '
@@ -1154,6 +1162,7 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
             . 'AND updated_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 MINUTE)'
         );
         $stale->execute([':account_id' => $accountId]);
+        if($mapTimeWeather!==null)onlineReconcileFailedStudioMaps($connection,$identity);
         $active = $connection->prepare(
             "SELECT (SELECT COUNT(*) FROM image_studio_messages WHERE author_account_id = :image_account_id "
             . "AND execution_mode = :image_execution_mode AND status IN ('queued', 'generating')) + "
@@ -1177,10 +1186,11 @@ function createImageStudioMessage(PDO $connection, string $conversationId): neve
         }
         $id = randomToken(18);
         $connection->beginTransaction();
+        if($mapTimeWeather!==null){$weatherClock=domainClockRecord($connection,true);try{$references=onlineStampStudioMapTimeWeather($connection,$identity,$mapTimeWeather,$references,$id,$weatherClock);}catch(RuntimeException $error){$connection->rollBack();sendError(in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():400,$error->getMessage(),'map_time_weather_rejected');}}
         $referenceMediaIds = array_values(array_unique(array_filter(array_column($references, 'mediaId'), 'is_string')));
         sort($referenceMediaIds, SORT_STRING);
         foreach ($referenceMediaIds as $referenceMediaId) {
-            assertImageStudioReferenceMediaAccess($connection, $identity, $referenceMediaId, true);
+            if($mapTimeWeather===null)assertImageStudioReferenceMediaAccess($connection, $identity, $referenceMediaId, true);
         }
         $insert = $connection->prepare(
             'INSERT INTO image_studio_messages '
@@ -1285,8 +1295,11 @@ function completeImageStudioMessage(PDO $connection, string $id): never
     }
     $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
     $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
+    $weatherMessage=$message;
+    $weatherContext=is_array($weatherMessage)?applicationStudioMapTimeWeatherContext($weatherMessage):null;
     $connection->beginTransaction();
     try {
+        $weatherClock=$weatherContext!==null?domainClockRecord($connection,true):null;
         $lockedMedia = $connection->prepare('SELECT id, uploaded_by_account_id, pending_delete_at FROM media_objects WHERE id = :id LIMIT 1 FOR UPDATE');
         $lockedMedia->execute([':id' => $mediaId]);
         $currentMedia = $lockedMedia->fetch();
@@ -1313,6 +1326,7 @@ function completeImageStudioMessage(PDO $connection, string $id): never
             $connection->rollBack();
             sendError(409, 'Cette génération a changé pendant la réception du résultat.', 'invalid_generation_state');
         }
+        if($weatherClock!==null){try{onlineCompleteStudioMapTimeWeather($connection,$message,$mediaId,$weatherClock);}catch(RuntimeException $error){if($connection->inTransaction())$connection->rollBack();sendError(in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():409,$error->getMessage(),'map_time_weather_result_rejected');}}
         $connection->commit();
     } catch (Throwable $error) {
         if ($connection->inTransaction()) $connection->rollBack();
@@ -1353,6 +1367,7 @@ function failImageStudioMessage(PDO $connection, string $id): never
         ':error_detail' => $detail,
         ':id' => $id,
     ]);
+    onlineFailStudioMapTimeWeather($connection,[...$message,'error_code'=>$code]);
     sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
 }
 
@@ -1377,8 +1392,11 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
     $width = max(1, min(8192, (int) ($payload['width'] ?? 1)));
     $height = max(1, min(8192, (int) ($payload['height'] ?? 1)));
 
+    $weatherMessage=imageStudioMessageRecord($connection,$id);
+    $weatherContext=is_array($weatherMessage)?applicationStudioMapTimeWeatherContext($weatherMessage):null;
     $connection->beginTransaction();
     try {
+        $weatherClock=$weatherContext!==null?domainClockRecord($connection,true):null;
         $service = imageStudioRegieServiceRecord($connection, true);
         if (!hash_equals($workerLeaseId, (string) ($service['worker_lease_id'] ?? ''))) {
             $connection->rollBack();
@@ -1391,11 +1409,13 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
             sendError(404, 'Travail du Compte de la Régie introuvable.', 'message_missing');
         }
         if ((string) $message['status'] === 'succeeded' && (string) $message['media_id'] === $mediaId) {
-            $connection->commit();
+            if($weatherClock!==null){try{onlineCompleteStudioMapTimeWeather($connection,$message,$mediaId,$weatherClock);}catch(RuntimeException $error){if($connection->inTransaction())$connection->rollBack();sendError(in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():409,$error->getMessage(),'map_time_weather_result_rejected');}}
+        $connection->commit();
             sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
         }
         if ((string) $message['status'] === 'cancelled') {
-            $connection->commit();
+
+        $connection->commit();
             sendError(409, 'Cette demande a été annulée par son auteur.', 'generation_cancelled');
         }
         if ((string) $message['status'] !== 'generating'
@@ -1438,6 +1458,7 @@ function completeImageStudioRegieJob(PDO $connection, string $id): never
             ':id' => $id,
             ':worker_lease_id' => $workerLeaseId,
         ]);
+        if($weatherClock!==null){try{onlineCompleteStudioMapTimeWeather($connection,$message,$mediaId,$weatherClock);}catch(RuntimeException $error){if($connection->inTransaction())$connection->rollBack();sendError(in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():409,$error->getMessage(),'map_time_weather_result_rejected');}}
         $connection->commit();
     } catch (Throwable $error) {
         if ($connection->inTransaction()) {
@@ -1509,6 +1530,7 @@ function failImageStudioRegieJob(PDO $connection, string $id): never
         }
         throw $error;
     }
+    onlineFailStudioMapTimeWeather($connection,[...$message,'error_code'=>$code]);
     sendJson(200, ['ok' => true, 'message' => imageStudioMessagePayload(imageStudioMessageRecord($connection, $id))]);
 }
 

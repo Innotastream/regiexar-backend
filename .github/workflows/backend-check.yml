@@ -69,6 +69,8 @@ jobs:
           php tests/ethereal-fangs.php
           php tests/token-dash.php
           php tests/melee-contact-variants.php
+          php tests/staff-whip-visuals.php
+          php tests/battle-wrench-visuals.php
           php tests/divine-strike.php
           php tests/brute-force.php
           php tests/riposte.php
@@ -111,6 +113,13 @@ jobs:
           php tests/path-targeting.php
           php tests/simple-weapon-intimidation.php
           php tests/weapon-targeting.php
+          php tests/equipment-target-counts.php
+          php tests/player-stocks-authority.php
+          php tests/stream-combat-details.php
+          php tests/map-time-weather.php
+          php tests/gm-defense-selection.php
+          php tests/weapon-turn-authority.php
+          php tests/device-defense-gates.php
           php tests/web-structures.php
           php tests/equipment-spirit-creatures.php
           php tests/device-owner-return.php
@@ -169,6 +178,15 @@ jobs:
           php tests/ability-mounted-movement.php
           php tests/attack-approach.php
           php tests/charge-mount-authority.php
+          php tests/path-strike.php
+          php tests/contact-effect-zones.php
+          php tests/contact-zone-undo.php
+          php tests/combat-undo-created-conditions.php
+          php tests/celestial-path-strike.php
+          php tests/moon-beam-footprint.php
+          php tests/environmental-damage-privacy.php
+          php tests/trass-beam-authority.php
+          php tests/trass-clock-undo.php
           php tests/fulgurant-throw.php
           php tests/ground-item-copy.php
           php tests/item-undo-authority.php

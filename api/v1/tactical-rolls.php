@@ -318,6 +318,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
     }
     $roll = onlineRollEntry($identity, $rolled, $spec['label'], (string) ($source['name'] ?? 'Personnage'), $outcome);
+    onlineAwardNaturalJoker($connection,$records,$pending,$source,$roll,$outcome,$sceneId);
     $roll['rollKind'] = $spec['kind'];
     if ($sceneId !== '') $roll['sourceSceneId'] = $sceneId;
     $roll['diceAppearance'] = onlineDiceAppearance($source, !empty($source['controllerPlayerId']), $character ?? null);

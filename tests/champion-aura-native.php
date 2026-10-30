@@ -21,6 +21,7 @@ foreach([$champion['id'],$stigma['id']] as $id){$r=$use($id);championNative($r->
 championNative($db->payload('character:character-player')['fatigue']['current']===15,'Combined buffs paid once');
 $args=['requestId'=>'champion-attack-'.randomToken(16),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>'ability','attackId'=>'dance','weaponAttackId'=>'chain','statId'=>'character-stat-force','useJoker'=>true,'opposed'=>true];
 $r=championCommand($db,'token.attack',$args);championNative($r->status===200,'Required weapon AoE starts: '.json_encode($r->body));
+$r=fixtureApproveDefenseGate($db,$r,true);
 championNative($r->body['attack']['status']==='awaiting-opposition','One opposition awaited');
 $attack=championStoredAttack($db,$r->body['attack']['id']);championNative(($attack['damageRepetitions']??0)===2,'Two damage rolls persisted before opposition');
 championNative(str_contains($attack['damageFormula'],'+30')&&str_contains($attack['damageFormula'],'+15'),'Current weapon and offensive buffs combined');

@@ -36,7 +36,8 @@ foreach ([[null,8],['',8],[false,8],[0,1],[-2,1],[7.6,8],[40.9,40],[12,12]] as [
 }
 requireTactical(playerCharacterPatch([],[])['visionDistance'] === 8, 'New player sheets default to eight cells.');
 requireTactical(!validApplicationCharacterDomain(['visionDistance'=>41]) && !validApplicationTokenDomain(['visionDistance'=>-1]), 'Invalid vision stats cannot enter MJ domains.');
-requireTactical(onlineTokenVisionDistance(['visionDistance'=>3],['visionDistance'=>12]) === 12 && onlineTokenVisionDistance(['visionDistance'=>3,'followCharacter'=>false],['visionDistance'=>12]) === 3, 'Sheets are authoritative for ordinary tokens, while independent clones keep their vision.');
+$visionToken=['id'=>'ordinary-vision-token','characterId'=>'ordinary-vision-character','visionDistance'=>3];$visionCharacter=['id'=>'ordinary-vision-character','visionDistance'=>12];
+requireTactical(onlineTokenVisionDistance($visionToken,$visionCharacter) === 12 && onlineTokenVisionDistance([...$visionToken,'followCharacter'=>false],$visionCharacter) === 3 && onlineTokenVisionDistance([...$visionToken,'independent'=>true,'followCharacter'=>true],$visionCharacter) === 3, 'Sheets are authoritative for ordinary tokens, while independent clones, including contradictory legacy followCharacter flags, keep their vision.');
 $db = fixture();
 $response = runCommand($db,'character.patch',['characterId'=>'character-player','patch'=>['visionDistance'=>12]]);
 requireTactical($response->status === 200 && $db->payload('character:character-player')['visionDistance'] === 12, 'A player can save the individual vision stat.');

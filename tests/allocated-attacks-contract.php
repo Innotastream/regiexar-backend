@@ -22,12 +22,13 @@ $advance=static function(array $command,?array $attack=null) use (&$execution,$c
 };
 $advance(['action'=>'select-targets','allocations'=>array_map(static fn(string $id):array=>['tokenId'=>$id,'count'=>1],['third','first','second']),
     'attackPlan'=>array_map(static fn(string $id):array=>['tokenId'=>$id,'attackId'=>'new-sweep','statId'=>'','opposed'=>false],['third','first','second'])]);
+$execution=applyApplicationComplexAbilityCommand($execution,['action'=>'resolve-defenses','expectedRevision'=>$execution['revision'],'decision'=>'approve','defenseTokenIds'=>['first']],[...$context,'actor'=>['id'=>'gm','role'=>'gm']]);
 $attacks=[];
 foreach (['third','first','second'] as $i=>$id) {
     $advance(['action'=>'prepare-target','targetTokenId'=>$id]);
     $request='request-'.$i; $execution['stepStates']['strikes']['attackRequestId']=$request;
     $attack=['id'=>'attack-'.$i,'requestId'=>$request,'accountId'=>'owner','attackKind'=>'ability','complexExecutionId'=>$execution['id'],'sceneId'=>'scene','sourceTokenId'=>'source',
-        'targetTokenId'=>$id,'targetName'=>$id,'opposed'=>false,'damagePercent'=>100,'status'=>$i===1?'awaiting-opposition':'applied','appliedDamage'=>8+$i,'createdAt'=>4,
+        'targetTokenId'=>$id,'targetName'=>$id,'opposed'=>$i===1,'damagePercent'=>100,'status'=>$i===1?'awaiting-opposition':'applied','appliedDamage'=>8+$i,'createdAt'=>4,
         'hit'=>['outcome'=>['automatic'=>true,'success'=>true,'threshold'=>91],'statId'=>'secret','secret'=>'do-not-project']];
     $advance(['action'=>'confirm-attack','attackRequestId'=>$request],$attack);
     allocatedCheck($execution['stepStates']['strikes']['attackRequestId']==='', 'A confirmed receipt never becomes the next strike.');

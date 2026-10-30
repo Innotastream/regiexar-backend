@@ -332,7 +332,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-check', 'ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'effect-stack', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
+        $serverReceiptKinds = ['ability-check', 'ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'effect-stack', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'studio-conversation-create', 'map-time-weather', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
@@ -350,6 +350,9 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         if (array_key_exists('abilityExecutions', $payload) || $executions !== []) {
             $payload['abilityExecutions'] = trimApplicationComplexAbilityExecutions(array_values($executions));
         }
+        $weaponTimers=array_values(array_filter($previous['actionTimers']??[],static fn($timer)=>($timer['kind']??'')==='weapon-turn-limit'));$weaponTimerIds=array_column($weaponTimers,'id');
+        $payload['actionTimers']=[...array_values(array_filter($payload['actionTimers']??[],static fn($timer)=>($timer['kind']??'')!=='weapon-turn-limit'&&!in_array($timer['id']??'',$weaponTimerIds,true))),...$weaponTimers];
+        $payload['actionTimerTombstones']=array_values(array_filter($payload['actionTimerTombstones']??[],static fn($timer)=>!in_array($timer['id']??'',$weaponTimerIds,true)));
         $timers = array_column($previous['actionTimers'] ?? [], null, 'id');
         foreach ($payload['actionTimers'] ?? [] as $index => $timer) {
             $old = $timers[$timer['id'] ?? ''] ?? [];

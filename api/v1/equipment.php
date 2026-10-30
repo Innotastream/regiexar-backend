@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/item-catalog.php';
+require_once __DIR__.'/weapon-template-targeting.php';
 
 function equipmentFailure(string $message,int $status=409):never{throw new RuntimeException($message,$status);}
 function equipmentId(mixed $value):bool{return is_string($value)&&preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value)===1;}
@@ -32,7 +33,7 @@ function normalizeEquipment(mixed $value):?array {
     if($value['kind']==='shield')return ['version'=>1,'kind'=>'shield','hands'=>1];
     $formula=strtolower(preg_replace('/\s+/','',(string)($value['formula']??'')));
     if(!validApplicationAbilityFormula($formula)||!in_array($value['damageType']??'', ['physical','magical','ignore'],true)||!in_array($value['reach']??'', ['melee','reach','ranged'],true))equipmentFailure('Réglez les dégâts et la portée de cette arme.',400);
-    return ['version'=>1,'kind'=>'weapon','hands'=>$value['hands'],'formula'=>$formula,'damageType'=>$value['damageType'],'reach'=>$value['reach'],'projectile'=>($value['projectile']??false)===true,'finesse'=>($value['finesse']??false)===true];
+    return ['version'=>1,'kind'=>'weapon','hands'=>$value['hands'],'formula'=>$formula,'damageType'=>$value['damageType'],'reach'=>$value['reach'],'projectile'=>($value['projectile']??false)===true,'finesse'=>($value['finesse']??false)===true,...(array_key_exists('targetCount',$value)?['targetCount'=>normalizeEquipmentTargetCount($value['targetCount'])]:[])];
 }
 function normalizeEquipmentLoadouts(mixed $value=[]):array {
     if(!is_array($value)||count($value)>1000)equipmentFailure('Les équipements sont invalides.',400);
@@ -60,7 +61,7 @@ function equipmentLoadoutMatches(mixed $expected,array $current):bool {
 }
 function equipmentInventory(array $items,string $unitId):array {
     $templates=array_column($items['templates']??[],null,'id');$result=[];
-    foreach($items['instances']??[] as $item)if(($item['location']['kind']??'')==='inventory'&&($item['location']['characterId']??'')===$unitId){$template=$templates[$item['templateId']]??[];$equipment=$item['equipment']??$template['equipment']??null;if($equipment!==null)$result[]=['id'=>$item['id'],'name'=>$item['name']??$template['name'],...normalizeEquipment($equipment)];}
+    foreach($items['instances']??[] as $item)if(($item['location']['kind']??'')==='inventory'&&($item['location']['characterId']??'')===$unitId){$template=$templates[$item['templateId']]??[];$equipment=$item['equipment']??$template['equipment']??null;if($equipment!==null){$normalized=normalizeEquipment($equipment);$targetCount=equipmentWeaponTargetCount($normalized,$template['equipment']??null,$item['templateId']);$result[]=['id'=>$item['id'],'name'=>$item['name']??$template['name'],...$normalized,...($targetCount!==null?['targetCount'=>$targetCount]:[])];}}
     return $result;
 }
 function carriedTorch(array $state,array $source):?array {
@@ -97,7 +98,8 @@ function resolveEquipmentAttack(array $attack,array $source,array $state,bool $s
     $byType=[];foreach($selected as $item){$type=$item['damageType'];$byType[$type]=['type'=>$type,'formula'=>isset($byType[$type])?sumEffectFormulas([$byType[$type]['formula'],$item['formula']]):$item['formula']];}$parts=array_values($byType);$formula=sumEffectFormulas(array_column($parts,'formula'));
     if(!validApplicationAbilityFormula($formula))equipmentFailure('Les dégâts cumulés de ce set dépassent la formule autorisée.');
     $reach='ranged';foreach(['melee','reach','ranged'] as $kind)if(in_array($kind,array_column($selected,'reach'),true)){$reach=$kind;break;}
-    return [...$attack,'formula'=>$formula,'damageType'=>$parts[0]['type'],'damageComponents'=>$parts,'reach'=>$reach,'projectile'=>in_array(true,array_column($selected,'projectile'),true),'finesse'=>($selected[0]['finesse']??false)===true,'equipmentItemIds'=>array_column($selected,'id'),'equipmentNames'=>array_column($selected,'name'),'naturalWeapon'=>false];
+    $targetCount=!array_key_exists('targetCount',$attack)&&$binding['kind']==='item'&&count($selected)===1?($selected[0]['targetCount']??null):null;
+    return [...$attack,'formula'=>$formula,'damageType'=>$parts[0]['type'],'damageComponents'=>$parts,'reach'=>$reach,'projectile'=>in_array(true,array_column($selected,'projectile'),true),'finesse'=>($selected[0]['finesse']??false)===true,'equipmentItemIds'=>array_column($selected,'id'),'equipmentNames'=>array_column($selected,'name'),'naturalWeapon'=>false,...($targetCount!==null?['targetCount'=>$targetCount]:[])];
 }
 function equipmentTorchAttack(array $state,array $source):?array {
     $light=carriedTorch($state,$source);return $light===null?null:['id'=>'torch-'.$light['id'],'name'=>$light['name']??'Torche','formula'=>'1d10+3','damageType'=>'magical','reach'=>'melee','projectile'=>false,'targetCount'=>1,'onHitConditions'=>[],'torchLightId'=>$light['id'],'equipmentItemIds'=>[],'naturalWeapon'=>false];

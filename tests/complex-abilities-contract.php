@@ -447,20 +447,21 @@ $owner = ['id' => 'caster-player', 'name' => 'Arvin', 'role' => 'player'];
 $defender = ['id' => 'player-a', 'name' => 'A', 'role' => 'player'];
 $allocated = runComplexContractCommand($allocated, ['action' => 'select-targets', 'expectedRevision' => 1,
     'allocations' => [['tokenId' => 'target-a', 'count' => 5]]], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5100]);
-$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 2,
+$allocated = runComplexContractCommand($allocated,['action'=>'resolve-defenses','expectedRevision'=>2,'decision'=>'approve','defenseTokenIds'=>['target-a']],['actor'=>['id'=>'gm','role'=>'gm'],'tokens'=>$allocatedTokens,'now'=>5150]);
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 3,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5200]);
 $projection = publicApplicationComplexAbilityExecution($allocated, 'player-a', false, $allocatedTokens);
 requireComplexAbility(($projection['participantOnly'] ?? false) === true && count($projection['stepStates']['strikes']['targets'] ?? []) === 1
     && ($projection['controllerAccountId'] ?? 'nonempty') === '', 'Only the pending defender sees their own awareness prompt.');
 try {
-    runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+    runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 4], [
         'actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5300,
         'roll' => static fn(string $formula): array => ['rawD100' => 1, 'total' => 1]]);
     throw new RuntimeException('The attacker cannot roll for the defender.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->httpStatus === 403, 'Awareness is authorized for the target or GM only.');
 }
-$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 3], [
+$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 4], [
     'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5300,
     'roll' => static fn(string $formula): array => ['rawD100' => 90, 'total' => 90]]);
 requireComplexAbility(($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? null) === false, 'A failed awareness prevents opposition.');
@@ -470,26 +471,26 @@ $first = ['id' => 'attack-first', 'requestId' => 'request-first-123456', 'attack
     'sourceTokenId' => 'caster', 'targetTokenId' => 'target-a', 'accountId' => 'caster-player',
     'opposed' => false, 'damagePercent' => 50, 'status' => 'applied', 'createdAt' => 5301];
 try {
-    runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+    runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 5,
         'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens,
         'attack' => [...$first, 'opposed' => true], 'now' => 5400]);
     throw new RuntimeException('A failed awareness cannot open opposition.');
 } catch (ApplicationComplexAbilityException $error) {
     requireComplexAbility($error->errorCode === 'complex_ability_attack_mismatch', 'A forged opposition is rejected.');
 }
-$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 4,
+$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 5,
     'attackRequestId' => $first['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $first, 'now' => 5400]);
-$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 5,
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 6,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5500]);
-$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 6], [
+$allocated = runComplexContractCommand($allocated, ['action' => 'awareness-roll', 'expectedRevision' => 7], [
     'actor' => $defender, 'tokens' => $allocatedTokens, 'now' => 5600,
     'roll' => static fn(string $formula): array => ['rawD100' => 30, 'total' => 30]]);
 $allocated['stepStates']['strikes']['attackRequestId'] = 'request-second-123456';
 $second = [...$first, 'id' => 'attack-second', 'requestId' => 'request-second-123456',
     'attackId' => 'sabre-feu', 'opposed' => true, 'createdAt' => 5601];
-$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 7,
+$allocated = runComplexContractCommand($allocated, ['action' => 'confirm-attack', 'expectedRevision' => 8,
     'attackRequestId' => $second['requestId']], ['actor' => $owner, 'tokens' => $allocatedTokens, 'attack' => $second, 'now' => 5700]);
-$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 8,
+$allocated = runComplexContractCommand($allocated, ['action' => 'prepare-target', 'expectedRevision' => 9,
     'targetTokenId' => 'target-a'], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 5800]);
 requireComplexAbility(($allocated['stepStates']['strikes']['awaitingAwareness'] ?? true) === false
     && ($allocated['stepStates']['strikes']['targets'][0]['aware'] ?? false) === true,
@@ -513,6 +514,7 @@ $noGate = createApplicationComplexAbilityExecution(['id' => 'execution-no-gate',
 $noGate = runComplexContractCommand($noGate, ['action' => 'select-targets', 'expectedRevision' => $noGate['revision'],
     'allocations' => [['tokenId' => 'target-a', 'count' => 1], ['tokenId' => 'target-b', 'count' => 1]]],
     ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8100]);
+$noGate=runComplexContractCommand($noGate,['action'=>'resolve-defenses','expectedRevision'=>$noGate['revision'],'decision'=>'approve','defenseTokenIds'=>['target-a']],['actor'=>['id'=>'gm','role'=>'gm'],'tokens'=>$allocatedTokens,'now'=>8150]);
 foreach (['target-a', 'target-b'] as $index => $targetId) {
     $noGate = runComplexContractCommand($noGate, ['action' => 'prepare-target', 'expectedRevision' => $noGate['revision'],
         'targetTokenId' => $targetId], ['actor' => $owner, 'tokens' => $allocatedTokens, 'now' => 8200 + $index * 200]);
@@ -532,7 +534,7 @@ foreach (['target-a', 'target-b'] as $index => $targetId) {
 requireComplexAbility($noGate['status'] === 'completed'
     && ($noGate['stepStates']['strikes']['targets'][0]['attacks'][0]['opposed'] ?? null) === true
     && ($noGate['stepStates']['strikes']['targets'][1]['attacks'][0]['opposed'] ?? null) === false,
-    'Opposition remains selectable for each target without an awareness roll.');
+    'The MJ selects opposition independently for each target without an awareness roll.');
 
 $rangedAbility = ['id' => 'ranged-attacks', 'name' => 'Répartition à portée', 'effect' => 'complex', 'formula' => '0',
     'workflow' => ['version' => 4, 'steps' => [
@@ -637,6 +639,7 @@ $once = runComplexContractCommand($once, ['action' => 'select-targets', 'expecte
 requireComplexAbility($onceRolls === [] && $once['stepStates']['strikes']['targets'][0]['aware'] === true
     && $once['stepStates']['strikes']['targets'][1]['aware'] === false,
     'Each target rolls exactly once before the first strike, with independent parry rights.');
+$once=runComplexContractCommand($once,['action'=>'resolve-defenses','expectedRevision'=>$once['revision'],'decision'=>'approve','defenseTokenIds'=>['target-a','target-b']],['actor'=>['id'=>'gm','role'=>'gm'],'tokens'=>$onceTokens,'now'=>11001]);
 $once = runComplexContractCommand($once, ['action' => 'prepare-target', 'expectedRevision' => $once['revision'],
     'targetTokenId' => 'target-b'], ['actor' => $owner, 'tokens' => $onceTokens, 'now' => 11002]);
 requireComplexAbility($once['stepStates']['strikes']['awaitingAwareness'] === false

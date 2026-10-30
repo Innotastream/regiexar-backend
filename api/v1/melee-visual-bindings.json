@@ -5,7 +5,10 @@
     "barbed-chain": "barbed-chain-lash",
     "ethereal-twin-blades": "ethereal-alternating",
     "light-halberd": "light-halberd-cleave",
-    "paired-chitin-legs": "paired-chitin-injection"
+    "paired-chitin-legs": "paired-chitin-injection",
+    "druidic-staff": "druidic-staff-strike",
+    "bladed-whip": "bladed-whip-lash",
+    "compact-battle-tool": "battle-wrench-strike"
   },
   "combinations": [
     {
@@ -36,7 +39,10 @@
     "v370-template-928081e83ab067b4c9186111": "ethereal-twin-blades",
     "v370-template-f43cc10b70c24ca180211282": "ethereal-twin-blades",
     "v370-template-ff5583e4ecc48f222b3241f1": "light-halberd",
-    "v370-template-36549b30586340cdecebeb0e": "light-halberd"
+    "v370-template-36549b30586340cdecebeb0e": "light-halberd",
+    "v370-template-5ec5f08a803a58d2fd9404d9": "druidic-staff",
+    "v370-template-d29417860cce105b93bb7f17": "bladed-whip",
+    "v370-template-89b3acc87a18f696747bdae1": "compact-battle-tool"
   },
   "abilities": {
     "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {

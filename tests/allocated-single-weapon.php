@@ -34,10 +34,7 @@ function singleWeaponFixture(?bool $allowWeaponSets = false): MemoryConnection {
     $target['hp']=$target['maxHp']=2000;$target['armor']=90;$target['magicArmor']=0;
     $target['stats']=[['id'=>'character-stat-instinct','label'=>'Instinct','value'=>'0']];
     $db->put('token:scene-one:token-monster', $target);
-    $response = runCommand($db, 'ability.complex', ['action'=>'start','requestId'=>'single-start-'.randomToken(20),
-        'sceneId'=>'scene-one','sourceTokenId'=>'token-player','abilityId'=>$ability['id']]);
-    specialCheck($response->status===200, 'Actual complex start succeeds: '.json_encode($response->body));
-    specialCheck($db->payload('character:character-player')['fatigue']['current']===5, 'Start pays five fatigue once');
+    specialCheck($db->payload('character:character-player')['fatigue']['current']===0, 'The pending selection has no cost before the MJ decision');
     return $db;
 }
 function singleWeaponCommand(MemoryConnection $db, string $action, array $extra=[]): TestResponse {
@@ -46,8 +43,10 @@ function singleWeaponCommand(MemoryConnection $db, string $action, array $extra=
         'executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],'command'=>['action'=>$action,...$extra]]);
 }
 function singleWeaponPlan(MemoryConnection $db,string $id): TestResponse {
-    return singleWeaponCommand($db,'select-targets',['allocations'=>[['tokenId'=>'token-monster','count'=>5]],
-        'attackPlan'=>array_fill(0,5,['tokenId'=>'token-monster','attackId'=>$id,'statId'=>'character-stat-agility','opposed'=>false])]);
+    $selection=['allocations'=>[['tokenId'=>'token-monster','count'=>5]],'attackPlan'=>array_fill(0,5,['tokenId'=>'token-monster','attackId'=>$id,'statId'=>'character-stat-agility','opposed'=>false])];
+    $response=runCommand($db,'ability.complex',['action'=>'start','requestId'=>'single-start-'.randomToken(20),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','abilityId'=>'single-weapon-series','initialSelection'=>$selection]);
+    if($response->status===200){$response=fixtureApproveDefenseGate($db,$response,false);specialCheck($db->payload('character:character-player')['fatigue']['current']===5,'The approved start pays five fatigue once');}
+    return $response;
 }
 function singleWeaponStrike(MemoryConnection $db,string $id,string $requestId=''): TestResponse {
     $execution=$db->payload('activity')['abilityExecutions'][0];

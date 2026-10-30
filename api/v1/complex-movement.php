@@ -91,6 +91,8 @@ function applicationComplexAbilityStrikeOrigin(array $execution,array $step,arra
     if(!empty($origin['charge']['staged'])){foreach($map['tokens']??[]as$t)if($t['id']===$execution['sourceTokenId'])return ['x'=>$t['x'],'y'=>$t['y'],'size'=>$t['size']??40,'layerId'=>$execution['layerId']];return null;}
     $targeting=($step['type']??'')==='targets'?$step:(($origin['type']??'')==='targets'?$origin:null);
     $movementId=($targeting['sourceMovementStepId']??'')?:(!empty($origin['charge'])?$origin['id']:'');$movement=$execution['stepStates'][$movementId]??[];
+    $pathMovement=null;foreach($execution['workflow']['steps']??[]as$entry)if($entry['id']===$movementId&&!empty($entry['pathStrike']['staged']))$pathMovement=$entry;
+    if($pathMovement!==null&&!empty($movement['planned'])){foreach($movement['targets']??[]as$stop)if($stop['tokenId']===$target['id'])return [...$stop['contactPoint'],'size'=>$movement['sourceSize'],'layerId'=>$execution['layerId']];return null;}
     $closest=applicationComplexMovementClosestPoint($target,$movement,$map);if($closest===null)return null;
     $final=!empty($origin['charge'])&&($execution['stepStates'][$origin['charge']['targetStepId']]['allocations'][0]['tokenId']??'')===$target['id'];
     if(!$final&&!applicationTargetTouchesComplexMovement($target,$movement,$map))return null;
@@ -106,7 +108,8 @@ function applicationComplexAbilityTargetEligible(array $execution, array $step, 
     $rangeSource=$approaching!==null&&$source!==null?applicationAbilityMovementSource($source,$map,($approaching['mountedMovement']??false)===true):$source;
     if (!applicationComplexAbilityTargetInRange($strikeOrigin!==null?[...($source??[]),...$strikeOrigin]:$rangeSource, $target, $map, $range)) return false;
     if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => !empty($source['friendlyFire']), 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? '')))) return false;
-    return empty($targeting['sourceMovementStepId']) || applicationTargetTouchesComplexMovement($target, $execution['stepStates'][$targeting['sourceMovementStepId']] ?? [], $map);
+    if(empty($targeting['sourceMovementStepId']))return true;$movementStep=null;foreach($execution['workflow']['steps']as$entry)if($entry['id']===$targeting['sourceMovementStepId'])$movementStep=$entry;$movementState=$execution['stepStates'][$targeting['sourceMovementStepId']]??[];
+    return !empty($movementStep['pathStrike']['staged'])&&!empty($movementState['planned'])?in_array($target['id'],array_column($movementState['targets']??[],'tokenId'),true):applicationTargetTouchesComplexMovement($target,$movementState,$map);
 }
 function recordApplicationComplexAbilityMovement(array $executions, array $context): array {
     foreach ($executions as &$execution) {
@@ -114,6 +117,7 @@ function recordApplicationComplexAbilityMovement(array $executions, array $conte
         if (($execution['status'] ?? '') !== 'active' || ($step['type'] ?? '') !== 'movement' || ($execution['sceneId'] ?? '') !== $context['sceneId']
             || ($execution['layerId'] ?? 'ground') !== $context['layerId'] || ($execution['sourceTokenId'] ?? '') !== $context['source']['id']) continue;
         $state = $execution['stepStates'][$step['id']] ?? [];
+        if(!empty($step['pathStrike']['staged']))applicationComplexAbilityFail('Ce trajet se prépare sans déplacer manuellement le pion.','complex_ability_movement_locked');
         if (!isset($state['origin'])) $state = initialApplicationComplexMovementState($context['source'], $context['now'],$step['attackWidthCells']??0);
         $updated = appendApplicationComplexMovementPath($state, $context['source'], $context['destination'], $context['path'] ?? null, $context['map'], $step['maximumMeters'], $context['now'],$step['maximumCells']??0);
         if(!empty($step['charge']))applicationValidateChargePath($updated,applicationChargeFinalTarget($execution,$step,$context['tokens']??$context['map']['tokens']??[]),$context['map']);

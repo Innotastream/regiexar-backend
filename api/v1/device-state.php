@@ -12,6 +12,7 @@ require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/metamorphosis.php';
 require_once __DIR__.'/attack-enhancements.php';
 require_once __DIR__.'/device-items.php';
+require_once __DIR__.'/contact-effect-zones.php';
 
 // Native PHP counterpart of public/device-state.js. Storage and dice are
 // supplied by the authority inside its existing transaction/clock lock.
@@ -79,7 +80,7 @@ function dsDefinition(mixed $v): array {
             'channelManaCost'=>$int('channelManaCost',0,1000000,10),'penaltyIncrement'=>$int('penaltyIncrement',0,100,10),'channelStatId'=>$stat('channelStatId','character-stat-intelligence'),
             'projectileStatId'=>$stat('projectileStatId','character-stat-dexterity'),'damagePercent'=>$int('damagePercent',0,100,50),'pointBlankCells'=>$int('pointBlankCells',0,100,1),
             'affectAllies'=>true,'affectEnemies'=>true],
-        default=>[...$base,'canPack'=>($v['canPack']??true)!==false,'delayTurns'=>$int('delayTurns',1,100,1),'lengthCells'=>$int('lengthCells',1,100,20),'widthCells'=>$int('widthCells',1,100,1),
+        default=>[...$base,'canPack'=>($v['canPack']??true)!==false,'delayTurns'=>$int('delayTurns',1,100,1),'lengthCells'=>$int('lengthCells',1,100,20),'widthCells'=>$int('widthCells',1,100,1),...(array_key_exists('unlimitedRange',$v)?['unlimitedRange'=>$v['unlimitedRange']===true]:[]),...(array_key_exists('affectUnseen',$v)?['affectUnseen'=>$v['affectUnseen']===true]:[]),
             'falloffPercent'=>$int('falloffPercent',0,100,10),'damageType'=>$damage('magical'),'consentRequired'=>true,'repairRequiresGm'=>true]
     };
 }
@@ -88,6 +89,7 @@ function dsStore(mixed $value): array {
     if ($value===null) return dsEmpty();
     if (!is_array($value) || ($value['version']??0)!==1) dsError('Ces dispositifs proviennent d’une version plus récente. Ils ont été conservés.');
     foreach (['devices','craftRequests','pendingRolls','timedConditions','receipts'] as $key) if (!is_array($value[$key]??null) || !array_is_list($value[$key]) || count($value[$key])>($key==='receipts'?2048:1000)) dsError('Le registre des dispositifs est invalide.');
+    if(array_key_exists('contactZones',$value))$value['contactZones']=applicationContactZones($value['contactZones']);
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1

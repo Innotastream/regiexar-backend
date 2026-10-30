@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/player-stocks.php';
 function applicationTableTokenName(mixed $value):string {preg_match('/^.{0,80}/us',(string)$value,$match);return $match[0]??'Joueur';}
 function normalizeApplicationTableTokens(mixed $value): array {
     $value=is_array($value)?$value:[];
@@ -53,20 +54,20 @@ function applicationChangeTableTokens(mixed $value,array $args,array $identity,i
 }
 function onlineTableTokensCommand(PDO $connection,array &$records,array &$pending,array $table,array $identity,array $args): array {
     $now=(int)floor(microtime(true)*1000);$requestId=(string)($args['requestId']??'');
-    $signature=json_encode([$args['action']??'', $args['side']??'', $args['id']??'', $args['expectedRevision']??null, $args['pools']??null],JSON_THROW_ON_ERROR);
+    $signature=json_encode(($args['action']??'')==='personal-use'?['personal-use',$args['characterId']??'',$args['expectedStock']??null]:[$args['action']??'', $args['side']??'', $args['id']??'', $args['expectedRevision']??null, $args['pools']??null],JSON_THROW_ON_ERROR);
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $receipts=array_values(array_filter($activity['resourceReceipts']??[],static fn($r)=>is_array($r)&&($r['expiresAt']??0)>$now));
     foreach($receipts as $receipt)if(($receipt['requestId']??'')===$requestId){
         if(($receipt['accountId']??'')!==$identity['id'])rejectOnlineCommand($connection,403,'Ce reçu appartient à un autre compte.','receipt_forbidden');
         if(($receipt['kind']??'')!=='table-tokens'||($receipt['requestSignature']??'')!==$signature)rejectOnlineCommand($connection,409,'Cette référence correspond à une autre action.','request_mismatch');
-        return ['tableTokens'=>applicationTableTokensProjection($table['tableTokens']??null,$identity,$now),'deduplicated'=>true];
+        return ['tableTokens'=>applicationTableTokensProjection($table['tableTokens']??null,$identity,$now),...(($args['action']??'')==='personal-use'?['personalAdvantage'=>onlinePersonalAdvantage($connection,$records,$pending,$identity,$args)]:[]),'deduplicated'=>true];
     }
     if(count($receipts)>=XAR_RESOURCE_RECEIPT_MAXIMUM)rejectOnlineCommand($connection,429,'Le journal de sécurité est plein.','receipt_capacity');
-    try{$table['tableTokens']=applicationChangeTableTokens($table['tableTokens']??null,$args,$identity,$now);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode(),$error->getMessage(),'table_tokens_rejected');}
-    queueOnlineDomainUpsert($pending,$records,'table',$table);
-    $entry=onlineAppendPlayerAction($connection,$records,$pending,$identity,onlineActiveSceneId($table),['kind'=>'action','summary'=>match($args['action']){'request'=>'Demande un jeton joueur','approve'=>'Accorde un jeton joueur','reject'=>'Refuse la demande de jeton','cancel'=>'Annule la demande de jeton','configure'=>'Règle les réserves communes',default=>'Utilise un jeton '.(($args['side']??'')==='gm'?'MJ':'joueur')}]);
+    $personalAdvantage=null;
+    try{if(($args['action']??'')==='personal-use')$personalAdvantage=onlinePersonalAdvantage($connection,$records,$pending,$identity,$args,true);else {$table['tableTokens']=applicationChangeTableTokens($table['tableTokens']??null,$args,$identity,$now);queueOnlineDomainUpsert($pending,$records,'table',$table);}}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode(),$error->getMessage(),'table_tokens_rejected');}
+    $entry=onlineAppendPlayerAction($connection,$records,$pending,$identity,onlineActiveSceneId($table),['kind'=>'action','summary'=>match($args['action']){'request'=>'Demande un jeton joueur','approve'=>'Accorde un jeton joueur','reject'=>'Refuse la demande de jeton','cancel'=>'Annule la demande de jeton','configure'=>'Règle les réserves communes','personal-use'=>'Consomme un avantage personnel',default=>'Utilise un jeton '.(($args['side']??'')==='gm'?'MJ':'joueur')}]);
     $activity=$pending['activity']['payload']??$activity;
     $receipts[]=['kind'=>'table-tokens','requestId'=>$requestId,'accountId'=>$identity['id'],'actionId'=>$entry['id'],'sourceKey'=>'table','requestSignature'=>$signature,'expiresAt'=>$now+XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS,'result'=>['accepted'=>true]];
     $activity['resourceReceipts']=$receipts;queueOnlineDomainUpsert($pending,$records,'activity',$activity);
-    return ['tableTokens'=>applicationTableTokensProjection($table['tableTokens'],$identity,$now),'deduplicated'=>false];
+    return ['tableTokens'=>applicationTableTokensProjection($table['tableTokens']??null,$identity,$now),...($personalAdvantage!==null?['personalAdvantage'=>$personalAdvantage]:[]),'deduplicated'=>false];
 }

@@ -18,6 +18,8 @@ $db->put('token:scene-one:token-monster-two', $second);
 $response = runCommand($db, 'token.attack', ['sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player',
     'attackKind' => 'ability', 'attackId' => 'audit-area', 'opposed' => true, 'requestId' => 'audit-area-ko-center-0001'], true, 'account-gm');
 requireTactical($response->status === 200, 'The synthetic area attack is accepted: ' . $response->getMessage());
+$response=fixtureApproveDefenseGate($db,$response,true);
+requireTactical($response->status===200,'The MJ authorizes defenses for the prepared area: '.$response->getMessage());
 $area = array_column($response->body['areaAttacks'] ?? [], null, 'targetTokenId');
 requireTactical(($area['token-monster-two']['status'] ?? '') === 'awaiting-opposition', 'A KO center must not disable another area target opposition.');
 $sibling = $area['token-monster-two'];
@@ -52,6 +54,8 @@ $request = ['sourceTokenId' => 'token-player', 'targetTokenId' => 'token-player'
     'requestId' => 'audit-caster-area-0001'];
 $response = runCommand($db, 'token.attack', $request, true, 'account-gm');
 requireTactical($response->status === 200, 'A caster-centered area accepts its source as anchor: ' . $response->getMessage());
+$response=fixtureApproveDefenseGate($db,$response);
+requireTactical($response->status===200,'The MJ confirms the caster-centered area before its effects: '.$response->getMessage());
 requireTactical(($response->body['attack']['areaAnchorOnly'] ?? false) === true
     && array_column($response->body['areaAttacks'] ?? [], 'targetTokenId') === ['token-monster'],
     'Only the enemy receives an area attack; the source is an inert anchor.');

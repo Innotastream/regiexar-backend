@@ -1,3 +1,11 @@
+## Version 0.19.5 / client 4.2.1 — préparation locale
+
+Build `client-4-2-1-oppositions-waiting-20261030-1`. Les sources préparent les défenses collectives réservées au MJ, la garantie de Foudroiement et les compteurs d’armes par tour. Le jet ATK préparé reste unique ; les ressources et mouvements attendent la décision MJ. Les compteurs privés sont projetés uniquement à leur propriétaire et peuvent être réinitialisés par le MJ. Schéma SQL 24 conservé.
+
+La politique candidate prévoit le client exact 4.2.1. Aucun push, déploiement OVH ou basculement public n’est effectué pour cette préparation.
+
+Le parcours du Serpent Céleste valide un zigzag complet avant dépenses et déplacements ; les contacts argentés sont limités à un par unité et tour, expirent au prochain tour du lanceur et utilisent les réductions magiques ordinaires. Les contacts appartiennent à l’action d’origine pour l’annulation sans absorber les actions des unités traversantes. Trass porte jusqu’au bord de la carte, inclut les cibles cachées dans la seule décision MJ et ouvre les murs sur une largeur double, avec sillage peint sans effet de jeu. Le Rayon de Lune adopte huit cases de diamètre sans écraser ses coûts ni dégâts périodiques. Les ressources, PV et annulations des clones indépendants suivent leur unité effective.
+
 ## Version 0.19.4 / client 4.2.0 — combats, inventaire et brume
 
 Build `client-4-2-0-combat-inventory-mist-20261030-1`. La connexion impose le client exact 4.2.0 ; le schéma SQL 24 est conservé. Les nouvelles sources réunissent les animations et liaisons autoritaires du venin, de la sacoche et de la brume, le déplacement réel de Foudroiement et les corrections d’inventaire et d’annulation qualifiées localement.

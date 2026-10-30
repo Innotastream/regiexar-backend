@@ -25,6 +25,7 @@ function onlineAssertAbilityValidationCapacity(PDO $connection, array $activity)
 
 function onlineAssertAbilityValidationAvailable(PDO $connection, array $activity, array $ability, array $source, bool $forAttack = false): void {
     $owner = applicationAbilityCastingOwner($source);
+    foreach($activity['pendingAttacks']??[]as$entry)if(!empty($entry['areaGate']['deferred'])&&empty($entry['areaGate']['resolving'])&&($entry['attackId']??'')===($ability['id']??'')&&($entry['areaGate']['sourceParty']['unitId']??'')===unitIdForToken($source))rejectOnlineCommand($connection,409,'Cette action attend déjà la décision du MJ.','ability_defense_selection_pending');
     foreach ($activity['pendingAbilityCasts'] ?? [] as $entry) {
         if (($entry['abilityId'] ?? '') !== ($ability['id'] ?? '')) continue;
         if ($owner['characterId'] !== '' ? ($entry['characterId'] ?? '') === $owner['characterId']

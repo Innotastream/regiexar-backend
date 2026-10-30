@@ -53,6 +53,7 @@ function onlineApplyAttackKnockback(PDO $db,array &$records,array &$pending,arra
         queueOnlineDomainUpsert($pending,$records,$key,[...$token,...$move['to'],'_movedAt'=>$now,'_updatedAt'=>$now]);
     }
     if($trap)queueOnlineDomainUpsert($pending,$records,'items',$state['items']);
+    foreach($plan['moves']as$move){$moved=$pending[onlineTokenDomainKey($attack['sceneId'],$move['tokenId'])]['payload']??null;if($moved!==null)onlineContactZoneMovement($db,$records,$pending,['id'=>$attack['accountId']??'mechanics-authority','display_name'=>$attack['playerName']??'Mechanics','effective_mode'=>'gm','permanent_role'=>'gm'],$attack['sceneId'],$moved,$move['from'],$move['to'],[$move['from'],$move['to']]);}
     if(isset($plan['impact'])&&empty(applicationSpellVisualBindings()[$attack['attackId']??'']['handlesKnockbackImpact'])){
         $key=onlineTokenDomainKey($attack['sceneId'],$attack['targetTokenId']);$target=$pending[$key]['payload']??applicationDomainPayload($records,$key);
         if($target!==[]){$point=applicationTokenSpatialFootprint($target,['tokens'=>onlineSceneTokensForLights($db,$records,$pending,$attack['sceneId'])]);$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');

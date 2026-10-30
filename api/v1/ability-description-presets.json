@@ -1,4 +1,11 @@
 {
+  "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {
+    "from": [
+      "Aoe, dure 5 tours, degats x2 pour les ennemis surnaturelles (fantomes, vampires, demons, etc) �Vise un point au sol et affecte toutes les unit�s de la zone, y compris les alli�s.",
+      "Aoe, dure 5 tours, degats x2 pour les ennemis surnaturelles (fantomes, vampires, demons, etc) Vise un point au sol et affecte toutes les unités de la zone, y compris les alliés."
+    ],
+    "template": "Visez un point au sol : une lumière lunaire dense couvre une zone de huit cases de diamètre. Les unités concernées, y compris les alliés selon le réglage de la zone, reçoivent les dégâts initiaux puis les dégâts périodiques pendant cinq tours. Le MJ choisit les défenses.\n\nLes dégâts doublés contre les ennemis surnaturels (fantômes, vampires, démons, etc.) restent une règle à appliquer par le MJ."
+  },
   "ability-3c2a4c7c-74e8-4110-96a1-468e4ce52132": {
     "from": [
       "Riposte et désarme l'adversaire."
@@ -29,9 +36,10 @@
   "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
     "from": [
       "Touche automatiquement / dégâts de base x2",
-      "Une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée."
+      "Une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.",
+      "Choisissez une position libre au contact de la cible, puis rejoignez-la en un éclair avant de porter une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.\n\nLe déplacement respecte les murs et l’empreinte des pions. La charge est limitée à la portée « À distance ». Une rémanence accompagne le trajet, suivie de la double coupe en X."
     ],
-    "template": "Choisissez une position libre au contact de la cible, puis rejoignez-la en un éclair avant de porter une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée.\n\nLe déplacement respecte les murs et l’empreinte des pions. La charge est limitée à la portée « À distance ». Une rémanence accompagne le trajet, suivie de la double coupe en X.",
+    "template": "Choisissez une position libre au contact de la cible, puis rejoignez-la en un éclair avant de porter une frappe qui touche automatiquement et inflige le double des dégâts de l’arme utilisée. La cible ne peut tenter ni défense ni contre-attaque.\n\nLe déplacement respecte les murs et l’empreinte des pions. La charge est limitée à la portée « À distance ». Une rémanence accompagne le trajet, suivie de la double coupe en X.",
     "defaults": {
       "rangeCells": 8
     }

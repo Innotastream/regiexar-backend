@@ -596,6 +596,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
         onlineDeviceFlush($state,$records,$pending);
         foreach(legacyStateToDomains($state) as $k=>$p)if(str_starts_with($k,'map:')&&dsCanonical($pending[$k]['payload']??applicationDomainPayload($records,$k))!==dsCanonical($p))queueOnlineDomainUpsert($pending,$records,$k,$p);
     }
+    if($command==='item.opposition'){foreach($state['map']['tokens']??[]as$target)if(($target['id']??'')===($args['targetTokenId']??''))foreach($applied['result']['rolls']as&$r)onlineAwardNaturalJoker($connection,$records,$pending,$target,$r,$r['outcome']??null,$sceneId);unset($r);}
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
     if (!$isGm) $result = publicItemCommandResult($result);
     if(in_array($command,['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){

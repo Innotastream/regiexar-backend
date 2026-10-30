@@ -24,8 +24,8 @@ $serpentDb->put('token:scene-one:token-monster-two',[...$serpentDb->payload('tok
 $start = runCommand($serpentDb, 'ability.complex', ['action' => 'start', 'sceneId' => 'scene-one', 'layerId' => 'ground', 'sourceTokenId' => 'token-player', 'abilityId' => $serpentAbility['id'], 'requestId' => 'serpent-start-request']);
 requireTactical($start->status === 200 && is_array($start->body['execution'] ?? null), 'Serpent starts without casting roll: ' . $start->getMessage());
 $serpentExecution = $start->body['execution'];
-$advanceSerpent = static function(array $command) use ($serpentDb, &$serpentExecution): TestResponse {
-    $result = runCommand($serpentDb, 'ability.complex', ['action' => 'command', 'executionId' => $serpentExecution['id'], 'expectedRevision' => $serpentExecution['revision'], 'requestId' => 'serpent-command-' . bin2hex(random_bytes(8)), 'command' => $command]);
+$advanceSerpent = static function(array $command,bool $isGm=false) use ($serpentDb, &$serpentExecution): TestResponse {
+    $result = runCommand($serpentDb, 'ability.complex', ['action' => 'command', 'executionId' => $serpentExecution['id'], 'expectedRevision' => $serpentExecution['revision'], 'requestId' => 'serpent-command-' . bin2hex(random_bytes(8)), 'command' => $command],$isGm,$isGm?'account-gm':'account-player');
     if (is_array($result->body['execution'] ?? null)) $serpentExecution = $result->body['execution'];
     return $result;
 };
@@ -43,6 +43,7 @@ requireTactical(!applicationComplexAbilityTargetEligible($serpentExecution,$targ
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster-two', 'count' => 1]]])->status === 409, 'Enemy outside the actual path is refused.');
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster', 'count' => 2]]])->status === 400, 'One hit per selected enemy is enforced.');
 requireTactical($advanceSerpent(['action' => 'select-targets', 'allocations' => [['tokenId' => 'token-monster', 'count' => 1]], 'attackPlan' => [['tokenId' => 'token-monster', 'attackId' => $serpentAbility['id'], 'statId' => 'character-stat-agility', 'opposed' => true]]])->status === 200, 'Serpent prepares fixed ability damage without a casting gate.');
+requireTactical($advanceSerpent(['action'=>'resolve-defenses','decision'=>'approve','defenseTokenIds'=>['token-monster']],true)->status===200,'The MJ explicitly grants the target its real dodge.');
 requireTactical($advanceSerpent(['action' => 'prepare-target', 'targetTokenId' => 'token-monster'])->status === 200, 'Serpent prepares the target.');
 $attackBody = ['sceneId' => 'scene-one', 'sourceTokenId' => 'token-player', 'targetTokenId' => 'token-monster', 'attackKind' => 'ability', 'attackId' => $serpentAbility['id'], 'statId' => 'character-stat-agility', 'complexExecutionId' => $serpentExecution['id'], 'opposed' => true, 'requestId' => 'serpent-strike-request'];
 $attack = runCommand($serpentDb, 'token.attack', $attackBody);

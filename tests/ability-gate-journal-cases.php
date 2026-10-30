@@ -27,8 +27,10 @@ foreach (['normal', 'disadvantage'] as $gateMode) {
     $gateActivity['rolls']=[$gateRoll]; $gateActivity['abilityExecutions']=[$gateExecution];
     $gateDb->put('activity',$gateActivity);
     foreach ([['action'=>'select-targets','allocations'=>[['tokenId'=>'token-monster','count'=>1]],'attackPlan'=>[['tokenId'=>'token-monster','attackId'=>$gateAbility['id'],'statId'=>'character-stat-force','opposed'=>false]]],
+        ['action'=>'resolve-defenses','decision'=>'approve','defenseTokenIds'=>[]],
         ['action'=>'prepare-target','targetTokenId'=>'token-monster']] as $gateCommand) {
-        $gateResponse=runCommand($gateDb,'ability.complex',['action'=>'command','executionId'=>$gateExecution['id'],'expectedRevision'=>$gateExecution['revision'],'requestId'=>'gate-command-'.bin2hex(random_bytes(8)),'command'=>$gateCommand]);
+        $gateIsGm=$gateCommand['action']==='resolve-defenses';
+        $gateResponse=runCommand($gateDb,'ability.complex',['action'=>'command','executionId'=>$gateExecution['id'],'expectedRevision'=>$gateExecution['revision'],'requestId'=>'gate-command-'.bin2hex(random_bytes(8)),'command'=>$gateCommand],$gateIsGm,$gateIsGm?'account-gm':'account-player');
         requireTactical($gateResponse->status===200,'Legacy gate setup: '.$gateResponse->getMessage());
         $gateExecution=$gateResponse->body['execution'];
     }

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/map-time-weather.php';
 require_once __DIR__.'/terrain-effects.php';
 require_once __DIR__ . '/character-statistics.php';
 
@@ -1477,6 +1478,7 @@ function validApplicationTokenDomain(array $payload): bool
             || !in_array($payload['frameVariant'], ['player', 'creature', 'elite', 'boss', 'apostle'], true))) {
         return false;
     }
+    if(array_key_exists('personalAdvantageStock',$payload)&&(!is_int($payload['personalAdvantageStock'])||$payload['personalAdvantageStock']<0||$payload['personalAdvantageStock']>9007199254740991))return false;
     if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     foreach (['hp', 'maxHp', 'mana', 'maxMana', 'initiativeBonus'] as $key) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key])) {
@@ -1745,6 +1747,7 @@ function validApplicationCharacterDomain(array $payload): bool
     if(array_key_exists('honorificTitles',$payload)&&!validApplicationHonorificTitles($payload['honorificTitles']))return false;
     if(array_key_exists('fortune',$payload)&&(!applicationHonorificInteger($payload['fortune'])||$payload['fortune']<0||$payload['fortune']>5))return false;
     if(isset($payload['sheetKind'])&&!in_array($payload['sheetKind'],['notes','character'],true))return false;
+    if(array_key_exists('personalAdvantageStock',$payload)&&(!is_int($payload['personalAdvantageStock'])||$payload['personalAdvantageStock']<0||$payload['personalAdvantageStock']>9007199254740991))return false;
     if(array_key_exists('specialSuccessStock',$payload)&&(!is_int($payload['specialSuccessStock'])||$payload['specialSuccessStock']<0||$payload['specialSuccessStock']>9999))return false;
     if (array_key_exists('lore', $payload) && !validApplicationDomainText($payload['lore'], 200000)) return false;
     if(array_key_exists('passiveAbilities',$payload)){try{applicationPassiveAbilities($payload['passiveAbilities']);}catch(RuntimeException){return false;}}
@@ -2207,6 +2210,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             sendError(400, 'Index de tokens incohérent.', 'invalid_token_index_domain');
         }
     }
+    if(str_starts_with($key,'map:'))$payload=applicationNormalizeMapTimeWeatherFields($payload);
     if (str_starts_with($key, 'map:') && !validApplicationMapFogState($payload)) {
         sendError(400, 'Brouillard de carte incohérent.', 'invalid_map_fog');
     }
@@ -2403,6 +2407,7 @@ function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $pay
         return $payload;
     }
     $currentPayload = $current['payload'];
+    if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$currentPayload);
     $payload = preserveApplicationAbilityExtensions($key, $payload, $currentPayload);
     $incomingUpdatedAt = applicationDomainEntityTimestamp($payload, '_updatedAt');
     $currentUpdatedAt = applicationDomainEntityTimestamp($currentPayload, '_updatedAt');
@@ -2445,6 +2450,9 @@ function prepareApplicationDomainUpsert(
     bool $protectAgainstStaleEntityWrite = false
 ): ?array
 {
+    if($key==='devices'&&$protectAgainstStaleEntityWrite&&is_array($payload)){
+        if(array_key_exists('contactZones',$current['payload']??[]))$payload['contactZones']=$current['payload']['contactZones'];else unset($payload['contactZones']);
+    }
     if($protectAgainstStaleEntityWrite&&str_starts_with($key,'token:')&&is_array($payload)&&empty($current['payload']['fixedStructure']))unset($payload['fixedStructure']);
     if(str_starts_with($key,'token:')&&is_array($payload)){
         $payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload));
@@ -2464,7 +2472,9 @@ function prepareApplicationDomainUpsert(
         $authoritativeActions=array_column($current['payload']['playerActions']??[],null,'id');
         foreach($payload['playerActions']??[]as$i=>$entry){foreach(['combatActionId','combatUndone']as$field){unset($payload['playerActions'][$i][$field]);if(array_key_exists($field,$authoritativeActions[$entry['id']??'']??[]))$payload['playerActions'][$i][$field]=$authoritativeActions[$entry['id']][$field];}}
     }
+    $inlineMapPaths=[];if(str_starts_with($key,'map:')&&is_array($payload))$payload=applicationMapUnchangedInlineForValidation($payload,$current['payload']??[],$inlineMapPaths);
     $payload = validatedDomainPayload($key, $payload);
+    if($inlineMapPaths!==[])$payload=applicationRestoreMapUnchangedInline($payload,$inlineMapPaths);
     if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     if ($protectAgainstStaleEntityWrite) {
         $payload = protectApplicationDomainAgainstStaleEntityWrite($key, $payload, $current);
@@ -3470,6 +3480,7 @@ function restoreApplicationDomainHistory(PDO $connection): never
             $payload = preserveApplicationPendingAbilityValidation($payload, $current['payload'] ?? []);
             $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);
         }
+        if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$current['payload']??[]);
         $payload = validatedDomainPayload($key, $payload);
         $pending = [['key' => $key, 'operation' => 'upsert', 'payload' => $payload, 'current' => $current]];
         $revision = persistDomainChangesInTransaction($connection, $identity, $clock, $pending);
