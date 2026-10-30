@@ -260,6 +260,17 @@ function imageStudioConversationCreateRequestSignature(string $title): string
     ]);
 }
 
+function imageStudioConversationCreateReceiptId(string $clientRequestId, string $accountId): string
+{
+    // The shipped Temps client uses a deterministic map key shared by every GM.
+    // Scope only that key to the authenticated requester. The Regie execution
+    // account is independent, and ordinary/private receipt ownership is unchanged.
+    if (preg_match('/^map-time-[a-f0-9]{40}$/D', $clientRequestId) !== 1) {
+        return $clientRequestId;
+    }
+    return 'map-time-' . hash('sha256', json_encode([$accountId, $clientRequestId], JSON_THROW_ON_ERROR));
+}
+
 function listImageStudioConversations(PDO $connection, bool $headOnly): never
 {
     $identity = requireImageStudioIdentity($connection);
@@ -324,6 +335,7 @@ function createImageStudioConversation(PDO $connection): never
 
     ensureDomainStoreInitialized($connection);
     $accountId = (string) $identity['id'];
+    $receiptRequestId = imageStudioConversationCreateReceiptId($clientRequestId, $accountId);
     $requestSignature = imageStudioConversationCreateRequestSignature($title);
     $connection->beginTransaction();
     try {
@@ -335,7 +347,7 @@ function createImageStudioConversation(PDO $connection): never
             $connection,
             $records,
             'studio-conversation-create',
-            $clientRequestId,
+            $receiptRequestId,
             $accountId,
             $requestSignature,
             'conversation_create'
@@ -376,7 +388,7 @@ function createImageStudioConversation(PDO $connection): never
             $pending,
             $receiptContext,
             'studio-conversation-create',
-            $clientRequestId,
+            $receiptRequestId,
             $accountId,
             'studio-conversation-' . $id,
             $id,

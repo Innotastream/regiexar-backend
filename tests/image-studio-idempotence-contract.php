@@ -397,6 +397,92 @@ requireImageStudioIdempotence(
 );
 
 $invalidDatabase = new ImageStudioMemoryConnection();
+
+// The shipped Windows client derives this key from the map, not the account.
+// Both GMs may submit that same map to the Regie without sharing a private receipt.
+$weatherDatabase = new ImageStudioMemoryConnection();
+$weatherKey = 'map-time-' . str_repeat('a', 40);
+$weatherBody = ['clientRequestId' => $weatherKey, 'title' => 'Temps de la carte'];
+$weatherFirst = runImageStudioConversationCreate($weatherDatabase, $weatherBody, 'weather-first-gm');
+$weatherSecond = runImageStudioConversationCreate($weatherDatabase, $weatherBody, 'weather-second-gm');
+$weatherFirstId = (string) ($weatherFirst->body['conversation']['id'] ?? '');
+$weatherSecondId = (string) ($weatherSecond->body['conversation']['id'] ?? '');
+requireImageStudioIdempotence(
+    $weatherFirst->status === 201 && $weatherSecond->status === 201
+        && $weatherFirstId !== '' && $weatherSecondId !== '' && $weatherFirstId !== $weatherSecondId
+        && count($weatherDatabase->conversations) === 2,
+    'Deux MJ utilisant le même client Temps créent chacun leur discussion sans conflit de reçu.'
+);
+requireImageStudioIdempotence(
+    $weatherDatabase->conversations[$weatherFirstId]['owner_account_id'] === 'weather-first-gm'
+        && $weatherDatabase->conversations[$weatherSecondId]['owner_account_id'] === 'weather-second-gm',
+    'Le propriétaire est le MJ authentifié, indépendamment du compte qui exécutera la génération.'
+);
+$weatherStableRevision = $weatherDatabase->revision;
+$weatherStableActivity = $weatherDatabase->activity();
+foreach (['weather-first-gm' => $weatherFirstId, 'weather-second-gm' => $weatherSecondId] as $account => $id) {
+    $retry = runImageStudioConversationCreate($weatherDatabase, [...$weatherBody, 'accountId' => 'weather-first-gm'], $account);
+    requireImageStudioIdempotence(
+        $retry->status === 200 && ($retry->body['deduplicated'] ?? false)
+            && ($retry->body['conversation']['id'] ?? '') === $id
+            && $weatherDatabase->revision === $weatherStableRevision
+            && $weatherDatabase->activity() === $weatherStableActivity,
+        'Chaque MJ reprend son propre reçu sans doublon, même avec un compte usurpé dans le corps : ' . $account
+    );
+}
+$weatherReceipts = $weatherDatabase->activity()['resourceReceipts'];
+requireImageStudioIdempotence(
+    count($weatherReceipts) === 2 && $weatherReceipts[0]['requestId'] !== $weatherReceipts[1]['requestId'],
+    'Les identifiants de reçus Temps sont séparés côté serveur pour les deux comptes.'
+);
+$weatherCopiedReceipt = runImageStudioConversationCreate($weatherDatabase,
+    [...$weatherBody, 'clientRequestId' => $weatherReceipts[0]['requestId']], 'weather-second-gm');
+requireImageStudioIdempotence(
+    $weatherCopiedReceipt->status === 403
+        && ($weatherCopiedReceipt->body['code'] ?? '') === 'conversation_create_receipt_forbidden'
+        && $weatherDatabase->activity() === $weatherStableActivity,
+    'Copier un reçu Temps canonique appartenant à un autre compte reste interdit.'
+);
+$weatherMismatch = runImageStudioConversationCreate($weatherDatabase,
+    [...$weatherBody, 'title' => 'Titre différent'], 'weather-first-gm');
+requireImageStudioIdempotence(
+    $weatherMismatch->status === 409 && $weatherDatabase->activity() === $weatherStableActivity,
+    'Une reprise Temps différente reste refusée sans mutation.'
+);
+$weatherOtherMap = runImageStudioConversationCreate($weatherDatabase,
+    [...$weatherBody, 'clientRequestId' => 'map-time-' . str_repeat('b', 40)], 'weather-first-gm');
+requireImageStudioIdempotence(
+    $weatherOtherMap->status === 201
+        && ($weatherOtherMap->body['conversation']['id'] ?? '') !== $weatherFirstId
+        && count($weatherDatabase->conversations) === 3,
+    'Une autre carte conserve sa propre discussion Temps.'
+);
+
+// A pre-fix receipt may already exist in production. It must stay intact and
+// must not prevent a second account from using the unchanged Windows client.
+$oldWeatherDatabase = new ImageStudioMemoryConnection();
+$oldWeather = runImageStudioConversationCreate($oldWeatherDatabase,
+    ['clientRequestId' => 'studio-old-weather-fixture', 'title' => 'Temps de la carte'], 'weather-first-gm');
+$oldWeatherId = $oldWeather->body['conversation']['id'];
+$oldWeatherActivity = $oldWeatherDatabase->activity();
+$oldWeatherActivity['resourceReceipts'][0]['requestId'] = $weatherKey;
+$oldWeatherDatabase->putDomain('activity', $oldWeatherActivity, $oldWeatherDatabase->revision);
+$secondAfterOld = runImageStudioConversationCreate($oldWeatherDatabase, $weatherBody, 'weather-second-gm');
+requireImageStudioIdempotence(
+    $secondAfterOld->status === 201
+        && isset($oldWeatherDatabase->conversations[$oldWeatherId])
+        && $oldWeatherDatabase->activity()['resourceReceipts'][0] === $oldWeatherActivity['resourceReceipts'][0],
+    'Un reçu Temps historique du premier MJ reste intact et ne bloque plus le second MJ.'
+);
+$legacyWeather = runImageStudioConversationCreate($oldWeatherDatabase, $weatherBody, 'weather-first-gm');
+$legacyWeatherRetry = runImageStudioConversationCreate($oldWeatherDatabase, $weatherBody, 'weather-first-gm');
+requireImageStudioIdempotence(
+    $legacyWeather->status === 201 && $legacyWeatherRetry->status === 200
+        && ($legacyWeatherRetry->body['conversation']['id'] ?? '') === ($legacyWeather->body['conversation']['id'] ?? '')
+        && isset($oldWeatherDatabase->conversations[$oldWeatherId]),
+    'Le premier MJ retrouve une voie idempotente après correction sans effacer sa discussion historique.'
+);
+
 $invalid = runImageStudioConversationCreate($invalidDatabase, [
     'clientRequestId' => 'trop-court',
     'title' => 'Refusée',

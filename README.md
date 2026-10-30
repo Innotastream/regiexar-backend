@@ -1,3 +1,9 @@
+## Version 0.19.6 / client 4.2.1 — Temps entre plusieurs MJ
+
+Build `client-4-2-1-map-time-multi-gm-20261030-1`. Les créations de discussions Temps distinguent désormais les comptes MJ authentifiés, même lorsque le client Windows 4.2.1 envoie le même identifiant pour une carte. Le Compte de la Régie continue de traiter les générations ; le changement ne transforme pas ces demandes en générations personnelles.
+
+La correction est compatible avec les clients déjà installés et les anciens reçus sont conservés. Les réessais du même compte restent idempotents, et un reçu privé copié depuis un autre compte reste refusé. Client exact 4.2.1 et schémas SQL 24 / session 22 inchangés ; aucun nouveau paquet Windows nécessaire.
+
 ## Version 0.19.5 / client 4.2.1 — préparation locale
 
 Build `client-4-2-1-oppositions-waiting-20261030-1`. Les sources préparent les défenses collectives réservées au MJ, la garantie de Foudroiement et les compteurs d’armes par tour. Le jet ATK préparé reste unique ; les ressources et mouvements attendent la décision MJ. Les compteurs privés sont projetés uniquement à leur propriétaire et peuvent être réinitialisés par le MJ. Schéma SQL 24 conservé.
