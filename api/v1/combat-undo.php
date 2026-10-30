@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/trass-beam.php';
 
 function combatUndoSame(mixed $a,mixed $b):bool{return json_encode($a)===json_encode($b);}
 function combatUndoLinked(array $t):bool{return unitUsesCharacterSheet($t);}
