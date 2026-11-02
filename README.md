@@ -1,3 +1,7 @@
+## Backend 0.19.7 — client 4.2.2
+
+Build `client-4-2-2-combat-inventory-hira-20261102-1`. Intègre le chantier de combat, potions, inventaires et compétences de Hira ; politique de connexion exacte 4.2.2, drainage des anciennes sessions pendant 30 secondes. Le déploiement est attesté séparément par les reçus de livraison.
+
 ## Version 0.19.6 / client 4.2.1 — Temps entre plusieurs MJ
 
 Build `client-4-2-1-map-time-multi-gm-20261030-1`. Les créations de discussions Temps distinguent désormais les comptes MJ authentifiés, même lorsque le client Windows 4.2.1 envoie le même identifiant pour une carte. Le Compte de la Régie continue de traiter les générations ; le changement ne transforme pas ces demandes en générations personnelles.
