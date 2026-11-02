@@ -107,7 +107,12 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
     if($continuation===null&&$plan!==null&&empty(applicationSpellVisualBindings()[$ability['id']??'']['onResolvedDamage'])){
-        $plan['spellVisual']=applicationTrustedSpellVisual($ability,['sceneId'=>$sceneId,'source'=>$source,'map'=>$map,'targetPoint'=>$zonePoint??($target!==[]?$target:null),'variantId'=>$arguments['variantId']??'']);
+        $visualContext=[];
+        if(!empty(applicationSpellVisualBindings()[$ability['id']??'']['weaponFromTarget'])){
+            $targetOwner=applicationAbilityCastingOwner($target);$targetSheet=$targetOwner['characterId']!==''?($pending['character:'.$targetOwner['characterId']]['payload']??applicationDomainPayload($records,'character:'.$targetOwner['characterId'])):[];
+            $visualContext=['items'=>$pending['items']['payload']??applicationDomainPayload($records,'items'),'weaponAttacks'=>($targetSheet!==[]?synchronizeOnlineCharacterToken($target,$targetSheet):$target)['weaponAttacks']??[]];
+        }
+        $plan['spellVisual']=applicationTrustedSpellVisual($ability,[...$visualContext,'sceneId'=>$sceneId,'source'=>$source,'map'=>$map,'targetPoint'=>$zonePoint??($target!==[]?$target:null),'variantId'=>$arguments['variantId']??'']);
     }
     if (($ability['effect'] ?? '') === 'enhancement') $plan['enhancementRecipient'] = $target;
     if(($plan['attackEnhancement']['trigger']??'')==='enchanted-weapon'&&($continuation===null||($continuation['cast']['success']??false))){

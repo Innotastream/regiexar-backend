@@ -1517,7 +1517,7 @@ function validApplicationTokenDomain(array $payload): bool
         return false;
     }
     if (array_key_exists('layerId', $payload) && !in_array($payload['layerId'], ['basement', 'ground', 'upper'], true)) return false;
-    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'immovable', 'mountable', 'mountControllable', 'artworkOnly'] as $key) {
+    foreach (['followCharacter', 'hidden', 'revealDetailsToPlayers', 'allied', 'immovable', 'mountable', 'mountControllable', 'artworkOnly'] as $key) {
         if (array_key_exists($key, $payload) && !is_bool($payload[$key])) {
             return false;
         }
@@ -3136,8 +3136,10 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     $dots = is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [];
     foreach ($pending as $key => $change) {
         if (!str_starts_with((string) $key, 'initiative:') || ($change['operation'] ?? '') !== 'upsert') continue;
+        $effectSceneId=substr((string)$key,strlen('initiative:'));$endingTokens=[];
+        if(($change['current']['payload']['active']??false)&&!($change['payload']['active']??false)&&array_filter($activity['attackEnhancements']??[],static fn($effect)=>($effect['expiry']??'')==='combat-or-rest'))$endingTokens=onlineSceneTokensForLights($connection,$records,$pending,$effectSceneId);
         $activity['attackEnhancements'] = applicationAdvanceAttackEnhancements($activity['attackEnhancements'] ?? [],
-            substr((string) $key, strlen('initiative:')), $change['current']['payload'] ?? [], $change['payload'] ?? []);
+            $effectSceneId, $change['current']['payload'] ?? [], $change['payload'] ?? [],false,$endingTokens);
     }
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     if ($endedScenes !== []) {
@@ -3175,7 +3177,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent(applicationEnhancedResistanceTarget($target,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId), (string) ($dot['damageType'] ?? 'physical')));
             $applied = 0;
             if ($summary['finalDamage'] > 0) {
-                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical']);
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical','family'=>applicationEffectFamily($dot),'sourceItemKind'=>$dot['sourceItemKind']??'']);
                 $applied = (int) ($health['appliedDamage'] ?? 0);
                 $updatedTarget = $pending[$key]['payload'] ?? $target;
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);

@@ -329,7 +329,7 @@ function applicationAttackVisualWaitsForDamage(array $activity,array $attack): b
     foreach($activity['abilityExecutions']??[] as $entry)if(($entry['id']??'')===($attack['complexExecutionId']??null)){$abilityId=$entry['abilityId']??'';break;}
     return !empty(applicationMeleeVisualBindings()['abilities'][$abilityId]['resolvedDamageOnly'])||!empty(applicationSpellVisualBindings()[$abilityId]['onResolvedDamage']);
 }
-function appendApplicationAttackVisualEvent(array &$activity,array $attack,array $map,array $items,array $alternatives=[],bool $approved=false,bool $deferredOnly=false): void {
+function appendApplicationAttackVisualEvent(array &$activity,array $attack,array $map,array $items,array $alternatives=[],bool $approved=false,bool $deferredOnly=false,array $devices=[]): void {
     $execution=null;foreach($activity['abilityExecutions']??[] as $entry)if(($entry['id']??'')===($attack['complexExecutionId']??null)){$execution=$entry;break;}
     $step=$execution['workflow']['steps'][$execution['currentStepIndex']??-1]??null;
     $strikeIndex=count($execution['stepStates'][$step['id']??'']['attacks']??[]);
@@ -346,10 +346,10 @@ function appendApplicationAttackVisualEvent(array &$activity,array $attack,array
     foreach($candidates as $index=>$candidate){
         if($candidate===null||isset($seen[$candidate['id']??'']))continue;$seen[$candidate['id']??'']=true;
         $spell=applicationTrustedMeleeVisual($candidate,['map'=>$map,'items'=>$items,'abilityId'=>$execution['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):''),
-            'strikeIndex'=>$strikeIndex+$index,'approved'=>$approved,'deferredOnly'=>$deferredOnly])??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'approved'=>$approved]);
+            'strikeIndex'=>$strikeIndex+$index,'approved'=>$approved,'deferredOnly'=>$deferredOnly])??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'devices'=>$devices,'approved'=>$approved]);
         if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),
-            $attack['sceneId'],$attack['layerId'],$attack['sourceTokenId'],$candidate['visibility']??$attack['visibility']??'public',
-            $weaponChildren!==[]||!empty($candidate['weaponAttackParentId'])?'attack-visual-'.$candidate['id']:'');
+            $attack['sceneId'],$attack['layerId'],$spell['presetId']==='stationary-blue-bolt'?$candidate['attackId']:$attack['sourceTokenId'],$candidate['visibility']??$attack['visibility']??'public',
+            $weaponChildren!==[]||!empty($candidate['weaponAttackParentId'])||$spell['presetId']==='stationary-blue-bolt'?'attack-visual-'.$candidate['id']:'');
     }
 }
 

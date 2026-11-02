@@ -12,7 +12,7 @@ $checks=0;$check=static function($ok,$message)use(&$checks){if(!$ok)throw new Ru
 $cue=['version'=>1,'placement'=>'melee','presetId'=>'barbed-chain-sweep','sceneId'=>'scene','layerId'=>'ground','sourceTokenId'=>'source','targetTokenId'=>'target',
     'source'=>['x'=>20,'y'=>50,'size'=>200],'targetPoint'=>['x'=>50,'y'=>50,'size'=>40],'strikeIndex'=>0];
 $check(applicationSpellVisual($cue)===$cue,'Melee DTO');
-$check(applicationSpellVisualDuration($cue)===2860,'Delivery window without changing animation cadence');
+$check(applicationMeleeVisualCatalogue()['barbed-chain-sweep']===1260&&applicationSpellVisualDuration($cue)===4120,'Half-speed delivery window preserves authored animation timing');
 $public=['sceneId'=>'scene','layerId'=>'ground','sourceTokenId'=>'source','visibleTokenIds'=>['source','target'],'visible'=>static fn()=>true];
 $check(applicationPublicSpellVisual($cue,$public)===$cue,'Both visible');
 foreach([['visibleTokenIds'=>['source']],['sourceTokenId'=>'other'],['paused'=>true],['visible'=>static fn($x,$y)=>$x<40]] as $patch)$check(applicationPublicSpellVisual($cue,[...$public,...$patch])===null,'No hidden target disclosure');
@@ -52,7 +52,7 @@ appendApplicationAttackVisualEvent($activity,$valseAttack,$map,$items);
 $event=$activity['abilityCueEvents'][0]['completionCue'];
 $check($event['spell']['presetId']==='sabre-frost-flurry'&&$event['spell']['strikeIndex']===1,'Allocated strikes count actual previous attacks, excluding echoes');
 $check($event['spell']['targetTokenId']==='target'&&$event['sound']===null,'Actual recipient, no sound');
-$check(applicationSpellVisualDuration($event['spell'])===2640,'Delivery window also includes five queued strikes without slowing their animation');
+$check(applicationSpellVisualDuration($event['spell'])===2960,'Half-speed delivery window also covers the queued strike margin');
 $activity['attackReceipts'][]=['attack'=>$valseAttack];$activity['abilityExecutions'][0]['currentStepIndex']=1;
 $valseAttack['hit']['outcome']['requiresGmValidation']=true;
 appendApplicationAttackVisualEvent($activity,$valseAttack,$map,$items,[],true);

@@ -8,13 +8,14 @@ function normalizeApplicationTableTokens(mixed $value): array {
     $state=['revision'=>$integer($value['revision']??null,0,0,PHP_INT_MAX),'pools'=>[],'requests'=>[],'events'=>[]];
     foreach(['gm','players'] as $side){$pool=$value['pools'][$side]??[];$max=$integer($pool['max']??null,6);$state['pools'][$side]=['max'=>$max,'current'=>$integer($pool['current']??null,$max,0,$max)];}
     foreach(array_slice(is_array($value['requests']??null)?$value['requests']:[],-100) as $r)if(is_array($r)&&preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($r['id']??''))===1&&is_string($r['accountId']??null)&&is_int($r['createdAt']??null))$state['requests'][]=['id'=>$r['id'],'accountId'=>$r['accountId'],'name'=>applicationTableTokenName($r['name']??'Joueur'),'createdAt'=>$r['createdAt']];
-    foreach(array_slice(is_array($value['events']??null)?$value['events']:[],-32) as $e)if(is_array($e)&&preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($e['id']??''))===1&&in_array($e['side']??'', ['gm','players'],true)&&is_int($e['at']??null))$state['events'][]=['id'=>$e['id'],'side'=>$e['side'],'at'=>$e['at']];
+    foreach(array_slice(is_array($value['events']??null)?$value['events']:[],-32) as $e)if(is_array($e)&&preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($e['id']??''))===1&&in_array($e['side']??'', ['gm','players'],true)&&is_int($e['at']??null))$state['events'][]=['id'=>$e['id'],'side'=>$e['side'],'at'=>$e['at'],...(is_string($e['accountId']??null)&&strlen($e['accountId'])<=180?['accountId'=>$e['accountId']]:[])];
     return $state;
 }
 function applicationTableTokensProjection(mixed $value,?array $identity=null,?int $now=null): array {
     $now??=(int)floor(microtime(true)*1000);$state=normalizeApplicationTableTokens($value);
     $gm=($identity['effective_mode']??'')==='gm'&&($identity['permanent_role']??'')==='gm';
     $state['requests']=array_values(array_filter($state['requests'],static fn($r)=>$now-$r['createdAt']<600000&&($gm||$r['accountId']===($identity['id']??null))));
+    $state['events']=array_map(static function($e)use($gm,$identity){if(!$gm&&($e['accountId']??null)!==($identity['id']??null))unset($e['accountId']);return $e;},$state['events']);
     return [...$state,'serverNow'=>$now];
 }
 function applicationChangeTableTokens(mixed $value,array $args,array $identity,int $now): array {
@@ -23,10 +24,10 @@ function applicationChangeTableTokens(mixed $value,array $args,array $identity,i
     if(preg_match('/^[A-Za-z0-9_-]{16,80}$/D',(string)($args['requestId']??''))!==1)$fail('Référence de demande invalide.',400);
     $state=normalizeApplicationTableTokens($value);$gm=($identity['effective_mode']??'')==='gm'&&($identity['permanent_role']??'')==='gm';
     $state['requests']=array_values(array_filter($state['requests'],static fn($r)=>$now-$r['createdAt']<600000));
-    $consume=static function($side)use(&$state,$args,$now,$fail):void {
+    $consume=static function($side,$accountId=null)use(&$state,$args,$now,$fail,$identity):void {
         if(!in_array($side,['gm','players'],true))$fail('Réserve inconnue.',400);
         if($state['pools'][$side]['current']<=0)$fail('Aucun jeton disponible dans cette réserve.');
-        $state['pools'][$side]['current']--;$state['events'][]=['id'=>$args['requestId'],'side'=>$side,'at'=>$now];$state['events']=array_slice($state['events'],-32);
+        $state['pools'][$side]['current']--;$state['events'][]=['id'=>$args['requestId'],'side'=>$side,'at'=>$now,'accountId'=>$accountId??$identity['id']];$state['events']=array_slice($state['events'],-32);
     };
     $action=$args['action']??'';
     if($action==='request'){
@@ -39,7 +40,7 @@ function applicationChangeTableTokens(mixed $value,array $args,array $identity,i
         $request=null;foreach($state['requests'] as $r)if($r['id']===($args['id']??''))$request=$r;
         if($request===null)$fail('Cette demande a expiré ou a déjà été traitée.');
         if(!$gm&&!($action==='cancel'&&$request['accountId']===$identity['id']))$fail('Seul le MJ peut répondre à cette demande.',403);
-        if($action==='approve')$consume('players');
+        if($action==='approve')$consume('players',$request['accountId']);
         $state['requests']=array_values(array_filter($state['requests'],static fn($r)=>$r['id']!==$request['id']));
     }elseif($action==='use'){
         if(!$gm)$fail('Demandez l’accord du MJ pour utiliser un jeton joueur.',403);$consume($args['side']??'');

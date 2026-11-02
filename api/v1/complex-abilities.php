@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/combat-range-policy.php';
+require_once __DIR__.'/combat-animation-timing.php';
 require_once __DIR__ . '/character-statistics.php';
 
 require_once __DIR__ . '/complex-movement.php';
@@ -1439,7 +1440,7 @@ function applyApplicationComplexAbilityCommand(
                 $state=[...$state,...$preview,'chargeDefenses'=>$defenses,'defenseTokenIds'=>array_keys(array_filter($defenses)),'defenseDecisionByGm'=>true];unset($execution['defenseGate']);
             }elseif (!applicationComplexMovementAtDestination($state, applicationComplexAbilityTokenById($tokens, $execution['sourceTokenId']))) applicationComplexAbilityFail('Déplacez le pion avant de confirmer cette étape.', 'complex_ability_movement_required');
             if(!empty($step['charge']))$state=[...$state,...applicationChargeAttackPlan($execution,$step,$state,applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']),$tokens,$map)];
-            $state['movementLockUntil']=$now+900;
+            $state['movementLockUntil']=$now+applicationCombatAnimationDuration(900);
             applicationComplexAbilityAppendEvent($execution, ['type' => 'movement', 'actorId' => $actorId, 'actorName' => $actorName, 'stepId' => $step['id'], 'label' => $step['title'], 'detail' => round($state['distanceMeters'], 2) . ' m parcourus'], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
             if(!empty($step['charge'])){

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/item-special-effects.php';
 
 function applicationArmorReductionDefinition(mixed $value): ?array {
     if (!is_array($value) || ($value['kind'] ?? '') !== 'armor-reduction') return null;
@@ -15,12 +16,12 @@ function applicationArmorReductionBonuses(array $action): array {
 function applicationFixedEffectArea(mixed $value): ?array {
     if(!is_array($value))return null;
     foreach(['x','y','radiusCells'] as $key)if(!(is_int($value[$key]??null)||is_float($value[$key]??null))||!is_finite((float)$value[$key]))return null;
-    if($value['x']<0||$value['x']>100||$value['y']<0||$value['y']>100||$value['radiusCells']<0.5||$value['radiusCells']>20
+    if($value['x']<0||$value['x']>100||$value['y']<0||$value['y']>100||$value['radiusCells']<0.5||$value['radiusCells']>80
         ||floor($value['radiusCells']*2)!=$value['radiusCells']*2||!in_array($value['layerId']??'', ['ground','upper','basement'],true))return null;
     return array_intersect_key($value,array_flip(['x','y','layerId','radiusCells']));
 }
 function applicationHasArmorReductionZone(array $active): bool {
-    foreach($active['effects']??[] as $action)if(($action['kind']??'')==='armor-reduction'&&($action['scope']??'target')==='zone')return true;return false;
+    foreach($active['effects']??[] as $action)if(($action['kind']??'')==='arbitration-zone'||($action['kind']??'')==='armor-reduction'&&($action['scope']??'target')==='zone')return true;return false;
 }
 function applicationAppendArmorReductionZone(array &$state,array $template,array $action,int $index,array $point,string $sourceId,array $context): void {
     $area=applicationFixedEffectArea([...$point,'radiusCells'=>$template['active']['targeting']['radiusCells']??null]);
@@ -45,6 +46,7 @@ function applicationFixedAreaAffects(array $effect,array $source,array $state,st
 }
 function applicationPublicArmorReductionZones(array $effects,string $sceneId,string $layerId,callable $visible): array {
     $result=[];foreach($effects as $effect){
+        $note=applicationPublicItemArbitrationZone($effect);if($note!==null){if(is_string($note['id']??null)&&$note['id']!==''&&strlen($note['id'])<=180&&$note['sceneId']===$sceneId&&$note['layerId']===$layerId&&$visible($note['x'],$note['y']))$result[]=$note;continue;}
         $area=applicationFixedEffectArea($effect['fixedArea']??null);$remaining=$effect['remainingTurns']??null;$bonuses=$effect['bonuses']??[];
         if($area===null||($effect['sceneId']??'')!==$sceneId||$area['layerId']!==$layerId||!is_int($remaining)||$remaining<1||$remaining>($effect['turns']??0)
             ||!is_string($effect['id']??null)||$effect['id']===''||strlen($effect['id'])>180

@@ -40,6 +40,7 @@ function applicationCompleteFixedStructure(array &$state,array &$device,array &$
 }
 function applicationAdvanceFixedStructures(array &$state,array $previous,array &$effects,array $context,bool $manual=false):void {
  $clock=$state['initiative'];foreach($state['devices']['devices'] as &$d){if($d['definition']['kind']!=='structure'||$d['status']!=='preparing'||$d['sceneId']!==$state['activeSceneId'])continue;
+ if(empty($clock['active'])){$d['preparationRemainingTurns']=0;applicationCompleteFixedStructure($state,$d,$effects,$context);continue;}
  if(!$manual&&(!($previous['active']??false)||!($clock['active']??false)||($clock['turnSerial']??0)<=($d['activatedTurn']??0)||($clock['order'][$clock['currentIndex']??0]??'')!==$d['sourceTokenId']))continue;
  $d['preparationRemainingTurns']=max(0,($d['preparationRemainingTurns']??1)-1);$d['revision']++;if(!$d['preparationRemainingTurns'])applicationCompleteFixedStructure($state,$d,$effects,$context);
  }unset($d);

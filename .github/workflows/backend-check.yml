@@ -113,6 +113,7 @@ jobs:
           php tests/path-targeting.php
           php tests/simple-weapon-intimidation.php
           php tests/weapon-targeting.php
+          php tests/precision-serpentaire.php
           php tests/equipment-target-counts.php
           php tests/player-stocks-authority.php
           php tests/stream-combat-details.php

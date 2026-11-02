@@ -142,7 +142,7 @@ function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pen
         if (!validApplicationAbilityFormula($formula)) rejectOnlineCommand($connection, 400, 'La formule de dégâts restants est hors limites ; choisissez un jet personnalisé.', 'dot_formula_invalid');
         $rolled = onlineRollFormulaWithMode($formula, 'normal');
         $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent(applicationEnhancedResistanceTarget($target,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId), (string) ($entry['damageType'] ?? 'physical')));
-        $health = applyOnlineAttackDamage($connection, $records, $pending, onlineTokenDomainKey($sceneId, $target['id']), $target, $summary['finalDamage'], false, [...$summary, 'damageType' => $entry['damageType'] ?? 'physical']);
+        $health = applyOnlineAttackDamage($connection, $records, $pending, onlineTokenDomainKey($sceneId, $target['id']), $target, $summary['finalDamage'], false, [...$summary, 'damageType' => $entry['damageType'] ?? 'physical','family'=>applicationEffectFamily($entry),'sourceItemKind'=>$entry['sourceItemKind']??'']);
         $applied = (int) ($health['appliedDamage'] ?? 0); $result['appliedDamage'] = $applied;
         $roll = onlineRollEntry($identity, $rolled, 'Fin de combat · ' . ($entry['label'] ?? 'Effet'), (string) $target['name']);
         $roll['diceAppearance'] = onlineDiceAppearance($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '');

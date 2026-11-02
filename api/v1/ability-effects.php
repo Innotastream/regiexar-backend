@@ -97,7 +97,8 @@ function validApplicationAbilityEffects(array $entry): bool {
         || !in_array($entry['effect'] ?? 'damage', ['damage', 'complex'], true))) return false;
     try{if(array_key_exists('tacticalEffect',$entry)&&applicationTacticalEffect($entry['tacticalEffect'])===null)return false;}
     catch(RuntimeException){return false;}
-    foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(array_key_exists($k,$entry)&&!is_bool($entry[$k]))return false;
+    foreach(['mainWeaponOnly','maximumWeaponDamage','useWeaponTargetCount'] as $k)if(array_key_exists($k,$entry)&&!is_bool($entry[$k]))return false;
+    if(($entry['useWeaponTargetCount']??false)===true&&($entry['useWeaponDamage']??false)!==true)return false;
     if(isset($entry['weaponDamageMode'])&&!in_array($entry['weaponDamageMode'],['add','replace'],true))return false;
     if(array_key_exists('terrainBarrier',$entry)&&(($entry['effect']??'damage')!=='damage'||applicationTerrainBarrier($entry['terrainBarrier'])===null))return false;
     if (!validApplicationAbilityCastingFields($entry)) return false;
@@ -175,7 +176,7 @@ function applicationAbilityEffectFields(array $entry): array {
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
     if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
     if(applicationTacticalEffect($entry['tacticalEffect']??null))$conditions['tacticalEffect']=applicationTacticalEffect($entry['tacticalEffect']);
-    foreach(['mainWeaponOnly','maximumWeaponDamage'] as $k)if(($entry[$k]??false)===true)$conditions[$k]=true;
+    foreach(['mainWeaponOnly','maximumWeaponDamage','useWeaponTargetCount'] as $k)if(($entry[$k]??false)===true)$conditions[$k]=true;
     if(applicationTerrainBarrier($entry['terrainBarrier']??null))$conditions['terrainBarrier']=applicationTerrainBarrier($entry['terrainBarrier']);
     if(dsRider($entry['conditionRider']??null)) $conditions['conditionRider']=dsRider($entry['conditionRider']);
     if($effect==='check') return [...$casting,...$cue,...$conditions,'effect'=>'check','statCheck'=>applicationStatCheckDefinition($entry['statCheck']??null)];

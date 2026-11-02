@@ -16,7 +16,32 @@ $records=$db->domains;$pending=[];onlineDeviceFlush($advanced['state'],$records,
 $records=onlineDeviceOverlayRecords($records,$pending);specialCheck(!in_array($web['id'],sortedOnlineInitiativeOrder(['token-player',$web['id'],'token-monster'],$records,'scene-one'),true),'Fixed element excluded from initiative');
 $mutated=$web;$mutated['size']=50;$mutated['image']='/media/abcdefghijklmnopqrstuvwx';$next=applicationProtectFixedStructure($web,$mutated);specialCheck($next['size']===50,'GM size adjustable');$mutated['x']++;try{applicationProtectFixedStructure($web,$mutated);specialCheck(false,'Move should fail');}catch(RuntimeException){specialCheck(true,'Fixed location protected');}
 
-$db=webFixture();$clock=$db->payload('initiative:scene-one');$clock['active']=false;$db->put('initiative:scene-one',$clock);$r=specialMechanics($db,'device.deploy',[...$args,'variantId'=>'huge','restUseCost'=>0,'hp'=>1,'size'=>1]);specialCheck($r->status===200,'Huge web request');$r=specialMechanics($db,'scene.advance',[]);specialCheck($r->status===200,'Manual one turn: '.json_encode($r->body));$state=domainsToApplicationState($db->domains,0);$web=array_values(array_filter($state['map']['tokens'],static fn($t)=>!empty($t['fixedStructure'])))[0]??null;specialCheck($web!==null&&$web['hp']===90&&$web['size']===90,'Native manual appearance and trusted variant');specialCheck($db->payload('activity')['actionTimers'][0]['restUseCount']===3,'Huge costs three');specialCheck(specialMechanics($db,'device.deploy',$args)->status===409,'Exhausted quota refused');
+$db=webFixture();$clock=$db->payload('initiative:scene-one');$clock['active']=false;$db->put('initiative:scene-one',$clock);
+$r=specialMechanics($db,'device.deploy',[...$args,'variantId'=>'huge','restUseCost'=>0,'hp'=>1,'size'=>1]);specialCheck($r->status===200,'Huge web request');
+$state=domainsToApplicationState($db->domains,0);$web=array_values(array_filter($state['map']['tokens'],static fn($t)=>!empty($t['fixedStructure'])))[0]??null;
+specialCheck($web!==null&&$web['hp']===90&&$web['size']===90,'Native immediate out-of-combat appearance and trusted variant');
+specialCheck($db->payload('activity')['actionTimers'][0]['restUseCount']===3,'Huge costs three');
+specialCheck($db->payload('initiative:scene-one')===$clock&&empty($db->payload('devices')['manualTurns']),'Creation does not advance initiative or other timed effects');
+specialCheck(in_array($web['id'],$db->payload('token-index:scene-one')['order'],true)&&$db->payload('devices')['devices'][0]['status']==='spent','Immediate structure is persisted and indexed without a waiting record');
+specialCheck(specialMechanics($db,'device.deploy',$args)->status===409,'Exhausted quota refused');
+
+function requireGmIdentity(PDO $connection):array {
+ $identity=$GLOBALS['testIdentity'];if(($identity['effective_mode']??'')!=='gm')sendError(403,'MJ requis');return $identity;
+}
+function webClockPatch(MemoryConnection $db,array $fields):TestResponse {
+ $key='initiative:scene-one';$GLOBALS['testIdentity']=['id'=>'account-gm','display_name'=>'MJ fixture','effective_mode'=>'gm','permanent_role'=>'gm'];
+ $GLOBALS['testBody']=['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,'changes'=>[['key'=>$key,'operation'=>'upsert','expectedRevision'=>$db->domains[$key]['revision'],'payload'=>[...$db->payload($key),...$fields]]]];
+ try{patchApplicationDomains($db);}catch(TestResponse $r){return $r;}throw new RuntimeException('No domain response');
+}
+$endDb=webFixture();$c=$endDb->payload('character:character-player');$c['abilities'][0]['device']['preparationTurns']=3;$endDb->put('character:character-player',$c);
+specialCheck(specialMechanics($endDb,'device.deploy',$args)->status===200,'Combat preparation starts');
+$beforeEnd=$endDb->payload('character:character-player');$beforeQuota=$endDb->payload('activity')['actionTimers'];
+specialCheck($endDb->payload('devices')['devices'][0]['status']==='preparing','Combat still delays the structure');
+$end=webClockPatch($endDb,['active'=>false]);specialCheck($end->status===200,'Real initiative domain ends combat');
+$endState=domainsToApplicationState($endDb->domains,0);$endWebs=array_values(array_filter($endState['map']['tokens'],static fn($t)=>!empty($t['fixedStructure'])));
+specialCheck(count($endWebs)===1&&$endDb->payload('devices')['devices'][0]['status']==='spent','End of combat completes the remaining preparation immediately');
+specialCheck($endDb->payload('character:character-player')===$beforeEnd&&$endDb->payload('activity')['actionTimers'][0]['restUseCount']===$beforeQuota[0]['restUseCount']&&empty($endDb->payload('devices')['manualTurns']),'Completion preserves the paid resources and does not advance a manual turn');
+$unchanged=$endDb->payload('token:scene-one:'.$endWebs[0]['id']);webClockPatch($endDb,['active'=>false]);specialCheck($endDb->payload('token:scene-one:'.$endWebs[0]['id'])===$unchanged,'Repeated out-of-combat update does not recreate the web');
 
 $state['initiative']=['active'=>true,'combatId'=>'web-turns','turnSerial'=>20,'currentIndex'=>0,'order'=>['token-player','token-monster']];onlineDeviceTimedCondition($state,['sceneId'=>'scene-one','targetTokenId'=>'token-player','sourceTokenId'=>$web['id'],'resisted'=>false,'rider'=>dsDefinition(['kind'=>'structure'])['conditionRider']]);$condition=$state['devices']['timedConditions'][0];specialCheck($condition['expiry']==='end-next-turn'&&!$condition['hasStarted'],'Full next turn tracked');
 $prev=$state['initiative'];$state['initiative']['turnSerial']++;$state['initiative']['currentIndex']=1;$a=applicationAdvanceDevices($state,$prev,['now'=>gmdate('c'),'id'=>static fn($p)=>$p.'-'.randomToken(16)]);specialCheck(count($a['state']['devices']['timedConditions'])===1,'Current turn end does not expire web');$state=$a['state'];$prev=$state['initiative'];$state['initiative']['turnSerial']++;$state['initiative']['currentIndex']=0;$a=applicationAdvanceDevices($state,$prev,['now'=>gmdate('c'),'id'=>static fn($p)=>$p.'-'.randomToken(16)]);$state=$a['state'];specialCheck($state['devices']['timedConditions'][0]['hasStarted'],'Escape window opens next target turn');applicationCloseFixedEscapeWindows($state,'token-player','scene-one');specialCheck($state['devices']['timedConditions'][0]['escapeWindowClosed'],'An action closes beginning-of-turn escape');$prev=$state['initiative'];$state['initiative']['turnSerial']++;$state['initiative']['currentIndex']=1;$a=applicationAdvanceDevices($state,$prev,['now'=>gmdate('c'),'id'=>static fn($p)=>$p.'-'.randomToken(16)]);specialCheck($a['state']['devices']['timedConditions']===[],'Expires end of complete next turn');

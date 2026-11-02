@@ -13,5 +13,5 @@ function applicationAbilityIcon(mixed $value): ?array
             || strtolower($parts['host'] ?? '') !== 'regie-xar-tsaroth.fr'
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])) return null;
     }
-    return ['url' => $url, 'label' => applicationComplexAbilityText($value['label'] ?? '', 120, 'Compétence'), 'durationMs' => 2000];
+    return ['url' => $url, 'label' => applicationComplexAbilityText($value['label'] ?? '', 120, 'Compétence'), 'durationMs' => 4000];
 }

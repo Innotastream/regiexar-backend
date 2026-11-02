@@ -1,8 +1,119 @@
 {
-  "character-amxWfdDZFvFZjLzT": {
-    "version": 1,
-    "id": "mania-ability-fatigue",
-    "kind": "ability-fatigue-surcharge",
-    "amount": 1
-  }
+  "character-amxWfdDZFvFZjLzT": [
+    {
+      "version": 1,
+      "id": "mania-ability-fatigue",
+      "kind": "ability-fatigue-surcharge",
+      "amount": 1,
+      "name": "Hyperactive",
+      "description": "Augmente automatiquement de 1 le coût en fatigue de toutes ses compétences, y compris celles sans coût de fatigue de base. Les fiches conservent les coûts standards ; le supplément est payé une seule fois à chaque activation.",
+      "polarity": "negative",
+      "existingCloneDefault": true
+    },
+    {
+      "version": 1,
+      "id": "mania-field-alchemist",
+      "kind": "manual",
+      "name": "Alchimiste de terrain",
+      "description": "Connaissance approfondie des composants à utilisation rapide. Les situations et bénéfices particuliers sont arbitrés par le MJ.",
+      "polarity": "positive"
+    },
+    {
+      "version": 1,
+      "id": "mania-self-experimentation",
+      "kind": "effect-resistance",
+      "name": "Auto-expérimentation",
+      "description": "Réduit de 25 % les dégâts des poisons et des potions reçus. Leurs effets nocifs durent un tour de moins sur elle.",
+      "polarity": "positive",
+      "percent": 25,
+      "durationReduction": 1,
+      "families": [
+        "poison"
+      ],
+      "itemKinds": [
+        "potion"
+      ],
+      "affectBeneficial": false
+    },
+    {
+      "version": 1,
+      "id": "mania-untameable",
+      "kind": "ranged-target-evasion",
+      "name": "Intenable",
+      "description": "Les attaques à distance dirigées contre elle subissent un malus de 10 à leur statistique d’attaque.",
+      "polarity": "positive",
+      "thresholdPenalty": 10
+    },
+    {
+      "version": 1,
+      "id": "mania-unstable-mana",
+      "kind": "infusion-efficiency",
+      "name": "Mana instable",
+      "description": "Lorsqu’une de ses attaques ou compétences autorise une infusion, 1 mana infusé apporte 2 dégâts. Ce passif ne rend pas infusables les actions qui ne le permettent pas.",
+      "polarity": "positive",
+      "ratio": 2
+    }
+  ],
+  "character-inho": [
+    {
+      "version": 1,
+      "id": "inho-third-eye",
+      "kind": "manual",
+      "name": "Troisième œil",
+      "description": "Ressent les personnes agressives à son égard dès qu’elles sont proches. Ne peut pas être surpris par une attaque. Arbitrage du MJ.",
+      "polarity": "positive"
+    },
+    {
+      "version": 1,
+      "id": "inho-hypnotic-words",
+      "kind": "stat-roll-option",
+      "name": "Paroles hypnotiques",
+      "description": "Propose une option sur les jets de Social : améliore leur résultat de 25. Le seuil et les règles des résultats remarquables restent ceux du jet.",
+      "polarity": "positive",
+      "statId": "character-stat-spiritSocial",
+      "resultBonus": 25,
+      "rollMode": "normal",
+      "rollLabel": "Paroles hypnotiques"
+    },
+    {
+      "version": 1,
+      "id": "inho-opportunity",
+      "kind": "opportunity-attack",
+      "name": "Attaque d’opportunité",
+      "description": "En combat, lorsqu’un ennemi quitte la portée de son arme de mêlée, avertit après le déplacement. Le MJ choisit de résoudre ou refuser la réaction ; aucune attaque automatique.",
+      "polarity": "positive",
+      "reachMode": "weapon",
+      "reachCells": 2,
+      "statId": "character-stat-agility"
+    },
+    {
+      "version": 1,
+      "id": "inho-stealth-advantage",
+      "kind": "stat-roll-option",
+      "name": "Avantage au jet de furtivité",
+      "description": "Propose « Furtivité » sur les jets d’Agilité. Lance avec avantage et inscrit « Avantage furtivité » dans le journal.",
+      "polarity": "positive",
+      "statId": "character-stat-agility",
+      "resultBonus": 0,
+      "rollMode": "advantage",
+      "rollLabel": "Avantage furtivité",
+      "choiceLabel": "Furtivité"
+    },
+    {
+      "version": 1,
+      "id": "inho-sanctified",
+      "kind": "manual",
+      "name": "Sacralisé",
+      "description": "A accès à la magie du vent. Les possibilités et conséquences sont arbitrées par le MJ.",
+      "polarity": "positive"
+    },
+    {
+      "version": 1,
+      "id": "inho-emotional-hypervigilance",
+      "kind": "manual",
+      "name": "Hypervigilance émotionnelle",
+      "description": "Inho est très rancunier et peut rapidement perdre son calme si Hira est en danger, au point de se mettre lui-même en danger. Arbitrage du MJ.",
+      "polarity": "negative"
+    }
+  ]
 }

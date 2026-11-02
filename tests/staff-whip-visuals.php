@@ -16,7 +16,7 @@ function staffWhipFixture(string $templateId,bool $twoTargets=false):MemoryConne
     $db->put('token:scene-one:token-player',$source);
     $target=$db->payload('token:scene-one:token-monster');$target['x']=$twoTargets?40:30;$db->put('token:scene-one:token-monster',$target);
     $second=[...$target,'id'=>'token-monster-two','name'=>'Même nom sans importance','x'=>38,'y'=>56];$db->put('token:scene-one:token-monster-two',$second);
-    $db->put('items',normalizeItemStore(['version'=>1,'templates'=>[['id'=>$templateId,'name'=>'Nom arbitraire','kind'=>'object','equipment'=>['version'=>1,'kind'=>'weapon','hands'=>$twoTargets?1:2,'formula'=>'13','damageType'=>'physical','reach'=>$twoTargets?'reach':'melee','projectile'=>false,'finesse'=>false]]],'instances'=>[['id'=>'actual-weapon','templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>CONTACT_CHARACTER]]],'equipmentLoadouts'=>[CONTACT_CHARACTER=>['sets'=>[],'equippedItemIds'=>['actual-weapon'],'activeSetId'=>'']]]));
+    $db->put('items',normalizeItemStore(['version'=>1,'templates'=>[['id'=>$templateId,'name'=>'Nom arbitraire','kind'=>'object','weaponCatalogRevision'=>1,'equipment'=>['version'=>1,'kind'=>'weapon','hands'=>$twoTargets?1:2,'formula'=>'13','damageType'=>'physical','reach'=>$twoTargets?'reach':'melee','projectile'=>false,'finesse'=>false]]],'instances'=>[['id'=>'actual-weapon','templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>CONTACT_CHARACTER]]],'equipmentLoadouts'=>[CONTACT_CHARACTER=>['sets'=>[],'equippedItemIds'=>['actual-weapon'],'activeSetId'=>'']]]));
     return $db;
 }
 

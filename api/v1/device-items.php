@@ -9,7 +9,7 @@ function synchronizeDeviceTemplateAppearance(array &$state,array $template):void
     foreach($state['devices']['devices']??[] as $index=>$entry)if(isset($ids[$entry['itemId']??''])){
         $image=dsImage($template['image']??'');
         if(!empty($template['image'])&&$image==='')itemFailure('Choisissez une image importée valide pour ce dispositif.',400);
-        if(($entry['image']??'')!==$image||$entry['name']!==$template['name']){$state['devices']['devices'][$index]['image']=$image;$state['devices']['devices'][$index]['name']=$template['name'];$state['devices']['devices'][$index]['revision']++;}
+        if(($entry['image']??'')!==$image||$entry['name']!==$template['name']){if(($entry['image']??'')!==$image)$state['devices']['devices'][$index]['imageCustomized']=$image!=='';$state['devices']['devices'][$index]['image']=$image;$state['devices']['devices'][$index]['name']=$template['name'];$state['devices']['devices'][$index]['revision']++;}
     }
 }
 function ensureDeviceItems(array &$state,callable $id):void {

@@ -57,3 +57,7 @@ function applicationSimpleWeaponDamage(array $ability,array $weapons,string $req
     $merged=[];foreach($parts as $part){$type=$part['type'];$merged[$type]=isset($merged[$type])?[...$merged[$type],'formula'=>applicationCombinedDamageFormula([$merged[$type],$part])]:$part;}
     $parts=array_values($merged);if(!validApplicationAbilityFormula(applicationCombinedDamageFormula($parts)))throw new RuntimeException('Les dégâts multipliés dépassent les limites de la formule.',400);return ['selectedWeapon'=>$weapon,'damageComponents'=>$parts,'damageFormula'=>applicationCombinedDamageFormula($parts),'damageType'=>$weapon['damageType']];
 }
+
+function applicationAbilityWeaponTargeting(array $ability,array $weapon):?array {
+ return ($ability['useWeaponDamage']??false)===true&&($ability['useWeaponTargetCount']??false)===true&&$weapon!==[]?[...$weapon,'targetCount'=>applicationWeaponTargetCount($weapon)]:null;
+}

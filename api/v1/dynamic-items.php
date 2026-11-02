@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/potion-catalog.php';
+require_once __DIR__.'/weapon-catalog.php';
 require_once __DIR__.'/item-catalog.php';
 require_once __DIR__.'/item-destruction.php';
 require_once __DIR__.'/item-activations.php';
@@ -42,6 +44,8 @@ function normalizeItemTemplate(array $value): array {
     if (($value['image'] ?? '') !== '' && $image === '') itemFailure('L’image de l’objet est invalide.');
     $result = ['id' => $value['id'], 'kind' => $value['kind'], 'name' => $name, 'description' => itemText($value['description'] ?? '', 4000), 'image' => $image,...potionVesselTemplateFields([...$value,'name'=>$name])];
     if(array_key_exists('category',$value)){if(!in_array($value['category'],['ability','usable','reading','equipment','utility','quick'],true)&&!customItemCategoryId($value['category']))itemFailure('La catégorie d’objet est invalide.');$result['category']=$value['category'];}
+    if(is_int($value['weaponCatalogRevision']??null)&&$value['weaponCatalogRevision']>0)$result['weaponCatalogRevision']=$value['weaponCatalogRevision'];
+    if(is_int($value['potionCatalogRevision']??null)&&$value['potionCatalogRevision']>0)$result['potionCatalogRevision']=$value['potionCatalogRevision'];
     if(isset($value['active']))$result['active']=normalizeActiveItem($value['active']);
     if(isset($value['equipment']))$result['equipment']=normalizeEquipment($value['equipment']);
     if(array_key_exists('permissions',$value))$result['permissions']=normalizeItemPermissions($value['permissions']);
@@ -109,7 +113,7 @@ function normalizeItemStore(?array $value): array {
     if ($value === null || $value === []) return ['version' => 1, 'templates' => [], 'instances' => []];
     if (($value['version'] ?? 1) !== 1) itemFailure('Ces objets proviennent d’une version plus récente. Ils ont été conservés.', 409);
     if (!is_array($value['templates'] ?? null) || !is_array($value['instances'] ?? null) || count($value['templates']) > 200 || count($value['instances']) > 2000) itemFailure('La collection d’objets dépasse les limites.');
-    $value=mergeKnownItemTemplateAliases($value);
+    $value=applicationWeaponCatalogPresets(applicationPotionCatalogPresets(mergeKnownItemTemplateAliases($value)));
     $categories=normalizeItemCategories($value['categories']??[]);
     $templates = []; $ids = [];
     foreach ($value['templates'] as $template) {
@@ -193,7 +197,7 @@ function itemLootAccess(array $state,string $targetTokenId,string $sourceTokenId
 function applyDynamicItemCommand(array $state, array $identity, string $command, array $args,array $context=[]): array {
     $items = normalizeItemStore($state['items'] ?? null); $isGm = ($identity['role'] ?? '') === 'gm';
     if(!in_array($command,['item.vessel.request','item.vessel.resolve'],true))foreach($items['instances'] as $item)if(isset($item['vesselRequest'])&&($item['id']===($args['itemId']??'')||in_array($item['id'],$args['itemIds']??[],true)))itemFailure('Cette fiole attend la validation de sa transformation par le MJ.',409);
-    if(in_array($command,['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){$result=applyItemUseCommand($state,$items,$identity,$command,$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
+    if(in_array($command,['item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){$result=applyItemUseCommand($state,$items,$identity,$command,$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
     $character = static function($id) use ($state): array {
         return unitById($state,(string)$id);
     };
@@ -248,7 +252,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
     if ($command === 'item.template.create') {
         if (!$isGm) itemFailure('La création de modèles est réservée au MJ.', 403);
         if (count($items['templates']) >= 200) itemFailure('La collection de modèles est pleine.', 429);
-        $template = normalizeItemTemplate(is_array($args['template'] ?? null) ? $args['template'] : []);
+        $template = normalizeItemTemplate(applicationMarkConfiguredPotionTemplate(is_array($args['template'] ?? null) ? $args['template'] : []));
         foreach ($items['templates'] as $entry) if ($entry['id'] === $template['id']) itemFailure('Ce modèle existe déjà.', 409);
         if(namedItemTemplate($items,$template['name']))itemFailure('Un modèle porte déjà ce nom. Ajoutez un exemplaire depuis la bibliothèque ou précisez un nom différent.',409);
         if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($items['categories']??[],'id'),true))itemFailure('Cette catégorie n’existe plus.',409);
@@ -271,7 +275,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         }
         $editable=array_intersect_key($args['template'],array_fill_keys(['name','kind','description','image','document','potion','active','equipment','permissions','size','maxHp','category','potionVessel','potionColor'],true));
         if(!empty($previous['stockBindings'])&&($editable['kind']??'')!==$previous['kind'])itemFailure('Ce modèle est lié à un stock de compétence : conservez son type.',409);
-        $editable['id']=$previous['id'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
+        $editable['id']=$previous['id'];if(isset($previous['weaponCatalogRevision']))$editable['weaponCatalogRevision']=$previous['weaponCatalogRevision'];if(isset($previous['potionCatalogRevision']))$editable['potionCatalogRevision']=$previous['potionCatalogRevision'];if(isset($previous['stockBindings']))$editable['stockBindings']=$previous['stockBindings'];
         $template=normalizeItemTemplate($editable);
         if(itemNameKey($template['name'])!==itemNameKey($previous['name'])&&namedItemTemplate($items,$template['name'],$previous['id']))itemFailure('Un modèle porte déjà ce nom. Précisez un nom différent.',409);
         $configuration=$args['instanceConfiguration']??null;
@@ -419,7 +423,7 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         $item['location']=['kind'=>'inventory','characterId'=>$receiver['id']];$item['revision']++;$items['instances'][$index]=$item;
         return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item]];
     }
-    $patch = null;
+    $patch = null; $itemEnhancement=null;
     if ($command === 'item.pickup') {
         $owned($args['characterId'] ?? null); $token = $tokenFor($args['characterId'] ?? null);
         if ($item['location']['kind'] !== 'ground' || $item['location']['sceneId'] !== ($args['sceneId'] ?? '') || $item['location']['layerId'] !== ($token['layerId'] ?? $state['map']['activeLayerId'] ?? 'ground')) itemFailure('Cet objet n’est plus sur ce niveau.', 409);
@@ -435,23 +439,25 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
         } elseif ($command === 'item.consume') {
             $template = effectivePotionVesselTemplate($items['templates'][array_search($item['templateId'], array_column($items['templates'], 'id'), true)],$item,$items);
             if(isset($template['active'])&&(isset($template['active']['targeting'])||isset($template['active']['trap'])||array_filter($template['active']['effects'],static fn($e)=>in_array($e['kind'],['damage','dot','condition','summon','armor-reduction'],true)))){$result=applyItemUseCommand($state,$items,$identity,'item.activate',$args,$context);return ['items'=>normalizeItemStore($items),'result'=>$result,'activeState'=>$state];}
+            $itemEnhancement=applicationItemUseEnhancement($state,$template,$source['id']);applicationAssertExpectedItemEnhancement($args,$itemEnhancement);applicationPreflightItemEnhancement($template['active']??null,$itemEnhancement);
             if(isset($template['active'])){
                 if(!empty($state['tacticalSync']['paused'])&&!$isGm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
                 if(($args['sceneId']??'')!==$state['activeSceneId'])itemFailure('La scène a changé.',409);$token=null;foreach($state['map']['tokens']??[] as $t)if(unitIdForToken($t)===$source['id']&&(!isset($args['tokenId'])||$args['tokenId']===$t['id'])&&($t['layerId']??'ground')===($state['map']['activeLayerId']??'ground')){$token=$t;break;}
-                $result=applicationApplyActiveItem($state,$template,$source,$token,$identity,$context);if(!emptyPotionVessel($item,$template))$item['location']=['kind'=>'consumed','characterId'=>$source['id']];$item['revision']++;$items['instances'][$index]=$item;
+                $result=applicationApplyActiveItem($state,$template,$source,$token,$identity,[...$context,'itemEnhancement'=>$itemEnhancement]);applicationConsumeItemUseEnhancement($state,$itemEnhancement);if(!emptyPotionVessel($item,$template))$item['location']=['kind'=>'consumed','characterId'=>$source['id']];$item['revision']++;$items['instances'][$index]=$item;
                 return ['items'=>normalizeItemStore($items),'result'=>['item'=>$item,...$result],'characterPatch'=>['id'=>$source['id'],'resources'=>$source['resources'],'fatigue'=>$source['fatigue']??['current'=>0,'max'=>150],'conditions'=>$source['conditions']??[]],'activeState'=>$state];
             }
             if ($template['kind'] !== 'potion') itemFailure('Cet objet n’est pas une potion.');
             $resources = $source['resources'] ?? [];
-            foreach (['hp', 'mana'] as $resource) $resources[$resource] = max($resource === 'hp' ? -1000000000 : 0, min($resources[$resource === 'hp' ? 'maxHp' : 'maxMana'] ?? 0, ($resources[$resource] ?? 0) + $template['potion'][$resource]));
-            $fatigue = $source['fatigue'] ?? []; $fatigue['current'] = max(0, min($fatigue['max'] ?? 150, ($fatigue['current'] ?? 0) + $template['potion']['fatigue']));
+            foreach (['hp', 'mana'] as $resource) $resources[$resource] = max($resource === 'hp' ? -1000000000 : 0, min($resources[$resource === 'hp' ? 'maxHp' : 'maxMana'] ?? 0, ($resources[$resource] ?? 0) + $template['potion'][$resource]*($itemEnhancement['multipliers']['healing']??1)));
+            $fatigue = $source['fatigue'] ?? []; $fatigue['current'] = max(0, min($fatigue['max'] ?? 150, ($fatigue['current'] ?? 0) + $template['potion']['fatigue']*($template['potion']['fatigue']<0?($itemEnhancement['multipliers']['healing']??1):1)));
             $patch = ['id' => $source['id'], 'resources' => $resources, 'fatigue' => $fatigue];
+            applicationConsumeItemUseEnhancement($state,$itemEnhancement);
             if(!emptyPotionVessel($item,$template))$item['location'] = ['kind' => 'consumed', 'characterId' => $source['id']];
         } else itemFailure('Action d’objet inconnue.');
     }
     if ($item['location']['kind'] === 'inventory') rememberLinkedItemStock($items, $character($item['location']['characterId']), $item['templateId']);
     $item['revision']++; $items['instances'][$index] = $item;
-    return ['items' => normalizeItemStore($items), 'result' => ['item' => $item], 'characterPatch' => $patch];
+    return ['items' => normalizeItemStore($items), 'result' => ['item' => $item,...($itemEnhancement?['itemEnhancement'=>$itemEnhancement]:[])], 'characterPatch' => $patch,...($itemEnhancement?['activeState'=>$state]:[])];
 }
 
 function linkedItemTemplateIds(array $character, array $templates = []): array {
@@ -495,6 +501,7 @@ function readableLinkedStock(array $store, array $character, string $templateId)
 }
 
 function publicItemStore(array $store, array $characters, ?array $identity, array $context, callable $visible): array {
+    $store=normalizeItemStore($store);
     foreach($context['tokens']??[] as $token)if(!empty($identity['id'])&&(($token['ownedByYou']??false)===true||($token['controllerPlayerId']??'')===$identity['id'])&&!unitUsesCharacterSheet($token))
         $characters[]=[...$token,'id'=>unitIdForToken($token),'ownerPlayerId'=>$identity['id']];
     $owned = [];
@@ -599,7 +606,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     if($command==='item.opposition'){foreach($state['map']['tokens']??[]as$target)if(($target['id']??'')===($args['targetTokenId']??''))foreach($applied['result']['rolls']as&$r)onlineAwardNaturalJoker($connection,$records,$pending,$target,$r,$r['outcome']??null,$sceneId);unset($r);}
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
     if (!$isGm) $result = publicItemCommandResult($result);
-    if(in_array($command,['item.activate','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){
+    if(in_array($command,['item.consume','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){
         onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'action','summary'=>'Résout une utilisation d’objet']);
     }
     onlineStorePersistentCommandReceipt($records, $pending, $context, 'item-command', $requestId, $identity['id'], 'item-' . $requestId, 'items', $signature, $result);

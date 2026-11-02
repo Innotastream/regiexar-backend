@@ -15,13 +15,13 @@ foreach([['presetId'=>'unknown'],['placement'=>'iframe'],['sceneId'=>'../private
 $cue=normalizeApplicationAbilityCompletionCue(['spell'=>$spell]);$check(validApplicationAbilityCompletionCue($cue),'Événement spatial valide sans son');
 $check(!isset(applicationAbilityCompletionCueFor([...$ability,'completionCue'=>['spell'=>$spell]])['spell']),'Animation arbitraire fournie par une fiche ignorée');
 $activity=[];$id=appendApplicationAbilityCueEvent($activity,$cue,'scene','ground','source');$event=$activity['abilityCueEvents'][0];
-$check($id!==''&&$event['expiresAt']-$event['createdAt']===2200,'Événement one-shot à durée bornée');$check(validApplicationAbilityCueEvents($activity['abilityCueEvents']),'Événement valide dans le journal autoritatif');
+$check($id!==''&&$event['expiresAt']-$event['createdAt']===4400,'Événement one-shot à durée bornée et demi-vitesse');$check(validApplicationAbilityCueEvents($activity['abilityCueEvents']),'Événement valide dans le journal autoritatif');
 $public=['sceneId'=>'scene','layerId'=>'ground','sourceTokenId'=>'source','visibleTokenIds'=>['source'],'visible'=>static fn()=>true];
 $check(applicationPublicSpellVisual($spell,$public)===$spell,'DTO public minimal');
 foreach([['visibleTokenIds'=>[]],['sceneId'=>'elsewhere'],['layerId'=>'upper'],['paused'=>true],['visible'=>static fn()=>false]]as$patch)$check(applicationPublicSpellVisual($spell,[...$public,...$patch])===null,'Source ou scène privée cachée');
 $mounted=applicationTrustedSpellVisual($ability,[...$context,'source'=>[...$context['source'],'mountedOnTokenId'=>'mount'],'map'=>[...$map,'tokens'=>[['id'=>'mount','x'=>30,'y'=>40,'size'=>100,'layerId'=>'ground']]]]);$check($mounted['source']===['x'=>30,'y'=>40,'size'=>100],'Empreinte de monture capturée');
 foreach(['elemental-darkness'=>2600,'elemental-roots'=>2800]as$preset=>$duration){
- $next=[...$spell,'presetId'=>$preset];$check(applicationSpellVisualDuration($next)===$duration,'Durée exacte de la nouvelle matière');
+ $next=[...$spell,'presetId'=>$preset];$duration*=2;$check(applicationSpellVisualDuration($next)===$duration,'Durée exacte de la nouvelle matière à demi-vitesse');
  $nextCue=normalizeApplicationAbilityCompletionCue(['spell'=>$next]);$nextActivity=[];appendApplicationAbilityCueEvent($nextActivity,$nextCue,'scene','ground','source');$nextEvent=$nextActivity['abilityCueEvents'][0];
  $check($nextEvent['expiresAt']-$nextEvent['createdAt']===$duration,'Le journal conserve toute la croissance ou dissipation');
  foreach(['source','target','area','cone']as$placement){$placed=applicationSpellVisual([...$next,'placement'=>$placement,'radiusCells'=>2]);$check($placed!==null&&applicationPublicSpellVisual($placed,$public)===$placed,'Placement public borné');$check(applicationPublicSpellVisual($placed,[...$public,'visible'=>static fn()=>false])===null,'Nouvelle matière cachée si origine privée');}

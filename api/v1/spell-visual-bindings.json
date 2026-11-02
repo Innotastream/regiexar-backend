@@ -1,7 +1,11 @@
 {
   "version": 1,
   "bindings": {
-    "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {"placement": "area", "presetId": "moonlight-density", "radiusCells": 4},
+    "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {
+      "placement": "area",
+      "presetId": "moonlight-density",
+      "radiusCells": 4
+    },
     "ability-9832cd85-12b9-48b6-8908-5ad6f19b944a": {
       "placement": "dash",
       "presetId": "token-afterimage-dash",
@@ -78,6 +82,49 @@
       "followAnchor": true,
       "fitSource": true,
       "sourcePaddingCells": 3
+    },
+    "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
+      "placement": "source",
+      "presetId": "super-potion-charge",
+      "radiusCells": 4,
+      "followAnchor": true,
+      "fitSource": true,
+      "sourcePaddingCells": 2,
+      "sourcePaddingPixels": 120
+    },
+    "ability-bf496f72-c419-4852-86b9-81e29eb17d4c": {
+      "placement": "target",
+      "presetId": "predator-analysis",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true
+    },
+    "ability-d4fe4e60-f96e-4c0d-9f5a-280aead0846a": {
+      "placement": "target",
+      "presetId": "weapon-poison-coat",
+      "radiusCells": 1,
+      "followTarget": true,
+      "weaponFromTarget": true,
+      "craftEvent": {
+        "placement": "source",
+        "presetId": "weapon-poison-brew",
+        "radiusCells": 1,
+        "followAnchor": true
+      }
+    },
+    "ability-1a43a9ff-6af8-4b37-8940-d6894ba864a2": {
+      "placement": "target",
+      "presetId": "supreme-eye",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true
+    },
+    "ability-1c96374f-b73d-440f-a1de-c149022c6dee": {
+      "placement": "target",
+      "presetId": "whisper-puppet",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true
     }
   }
 }

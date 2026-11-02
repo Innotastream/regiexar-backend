@@ -1,0 +1,436 @@
+[
+  {
+    "id": "potion-catalog-strength-1",
+    "family": "strength",
+    "level": 1,
+    "names": [
+      "Petite potion de force"
+    ],
+    "kind": "potion",
+    "description": "+5 en Force pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "force": 5
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-strength-2",
+    "family": "strength",
+    "level": 2,
+    "names": [
+      "Potion de force"
+    ],
+    "kind": "potion",
+    "description": "+10 en Force pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "force": 10
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-strength-3",
+    "family": "strength",
+    "level": 3,
+    "names": [
+      "Grande potion de force"
+    ],
+    "kind": "potion",
+    "description": "+15 en Force pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "force": 15
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-speed-1",
+    "family": "speed",
+    "level": 1,
+    "names": [
+      "Petite potion de vitesse"
+    ],
+    "kind": "potion",
+    "description": "+5 en Agilité pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "agility": 5
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-speed-2",
+    "family": "speed",
+    "level": 2,
+    "names": [
+      "Potion de vitesse"
+    ],
+    "kind": "potion",
+    "description": "+10 en Agilité pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "agility": 10
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-speed-3",
+    "family": "speed",
+    "level": 3,
+    "names": [
+      "Grande potion de vitesse"
+    ],
+    "kind": "potion",
+    "description": "+15 en Agilité pendant 3 tours.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stats",
+          "bonuses": {
+            "agility": 15
+          },
+          "duration": {
+            "kind": "rounds",
+            "turns": 3
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-resistance-1",
+    "family": "resistance",
+    "level": 1,
+    "names": [
+      "Petite potion de résistance"
+    ],
+    "kind": "potion",
+    "description": "Accorde 1 stack(s) de Protection : 25 % de réduction physique et magique par stack. Le surplus au-delà de 100 % reste pour les attaques suivantes. Les dégâts ignore-armure ne consomment pas la protection.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stackable-effect",
+          "effectId": "protection",
+          "stacks": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-resistance-2",
+    "family": "resistance",
+    "level": 2,
+    "names": [
+      "Potion de résistance"
+    ],
+    "kind": "potion",
+    "description": "Accorde 2 stack(s) de Protection : 25 % de réduction physique et magique par stack. Le surplus au-delà de 100 % reste pour les attaques suivantes. Les dégâts ignore-armure ne consomment pas la protection.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stackable-effect",
+          "effectId": "protection",
+          "stacks": 2
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-resistance-3",
+    "family": "resistance",
+    "level": 3,
+    "names": [
+      "Grande potion de résistance"
+    ],
+    "kind": "potion",
+    "description": "Accorde 3 stack(s) de Protection : 25 % de réduction physique et magique par stack. Le surplus au-delà de 100 % reste pour les attaques suivantes. Les dégâts ignore-armure ne consomment pas la protection.",
+    "active": {
+      "version": 1,
+      "useLabel": "Boire",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "stackable-effect",
+          "effectId": "protection",
+          "stacks": 3
+        }
+      ]
+    }
+  },
+  {
+    "id": "potion-catalog-entanglement-1",
+    "family": "entanglement",
+    "level": 1,
+    "names": [
+      "Petite potion d’enchevêtrement"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 4 cases de diamètre. Enchevêtre les unités touchées pendant 2 tours. Le MJ choisit les oppositions après l’aperçu.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "condition",
+          "rider": {
+            "version": 1,
+            "label": "Enchevêtré",
+            "turns": 2,
+            "resistance": false,
+            "blocksMovement": true,
+            "blocksActions": false
+          }
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 2,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-entanglement-2",
+    "family": "entanglement",
+    "level": 2,
+    "names": [
+      "Potion d’enchevêtrement"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 6 cases de diamètre. Enchevêtre les unités touchées pendant 3 tours. Le MJ choisit les oppositions après l’aperçu.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "condition",
+          "rider": {
+            "version": 1,
+            "label": "Enchevêtré",
+            "turns": 3,
+            "resistance": false,
+            "blocksMovement": true,
+            "blocksActions": false
+          }
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 3,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-entanglement-3",
+    "family": "entanglement",
+    "level": 3,
+    "names": [
+      "Grande potion d’enchevêtrement"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 8 cases de diamètre. Enchevêtre les unités touchées pendant 4 tours. Le MJ choisit les oppositions après l’aperçu.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "condition",
+          "rider": {
+            "version": 1,
+            "label": "Enchevêtré",
+            "turns": 4,
+            "resistance": false,
+            "blocksMovement": true,
+            "blocksActions": false
+          }
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 4,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-stench-1",
+    "family": "stench",
+    "level": 1,
+    "names": [
+      "Petite potion puante"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 4 cases de diamètre, nauséabonde pendant 5 tours. Conséquences arbitrées par le MJ ; aucun malus automatique.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "arbitration-zone",
+          "label": "Puanteur",
+          "turns": 5,
+          "color": "#9ca45c"
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 2,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-stench-2",
+    "family": "stench",
+    "level": 2,
+    "names": [
+      "Potion puante"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 6 cases de diamètre, nauséabonde pendant 7 tours. Conséquences arbitrées par le MJ ; aucun malus automatique.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "arbitration-zone",
+          "label": "Puanteur",
+          "turns": 7,
+          "color": "#9ca45c"
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 3,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-stench-3",
+    "family": "stench",
+    "level": 3,
+    "names": [
+      "Grande potion puante"
+    ],
+    "kind": "potion",
+    "description": "Lancer dans une zone de 8 cases de diamètre, nauséabonde pendant 9 tours. Conséquences arbitrées par le MJ ; aucun malus automatique.",
+    "active": {
+      "version": 1,
+      "useLabel": "Lancer",
+      "authority": "owner",
+      "effects": [
+        {
+          "kind": "arbitration-zone",
+          "label": "Puanteur",
+          "turns": 9,
+          "color": "#9ca45c"
+        }
+      ],
+      "targeting": {
+        "mode": "area",
+        "rangeCells": 15,
+        "radiusCells": 4,
+        "origin": "point"
+      }
+    }
+  },
+  {
+    "id": "potion-catalog-elemental-component",
+    "family": "elemental-component",
+    "level": 1,
+    "names": [
+      "Potion élémentaire"
+    ],
+    "kind": "object",
+    "description": "Composant du Souffle arcano-élémentaire de Mania.",
+    "active": {
+      "version": 1,
+      "authority": "owner",
+      "useLabel": "Composant du Souffle arcano-élémentaire",
+      "ingredientTag": "elemental-potion",
+      "effects": []
+    }
+  }
+]

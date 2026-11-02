@@ -168,6 +168,7 @@ function applicationTacticalRollSignature(string $sceneId, array $arguments): st
         onlineRollModeForKind($arguments['rollMode'] ?? 'normal', $kind),
         is_string($arguments['visibility'] ?? null) ? $arguments['visibility'] : 'public',
         ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
+        ...(isset($arguments['rollOptionId'])&&$arguments['rollOptionId']!==''?['passive-option',$arguments['rollOptionId']]:[]),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
@@ -231,9 +232,9 @@ function applicationTacticalRollSpecification(array $source, array $arguments): 
         $formula .= $value !== 0 ? ($value > 0 ? '+' : '') . $value : '';
     }
     if (strlen($formula) > 100 || !validOnlineRollFormula($formula)) throw new RuntimeException('invalid_tactical_roll_formula');
-    return ['kind' => $kind, 'label' => onlineUtf8ByteSlice($label, 120), 'formula' => $formula, 'threshold' => $threshold, 'modifier' => $modifier,
+    return applicationApplyPassiveStatRoll(['kind' => $kind, 'label' => onlineUtf8ByteSlice($label, 120), 'formula' => $formula, 'threshold' => $threshold, 'modifier' => $modifier,
         'resultModifier' => $resultModifier, 'modifierMode' => ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold',
-        'rollMode' => $mode, 'd100RollUnder' => in_array($kind, ['stat', 'luck', 'custom-stat'], true), 'visibility' => $arguments['visibility'] ?? 'public'];
+        'rollMode' => $mode, 'd100RollUnder' => in_array($kind, ['stat', 'luck', 'custom-stat'], true), 'visibility' => $arguments['visibility'] ?? 'public'],$source,$arguments);
 }
 
 function applicationTacticalRollVisibility(array $roll, array $source, string $kind, string $requestedVisibility = 'public', bool $sourceVisibleToPlayers = false): array {
@@ -305,7 +306,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         $source = synchronizeOnlineCharacterToken(['characterId' => $characterId], $source);
     }
     try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
-    catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, 'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
+    catch (RuntimeException $error) { rejectOnlineCommand($connection, in_array($error->getCode(),[400,403],true)?$error->getCode():400, $error->getCode()?$error->getMessage():'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $joker?applicationSpecialSuccessOutcome($spec['threshold']):($spec['threshold'] !== null

@@ -25,8 +25,11 @@ foreach([null,false,$point] as $fixedDefinition){
     armorReject(static fn()=>normalizeOnlineAbilities([$forged]),'Ability import cannot bypass fixed-coordinate guard');
 }
 armorCheck(applicationAttackEnhancement(['mode'=>'stats','turns'=>5,'bonuses'=>['physicalResistance'=>-30],'fixedArea'=>$point])!==null,'Runtime item zones remain valid');
-foreach([['x'=>-1],['x'=>101],['x'=>'50'],['x'=>NAN],['y'=>INF],['radiusCells'=>0],['radiusCells'=>20.5],['radiusCells'=>1.2],['layerId'=>'attic']] as $bad)
+foreach([['x'=>-1],['x'=>101],['x'=>'50'],['x'=>NAN],['y'=>INF],['radiusCells'=>0],['radiusCells'=>80.5],['radiusCells'=>1.2],['layerId'=>'attic']] as $bad)
     armorCheck(applicationFixedEffectArea([...$point,...$bad])===null,'Invalid fixed geometry rejected');
+armorCheck(applicationFixedEffectArea([...$point,'radiusCells'=>40])!==null,'A doubled maximum-size potion retains its expanded runtime zone');
+armorCheck(applicationFixedEffectArea([...$point,'radiusCells'=>80])!==null,'Runtime geometry accepts the configured maximum fourfold enhancement');
+armorReject(static fn()=>normalizeActiveItem(armorDefinition($zone,['targeting'=>[...$areaTarget,'radiusCells'=>20.5]])),'Authoring still refuses a base radius above twenty');
 $target=['id'=>'victim','x'=>50,'y'=>50,'layerId'=>'ground','size'=>40,'armor'=>20,'armorCategory'=>'percent','magicArmor'=>0];
 $effect=['id'=>'debuff','holder'=>'token:victim','abilityId'=>'item-arbitrary','label'=>'Fiole aux règles configurables','sceneId'=>'s','targetTokenId'=>'victim','casterTokenId'=>'source','mode'=>'stats','bonuses'=>['physicalResistance'=>-30,'magicalResistance'=>-50],'turns'=>5,'remainingTurns'=>5,'combatId'=>'c','lastTurnSerial'=>2];
 $state=['activeSceneId'=>'s','map'=>['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50,'activeLayerId'=>'ground','tokens'=>[$target]],'attackEnhancements'=>[$effect]];

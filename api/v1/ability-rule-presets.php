@@ -10,6 +10,7 @@ function applicationConfiguredOppositionAbility(array $source): array {
 function applicationConfiguredAbilityRules(array $source): array {
     static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
     $configured=applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source)));$preset=$presets[$source['id']??'']??null;
+    if(($preset['retired']??false)===true)return $configured;
     if(isset($preset['attackEnhancementTrigger'])&&($source['effect']??'')===($preset['effect']??'')&&($source['attackEnhancement']['mode']??'')==='on-attack-dot')return [...$configured,'attackEnhancement'=>applicationConfiguredAttackEnhancement((string)$source['id'],$source['attackEnhancement'])];
     if(isset($preset['values'])&&($source['effect']??'damage')===($preset['effect']??'damage')){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
@@ -28,7 +29,7 @@ function applicationConfiguredAbilityRules(array $source): array {
     }
     return $preset!==null&&!isset($preset['values'])&&!isset($preset['attackEnhancementTrigger'])&&($source['effect']??'damage')==='damage'&&!array_key_exists('rangeCells',$source)&&!array_key_exists('infusion',$source)?[...$configured,...$preset]:$configured;
 }
-function applicationConfiguredInclusiveFatigue(array $source):array{static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-inclusive-fatigue-presets.json'),true,512,JSON_THROW_ON_ERROR);$preset=$presets[$source['id']??'']??null;return $preset!==null&&!array_key_exists('fatigueCostIncludesPassive',$source)&&in_array($source['fatigueCost']??null,[$preset['base'],$preset['inclusive']],true)?[...$source,'fatigueCost'=>$preset['inclusive'],'fatigueCostIncludesPassive'=>true]:$source;}
+function applicationConfiguredInclusiveFatigue(array $source):array{static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-inclusive-fatigue-presets.json'),true,512,JSON_THROW_ON_ERROR);$preset=$presets[$source['id']??'']??null;if($preset===null)return $source;if(is_string($source['description']??null))$source['description']=str_replace($preset['inclusive'].' fatigue (passif compris)',$preset['base'].' fatigue de base',$source['description']);if(($source['fatigueCostIncludesPassive']??null)===false||!is_int($source['fatigueCost']??null))return $source;$cost=($source['fatigueCostIncludesPassive']??false)===true?max(0,$source['fatigueCost']-($preset['inclusive']-$preset['base'])):($source['fatigueCost']===$preset['inclusive']?$preset['base']:$source['fatigueCost']);return [...$source,'fatigueCost'=>$cost,'fatigueCostIncludesPassive'=>false];}
 function applicationAbilityRulePreset(mixed $value): ?array {
     return is_array($value)&&is_string($value['id']??null)&&preg_match('/^[A-Za-z0-9_-]{1,120}$/D',$value['id'])===1&&is_int($value['revision']??null)&&$value['revision']>=1&&$value['revision']<=1000000?['id'=>$value['id'],'revision'=>$value['revision']]:null;
 }
@@ -38,4 +39,9 @@ function applicationConfiguredAttackEnhancement(string $abilityId,array $enhance
     if(!isset($preset['attackEnhancementTrigger'])||($enhancement['mode']??'')!=='on-attack-dot')return $enhancement;
     $patch=[];if(!array_key_exists('trigger',$enhancement))$patch['trigger']=$preset['attackEnhancementTrigger'];if(!array_key_exists('weaponIds',$enhancement)&&isset($preset['attackEnhancementWeaponIds']))$patch['weaponIds']=$preset['attackEnhancementWeaponIds'];
     return $patch!==[]?[...$enhancement,...$patch]:$enhancement;
+}
+
+function applicationIsRetiredAbility(mixed $id): bool {
+    static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
+    return is_string($id)&&($presets[$id]['retired']??false)===true;
 }

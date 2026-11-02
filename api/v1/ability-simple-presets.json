@@ -24,8 +24,8 @@
       "outcomeMessages": null,
       "manaCost": 15,
       "hpCost": 0,
-      "fatigueCost": 6,
-      "fatigueCostIncludesPassive": true,
+      "fatigueCost": 5,
+      "fatigueCostIncludesPassive": false,
       "cooldownRounds": 5,
       "usesPerRest": 2,
       "restRecharge": "short",
@@ -65,7 +65,7 @@
         "radiusCells": 4,
         "turns": 3
       },
-      "description": "Choisissez un point à portée À distance. Après un jet d’Intelligence réussi, y déploie une nappe de brume magique de huit cases de diamètre pendant trois tours du lanceur. La brume limite la vision sans infliger de dégâts ni ajouter l’état Aveuglé.\n\nCoût : 15 mana, 6 fatigue (passif compris) et une Capsule de réactif consommée dès la tentative. Recharge : cinq tours. Deux utilisations par repos court. Échec amoindri : fatigue remboursée et recharge réduite à un tour ; la capsule reste consommée."
+      "description": "Choisissez un point à portée À distance. Après un jet d’Intelligence réussi, y déploie une nappe de brume magique de huit cases de diamètre pendant trois tours du lanceur. La brume limite la vision sans infliger de dégâts ni ajouter l’état Aveuglé.\n\nCoût : 15 mana, 5 fatigue de base et une Capsule de réactif consommée dès la tentative. Recharge : cinq tours. Deux utilisations par repos court. Échec amoindri : fatigue remboursée et recharge réduite à un tour ; la capsule reste consommée."
     }
   },
   "ability-541dcf8a-3492-4196-afc1-2a7815eb02f4": {
@@ -101,8 +101,8 @@
       "outcomeMessages": null,
       "manaCost": 0,
       "hpCost": 0,
-      "fatigueCost": 6,
-      "fatigueCostIncludesPassive": true,
+      "fatigueCost": 5,
+      "fatigueCostIncludesPassive": false,
       "cooldownRounds": 3,
       "usesPerRest": 2,
       "restRecharge": "short",
@@ -321,6 +321,57 @@
         "affectUnseen": true
       },
       "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
+    }
+  },
+  "ability-2570d5e3-58d0-4b44-aa7b-5c5627e1fa32": {
+    "retired": true
+  },
+  "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
+    "presetId": "next-potion-empowerment",
+    "revision": 1,
+    "effect": "movement",
+    "values": {
+      "effect": "enhancement",
+      "formula": "0",
+      "manaCost": 30,
+      "hpCost": 0,
+      "fatigueCost": 10,
+      "fatigueCostIncludesPassive": false,
+      "attackEnhancement": {
+        "mode": "next-item-use",
+        "itemKind": "potion",
+        "multipliers": {
+          "healing": 2,
+          "damage": 2,
+          "area": 2,
+          "duration": 2
+        },
+        "turns": 1,
+        "target": "self",
+        "expiry": "combat-or-rest"
+      },
+      "description": "Une utilisation par repos long. Surcharge la prochaine potion utilisée par cette unité : soins, dégâts, dimensions de zone et durée sont doublés. Une zone de 4 cases de diamètre passe ainsi à 8 cases. La portée de lancement ne change pas. Le renforcement ne se cumule pas avec lui-même. Il est consommé à la prochaine utilisation effective et disparaît à la fin du combat, lors d’un repos court ou long, ou sur retrait du MJ. Hors combat, il attend la prochaine potion, un repos ou son retrait. Annuler une potion avant son utilisation conserve la préparation tant qu’elle n’a pas expiré.",
+      "image": "/assets/spell-effects/super-potion.png",
+      "onHitConditions": [],
+      "usesPerRest": 1,
+      "restRecharge": "long"
+    }
+  },
+  "ability-38ab61ec-4a78-4dbf-8101-75acaeb911ca": {
+    "retired": true
+  },
+  "ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066": {
+    "presetId": "weapon-targeted-precision",
+    "revision": 1,
+    "effect": "damage",
+    "values": {
+      "useWeaponDamage": true,
+      "mainWeaponOnly": true,
+      "maximumWeaponDamage": true,
+      "useWeaponTargetCount": true,
+      "noDefensePossible": true,
+      "castingStatId": "",
+      "description": "Visez une ou plusieurs unités distinctes dans la portée de l’arme principale, sans dépasser son nombre de cibles autorisé (jusqu’à deux avec le fouet). Chaque cible est touchée automatiquement, sans jet de lancement, opposition ni contre-attaque. Inflige le maximum des dégâts de base de l’arme principale à chaque cible ; les effets supplémentaires gardent leurs jets normaux. Le coût et la recharge sont payés une seule fois pour l’action."
     }
   }
 }

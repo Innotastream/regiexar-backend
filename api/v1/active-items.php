@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/passive-rules.php';
 require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/item-special-effects.php';
+require_once __DIR__.'/item-use-enhancements.php';
 require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__.'/item-use-schema.php';
 require_once __DIR__.'/item-payloads.php';
@@ -13,6 +16,7 @@ function normalizeActiveItem(mixed $v):?array {
  if($v===null)return null;if(!is_array($v)||($v['version']??0)!==1)itemFailure('Ces effets d’objet proviennent d’une version plus récente.');
  if(!is_array($v['effects']??null)||count($v['effects'])>12)itemFailure('Choisissez au maximum douze effets pour cet objet.');$effects=[];
  foreach($v['effects'] as $e){$kind=$e['kind']??'';
+  if(is_array($e)&&($special=applicationSpecialItemEffect($e))!==null){$effects[]=$special;continue;}
   if($kind==='armor-reduction'){$reduction=applicationArmorReductionDefinition($e);if($reduction===null)itemFailure('Réglez une réduction physique ou magique de 1 à 100 points et sa durée.');$effects[]=$reduction;continue;}
   if($kind==='summon'){if(!itemId($e['templateId']??null))itemFailure('Choisissez un modèle du bestiaire.');$effects[]=['kind'=>'summon','templateId'=>$e['templateId'],'controllable'=>($e['controllable']??true)!==false,'nonCombatant'=>($e['nonCombatant']??false)===true];continue;}
   $payload=normalizeItemPayload($e);if($payload){$effects[]=$payload;continue;}
@@ -30,7 +34,7 @@ function normalizeActiveItem(mixed $v):?array {
   else itemFailure('Cet effet d’objet n’est pas pris en charge.');
  }
  if(!empty($v['ingredientTag'])&&!activeItemTag($v['ingredientTag']))itemFailure('Catégorie d’ingrédient invalide.');
- foreach($effects as $effect)if(($effect['kind']??'')==='armor-reduction'&&$effect['scope']==='zone'&&($v['targeting']['mode']??'')!=='area')itemFailure('Une réduction d’armure en zone nécessite une cible de type zone circulaire.');
+ foreach($effects as $effect)if((($effect['kind']??'')==='arbitration-zone'||($effect['kind']??'')==='armor-reduction'&&$effect['scope']==='zone')&&($v['targeting']['mode']??'')!=='area')itemFailure('Une réduction d’armure en zone nécessite une cible de type zone circulaire.');
  return ['version'=>1,'useLabel'=>itemText($v['useLabel']??'Utiliser',40),'authority'=>($v['authority']??'')==='gm'?'gm':'owner','effects'=>$effects,...(isset($v['targeting'])?['targeting'=>normalizeItemTargeting($v['targeting'])]:[]),...(isset($v['trap'])?['trap'=>normalizeItemTrap($v['trap'])]:[]),...(($v['reusable']??false)===true?['reusable'=>true]:[]),...(!empty($v['ingredientTag'])?['ingredientTag'=>$v['ingredientTag']]:[])];
 }
 function applicationEffectFamily(mixed $v):string {
@@ -57,11 +61,13 @@ function applicationCleanseUnitEffects(array &$state,array &$unit,array $familie
 function applicationApplyActiveItem(array &$state,array $template,array &$unit,?array $token,array $identity,array $context):array {
  $active=normalizeActiveItem($template['active']??null);if(empty($active['effects']))itemFailure('Cet objet est un prérequis de compétence, il ne s’utilise pas directement.',409);
  if($active['authority']==='gm'&&$identity['role']!=='gm')itemFailure('Cette fiole doit être utilisée par le MJ pour son arbitrage.',403);
- $sceneId=$state['activeSceneId'];$holder=($unit['unitKind']??'')==='token'?'token:'.$unit['unitTokenId']:'character:'.$unit['id'];$clock=$state['initiative']??[];$result=['used'=>true,'itemName'=>$template['name'],'healing'=>0,'rolls'=>[],'messages'=>[]];
- foreach($active['effects'] as $index=>$a){
+ $sceneId=$state['activeSceneId'];$holder=($unit['unitKind']??'')==='token'?'token:'.$unit['unitTokenId']:'character:'.$unit['id'];$clock=$state['initiative']??[];$result=['used'=>true,'itemName'=>$template['name'],'healing'=>0,'rolls'=>[],'messages'=>[],...(isset($context['itemEnhancement'])?['itemEnhancement'=>$context['itemEnhancement']]:[])];
+ foreach($active['effects'] as $index=>$baseAction){
+  $a=applicationPassiveItemDuration(applicationEnhancedItemAction($baseAction,$context['itemEnhancement']??null),$unit,$template,$state);if($a===null)continue;
   if(in_array($a['kind'],['damage','dot','condition'],true)){if(!$token)itemFailure('Placez le pion sur la carte pour utiliser cet effet.',409);applicationItemPayload($state,$template,$unit,$token,$a,$index,$context,$result);}
+  if($a['kind']==='stackable-effect')applicationApplyStackableItemEffect($state,$a,$token,$context);
   if($a['kind']==='cleanse')applicationCleanseUnitEffects($state,$unit,$a['families']);
-  elseif($a['kind']==='heal-max-die'){$sides=max(1,(int)floor(($unit['resources']['maxHp']??0)*$a['percent']/100));$roll=($context['rollDie'])($sides,$template['name'],$unit['name']);$result['rolls'][]=$roll;$healing=$roll['total'];if(!empty($a['bonusFormula'])){$bonus=($context['rollFormula'])($a['bonusFormula'],$template['name'].' · complément de soin',$unit['name']);$result['rolls'][]=$bonus;$healing+=$bonus['total'];}$old=$unit['resources']['hp'];$unit['resources']['hp']=min($unit['resources']['maxHp'],$old+max(0,$healing));$result['healing']+=$unit['resources']['hp']-$old;}
+  elseif($a['kind']==='heal-max-die'){$sides=max(1,(int)floor(($unit['resources']['maxHp']??0)*$a['percent']/100));$roll=($context['rollDie'])($sides,$template['name'],$unit['name']);$result['rolls'][]=$roll;$healing=$roll['total'];if(!empty($a['bonusFormula'])){$bonus=($context['rollFormula'])($a['bonusFormula'],$template['name'].' · complément de soin',$unit['name']);$result['rolls'][]=$bonus;$healing+=$bonus['total'];}$old=$unit['resources']['hp'];$unit['resources']['hp']=min($unit['resources']['maxHp'],$old+max(0,$healing)*($context['itemEnhancement']['multipliers']['healing']??1));$result['healing']+=$unit['resources']['hp']-$old;}
   elseif(in_array($a['kind'],['stats','immunity','armor-reduction'],true)){
    if($a['kind']==='armor-reduction'&&$a['scope']==='zone')itemFailure('Une zone doit être créée depuis la carte.',409);
    $d=$a['kind']==='stats'?$a['duration']:['kind'=>'rounds','turns'=>$a['turns']];$mode=$a['kind']==='immunity'?'immunity':'stats';
@@ -78,7 +84,7 @@ function applicationApplyActiveItem(array &$state,array $template,array &$unit,?
 }
 function applicationItemEffectRest(array &$state,array $ids,string $kind):array {
  $holders=array_map(static fn($id)=>str_starts_with($id,'unit_')?'token:'.substr($id,5):'character:'.$id,$ids);$next=[];$expired=0;
- foreach($state['attackEnhancements']??[] as $e){if(($e['expiry']??'')!=='rests'||!in_array($e['holder'],$holders,true)){$next[]=$e;continue;}$left=$kind==='long'?0:($e['remainingShortRests']??1)-1;if($left<=0)$expired++;else{$e['remainingShortRests']=$left;$next[]=$e;}}
+ foreach($state['attackEnhancements']??[] as $e){if(in_array($e['expiry']??'',['long-rest','combat-or-rest'],true)&&in_array($e['holder'],$holders,true)){if($kind==='long'||($e['expiry']??'')==='combat-or-rest'){$expired++;continue;}$next[]=$e;continue;}if(($e['expiry']??'')!=='rests'||!in_array($e['holder'],$holders,true)){$next[]=$e;continue;}$left=$kind==='long'?0:($e['remainingShortRests']??1)-1;if($left<=0)$expired++;else{$e['remainingShortRests']=$left;$next[]=$e;}}
  $state['attackEnhancements']=$next;return ['expired'=>$expired];
 }
 function applicationAttackPoisonStacks(array &$state,array &$attack,array $source,array $target,callable $id):void {
@@ -88,7 +94,7 @@ function applicationAttackPoisonStacks(array &$state,array &$attack,array $sourc
  foreach($enhancements as $e)if(($e['mode']??'')==='on-hit-effects'&&applicationAttackTriggersEnhancement($e,$attack)){$payload=$e['payload'];unset($payload['timing'],$payload['buffTurns'],$payload['trigger']);$unit=unitById($state,unitIdForToken($target));$r=['rolls'=>[],'messages'=>[]];applicationItemPayload($state,['id'=>$e['abilityId'],'name'=>$e['label'],'image'=>$e['abilityImage']??''],$unit,$target,$payload,0,['id'=>$id,'sourceTokenId'=>$source['id']],$r);}
  if(applicationHasEffectImmunity($target,$state,$attack['sceneId'],'poison'))return;$clock=$state['initiative']??[];$key=!empty($clock['active'])?($clock['combatId']??'').':'.($clock['turnSerial']??0):'free:'.($state['devices']['manualTurns'][$attack['sceneId']]??0);$holder=applicationEnhancementHolder($source);
  foreach($state['attackEnhancements']??[] as $i=>$e){if(($e['mode']??'')!=='on-attack-dot'||!applicationAttackTriggersEnhancement($e,$attack)||!in_array($e['id'],array_column($enhancements,'id'),true)||($e['appliedTargets'][$target['id']]??'')===$key)continue;
-  if(count($state['damageOverTime']??[])>=100)itemFailure('La liste des dégâts périodiques est pleine.',409);$d=$e['dot'];$dotId=$id('dot');$state['damageOverTime'][]=['id'=>$dotId,'sourceAbilityId'=>$e['abilityId']??'','sourceEffectId'=>$e['id'],'sceneId'=>$attack['sceneId'],'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$source['name']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'label'=>$d['label'],'family'=>'poison','formula'=>$d['formula'],'damageType'=>'ignore','remainingTurns'=>$d['turns'],'lastTurnSerial'=>$clock['turnSerial']??0];$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;
+  if(count($state['damageOverTime']??[])>=100)itemFailure('La liste des dégâts périodiques est pleine.',409);$d=$e['dot'];$turns=applicationPassiveEffectTurns($target,$d['turns'],['family'=>'poison','harmful'=>true],$state);if($turns<=0){$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;continue;}$dotId=$id('dot');$state['damageOverTime'][]=['id'=>$dotId,'sourceAbilityId'=>$e['abilityId']??'','sourceEffectId'=>$e['id'],'sceneId'=>$attack['sceneId'],'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$source['name']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'label'=>$d['label'],'family'=>'poison','formula'=>$d['formula'],'damageType'=>'ignore','remainingTurns'=>$turns,'lastTurnSerial'=>$clock['turnSerial']??0];$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;
   $attack['poisonApplications'][]=['effectId'=>$e['id'],'abilityId'=>$e['abilityId']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'dotId'=>$dotId];
  }
 }

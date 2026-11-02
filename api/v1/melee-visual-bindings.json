@@ -1,9 +1,12 @@
 {
   "version": 1,
   "profiles": {
+    "serrated-harvesting-dagger": "harvesting-dagger-strike",
     "heavy-incandescent-blade": "requiem-grand-cleave",
     "barbed-chain": "barbed-chain-lash",
-    "ethereal-twin-blades": "ethereal-alternating",
+    "ethereal-twin-blades": "ethereal-rapier-strike",
+    "flame-sabre": "sabre-fire-strike",
+    "frost-sabre": "sabre-frost-strike",
     "light-halberd": "light-halberd-cleave",
     "paired-chitin-legs": "paired-chitin-injection",
     "druidic-staff": "druidic-staff-strike",
@@ -27,6 +30,8 @@
     }
   ],
   "equipmentTemplates": {
+    "v370-template-dc1e715d3803b61985045ee1": "serrated-harvesting-dagger",
+    "v370-template-30a0e58056d9f6c60da7b9ff": "serrated-harvesting-dagger",
     "v370-template-d810e782aa535bc6422e6ebf": "flame-sabre",
     "v370-template-82f161523d5dbfa66b734000": "frost-sabre",
     "v370-template-6aacb2d60e4cfeec7227d9b6": "flame-sabre",
@@ -94,6 +99,13 @@
     "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
       "presetByProfile": {
         "light-halberd": "charge-halberd-cleave"
+      },
+      "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    },
+    "ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066": {
+      "presetByProfile": {
+        "bladed-whip": "bladed-whip-precision"
       },
       "fallbackToWeapon": true,
       "resolvedDamageOnly": true

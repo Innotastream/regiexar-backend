@@ -16,7 +16,7 @@ $check($mounted['source']===['x'=>60,'y'=>45,'size'=>150]&&$mounted['anchorToken
 $check($mounted['radiusCells']==4.5,'Budget adapte a la monture');
 $giant=applicationTrustedSpellVisual(['id'=>$id],[...$context,'source'=>[...$context['source'],'size'=>10000]]);
 $check($giant['radiusCells']==20,'Empreinte geante bornee');
-$check(applicationSpellVisualDuration($spell)===5000,'3400ms visibles plus1600ms de livraison');
+$check(applicationSpellVisualDuration($spell)===8400,'6800ms visibles à demi-vitesse plus1600ms de livraison');
 $check(applicationTrustedSpellVisual(['id'=>'unknown','completionCue'=>['spell'=>$spell]],$context)===null,'Aucune animation inventée par une fiche');
 $check(applicationSpellVisual([...$spell,'presetId'=>'unknown'])===null,'Catalogue verrouillé');
 $public=['sceneId'=>'lobby','layerId'=>'ground','sourceTokenId'=>'caster','visibleTokenIds'=>['caster'],'visible'=>static fn()=>true];

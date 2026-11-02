@@ -343,9 +343,10 @@ if (is_array($deduplicatedAttack)) {
         $selectedWeapon=$weaponResult['selectedWeapon'];$damageComponents=$weaponResult['damageComponents'];$damageFormula=$weaponResult['damageFormula'];$damageType=$weaponResult['damageType'];
     }
     if($attackKind!=='weapon'){$enhanced=applicationEnhancedAttackDamage(['formula'=>$damageFormula,'damageType'=>$damageType,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[])],$source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId,!empty($mechanicsDefinition['useWeaponDamage']),true,false);$damageFormula=$enhanced['formula'];$damageType=$enhanced['damageType'];$damageComponents=$enhanced['damageComponents']??[];}
-    if(array_key_exists('targetTokenIds',$arguments)&&$attackKind!=='weapon')rejectOnlineCommand($connection,400,'Les cibles multiples de cette arme ne s’appliquent pas à cette compétence.','weapon_targets_invalid');
+    $targetingWeapon=$attackKind==='weapon'?$mechanicsDefinition:applicationAbilityWeaponTargeting($mechanicsDefinition,$selectedWeapon);
+    if(array_key_exists('targetTokenIds',$arguments)&&$targetingWeapon===null)rejectOnlineCommand($connection,400,'Les cibles multiples de cette arme ne s’appliquent pas à cette compétence.','weapon_targets_invalid');
     if(array_key_exists('targetTokenIds',$arguments)&&$arguments['targetTokenIds']===null)rejectOnlineCommand($connection,400,'Liste des cibles invalide.','weapon_targets_invalid');
-    try{$requestedWeaponIds=$attackKind==='weapon'&&!validApplicationDamageTargeting($mechanicsDefinition['damageTargeting']??null)?applicationWeaponTargetIds($mechanicsDefinition,(string)$target['id'],array_key_exists('targetTokenIds',$arguments)?$arguments['targetTokenIds']:null,$complexExecutionId!==''):[];}
+    try{$requestedWeaponIds=$targetingWeapon!==null&&!validApplicationDamageTargeting($mechanicsDefinition['damageTargeting']??null)?applicationWeaponTargetIds($targetingWeapon,(string)$target['id'],array_key_exists('targetTokenIds',$arguments)?$arguments['targetTokenIds']:null,$complexExecutionId!==''):[];}
     catch(RuntimeException $error){rejectOnlineCommand($connection,400,$error->getMessage(),'weapon_targets_invalid');}
     $weaponTargets=[];
     foreach($requestedWeaponIds as $weaponTargetId){
@@ -355,7 +356,7 @@ if (is_array($deduplicatedAttack)) {
         if(onlineResourceNumber($candidate['maxHp']??0)<=0||onlineTokenIsDead($candidate,$controller!==''))rejectOnlineCommand($connection,409,'Une des cibles ne peut plus être attaquée.','weapon_target_unavailable');
         $rangeTarget=$mechanicsStrikePosition?[...$candidate,...$mechanicsStrikePosition]:$candidate;
         $rangeSource=$strikeSourcePosition?[...$source,...$strikeSourcePosition]:$source;
-        if(!($authorizedRangeCells?applicationAbilityTargetInRange(['rangeCells'=>$authorizedRangeCells],$rangeSource,$rangeTarget,$map):applicationWeaponInRange($mechanicsDefinition,$rangeSource,$rangeTarget,$map)))rejectOnlineCommand($connection,409,'Une des cibles est hors de portée de cette arme.','weapon_target_out_of_range');
+        if(!($authorizedRangeCells?applicationAbilityTargetInRange(['rangeCells'=>$authorizedRangeCells],$rangeSource,$rangeTarget,$map):($attackKind==='ability'?applicationAbilityTargetInRange($mechanicsDefinition,$rangeSource,$rangeTarget,$map,[$selectedWeapon],(string)($arguments['weaponAttackId']??'')):applicationWeaponInRange($targetingWeapon,$rangeSource,$rangeTarget,$map))))rejectOnlineCommand($connection,409,'Une des cibles est hors de portée de cette arme.','weapon_target_out_of_range');
         $weaponTargets[]=$candidate;
     }
     if(count($weaponTargets)>1&&(count($activity['pendingAttacks']??[])+count($weaponTargets)>XAR_PENDING_ATTACK_MAXIMUM||count($receipts)+count($weaponTargets)>XAR_ATTACK_RECEIPT_MAXIMUM))rejectOnlineCommand($connection,409,'La file des attaques est pleine.','pending_attack_capacity_reached');
@@ -462,7 +463,8 @@ if (is_array($deduplicatedAttack)) {
     $threshold = $hasCastingCheck ? max(0, min(100, (int) $stats[$statIndex]['value'])) : null;
     $hitModifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? 0);
     $hitModifierMode = ($arguments['hitModifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
-    $conditionAttackPenalty=applicationTimedAttackPenalty(onlineDeviceState($connection,$records,$pending),$source,(string)$target['id'],$sceneId)+($chargeStrike['thresholdPenalty']??0);
+    $passiveState=onlineDeviceState($connection,$records,$pending);$passiveAttack=!empty($mechanicsDefinition['useWeaponDamage'])&&$selectedWeapon!==[]?[...$mechanicsDefinition,'reach'=>applicationWeaponReach($selectedWeapon)]:($mechanicsDefinition??[]);$targetPassivePenalty=static fn(array $recipient):int=>applicationPassiveRangedAttackPenalty($recipient,$passiveAttack,$passiveState);
+    $conditionAttackPenalty=applicationTimedAttackPenalty($passiveState,$source,(string)$target['id'],$sceneId)+$targetPassivePenalty($target)+($chargeStrike['thresholdPenalty']??0);
     $thresholdModifier = ($hitModifierMode === 'threshold' ? $hitModifierValue : 0) - ($castingPlan['difficultyPenalty'] ?? 0) - $conditionAttackPenalty;
     $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus);
     $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
@@ -485,7 +487,7 @@ if (is_array($deduplicatedAttack)) {
     if ($castingPlan === null && $chainGate === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
     if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
     $weaponOutcomes=[];
-    foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty(onlineDeviceState($connection,$records,$pending),$source,$id,$sceneId),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
+    foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||!empty($hitOutcome['automatic'])||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty($passiveState,$source,$id,$sceneId)-$targetPassivePenalty($recipient),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
     if($prepareDefenseOnly){$outcomes=[];foreach($liveAreaTargets as$recipient)$outcomes[$recipient['id']]=$weaponOutcomes[$recipient['id']]??$hitOutcome;return ['rolled'=>$hitRolled,'hasStatCheck'=>$hasCastingCheck,'hit'=>['raw'=>$hitRolled['rawD100']??null,'total'=>$hitRolled['total'],'formula'=>$hitRolled['formula']??$hitFormula,'statId'=>$hasCastingCheck?($stats[$statIndex]['id']??''):'','statLabel'=>$hasCastingCheck?($stats[$statIndex]['label']??'Statistique'):'Sans jet','outcome'=>$hitOutcome],'outcomes'=>$outcomes];}
     $infusionMissed=$weaponOutcomes!==[]?!array_filter($weaponOutcomes,static fn($o)=>!empty($o['success'])):!($hitOutcome['success']??false);
     if(!empty($infusion['payment'])&&$infusion['refundOnMiss']&&$infusionMissed)onlineDeviceRefund($connection,$records,$pending,$infusion['payment']);
@@ -716,7 +718,7 @@ if (is_array($deduplicatedAttack)) {
             }
             if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
             $areaAttack = $attack;
-            foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
+            foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'passivePercent', 'passivePreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
             $areaAttack['id'] = 'attack-' . randomToken(12);
             $areaAttack['requestId'] = 'area-' . randomToken(12);
             $areaAttack['targetTokenId'] = $areaId;
@@ -795,7 +797,9 @@ if (is_array($deduplicatedAttack)) {
         'expiresAt' => $now + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,
         'attack' => $attack,
     ];
-    appendApplicationAttackVisualEvent($activity,$attack,$map,$equipmentState['items']??[],$areaVisualAttacks);
+    $visualMap=$map;$visualTokenIds=array_fill_keys(array_column($visualMap['tokens']??[],'id'),true);
+    foreach($weaponTargets as $recipient)if(!isset($visualTokenIds[$recipient['id']])){$visualMap['tokens'][]=$recipient;$visualTokenIds[$recipient['id']]=true;}
+    appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$equipmentState['items']??[],$areaVisualAttacks,false,false,$equipmentState['devices']['devices']??[]);
     $activity['attackReceipts'] = $receipts;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $attackActivityDetail = onlineAttackHistoryDetail($attack, false);

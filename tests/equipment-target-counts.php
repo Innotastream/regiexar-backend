@@ -24,7 +24,7 @@ if(($argv[1]??'')==='--cases') {
 }
 
 $specialChecks=0;$f=targetCountFixture();$before=$f['state'];$attack=resolveEquipmentAttack($f['definition'],$f['source'],$f['state']);
-specialCheck($attack['targetCount']===2&&$attack['formula']==='d30+6'&&$attack['reach']==='reach'&&!$attack['projectile'],'Known model provides two targets without changing its attack');
+specialCheck($attack['targetCount']===2&&$attack['formula']==='2d20+10'&&$attack['reach']==='reach'&&!$attack['projectile'],'Known model provides two targets and the current weapon damage without changing its reach');
 specialCheck($f['state']===$before,'Resolving keeps stocks, instances and loadouts untouched');
 specialCheck(!array_key_exists('targetCount',$f['state']['items']['templates'][0]['equipment']),'Legacy equipment remains byte-equivalent in shape');
 specialCheck(applicationWeaponTargetIds($attack,'one',['one','two'])===['one','two'],'Two distinct recipients accepted');
