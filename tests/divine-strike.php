@@ -26,4 +26,10 @@ $blocked=contactAttack($db,'ability',DIVINE_ABILITY,['weaponAttackId'=>'halberd'
 [$db,$r]=divineCase('missed',false,false);$timer=$db->payload('activity')['actionTimers'][0];$character=$db->payload('character:'.CONTACT_CHARACTER);specialCheck($r->body['cast']['success']===false,'Failed Force check');specialCheck($character['resources']['mana']===80&&$character['fatigue']['current']===0&&$timer['readyRound']===2,'Reduced failure refunds fatigue, keeps mana spent and one-round cooldown');specialCheck($db->payload('token:scene-one:token-monster')['hp']===1000&&empty($db->payload('activity')['abilityCueEvents']),'Failed cast has neither damage nor successful-impact visual');
 [$db,$r]=divineCase('awaiting-opposition',true);specialCheck(empty($db->payload('activity')['abilityCueEvents']),'Optional opposition delays the impact visual');
 $rules=normalizeOnlineAbilities([['id'=>DIVINE_ABILITY,'name'=>'Autre nom','effect'=>'damage','formula'=>'1']])[0];$rules['manaCost']=23;specialCheck(normalizeOnlineAbilities([$rules])[0]['manaCost']===23,'Later explicit configuration stays editable');
+// Natural anatomy and an inventory-only weapon must fail before any payment.
+foreach(['natural','unequipped'] as $mode){$db=divineFixture();$beforeCharacter=$db->payload('character:'.CONTACT_CHARACTER);$beforeActivity=$db->payload('activity');
+ if($mode==='unequipped'){$items=$db->payload('items');$items['equipmentLoadouts'][CONTACT_CHARACTER]['equippedItemIds']=[];$items['equipmentLoadouts'][CONTACT_CHARACTER]['activeSetId']='';$db->put('items',$items);}
+ $r=contactAttack($db,'ability',DIVINE_ABILITY,['weaponAttackId'=>$mode==='natural'?'weapon-2':'halberd']);
+ specialCheck($r->status===400&&str_contains($r->body['error']??$r->body['message']??'','arme équipée'),'Divine strike rejects '.$mode.' selection: '.json_encode($r->body));
+ specialCheck($db->payload('character:'.CONTACT_CHARACTER)===$beforeCharacter&&$db->payload('activity')===$beforeActivity,'Refusal preserves resources, cooldown and cue history');}
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

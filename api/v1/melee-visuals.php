@@ -2,11 +2,11 @@
 declare(strict_types=1);
 require_once __DIR__.'/token-dash.php';
 function applicationMeleeVisualCatalogue(): array {
-    return ['harvesting-dagger-strike'=>730,'sabre-fire-strike'=>770,'sabre-frost-strike'=>770,'ethereal-rapier-strike'=>770,'battle-wrench-strike'=>950,'druidic-staff-strike'=>950,'bladed-whip-lash'=>1440,'bladed-whip-precision'=>1440,'charge-halberd-cleave'=>995,'light-halberd-cleave'=>975,'light-halberd-divine'=>1075,'paired-chitin-injection'=>865,'paired-chitin-divine'=>865,'ethereal-ground-fangs'=>2380,'sabre-fire-counter'=>1180,'sabre-frost-counter'=>1180,'sabre-fire-flurry'=>320,'sabre-frost-flurry'=>320,'elemental-sabre-cross'=>770,'ethereal-weapon-cross'=>770,'barbed-chain-lash'=>1040,'barbed-chain-sweep'=>1260,'ethereal-alternating'=>510,'ethereal-weave'=>585,
+    return ['harvesting-dagger-strike'=>730,'sabre-fire-strike'=>770,'sabre-frost-strike'=>770,'ethereal-rapier-strike'=>770,'battle-wrench-strike'=>950,'battle-wrench-overload'=>1650,'druidic-staff-strike'=>950,'bladed-whip-lash'=>1440,'bladed-whip-moving-lash'=>1360,'bladed-whip-precision'=>1440,'charge-halberd-cleave'=>995,'light-halberd-cleave'=>975,'light-halberd-divine'=>1075,'paired-chitin-injection'=>865,'ethereal-ground-fangs'=>2380,'sabre-fire-counter'=>1180,'sabre-frost-counter'=>1180,'sabre-fire-flurry'=>320,'sabre-frost-flurry'=>320,'elemental-sabre-cross'=>770,'ethereal-weapon-cross'=>770,'barbed-chain-lash'=>1040,'barbed-chain-sweep'=>1260,'ethereal-alternating'=>330,'ethereal-weave'=>585,
         'ethereal-instant'=>370,'ethereal-cross'=>440,'ethereal-dash-cross'=>1210,'requiem-judgement'=>1115,'requiem-grand-cleave'=>1065,'requiem-overhead'=>1270];
 }
 function applicationMeleeVisualDeliverySlack(string $presetId): int {
-    return in_array($presetId,['sabre-fire-flurry','sabre-frost-flurry'],true)?720:0;
+    return in_array($presetId,['sabre-fire-flurry','sabre-frost-flurry','ethereal-alternating'],true)?720:0;
 }
 function applicationMeleeVisual(mixed $value): ?array {
     if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='melee'
@@ -46,6 +46,8 @@ function applicationTrustedMeleeVisual(array $attack,array $context): ?array {
         ?(($bindings['naturalWeapons']['unit_'.$source['id']]??$bindings['naturalWeapons'][$source['characterId']??'']??[])[$weapon['weaponId']??'']??null):null;
     $binding=$bindings['abilities'][$context['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):'')]??null;
     if(!empty($context['deferredOnly'])&&empty($binding['resolvedDamageOnly'])||!empty($binding['resolvedDamageOnly'])&&!in_array($attack['status']??'',['applied','blocked'],true))return null;
+    if(!empty($binding['requiresPhysicalEquipment'])&&(!empty($weapon['naturalWeapon'])||empty($weapon['equipmentItemIds'])))return null;
+    if(!empty($binding['suppress']))return null;
     $requiresEquipment=($binding['requiresEquipment']??true)!==false;
     if($requiresEquipment&&(empty($weapon['weaponBased'])||!empty($weapon['projectile'])||($weapon['reach']??'')==='ranged'||!$natural&&empty($weapon['equipmentItemIds'])))return null;
     if($natural)$profiles=[$natural];

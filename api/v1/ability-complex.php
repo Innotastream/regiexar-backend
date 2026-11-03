@@ -371,6 +371,9 @@ function onlineUseComplexAbility(
             $currentActivity['abilityExecutions'] = trimApplicationComplexAbilityExecutions([
                 ...($currentActivity['abilityExecutions'] ?? []), $execution,
             ]);
+            $visualMap=[...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
+            $activationVisual=applicationTrustedActivationSpellVisual($ability,['sceneId'=>$sceneId,'source'=>$source,'map'=>$visualMap]);
+            if($activationVisual!==null)appendApplicationAbilityCueEvent($currentActivity,normalizeApplicationAbilityCompletionCue(['version'=>1,'spell'=>$activationVisual]),$sceneId,$activationVisual['layerId'],(string)$source['id'],!empty($source['hidden'])||($cast['roll']['visibility']??'')==='gm'?'gm':'public','activation-'.$execution['id']);
             queueOnlineDomainUpsert($pending, $records, 'activity', $currentActivity);
             if($defenseApproval!==null||$emptyPathSelection)$execution=onlineApplyApprovedComplexSelection($connection,$records,$pending,$table,$execution,$arguments,$defenseApproval??['defenseTokenIds'=>[],'gate'=>['targetTokenIds'=>[]],'gm'=>$identity]);
         }

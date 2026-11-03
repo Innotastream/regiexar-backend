@@ -78,8 +78,7 @@
       "presetId": "requiem-overhead"
     },
     "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {
-      "profile": "barbed-chain",
-      "presetId": "barbed-chain-sweep"
+      "suppress": true
     },
     "ability-3c2a4c7c-74e8-4110-96a1-468e4ce52132": {
       "presetChoices": [
@@ -90,11 +89,11 @@
     },
     "ability-0eaec688-fbcd-49cf-8e85-b6e1e7c8fa25": {
       "presetByProfile": {
-        "light-halberd": "light-halberd-divine",
-        "paired-chitin-legs": "paired-chitin-divine"
+        "light-halberd": "light-halberd-divine"
       },
       "fallbackToWeapon": true,
-      "resolvedDamageOnly": true
+      "resolvedDamageOnly": true,
+      "requiresPhysicalEquipment": true
     },
     "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
       "presetByProfile": {
@@ -108,6 +107,25 @@
         "bladed-whip": "bladed-whip-precision"
       },
       "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    },
+    "leihr-surcharge-cle": {
+      "presetByProfile": {
+        "compact-battle-tool": "battle-wrench-overload"
+      },
+      "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    },
+    "ability-ada1c512-1a87-455b-8d87-8ff014b57c78": {
+      "presetByProfile": {
+        "compact-battle-tool": "battle-wrench-overload"
+      },
+      "fallbackToWeapon": true,
+      "resolvedDamageOnly": true
+    },
+    "ability-ae84d88e-2469-45f5-b22e-b56971892753": {
+      "presetId": "bladed-whip-moving-lash",
+      "requiresEquipment": false,
       "resolvedDamageOnly": true
     }
   },

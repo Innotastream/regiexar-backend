@@ -1,4 +1,157 @@
 {
+  "ability-7BG1hkmR6vBEbTLL": {
+    "presetId": "single-weapon-full-damage",
+    "revision": 1,
+    "effect": "complex",
+    "workflowUpgrade": {
+      "steps": [
+        {
+          "match": {
+            "id": "valse_cinq_frappes",
+            "type": "allocated-attacks",
+            "damageMode": "weapon"
+          },
+          "values": {
+            "damagePercent": 100,
+            "allowWeaponSets": false
+          }
+        }
+      ],
+      "descriptionReplacements": [
+        [
+          "Chaque frappe conserve le multiplicateur de 50 % sur les dégâts de l’attaque de base configurée.",
+          "Chaque frappe inflige 100 % des dégâts actuels de l’arme individuelle choisie. Les deux sabres ne sont jamais cumulés dans une même frappe."
+        ]
+      ]
+    }
+  },
+  "ability-1c96374f-b73d-440f-a1de-c149022c6dee": {
+    "presetId": "mind-influence-recharge",
+    "revision": 2,
+    "effect": "movement",
+    "rangeUpgradeOnly": true,
+    "upgradeValues": {
+      "reach": "melee",
+      "projectile": false,
+      "minimumReach": null
+    },
+    "values": {
+      "cooldownRounds": 4,
+      "restRecharge": "short",
+      "usesPerRest": 2,
+      "reusableInTurn": false,
+      "reach": "melee",
+      "rangeCells": 2,
+      "projectile": false,
+      "minimumReach": null
+    }
+  },
+  "ability-1a43a9ff-6af8-4b37-8940-d6894ba864a2": {
+    "presetId": "supreme-eye-reach",
+    "revision": 1,
+    "effect": "movement",
+    "values": {
+      "reach": "reach",
+      "rangeCells": 4,
+      "projectile": false,
+      "minimumReach": null
+    }
+  },
+  "supra-miroir": {
+    "presetId": "appearance-copy-melee",
+    "revision": 1,
+    "effect": "movement",
+    "match": {
+      "effect": "movement",
+      "tacticalEffect": {
+        "version": 1,
+        "kind": "appearance"
+      }
+    },
+    "values": {
+      "reach": "melee",
+      "rangeCells": 2,
+      "projectile": false,
+      "minimumReach": null
+    }
+  },
+  "ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066": {
+    "presetId": "weapon-targeted-precision",
+    "revision": 1,
+    "effect": "damage",
+    "values": {
+      "useWeaponDamage": true,
+      "mainWeaponOnly": true,
+      "maximumWeaponDamage": true,
+      "useWeaponTargetCount": true,
+      "noDefensePossible": true,
+      "castingStatId": "",
+      "description": "Visez une ou plusieurs unités distinctes dans la portée de l’arme principale, sans dépasser son nombre de cibles autorisé (jusqu’à deux avec le fouet). Chaque cible est touchée automatiquement, sans jet de lancement, opposition ni contre-attaque. Inflige le maximum des dégâts de base de l’arme principale à chaque cible ; les effets supplémentaires gardent leurs jets normaux. Le coût et la recharge sont payés une seule fois pour l’action."
+    }
+  },
+  "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
+    "presetId": "next-potion-empowerment",
+    "revision": 1,
+    "effect": "movement",
+    "values": {
+      "effect": "enhancement",
+      "formula": "0",
+      "manaCost": 30,
+      "hpCost": 0,
+      "fatigueCost": 10,
+      "fatigueCostIncludesPassive": false,
+      "attackEnhancement": {
+        "mode": "next-item-use",
+        "itemKind": "potion",
+        "multipliers": {
+          "healing": 2,
+          "damage": 2,
+          "area": 2,
+          "duration": 2
+        },
+        "turns": 1,
+        "target": "self",
+        "expiry": "combat-or-rest"
+      },
+      "description": "Une utilisation par repos long. Surcharge la prochaine potion utilisée par cette unité : soins, dégâts, dimensions de zone et durée sont doublés. Une zone de 4 cases de diamètre passe ainsi à 8 cases. La portée de lancement ne change pas. Le renforcement ne se cumule pas avec lui-même. Il est consommé à la prochaine utilisation effective et disparaît à la fin du combat, lors d’un repos court ou long, ou sur retrait du MJ. Hors combat, il attend la prochaine potion, un repos ou son retrait. Annuler une potion avant son utilisation conserve la préparation tant qu’elle n’a pas expiré.",
+      "image": "/assets/spell-effects/super-potion.png",
+      "onHitConditions": [],
+      "usesPerRest": 1,
+      "restRecharge": "long"
+    }
+  },
+  "ability-2570d5e3-58d0-4b44-aa7b-5c5627e1fa32": {
+    "retired": true
+  },
+  "ability-38ab61ec-4a78-4dbf-8101-75acaeb911ca": {
+    "retired": true
+  },
+  "leihr-vengeance-trass": {
+    "presetId": "trass-unlimited-beam",
+    "revision": 1,
+    "effect": "device",
+    "deviceUpgradeOnly": true,
+    "values": {
+      "device": {
+        "unlimitedRange": true,
+        "affectUnseen": true
+      },
+      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
+    }
+  },
+  "ability-3edf1e55-7d28-405f-9f7b-fe6045b9002b": {
+    "presetId": "trass-unlimited-beam",
+    "revision": 1,
+    "effect": "device",
+    "deviceUpgradeOnly": true,
+    "values": {
+      "device": {
+        "unlimitedRange": true,
+        "affectUnseen": true
+      },
+      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
+    }
+  },
   "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {
     "presetId": "moon-beam-footprint",
     "revision": 1,
@@ -73,6 +226,10 @@
     "revision": 3,
     "effect": "damage",
     "rangeUpgradeOnly": true,
+    "rangeUpgradeRevision": 2,
+    "upgradeValues": {
+      "noDefensePossible": true
+    },
     "values": {
       "rangeCells": 15,
       "attackApproach": {
@@ -80,10 +237,6 @@
         "mode": "contact",
         "durationMs": 1210
       },
-      "noDefensePossible": true
-    },
-    "rangeUpgradeRevision": 2,
-    "upgradeValues": {
       "noDefensePossible": true
     }
   },
@@ -255,7 +408,7 @@
   },
   "ability-0eaec688-fbcd-49cf-8e85-b6e1e7c8fa25": {
     "presetId": "divine-strike",
-    "revision": 1,
+    "revision": 2,
     "values": {
       "useWeaponDamage": true,
       "mainWeaponOnly": true,
@@ -282,7 +435,13 @@
       "reducedFailureCooldown": true,
       "reusableInTurn": false,
       "difficultyIncrement": 0,
-      "description": "Imprègne la hallebarde d’énergie divine avant de l’abattre sur la cible.\n\nAjoute 1d40+10 dégâts ignorant l’armure aux dégâts physiques de la hallebarde, actuellement 1d40+6."
+      "description": "Imprègne l’arme principale actuellement équipée en main d’énergie divine, puis frappe dans sa portée propre. Les armes naturelles, dont les pattes, sont exclues.\n\nAjoute 1d40+10 dégâts ignorant l’armure aux dégâts courants de cette seule arme.",
+      "equippedWeaponOnly": true
+    },
+    "upgradeOnly": true,
+    "upgradeValues": {
+      "equippedWeaponOnly": true,
+      "description": "Imprègne l’arme principale actuellement équipée en main d’énergie divine, puis frappe dans sa portée propre. Les armes naturelles, dont les pattes, sont exclues.\n\nAjoute 1d40+10 dégâts ignorant l’armure aux dégâts courants de cette seule arme."
     }
   },
   "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {
@@ -297,81 +456,23 @@
       "refundOnMiss": false
     }
   },
-  "leihr-vengeance-trass": {
-    "presetId": "trass-unlimited-beam",
-    "revision": 1,
-    "effect": "device",
-    "deviceUpgradeOnly": true,
-    "values": {
-      "device": {
-        "unlimitedRange": true,
-        "affectUnseen": true
-      },
-      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
-    }
-  },
-  "ability-3edf1e55-7d28-405f-9f7b-fe6045b9002b": {
-    "presetId": "trass-unlimited-beam",
-    "revision": 1,
-    "effect": "device",
-    "deviceUpgradeOnly": true,
-    "values": {
-      "device": {
-        "unlimitedRange": true,
-        "affectUnseen": true
-      },
-      "description": "Une utilisation par repos long. Chaque participant consent personnellement à céder tout son mana courant. Après un tour complet, une petite orbe mécanique libère un faisceau de plasma droit dans la direction choisie, sans limite de portée sur la carte. Il touche aussi les unités cachées ou hors de la vue des joueurs ; seul le MJ voit toutes les victimes et décide de leurs défenses. La largeur des dégâts reste de 1 case : dégâts magiques égaux au mana récolté, à 100 %, 90 %, 80 %, etc. selon l’ordre des cibles. Le rayon traverse les murs et y ouvre une brèche de largeur double. Son sillage de feu violet rose reste peint et effaçable ; il est purement visuel, sans dégât ni état supplémentaire. Le jet final utilise la Chance courante arrondie de Leihr. Un échec détruit la lentille ; seul le MJ peut réactiver l’appareil."
-    }
-  },
-  "ability-2570d5e3-58d0-4b44-aa7b-5c5627e1fa32": {
-    "retired": true
-  },
-  "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
-    "presetId": "next-potion-empowerment",
-    "revision": 1,
-    "effect": "movement",
-    "values": {
-      "effect": "enhancement",
-      "formula": "0",
-      "manaCost": 30,
-      "hpCost": 0,
-      "fatigueCost": 10,
-      "fatigueCostIncludesPassive": false,
-      "attackEnhancement": {
-        "mode": "next-item-use",
-        "itemKind": "potion",
-        "multipliers": {
-          "healing": 2,
-          "damage": 2,
-          "area": 2,
-          "duration": 2
-        },
-        "turns": 1,
-        "target": "self",
-        "expiry": "combat-or-rest"
-      },
-      "description": "Une utilisation par repos long. Surcharge la prochaine potion utilisée par cette unité : soins, dégâts, dimensions de zone et durée sont doublés. Une zone de 4 cases de diamètre passe ainsi à 8 cases. La portée de lancement ne change pas. Le renforcement ne se cumule pas avec lui-même. Il est consommé à la prochaine utilisation effective et disparaît à la fin du combat, lors d’un repos court ou long, ou sur retrait du MJ. Hors combat, il attend la prochaine potion, un repos ou son retrait. Annuler une potion avant son utilisation conserve la préparation tant qu’elle n’a pas expiré.",
-      "image": "/assets/spell-effects/super-potion.png",
-      "onHitConditions": [],
-      "usesPerRest": 1,
-      "restRecharge": "long"
-    }
-  },
-  "ability-38ab61ec-4a78-4dbf-8101-75acaeb911ca": {
-    "retired": true
-  },
-  "ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066": {
-    "presetId": "weapon-targeted-precision",
+  "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {
+    "presetId": "claw-dance-caster-area",
     "revision": 1,
     "effect": "damage",
+    "targetingUpgradeOnly": true,
+    "targetingDefaults": {
+      "radiusCells": 4
+    },
     "values": {
-      "useWeaponDamage": true,
-      "mainWeaponOnly": true,
-      "maximumWeaponDamage": true,
-      "useWeaponTargetCount": true,
-      "noDefensePossible": true,
-      "castingStatId": "",
-      "description": "Visez une ou plusieurs unités distinctes dans la portée de l’arme principale, sans dépasser son nombre de cibles autorisé (jusqu’à deux avec le fouet). Chaque cible est touchée automatiquement, sans jet de lancement, opposition ni contre-attaque. Inflige le maximum des dégâts de base de l’arme principale à chaque cible ; les effets supplémentaires gardent leurs jets normaux. Le coût et la recharge sont payés une seule fois pour l’action."
+      "damageTargeting": {
+        "mode": "area",
+        "origin": "caster",
+        "affectCaster": false,
+        "affectAllies": false,
+        "affectEnemies": true
+      },
+      "description": "Déploie la chaîne à sa portée maximale autour du lanceur et la fait tournoyer deux fois. Les ennemis présents dans la zone au lancement sont inclus dans cette seule attaque de zone ; le lanceur et les alliés sont exclus."
     }
   }
 }

@@ -44,7 +44,15 @@ function applicationWeaponTargetIds(array $weapon,string $primary,mixed $request
     $seen=[];foreach($ids as $id){if(!is_string($id)||preg_match('/^[A-Za-z0-9_-]{1,80}$/D',$id)!==1||isset($seen[$id]))throw new RuntimeException('Choisissez des cibles distinctes dans la limite prévue par cette arme.',400);$seen[$id]=true;}
     return $ids;
 }
-function applicationSimpleWeaponDamage(array $ability,array $weapons,string $requested=''):array {
+function applicationUsableAbilityWeapons(array $ability,array $weapons,?array $equippedWeapons=null):array {
+    if(empty($ability['equippedWeaponOnly']))return $weapons;
+    $ids=[];foreach($equippedWeapons??$weapons as $w)if(empty($w['naturalWeapon']))foreach($w['equipmentItemIds']??[]as$id)if(!in_array($id,$ids,true))$ids[]=$id;
+    $rows=array_values(array_filter($weapons,static fn($w)=>empty($w['naturalWeapon'])&&count($w['equipmentItemIds']??[])===1&&in_array($w['equipmentItemIds'][0],$ids,true)));
+    usort($rows,static fn($a,$b)=>array_search($a['equipmentItemIds'][0],$ids,true)<=>array_search($b['equipmentItemIds'][0],$ids,true));return $rows;
+}
+function applicationSimpleWeaponDamage(array $ability,array $weapons,string $requested='',?array $equippedWeapons=null):array {
+    $weapons=applicationUsableAbilityWeapons($ability,$weapons,$equippedWeapons);
+    if(!empty($ability['equippedWeaponOnly'])&&($weapons===[]||$requested!==''&&!in_array($requested,array_column($weapons,'id'),true)))throw new RuntimeException('Cette compétence exige une arme équipée en main, hors armes naturelles.',400);
     $required=$ability['requiredWeaponAttackId']??'';if($required!==''&&$requested!==''&&$requested!==$required)throw new RuntimeException('Cette compétence utilise uniquement l’arme configurée.',400);
     $id=$required?:($requested!==''?$requested:(!empty($ability['mainWeaponOnly'])?($weapons[0]['id']??''):''));$weapon=null;
     foreach($weapons as $entry)if($entry['id']===$id){$weapon=$entry;break;}

@@ -28,7 +28,7 @@ function applicationRestoreBeamWallDelta(array $walls,array $delta,?array $map=n
 function applicationTrassTerrainStroke(array $map,array $ray,string $id):array{
  $dimensions=applicationTerrainRasterDimensions($map);$bytes=str_repeat("\0",(int)ceil($dimensions['width']*$dimensions['height']/8));$radius=$ray['width']/2;
  for($y=0;$y<$dimensions['height'];$y++)for($x=0;$x<$dimensions['width'];$x++){$dx=($x+.5)*$ray['mapWidth']/$dimensions['width']-$ray['start']['x'];$dy=($y+.5)*$ray['mapHeight']/$dimensions['height']-$ray['start']['y'];$along=max(0,min($ray['length'],$dx*$ray['ux']+$dy*$ray['uy']));$distance=($dx-$along*$ray['ux'])**2+($dy-$along*$ray['uy'])**2;if($distance<=$radius*$radius){$index=$y*$dimensions['width']+$x;$byte=intdiv($index,8);$bytes[$byte]=chr(ord($bytes[$byte])|(1<<($index&7)));}}
- return ['id'=>$id,'kind'=>'fire','layerId'=>$map['activeLayerId']??'ground',...$dimensions,'mask'=>applicationEncodeTerrainMask($bytes,$dimensions['width'],$dimensions['height']),'hue'=>285];
+ return ['id'=>$id,'kind'=>'fire','layerId'=>$map['activeLayerId']??'ground',...$dimensions,'mask'=>applicationEncodeTerrainMask($bytes,$dimensions['width'],$dimensions['height']),'hue'=>345];
 }
 function applicationApplyTrassBeamPresentation(array &$state,array $device,string $requestId,?int $now=null):?array{
  if(!applicationIsTrassBeam($device))return null;$now??=(int)floor(microtime(true)*1000);$key='trass-shot-'.substr(hash('sha256',json_encode([$device['id'],$requestId],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)),0,48);

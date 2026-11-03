@@ -39,7 +39,7 @@ foreach(['token-monster','token-monster-two']as$index=>$targetId){
 $final=$db->payload('token:scene-one:token-player');specialCheck($execution['status']==='completed'&&abs($final['x']-50)<1e-7&&abs($final['y']-50)<1e-7,'Last real hop reaches the chosen final point');
 $store=$db->payload('devices');specialCheck(count($store['contactZones'])===1&&$store['contactZones'][0]['definition']['damage']===['formula'=>'1d20','damageType'=>'magical'],'One persistent normal-magical contact filament follows the accepted hops');
 specialCheck($store['contactZones'][0]['contacts']===[],'Enemy contacts are not charged during Hira’s own turn');
-$dashes=array_values(array_filter($db->payload('activity')['abilityCueEvents'],static fn($event)=>($event['completionCue']['spell']['presetId']??'')==='token-fulgurant-dash'));
+$dashes=array_values(array_filter($db->payload('activity')['abilityCueEvents'],static fn($event)=>($event['completionCue']['spell']['presetId']??'')==='token-celestial-dash'));
 specialCheck(count($dashes)===3&&array_filter($dashes,static fn($event)=>$event['completionCue']['sound']!==null)===[],'Two hops and one final move have silent token afterimages, without a melee X');
 specialCheck(($db->payload('character:character-player')['resources']['mana']??0)===100&&($db->payload('character:character-player')['fatigue']['current']??0)===0,'Original zero mana/fatigue costs remain unchanged');
 

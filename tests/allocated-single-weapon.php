@@ -5,10 +5,10 @@ declare(strict_types=1);
 define('XAR_SPECIAL_FIXTURE_ONLY', true);
 require __DIR__ . '/tactical-special-effects.php';
 
-function singleWeaponFixture(?bool $allowWeaponSets = false): MemoryConnection {
+function singleWeaponFixture(?bool $allowWeaponSets = false, int $damagePercent = 50): MemoryConnection {
     $db = specialFixture();
     $step = ['id'=>'strikes','type'=>'allocated-attacks','sourceStepId'=>'distribution',
-        'awarenessMode'=>'once','awarenessStatId'=>'character-stat-instinct','damagePercent'=>50];
+        'awarenessMode'=>'once','awarenessStatId'=>'character-stat-instinct','damagePercent'=>$damagePercent];
     if ($allowWeaponSets !== null) $step['allowWeaponSets'] = $allowWeaponSets;
     $ability = ['id'=>'single-weapon-series','name'=>'Série fictive','effect'=>'complex','formula'=>'0',
         'castingStatId'=>'','fatigueCost'=>5,'workflow'=>['version'=>8,'steps'=>[
@@ -101,4 +101,19 @@ specialCheck(!applicationAllocatedAttackAllowsWeapon($restricted,['equipmentItem
 foreach ([['equipmentBinding'=>['kind'=>'item','id'=>'greatsword'],'equipmentItemIds'=>['greatsword'],'formula'=>'2d30+8'],['naturalWeapon'=>true,'equipmentItemIds'=>[],'formula'=>'2d30+8'],['formula'=>'3d10+5']] as $weapon) {
     specialCheck(applicationAllocatedAttackAllowsWeapon($restricted,$weapon),'Two-handed, natural and direct creature attacks remain individual regardless of dice count');
 }
+// Valse owner adjustment: a single selected weapon deals its full damage.
+foreach (['fire'=>44,'ice'=>10] as $weapon=>$expectedDamage) {
+    $db=singleWeaponFixture(false,100);
+    specialCheck(singleWeaponPlan($db,'equipment-'.$weapon)->status===200,'Full weapon series accepts one actual weapon');
+    specialCheck(singleWeaponCommand($db,'prepare-target',['targetTokenId'=>'token-monster'])->status===200,'Full weapon strike can be prepared');
+    $request='full-weapon-'.randomToken(20);$accepted=singleWeaponStrike($db,'equipment-'.$weapon,$request);
+    specialCheck($accepted->status===200,'Full weapon strike resolves');
+    $receipts=$db->payload('activity')['attackReceipts'];$attack=$receipts[count($receipts)-1]['attack'];
+    specialCheck($attack['damagePercent']===100&&$attack['appliedDamage']===$expectedDamage,'One hundred percent uses only the selected weapon, never the sum of the pair');
+    specialCheck($attack['echoAttackContext']['equipmentItemIds']===[$weapon]&&$attack['damageType']==='magical','Full weapon preserves its sole equipment identity and damage type');
+    $before=serialize([$db->domains,$db->revision]);$replayed=singleWeaponStrike($db,'equipment-'.$weapon,$request);
+    specialCheck($replayed->status===200&&serialize([$db->domains,$db->revision])===$before,'Retry never applies full damage twice');
+    specialCheck($db->payload('character:character-player')['fatigue']['current']===5,'Full weapon series still pays fatigue only once');
+}
+
 echo 'allocated-single-weapon: '.$specialChecks." checks passed\n";

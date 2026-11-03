@@ -25,6 +25,13 @@
       "variants": {
         "damage": "blood-burst",
         "guard": "blood-crystal"
+      },
+      "activation": {
+        "presetId": "blood-awakening",
+        "placement": "source",
+        "radiusCells": 1,
+        "followSource": true,
+        "followAnchor": true
       }
     },
     "ability-mania-elemental-breath": {
@@ -122,6 +129,22 @@
     "ability-1c96374f-b73d-440f-a1de-c149022c6dee": {
       "placement": "target",
       "presetId": "whisper-puppet",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true
+    },
+    "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {
+      "presetId": "barbed-chain-area-sweep",
+      "placement": "source",
+      "radiusCells": 4,
+      "followSource": true,
+      "followAnchor": true
+    }
+  },
+  "tacticalEffects": {
+    "appearance": {
+      "placement": "target",
+      "presetId": "mirror-copy",
       "radiusCells": 1,
       "followTarget": true,
       "followSource": true

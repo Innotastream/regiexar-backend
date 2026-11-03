@@ -4,12 +4,12 @@ require_once __DIR__.'/melee-visuals.php';
 require_once __DIR__.'/token-dash.php';
 require_once __DIR__.'/equipment.php';
 require_once __DIR__.'/combat-animation-timing.php';
-function applicationSpellVisualCatalogue(): array { return ['whisper-puppet'=>3300,'supreme-eye'=>3900,'weapon-poison-brew'=>2300,'weapon-poison-coat'=>2700,'timed-flux-explosion'=>1900,'stationary-blue-bolt'=>1350,'trass-plasma-beam'=>2200,'moonlight-density'=>2400,'mist-capsule'=>1600,'potion-satchel'=>3400,'super-potion-charge'=>2800,'predator-analysis'=>3300,'venom-awakening'=>2800,'venom-ramifications'=>1300,'venom-affliction'=>1700,'compact-force-wave'=>2150,'force-wall-shatter'=>1250,'intimidation-red'=>2300,'blood-burst'=>1290,'blood-crystal'=>1640,'elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
+function applicationSpellVisualCatalogue(): array { return ['mirror-copy'=>3000,'whisper-puppet'=>3300,'supreme-eye'=>3900,'weapon-poison-brew'=>2300,'weapon-poison-coat'=>2700,'timed-flux-explosion'=>1900,'stationary-blue-bolt'=>1350,'trass-plasma-beam'=>2200,'moonlight-density'=>2400,'mist-capsule'=>1600,'potion-satchel'=>3400,'super-potion-charge'=>2800,'predator-analysis'=>3300,'venom-awakening'=>2800,'venom-ramifications'=>1300,'venom-affliction'=>1700,'barbed-chain-area-sweep'=>1260,'compact-force-wave'=>2150,'force-wall-shatter'=>1250,'intimidation-red'=>2300,'blood-awakening'=>2600,'blood-burst'=>1290,'blood-crystal'=>1640,'elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
 function applicationSpellVisualDuration(mixed $value): int {
     $spell=applicationSpellVisual($value);if($spell===null)return 0;
-    if($spell['placement']==='dash')return applicationCombatAnimationDuration(match($spell['presetId']){'token-body-charge'=>800,'token-fulgurant-dash'=>1210,default=>900})+1600;
+    if($spell['placement']==='dash')return applicationCombatAnimationDuration(match($spell['presetId']){'token-body-charge'=>800,'token-fulgurant-dash'=>1210,'token-celestial-dash'=>910,default=>900})+1600;
     if($spell['placement']==='melee')return applicationCombatAnimationDuration(applicationMeleeVisualCatalogue()[$spell['presetId']])+1600+applicationMeleeVisualDeliverySlack($spell['presetId']);
-    return applicationCombatAnimationDuration(applicationSpellVisualCatalogue()[$spell['presetId']])+(in_array($spell['presetId'],['whisper-puppet','supreme-eye','weapon-poison-brew','weapon-poison-coat','timed-flux-explosion','stationary-blue-bolt','trass-plasma-beam','blood-burst','blood-crystal','force-wall-shatter','compact-force-wave','venom-awakening','venom-ramifications','venom-affliction','potion-satchel','mist-capsule','super-potion-charge','predator-analysis'],true)?1600:0);
+    return applicationCombatAnimationDuration(applicationSpellVisualCatalogue()[$spell['presetId']])+(in_array($spell['presetId'],['mirror-copy','whisper-puppet','supreme-eye','weapon-poison-brew','weapon-poison-coat','timed-flux-explosion','stationary-blue-bolt','trass-plasma-beam','blood-awakening','blood-burst','blood-crystal','force-wall-shatter','compact-force-wave','venom-awakening','venom-ramifications','venom-affliction','barbed-chain-area-sweep','potion-satchel','mist-capsule','super-potion-charge','predator-analysis'],true)?1600:0);
 }
 
 function applicationSpellVisual(mixed $value): ?array {
@@ -37,10 +37,10 @@ function applicationSpellVisual(mixed $value): ?array {
     return $result;
 }
 
-function applicationSpellVisualBindings(): array {
+function applicationSpellVisualBindings(string $section='bindings'): array {
     static $configuration=null;
     if($configuration===null){$data=json_decode((string)file_get_contents(__DIR__.'/spell-visual-bindings.json'),true);$configuration=is_array($data)?$data:[];}
-    return $configuration['bindings']??[];
+    return is_array($configuration[$section]??null)?$configuration[$section]:[];
 }
 function applicationCoatingWeaponProfile(array $target,array $context): ?string {
     if(empty($context['items']))return null;
@@ -57,8 +57,14 @@ function applicationTrustedCraftSpellVisual(array $effect,array $context): ?arra
     if(($effect['type']??'')!=='consumable.crafted'||($effect['sceneId']??'')!==($context['sceneId']??'')||!is_array($binding)||$source===null)return null;
     return applicationTrustedSpellVisual(['id'=>$effect['abilityId']],[...$context,'source'=>$source,'bindings'=>[$effect['abilityId']=>$binding]]);
 }
+function applicationTrustedActivationSpellVisual(array $ability,array $context): ?array {
+    $binding=applicationSpellVisualBindings()[$ability['id']??'']['activation']??null;
+    return is_array($binding)?applicationTrustedSpellVisual($ability,[...$context,'bindings'=>[$ability['id']=>$binding]]):null;
+}
 function applicationTrustedSpellVisual(array $ability,array $context): ?array {
-    $binding=($context['bindings']??applicationSpellVisualBindings())[$ability['id']??'']??null;$source=$context['source']??null;$map=$context['map']??null;
+    $effect=$ability['tacticalEffect']??[];$kind=($effect['version']??null)===1&&($ability['effect']??'')==='movement'?($effect['kind']??null):null;
+    $tactical=$context['tacticalBindings']??applicationSpellVisualBindings('tacticalEffects');
+    $binding=($context['bindings']??applicationSpellVisualBindings())[$ability['id']??'']??(is_string($kind)?($tactical[$kind]??null):null);$source=$context['source']??null;$map=$context['map']??null;
     if(!is_array($binding)||!empty($binding['movementStepId'])||!is_array($source)||!is_array($map))return null;
     $footprint=function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($source,$map):$source;
     $target=!empty($binding['followTarget'])&&!empty($context['targetPoint']['id'])?(function_exists('applicationTokenSpatialFootprint')?applicationTokenSpatialFootprint($context['targetPoint'],$map):$context['targetPoint']):null;
