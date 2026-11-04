@@ -61,7 +61,10 @@ test("la commande de déplacement arbitre le trajet Joueur et la destination MJ 
   assert.match(movement, /\$mapKey = 'map:' \. \$moveSceneId/);
   assert.match(movement, /\$moveSceneId = \$requestedSceneId/);
   assert.match(movement, /\$isGm && \(\$arguments\['assisted'\] \?\? false\) !== true \? applicationResolveGmTokenPlacement\(/);
-  assert.match(movement, /if \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)/);
+  assert.match(movement, /\$freeWallPlacement\s*=\s*\$isGm\s*&&\s*applicationIsRectangularObstacle\(\$token\)/,
+    'seul le MJ qui place un obstacle rectangulaire peut déborder des murs');
+  assert.match(movement, /if \(!\$freeWallPlacement && \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)\)/,
+    'les déplacements Joueur et les déplacements assistés ordinaires conservent le contrôle de visibilité');
   assert.match(movement, /onlineMapMovementVisibility\(\$connection, \$records, \$map, \$accountId, \$moveSceneId\)/);
   assert.match(movement, /applicationComputeVisionMask\(\$occlusion, \$origins/);
   assert.match(movement, /applicationActiveMapOcclusionState\(\$map, \$sceneTokens\)/);

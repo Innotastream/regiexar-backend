@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/door-pick.php';
 require_once __DIR__.'/passive-rules.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__.'/complex-movement.php';
@@ -86,10 +87,12 @@ function dsDefinition(mixed $v): array {
     };
 }
 function dsEmpty(): array { return ['version'=>1,'devices'=>[],'craftRequests'=>[],'pendingRolls'=>[],'timedConditions'=>[],'receipts'=>[]]; }
+require_once __DIR__.'/spell-fields.php';
 function dsStore(mixed $value): array {
     if ($value===null) return dsEmpty();
     if (!is_array($value) || ($value['version']??0)!==1) dsError('Ces dispositifs proviennent d’une version plus récente. Ils ont été conservés.');
     foreach (['devices','craftRequests','pendingRolls','timedConditions','receipts'] as $key) if (!is_array($value[$key]??null) || !array_is_list($value[$key]) || count($value[$key])>($key==='receipts'?2048:1000)) dsError('Le registre des dispositifs est invalide.');
+    if(array_key_exists('spellFields',$value))$value['spellFields']=applicationSpellFields($value['spellFields']);
     if(array_key_exists('contactZones',$value))$value['contactZones']=applicationContactZones($value['contactZones']);
     $ids=[];
     foreach ($value['devices'] as $entry) {
@@ -253,10 +256,19 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
     ensureDeviceItems($state,$id);
-    if($command==='condition.activate'){$result=applicationActivateMoraleCondition($state,$actor,$args);
+    if($command==='appearance.change'){
+        $ti=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
+        $owner=ownedUnit($state,$actor,unitIdForToken($token));
+        if(($token['layerId']??'ground')!==($args['layerId']??$state['map']['activeLayerId']??'ground')||$actor['role']!=='gm'&&(!empty($token['hidden'])||!empty($token['dimSilhouette'])))dsError('Ce pion n’est pas disponible sur ce niveau.',403);
+        $ability=null;foreach($owner['abilities']??[] as $candidate)if($candidate['id']===($args['abilityId']??''))$ability=$candidate;
+        $oi=applicationCosmeticOwnerIndex($state,$owner);
+        if($oi>=0)$result=applicationChangeCosmeticForm($token,$state['characters'][$oi],$ability,$args,$id('appearance'));
+        else $result=applicationChangeCosmeticForm($token,$token,$ability,$args,$id('appearance'));
+        unset($token);
+    } elseif($command==='condition.activate'){$result=applicationActivateMoraleCondition($state,$actor,$args);
     } elseif($command==='effect.revoke') {
         $ti=dsIndex($state['map']['tokens'],$args['tokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
-        if(($args['kind']??'')==='appearance'){ownedUnit($state,$actor,unitIdForToken($token));if(!($token['appearanceState']['active']??false)||$token['appearanceState']['id']!==($args['effectId']??''))dsError('Cette apparence a changé.');$token['appearanceState']['active']=false;$token['image']=$token['appearanceState']['baseImage'];}
+        if(($args['kind']??'')==='appearance'){$owner=ownedUnit($state,$actor,unitIdForToken($token));if(!($token['appearanceState']['active']??false)||$token['appearanceState']['id']!==($args['effectId']??''))dsError('Cette apparence a changé.');$oi=applicationCosmeticOwnerIndex($state,$owner);$released=$oi>=0?applicationReleaseCosmeticForm($token,$state['characters'][$oi]):applicationReleaseCosmeticForm($token,$token);if(!$released){$token['appearanceState']['active']=false;$token['image']=$token['appearanceState']['baseImage'];}}
         else{if($actor['role']!=='gm')dsError('Seul le MJ peut révoquer cet effet.',403);
             if(($args['kind']??'')==='control'){if(($token['controlEffect']['id']??'')!==($args['effectId']??''))dsError('Ce contrôle a changé.');unset($token['controlEffect']);}
             elseif(($args['kind']??'')==='mark'){$marks=$token['predatoryMarks']??[];if(dsIndex($marks,$args['effectId']??'')<0)dsError('Cette lecture a changé.');$token['predatoryMarks']=array_values(array_filter($marks,static fn($m)=>$m['id']!==$args['effectId']));}
@@ -269,6 +281,10 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if($actor['role']!=='gm')dsError('Seul le MJ peut valider cette fabrication.',403);$ri=dsIndex($store['craftRequests'],$args['craftRequestId']??'');if(($store['craftRequests'][$ri]['status']??'')!=='pending')dsError('Cette fabrication a déjà été traitée.');
         $result=applicationResolveConsumableCraft($state,$store,$ri,($args['approve']??false)===true,$context);
         if(!empty($result['itemIds'])){$r=$store['craftRequests'][$ri];$effects[]=['type'=>'consumable.crafted','abilityId'=>$r['ability']['id'],'sourceTokenId'=>$r['sourceTokenId'],'sceneId'=>$r['sceneId'],'craftRequestId'=>$r['id'],'visibility'=>($r['cast']['roll']['visibility']??'')==='gm'?'gm':'public'];}
+    } elseif($command==='field.dispel'){
+        if(($actor['role']??'')!=='gm')dsError('Seul le MJ peut dissiper cette zone.',403);
+        $found=false;foreach($store['spellFields']??[]as$f)if($f['id']===($args['fieldId']??'')&&$f['sceneId']===$sceneId){$found=true;break;}if(!$found)dsError('Cette zone n’existe plus.',404);
+        applicationEndSpellField($store,$args['fieldId'],$effects,$context['nowMs']??$context['now']??null);$result=['removed'=>true];
     } elseif($command==='condition.remove') {
         if($actor['role']!=='gm')dsError('Seul le MJ peut retirer cet effet.',403);
         $ci=dsIndex($store['timedConditions'],$args['conditionId']??'');
@@ -495,10 +511,11 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     } elseif($command==='roll.resolve') {
         if($actor['role']!=='gm') dsError('Seul le MJ peut traiter ce résultat remarquable.',403);$i=dsIndex($store['pendingRolls'],$args['validationId']??'');if($i<0) dsError('Ce résultat a déjà été traité.');
         $p=$store['pendingRolls'][$i];array_splice($store['pendingRolls'],$i,1);$owner=null;
-        if($p['type']!=='condition'){$owner=ownedUnit($state,$actor,$p['ownerId']);}
-        $ti=dsIndex($state['map']['tokens'],$p['tokenId']);if($ti<0) dsError('Le pion de ce résultat n’existe plus.');$token=$state['map']['tokens'][$ti];
+        if(!in_array($p['type'],['condition','door-pick'],true)){$owner=ownedUnit($state,$actor,$p['ownerId']);}
+        $ti=dsIndex($state['map']['tokens'],$p['tokenId']);if($ti<0&&$p['type']!=='door-pick') dsError('Le pion de ce résultat n’existe plus.');$token=$ti<0?[]:$state['map']['tokens'][$ti];
         $success=($args['approve']??false)===true && $p['cast']['success'];
-        if(in_array($p['type'],['deploy','bomb'],true)) {
+        if($p['type']==='door-pick'){$result=[...$result,...applicationResolveDoorPick($state,$p,($args['approve']??false)===true)];}
+        elseif(in_array($p['type'],['deploy','bomb'],true)) {
             if(($args['approve']??false)===true)($context['finishCast'])($state,$owner,$token,$p['ability'],$p['cast'],$p['sceneId']);
             if($p['type']==='deploy'&&$success) $result['deviceId']=dsDeployment($state,$store,$actor,$owner,$token,$p['ability'],$p['args'],$context,$effects)['id'];
             if($p['type']==='bomb') dsCompleteBomb($store['devices'][dsDevice($store,$p['deviceId'],false)],$state,$token,$p['args'],$success);
@@ -516,6 +533,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
 
 function applicationAdvanceDevices(array $state,array $previous,array $context): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
+    applicationAdvanceSpellFields($state,$previous,$context,$effects);
     $effects=[...$effects,...applicationAdvanceMetamorphoses($state,$previous,($context['manual']??false)===true)];
     $state['map']['tokens']=applicationAdvanceTacticalTokens($state['map']['tokens']??[],$previous,$current,($context['manual']??false)===true);
     if(($previous['active']??false)===true&&($current['active']??false)!==true){

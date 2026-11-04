@@ -139,6 +139,17 @@
       "radiusCells": 4,
       "followSource": true,
       "followAnchor": true
+    },
+    "ability-a8b354c7-87d2-41c9-83a8-25dd6de77e40": {
+      "placement": "source",
+      "presetId": "feral-metamorphosis",
+      "radiusCells": 1,
+      "followSource": true,
+      "followAnchor": true
+    },
+    "ability-832949db-79d2-4e1a-a916-fea5c439edc1": {
+      "presetId": "root-entanglement",
+      "placement": "area"
     }
   },
   "tacticalEffects": {

@@ -1,6 +1,16 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/complex-movement.php';
+function applicationSquareAreaTargets(array $tokens,array $center,array $map,float $radiusCells,bool $fromCenterEdges=false):array{
+ if(empty($map['tokens']))$map['tokens']=$tokens;$center=applicationTokenSpatialFootprint($center,$map);$layer=$center['layerId']??'ground';$level=$map['layers'][$layer]??$map;
+ $w=(float)($level['naturalWidth']??$map['naturalWidth']??0);$h=(float)($level['naturalHeight']??$map['naturalHeight']??0);$grid=(float)($map['gridSize']??0);
+ if($w<=0||$h<=0||$grid<=0||!is_finite($radiusCells)||$radiusCells<.5||$radiusCells>20||floor($radiusCells*2)!==$radiusCells*2)return [];
+ $half=$radiusCells*$grid+($fromCenterEdges?max(0,(float)($center['size']??40))/2:0);$x=(float)$center['x']*$w/100;$y=(float)$center['y']*$h/100;
+ return array_values(array_filter($tokens,static function($token)use($map,$layer,$half,$x,$y,$w,$h){
+  if(!is_array($token)||!empty($token['hidden']))return false;$t=applicationTokenSpatialFootprint($token,$map);if(($t['layerId']??'ground')!==$layer)return false;
+  return hypot(max(0,abs($t['x']*$w/100-$x)-$half),max(0,abs($t['y']*$h/100-$y)-$half))<=max(0,(float)($t['size']??40))/2+1e-8;
+ }));
+}
 function applicationConeAreaGeometry(array $source,array $point,array $map,int $length): ?array {
     $source=applicationTokenSpatialFootprint($source,$map);$layer=$source['layerId']??'ground';$level=$map['layers'][$layer]??$map;
     $width=(float)($level['naturalWidth']??$map['naturalWidth']??0);$height=(float)($level['naturalHeight']??$map['naturalHeight']??0);$grid=(float)($map['gridSize']??0);

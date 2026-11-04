@@ -41,7 +41,7 @@ function onlineQueueDeferredDefenseGate(PDO $connection,array &$records,array &$
     $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$ids=array_column($targets,'id');$eligible=[];
     foreach($targets as $target)if(($definition['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0&&($preparedHit===null||(!empty($preparedHit['outcomes'][$target['id']]['success'])&&empty($preparedHit['outcomes'][$target['id']]['breaksOpposition']))))$eligible[]=$target['id'];
-    if($ids===[])throw new RuntimeException('Cette action ne touche plus aucune unité admissible.',409);
+    if($ids===[]&&($definition['terrainBarrier']['shape']??'')!=='thorn-wall')throw new RuntimeException('Cette action ne touche plus aucune unité admissible.',409);
     if(count($ids)>100||count($activity['pendingAttacks']??[])>=XAR_PENDING_ATTACK_MAXIMUM||count($activity['attackReceipts']??[])>=XAR_ATTACK_RECEIPT_MAXIMUM)throw new RuntimeException('La file des décisions de combat est pleine.',429);
     foreach($activity['pendingAttacks']??[]as$existing)if(!empty($existing['areaGate']['deferred'])&&$existing['sourceTokenId']===$source['id']&&$existing['attackId']===($arguments['attackId']??$arguments['abilityId']))throw new RuntimeException('Cette action attend déjà la décision du MJ.',409);
     $parties=[];foreach($targets as$target)$parties[$target['id']]=onlineDefenseParty($connection,$records,$target,$map);

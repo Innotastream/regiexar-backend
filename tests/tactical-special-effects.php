@@ -54,6 +54,152 @@ $m=$db->payload('token:scene-one:token-monster');$m['conditions']=['Doute','Moti
 
 $db=specialFixture();$a=$db->payload('character:character-player')['abilities'];$wall=$a[array_search('wall',array_column($a,'id'),true)];$r=runCommand($db,'token.attack',['requestId'=>'wall-'.randomToken(20),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'wall','targetPoint'=>['x'=>50,'y'=>50],'opposed'=>false]);specialCheck($r->status===200,'Ground wall: '.json_encode($r->body));$r=fixtureApproveDefenseGate($db,$r);specialCheck($r->status===200,'MJ confirms this area before its effects: '.json_encode($r->body));
 $wallTokens=array_values(array_filter(array_map(static fn($r)=>$r['payload'],$db->domains),static fn($v)=>isset($v['terrainBarrier'])));specialCheck(count($wallTokens)===1,'Exactly one wall token');$token=$wallTokens[0];specialCheck($token['hp']===75&&$token['maxHp']===75&&$token['size']>=150&&$token['armor']===0&&$token['magicArmor']===0,'Wall stats fixed');specialCheck($token['immovable']===true&&$token['controllerPlayerId']===null,'Wall fixed and not controllable');specialCheck(count($db->payload('activity')['damageOverTime']??[])>=1,'Wall poison registered');
+$db=specialFixture();
+$c=$db->payload('character:character-player');
+$wallAbility=$wall;
+$wallAbility['id']='ability-28849018-287a-4ce4-b1fa-7ec786d00807';
+$wallAbility['damageComponents']=[['type'=>'magical','formula'=>'10'],['type'=>'ignore','formula'=>'11']];
+$c['abilities']=[$wallAbility];$db->put('character:character-player',$c);
+$args=['requestId'=>'thorn-wall-rectangular','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player',
+    'attackKind'=>'ability','attackId'=>$wallAbility['id'],'targetPoint'=>['x'=>50,'y'=>50,'rotation'=>90],'opposed'=>false];
+$r=runCommand($db,'token.attack',$args);
+specialCheck($r->status===200&&!empty($r->body['pendingAreaGate']),'Oriented wall can be prepared: '.json_encode($r->body));
+$r=fixtureApproveDefenseGate($db,$r);specialCheck($r->status===200,'Rectangular wall resolves: '.json_encode($r->body));
+$walls=array_values(array_filter(array_column($db->domains,'payload'),static fn($v)=>isset($v['terrainBarrier'])));
+$token=$walls[0];$wallKey='token:scene-one:'.$token['id'];
+specialCheck($token['terrainBarrier']['rotation']===90&&$token['immovable']===false&&$token['terrainBarrier']['playerSide']===true,'Rectangular obstacle keeps its rotation and caster side');
+$cue=array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],static fn($event)=>($event['completionCue']['spell']['presetId']??'')==='thorn-wall-growth'));
+specialCheck(count($cue)===1&&$cue[0]['sourceTokenId']==='token-player','Wall growth cue is emitted once by the caster');
+specialCheck($cue[0]['completionCue']['spell']['targetPoint']['rotation']===90&&$cue[0]['completionCue']['spell']['anchorTokenId']===$token['id'],'Cue preserves the actual wall position and rotation');
+specialCheck($db->payload('character:character-player')['resources']['mana']===70,'Canonical wall costs thirty mana');
+$monsterKey='token:scene-one:token-monster';
+$m=$db->payload($monsterKey);
+specialCheck($m['hp']===479,'Initial magic and poison are both immediate');
+$dots=array_values(array_filter($db->payload('activity')['damageOverTime']??[],static fn($dot)=>$dot['targetTokenId']==='token-monster'));
+specialCheck(count($dots)===1&&$dots[0]['remainingTurns']===2,'Poison has precisely two later ticks');
+$map=$db->payload('map:scene-one');$mask=applicationActiveMapOcclusionState($map,[$token])['walls'];
+$covers=static fn($mask,$x,$y)=>applicationMaskBit(applicationWallMaskBytes($mask),(int)round($y/100*($mask['height']-1))*$mask['width']+(int)round($x/100*($mask['width']-1)));
+specialCheck($covers($mask,50,60)&&!$covers($mask,60,50),'Wall mask keeps the vertical rectangular footprint');
+$move=['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>$token['id'],'x'=>60,'y'=>50];
+specialCheck(runCommand($db,'token.move',$move)->status===403,'Player cannot drag the obstacle');
+$r=runCommand($db,'token.move',$move,true);
+specialCheck($r->status===200&&$db->payload($wallKey)['x']==60,'GM can move the obstacle: '.json_encode($r->body));
+$token=$db->payload($wallKey);$mask=applicationActiveMapOcclusionState($map,[$token])['walls'];
+specialCheck(!$covers($mask,50,60)&&$covers($mask,60,60),'Only the new footprint blocks movement');
+$m['x']=60;$m['y']=66;$m['magicArmor']=0;$m['abilities']=[['id'=>'demolition','name'=>'Démolition','effect'=>'damage','formula'=>'75','damageType'=>'ignore','castingStatId'=>'']];
+$db->put($monsterKey,$m);
+$initiative=$db->payload('initiative:scene-one');$initiative['currentIndex']=1;$db->put('initiative:scene-one',$initiative);
+$attack=['requestId'=>'thorn-wall-demolish-native','sceneId'=>'scene-one','sourceTokenId'=>'token-monster','targetTokenId'=>$token['id'],
+    'attackKind'=>'ability','attackId'=>'demolition','opposed'=>false];
+$r=runCommand($db,'token.attack',$attack,true);
+$counter=$r->body['attack']['thornWallRetaliation']['appliedDamage']??0;
+specialCheck($r->status===200&&$counter>=11&&$counter<=40,'Fatal enemy strike triggers magical retaliation: '.json_encode($r->body));
+specialCheck($db->payload($monsterKey)['hp']===479-$counter&&$db->payload($wallKey)['hp']===0,'Both wall and enemy take their damage');
+$r=runCommand($db,'token.attack',$attack,true);
+specialCheck(!empty($r->body['deduplicated'])&&$db->payload($monsterKey)['hp']===479-$counter,'Retaliation cannot be replayed');
+
+$door=applicationCreateTerrainBarrierToken(['id'=>'door','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>75,'size'=>40]],['x'=>50,'y'=>50,'rotation'=>0],'fixture-door');
+$doorMask=applicationActiveMapOcclusionState($map,[$door])['walls'];
+specialCheck($covers($doorMask,50,50)&&!$covers($doorMask,50,51.2),'Closed door uses its centre line as the blocker');
+specialCheck(applicationTerrainBarrierPointVisible($door,$map,static fn($x,$y)=>$y<49.5),'Door is fully projectable if a front edge is visible');
+$next=$door;$next['terrainBarrier']['open']=true;$door=applicationProtectTerrainBarrier($door,$next);
+$openedMask=applicationActiveMapOcclusionState($map,[$door])['walls'];
+specialCheck(!$covers($openedMask,50,50)&&$covers($openedMask,47.5,47)&&applicationPublicTerrainBarrier($door)['open'],'Opening pivots the blocker around its hinge');
+$db=specialFixture();
+$door=applicationCreateTerrainBarrierToken(['id'=>'door','name'=>'Porte des archives','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>50,'size'=>40]],['x'=>53,'y'=>50,'rotation'=>270],'fixture-door');
+$db->put('token:scene-one:fixture-door',$door);
+$cmd=['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'fixture-door','sourceTokenId'=>'token-player'];
+specialCheck($door['armor']===20&&$door['maxHp']===50,'Ordinary door has medium armor and fifty HP');
+specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'lock'],true)->status===200,'GM locks the door');
+specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'open'])->status===403,'Lock rejects a player without its key');
+$created=runCommand($db,'door.interact',[...$cmd,'action'=>'generate','recipientCharacterId'=>'character-player'],true);
+specialCheck($created->status===200&&!empty($created->body['key']['id']),'Generation creates a real transferable item: '.json_encode($created->body));
+$again=runCommand($db,'door.interact',[...$cmd,'action'=>'generate'],true);
+specialCheck($again->body['key']['id']===$created->body['key']['id']&&count($db->payload('items')['instances'])===1,'Repeated generation keeps one key');
+$opened=runCommand($db,'door.interact',[...$cmd,'action'=>'open']);
+specialCheck($opened->status===200&&!empty($opened->body['open']),'The nearby holder can open manually');
+$closed=runCommand($db,'door.interact',[...$cmd,'action'=>'close']);
+specialCheck($closed->status===200&&!$closed->body['open']&&$closed->body['locked'],'Closing preserves the keyed lock');
+specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'resize','widthCells'=>2.8])->status===403,'Only the GM can resize');
+$resized=runCommand($db,'door.interact',[...$cmd,'action'=>'resize','widthCells'=>2.8],true);
+specialCheck($resized->status===200&&$db->payload('token:scene-one:fixture-door')['terrainBarrier']['widthCells']===2.8,'GM adjusts the physical width');
+specialCheck(!isset(applicationPublicTerrainBarrier($db->payload('token:scene-one:fixture-door'))['keyItemId']),'Player projection keeps the key identifier private');
+$character=$db->payload('character:character-player');$character['stats']['dexterity']=100;$db->put('character:character-player',$character);
+for($i=0;$i<2;$i++){
+    $pickItem=runCommand($db,'door.interact',[...$cmd,'action'=>'spawn-pick','recipientCharacterId'=>'character-player'],true);
+    specialCheck($pickItem->status===200,'GM can give a real Passe partout: '.json_encode($pickItem->body));
+}
+specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'difficulty','difficulty'=>100],true)->status===200,'GM can set pick difficulty');
+$settledPick=static function(bool $success)use($db,$cmd):array {
+    for($i=0;$i<128;$i++){
+        $args=[...$cmd,'action'=>'pick','requestId'=>'door-fixture-pick-'.randomToken(16)];
+        $response=runCommand($db,'door.interact',$args);
+        specialCheck($response->status===200,'Native lockpick request succeeds: '.json_encode($response->body));
+        $attempt=$response->body['attempt'];
+        if(!empty($attempt['pendingValidation'])){
+            specialCheck($db->payload('token:scene-one:fixture-door')['terrainBarrier']['locked'],'Remarkable result waits for the GM without unlocking');
+            $decision=specialMechanics($db,'roll.resolve',['validationId'=>$attempt['validationId'],'approve'=>$attempt['success']===$success]);
+            specialCheck($decision->status===200,'GM can arbitrate a native remarkable lockpick: '.json_encode($decision->body));
+            if($attempt['success']!==$success)continue;
+            $response=runCommand($db,'door.interact',$args);
+        }
+        return [$response,$args];
+    }
+    throw new RuntimeException('No matching lockpick outcome after 128 real dice rolls');
+};
+[$failed,$pick]=$settledPick(false);
+specialCheck($failed->status===200&&$failed->body['attempt']['success']===false&&$failed->body['locked'],'A failed check leaves the door locked: '.json_encode($failed->body));
+$picks=static fn($db)=>array_values(array_filter($db->payload('items')['instances'],static fn($item)=>$item['templateId']===XAR_PASS_PARTOUT_TEMPLATE));
+specialCheck(array_column(array_column($picks($db),'location'),'kind')===['destroyed','inventory'],'Only one tool in the stack is destroyed');
+specialCheck(!empty(runCommand($db,'door.interact',$pick)->body['deduplicated']),'Replaying a failed request consumes nothing');
+specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'difficulty','difficulty'=>0],true)->status===200,'GM can lower difficulty');
+[$success]=$settledPick(true);
+specialCheck($success->status===200&&$success->body['attempt']['success']===true&&!$success->body['locked']&&!$success->body['open'],'Successful picking unlocks without opening the door');
+specialCheck(array_column(array_column($picks($db),'location'),'kind')===['destroyed','inventory'],'Successful picking preserves the surviving tool');
+
+$db=specialFixture();
+$map=$db->payload('map:scene-one');$map['vision']=['enabled'=>true,'distance'=>15,'shared'=>false];$map['lightingMode']='day';$db->put('map:scene-one',$map);
+$door=applicationCreateTerrainBarrierToken(['id'=>'door','name'=>'Porte au judas','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>50,'size'=>40]],['x'=>50,'y'=>50,'rotation'=>0],'keyhole-door');
+$db->put('token:scene-one:keyhole-door',$door);
+$tokenIndex=$db->payload('token-index:scene-one');$tokenIndex['order'][]='keyhole-door';$db->put('token-index:scene-one',$tokenIndex);
+$source=$db->payload('token:scene-one:token-player');$source['x']=52;$source['y']=55;$db->put('token:scene-one:token-player',$source);
+$foe=$db->payload('token:scene-one:token-monster');$foe['x']=52;$foe['y']=42;$db->put('token:scene-one:token-monster',$foe);
+$command=['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'keyhole-door','sourceTokenId'=>'token-player'];
+$project=static fn($account,$include=true,$stream=false)=>publicPlayerState(domainsToApplicationState($db->domains,0),['id'=>$account,'display_name'=>'Recette','effective_mode'=>'player'],[],$stream,$include);
+specialCheck(runCommand($db,'door.interact',[...$command,'action'=>'peek'])->status===403,'Keyhole requires GM permission');
+$r=runCommand($db,'door.interact',[...$command,'action'=>'peek-permission','allowPeek'=>true],true);
+specialCheck($r->status===200,'GM enables the keyhole: '.json_encode($r->body));
+$r=runCommand($db,'door.interact',[...$command,'action'=>'peek']);
+specialCheck($r->status===200&&!empty($r->body['peeking']),'Player starts peeking: '.json_encode($r->body));
+$visible=$project('account-player');
+specialCheck(($visible['doorPeek']['doorId']??'')==='keyhole-door'&&!empty($visible['doorPeek']['mask']),'Player receives the keyhole pane');
+specialCheck(in_array($foe['name'],array_column($visible['doorPeek']['occupants'],'name'),true),'Player can see the unit behind the door');
+specialCheck(!in_array('token-monster',array_column($visible['map']['tokens'],'id'),true),'The keyhole does not add attackable targets to the map');
+specialCheck($project('another-player')['doorPeek']===null&&!isset($project('account-player',false)['doorPeek'])&&!isset($project('account-player',true,true)['doorPeek']),'Observation stays private and absent from Stream and authority');
+$source=$db->payload('token:scene-one:token-player');$source['x']=54;$source['_movedAt']=7;$db->put('token:scene-one:token-player',$source);
+specialCheck($project('account-player')['doorPeek']===null,'The pawn movement ends observation');
+$source['x']=52;$source['_movedAt']=8;$db->put('token:scene-one:token-player',$source);
+specialCheck($project('account-player')['doorPeek']===null,'Returning to the same point cannot restore observation');
+$r=runCommand($db,'door.interact',[...$command,'action'=>'peek']);
+specialCheck($r->status===200&&$project('account-player')['doorPeek']!==null,'A new observation can be started');
+$r=runCommand($db,'door.interact',['sceneId'=>'scene-one','layerId'=>'ground','action'=>'peek-end']);
+specialCheck($r->status===200&&$project('account-player')['doorPeek']===null,'Player can cancel the observation');
+
+$door=$db->payload('token:scene-one:keyhole-door');
+$door['terrainBarrier']['swungAt']=(int)floor(microtime(true)*1000)+10000;
+$db->put('token:scene-one:keyhole-door',$door);
+$r=runCommand($db,'door.interact',[...$command,'action'=>'peek']);
+specialCheck($r->status===200&&$project('account-player')['doorPeek']!==null,'Observation starts after an earlier recorded door movement');
+foreach(['open','close'] as $action){
+    $previous=$db->payload('token:scene-one:keyhole-door')['terrainBarrier']['swungAt'];
+    $r=runCommand($db,'door.interact',[...$command,'action'=>$action],true);
+    specialCheck($r->status===200&&$db->payload('token:scene-one:keyhole-door')['terrainBarrier']['swungAt']>$previous,'Door checkpoints remain monotone after a clock adjustment');
+}
+specialCheck($project('account-player')['doorPeek']===null,'Opening and reclosing cannot restore a stale observation');
+$before=$db->payload('token:scene-one:keyhole-door')['terrainBarrier']['swungAt'];
+$r=runCommand($db,'door.interact',[...$command,'action'=>'close'],true);
+specialCheck($r->status===200&&$db->payload('token:scene-one:keyhole-door')['terrainBarrier']['swungAt']===$before,'An unchanged closed door keeps its checkpoint');
+
 $s=['x'=>20,'y'=>20];$movement=initialApplicationComplexMovementState($s,1);$movement=appendApplicationComplexMovementPath($movement,$s,['x'=>35,'y'=>35],null,['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50],20,2,5);specialCheck($movement['distanceCells']==3,'Retreat diagonal counts cells');try{appendApplicationComplexMovementPath($movement,['x'=>35,'y'=>35],['x'=>55,'y'=>35],null,['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50],20,3,5);specialCheck(false,'Too long retreat should fail');}catch(ApplicationComplexAbilityException){specialCheck(true,'Retreat rejects over five cells');}
 $changed=applicationTacticalEffect(['version'=>1,'kind'=>'mark','attackBonus'=>7,'dodgeBonus'=>9]);specialCheck($changed['attackBonus']===7&&$changed['dodgeBonus']===9,'Bonuses configurable');try{applicationTacticalEffect(['version'=>2,'kind'=>'mark']);specialCheck(false,'Future version rejected');}catch(RuntimeException){specialCheck(true,'Future schema refused');}
 

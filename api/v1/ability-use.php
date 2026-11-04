@@ -3,7 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/ability-stat-check-online.php';
 
 function planApplicationMetamorphosis(array $source, array $characters, array $tokens, ?array $ability, array $request, string $accountId, bool $isGm, array $pendingAttacks = [], array $initiative = []): array {
-    if (($source['followCharacter'] ?? true) === false || !empty($source['linkedTokenId']) || empty($source['characterId'])) throw new RuntimeException('La métamorphose nécessite un pion lié à une fiche.');
+    if (!unitUsesCharacterSheet($source)) throw new RuntimeException('La métamorphose nécessite un pion lié à une fiche.');
     $previous = is_array($source['transformation'] ?? null) ? $source['transformation'] : [];
     $returning = ($request['returnForm'] ?? false) === true;
     $byId = array_column($characters, null, 'id');
@@ -15,13 +15,15 @@ function planApplicationMetamorphosis(array $source, array $characters, array $t
     if (($previous['requestId'] ?? '') === $request['requestId'] && ($previous['accountId'] ?? '') === $accountId) return ['deduplicated' => true, 'activeCharacterId' => $source['characterId'], 'changes' => []];
     if ((string) ($request['expectedFormRequestId'] ?? '') !== (string) ($previous['requestId'] ?? '')) throw new RuntimeException('La forme du pion a changé. Actualisez la table avant de relancer.');
     if ($returning ? !($previous['active'] ?? false) : (($previous['active'] ?? false) || ($ability['effect'] ?? '') !== 'metamorphosis')) throw new RuntimeException('Cette forme n’est pas disponible pour cette action.');
-    $affected = array_filter($tokens, static fn(array $t): bool => ($t['followCharacter'] ?? true) !== false && empty($t['linkedTokenId']) && ($returning
+    $affected = array_filter($tokens, static fn(array $t): bool => unitUsesCharacterSheet($t) && ($returning
         ? ($t['transformation']['active'] ?? false) && ($t['transformation']['baseCharacterId'] ?? '') === $baseId && ($t['characterId'] ?? '') === $formId
         : ($t['characterId'] ?? '') === $baseId));
     $ids = array_fill_keys(array_column($affected, 'id'), true);
     foreach ($pendingAttacks as $attack) if (isset($ids[$attack['sourceTokenId'] ?? '']) || isset($ids[$attack['targetTokenId'] ?? ''])) throw new RuntimeException('Terminez les attaques en attente avant de changer de forme.');
     $activeCharacterId = $returning ? $baseId : $formId;
     $transformation = ['baseCharacterId' => $baseId, 'formCharacterId' => $formId, 'active' => !$returning, 'requestId' => $request['requestId'], 'accountId' => $accountId];
+    $returnCondition=$returning?applicationMetamorphosisReturnCondition($previous,$characters):(applicationMetamorphosisReturnConditions()[$ability['id']??'']??'');
+    if($returnCondition!=='')$transformation['returnCondition']=$returnCondition;
     if (!$returning && ($ability['formDurationTurns'] ?? 0) > 0) $transformation = [...$transformation,
         'durationTurns' => $ability['formDurationTurns'], 'remainingTurns' => $ability['formDurationTurns'],
         'clockTokenId' => $source['id'], 'clockCombatId' => $initiative['combatId'] ?? '', 'lastTurnSerial' => $initiative['turnSerial'] ?? 0];
@@ -118,7 +120,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     if(($plan['attackEnhancement']['trigger']??'')==='enchanted-weapon'&&($continuation===null||($continuation['cast']['success']??false))){
         $equipmentState=onlineEquipmentState($connection,$records,$pending,$sceneId,$map);
         try{$plan['enchantment']=$continuation===null
-            ?requireEnchantedWeapon($equipmentState,$target,(string)($arguments['enchantedItemId']??''))
+            ?requireEnchantedWeapon($equipmentState,$target)
             :requireEnchantmentInstance($equipmentState,$plan['enchantment']??[]);}
         catch(RuntimeException $error){rejectOnlineCommand($connection,409,$error->getMessage(),'ability_enchantment_changed');}
     }

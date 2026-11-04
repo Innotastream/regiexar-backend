@@ -1,4 +1,17 @@
 {
+  "ability-28849018-287a-4ce4-b1fa-7ec786d00807": {
+    "presetId": "rotatable-thorn-wall",
+    "revision": 1,
+    "effect": "damage",
+    "values": {
+      "manaCost": 30,
+      "terrainBarrier": {"version": 1, "shape": "thorn-wall", "hp": 75, "size": 150},
+      "onHitConditions": [],
+      "damageTargeting": {"mode": "area", "origin": "point", "shape": "thorn-wall", "radiusCells": 2, "affectCaster": true, "affectAllies": true, "affectEnemies": true},
+      "damageOverTime": {"label": "Poison · Mur de ronces", "formula": "1d10+10", "damageType": "ignore", "turns": 2},
+      "description": "Place un mur orientable de 5 × 1 cases. À sa création, chaque cible à 2 cases ou moins du mur subit 1d30+10 dégâts magiques et 1d10+10 de poison ignorant l’armure. Le poison frappe encore aux deux tours suivants de chaque victime. Cet obstacle attaquable de 75 PV bloque la vue et le déplacement. Le MJ peut le déplacer ou le détruire. Tout ennemi qui attaque le mur subit 1d30+10 dégâts magiques."
+    }
+  },
   "ability-7BG1hkmR6vBEbTLL": {
     "presetId": "single-weapon-full-damage",
     "revision": 1,
@@ -473,6 +486,61 @@
         "affectEnemies": true
       },
       "description": "Déploie la chaîne à sa portée maximale autour du lanceur et la fait tournoyer deux fois. Les ennemis présents dans la zone au lancement sont inclus dans cette seule attaque de zone ; le lanceur et les alliés sont exclus."
+    }
+  },
+  "ability-832949db-79d2-4e1a-a916-fea5c439edc1": {
+    "presetId": "entanglement-square-choices",
+    "revision": 3,
+    "effect": "damage",
+    "upgradeOnly": true,
+    "upgradeValues": {
+      "persistentArea": {
+        "version": 1,
+        "kind": "roots",
+        "turns": 3
+      },
+      "reach": "ranged",
+      "rangeCells": 15
+    },
+    "values": {
+      "manaCost": 10,
+      "areaVariants": [
+        {
+          "id": "roots-2",
+          "label": "2 × 2 cases",
+          "sizeCells": 2,
+          "manaCost": 10
+        },
+        {
+          "id": "roots-4",
+          "label": "4 × 4 cases",
+          "sizeCells": 4,
+          "manaCost": 20
+        },
+        {
+          "id": "roots-8",
+          "label": "8 × 8 cases",
+          "sizeCells": 8,
+          "manaCost": 30
+        }
+      ],
+      "damageTargeting": {
+        "mode": "area",
+        "shape": "square",
+        "origin": "point",
+        "radiusCells": 1,
+        "affectCaster": false,
+        "affectAllies": true,
+        "affectEnemies": true
+      },
+      "description": "Choisissez un carré de 2 × 2 cases pour 10 mana, 4 × 4 pour 20 mana ou 8 × 8 pour 30 mana, puis visez le sol. Les alliés et les ennemis peuvent être pris ; le lanceur est exclu. Les unités touchées sont entravées pendant 3 tours sans dégâts : déplacements bloqués, actions conservées. Une tentative de Force à chaque tour permet de se libérer : −20, puis −10, puis sans malus. La zone reste visible pendant 3 tours du lanceur. Une cible libérée perd son lien et peut se déplacer normalement, sans être reprise en restant ou en revenant dans la zone. La fin de la zone ou sa dissipation par le MJ retire ses liens restants et résorbe les racines. Portée À distance : 15 cases. Le mode cible unique est remplacé par le carré de 2 × 2 cases.",
+      "persistentArea": {
+        "version": 1,
+        "kind": "roots",
+        "turns": 3
+      },
+      "reach": "ranged",
+      "rangeCells": 15
     }
   }
 }

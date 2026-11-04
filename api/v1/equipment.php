@@ -139,9 +139,15 @@ function abilityEquipmentAttackRows(array $attacks,array $source,array $state):a
     }
     return array_values($rows);
 }
-function requireEnchantedWeapon(array $state,array $recipient,string $itemId):array {
-    foreach(enchantableWeapons($state,$recipient) as $item)if($item['id']===$itemId)return ['enchantedItemId'=>$item['id'],'enchantedItemName'=>$item['name']];
-    equipmentFailure('Choisissez une arme fabriquée portée et utilisable par le bénéficiaire. Les armes naturelles et les projectiles sont exclus.');
+function requireEnchantedWeapon(array $state,array $recipient,?callable $pickIndex=null):array {
+    $weapons = enchantableWeapons($state,$recipient);
+    if ($weapons === []) equipmentFailure('Le bénéficiaire doit manier une arme fabriquée compatible.');
+    $scores = array_map(static fn($weapon) => meanEffectFormula($weapon['formula']), $weapons);
+    $best = max($scores);
+    $indices = array_keys($scores,$best,true);
+    $pickIndex ??= static fn(int $count): int => random_int(0,$count-1);
+    $item = $weapons[$indices[count($indices) === 1 ? 0 : $pickIndex(count($indices))]];
+    return ['enchantedItemId'=>$item['id'],'enchantedItemName'=>$item['name']];
 }
 function requireEnchantmentInstance(array $state,array $enchantment):array {
     $item=null;foreach($state['items']['instances']??[] as $entry)if($entry['id']===($enchantment['enchantedItemId']??'')){$item=$entry;break;}

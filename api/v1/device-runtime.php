@@ -29,7 +29,20 @@ function onlineDeviceFlush(array $state,array &$records,array &$pending): void {
         if(dsCanonical($before)!==dsCanonical($payload)) queueOnlineDomainUpsert($pending,$records,$key,$payload);
     }
 }
+function onlineDeviceReadJokerStock(array &$state,array $pending): void {
+    $sync=static function(array &$entity,string $key)use($pending):void {
+        $current=$pending[$key]['payload']??null;
+        if(!is_array($current)||!array_key_exists('specialSuccessStock',$current))return;
+        $entity['specialSuccessStock']=$current['specialSuccessStock'];
+    };
+    foreach($state['characters'] as &$sheet)$sync($sheet,'character:'.$sheet['id']);unset($sheet);
+    foreach($state['map']['tokens'] as &$token)$sync($token,onlineTokenDomainKey($state['activeSceneId'],$token['id']));unset($token);
+    foreach($state['scenes']??[] as $index=>$scene)if(isset($scene['combat']['map']['tokens'])) {
+        foreach($state['scenes'][$index]['combat']['map']['tokens'] as &$token)$sync($token,onlineTokenDomainKey($scene['id'],$token['id']));unset($token);
+    }
+}
 function onlineDeviceReadChanges(array &$state,array &$owner,array $records,array $pending): void {
+    onlineDeviceReadJokerStock($state,$pending);
     $new=domainsToApplicationState(onlineDeviceOverlayRecords($records,$pending),0);
     foreach($state['devices']['timedConditions'] as &$condition){$i=dsIndex($new['devices']['timedConditions'],$condition['id']);if($i>=0&&!empty($new['devices']['timedConditions'][$i]['escapeWindowClosed']))$condition['escapeWindowClosed']=true;}unset($condition);
     foreach(['actionTimers','resourceReceipts','rolls','abilityCueEvents','luckStatistics'] as $key) if(isset($new[$key]))$state[$key]=$new[$key];
@@ -38,12 +51,12 @@ function onlineDeviceReadChanges(array &$state,array &$owner,array $records,arra
         if($index>=0&&isset($new['devices']['devices'][$index]['mana'])){$device['mana']=$new['devices']['devices'][$index]['mana'];$device['revision']=max($device['revision'],$new['devices']['devices'][$index]['revision']);}
     }unset($device);
     $current=unitById($new,$owner['id'],false);
-    if($current){$owner['resources']=$current['resources'];$owner['fatigue']=$current['fatigue']??['current'=>0,'max'=>150];persistUnitResources($state,$owner);}
+    if($current){$owner['resources']=$current['resources'];$owner['fatigue']=$current['fatigue']??['current'=>0,'max'=>150];$owner['specialSuccessStock']=$current['specialSuccessStock']??0;persistUnitResources($state,$owner);}
     foreach($state['map']['tokens'] as &$token) if(unitUsesCharacterSheet($token)&&$token['characterId']===$owner['id'])$token=synchronizeOnlineCharacterToken($token,$owner);
     unset($token);
 }
 function onlineDeviceContext(PDO $db,array &$records,array &$pending,array $identity): array {
-    return ['now'=>gmdate('c'),'id'=>static fn($prefix)=>$prefix.'-'.randomToken(16),'direct'=>'onlineDeviceDirect',
+    return ['now'=>gmdate('c'),'nowMs'=>(int)floor(microtime(true)*1000),'id'=>static fn($prefix)=>$prefix.'-'.randomToken(16),'direct'=>'onlineDeviceDirect',
         'cast'=>static function(array &$state,array &$store,array &$owner,array $token,array $ability,array $args)use($db,&$records,&$pending,$identity):array {
             onlineDeviceFlush($state,$records,$pending);$sheet=($owner['unitKind']??'')==='token'?null:$owner;$source=$sheet?synchronizeOnlineCharacterToken($token,$sheet):$token;$sceneId=$state['activeSceneId'];
             $plan=onlinePrepareAbilityCasting($db,$ability,$source,$sceneId,$state['initiative'],$pending['activity']['payload']??applicationDomainPayload($records,'activity'),null,$state);
@@ -69,7 +82,7 @@ function onlineDeviceContext(PDO $db,array &$records,array &$pending,array $iden
             $outcome=classifyOnlineD100Outcome($rolled['rawD100']??null,$threshold===null?null:(int)$threshold,$penalty,0,true,$statId!=='luck',applicationRollCriticalFailureProtected($source,$state,(string)($state['activeSceneId']??'')));applyOnlineD100ResultToRoll($rolled,$outcome);
             $roll=onlineRollEntry($identity,$rolled,$label,$owner['name']??$token['name'],$outcome);
             onlineAwardNaturalJoker($db,$records,$pending,$source,$roll,$outcome,(string)$state['activeSceneId']);
-            onlineDeviceReadChanges($state,$owner,$records,$pending);
+            onlineDeviceReadJokerStock($state,$pending);
             $roll['sourceTokenId']=$token['id'];$roll['sourceSceneId']=$state['activeSceneId'];
             if(onlineIdentityIsGm($identity)||!$owner){$roll['visibility']='gm';$roll['revealed']=false;}
             $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$activity['rolls']=array_slice([$roll,...($activity['rolls']??[])],0,100);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
@@ -256,13 +269,14 @@ function onlineDeviceCondition(array &$state,string $tokenId,string $label,bool 
     else{$token['conditions']=$value['conditions'];$token['condition']=implode(', ',$value['conditions']);}return !$exists;
 }
 function onlineDeviceTimedCondition(array &$state,array $effect): void {
-    $rider=$effect['rider'];$resisted=$effect['resisted'];$label=normalizeOnlineCondition($resisted?$rider['fallbackLabel']:$rider['label']);if($label==='')return;
+    $rider=$effect['rider'];$resisted=$effect['resisted'];
+    if(!empty($effect['fieldId'])&&!applicationSpellFieldActive($state['devices'],$effect['fieldId']))return;$label=normalizeOnlineCondition($resisted?$rider['fallbackLabel']:$rider['label']);if($label==='')return;
     $target=$state['map']['tokens'][dsIndex($state['map']['tokens'],$effect['targetTokenId'])]??[];
     if(applicationEffectFamily($label)==='poison'&&applicationHasEffectImmunity($target,$state,$effect['sceneId'],'poison'))return;
     $remainingTurns=applicationPassiveEffectTurns($target,$resisted?$rider['fallbackTurns']:$rider['turns'],['family'=>applicationEffectFamily($label),'sourceItemKind'=>$effect['sourceItemKind']??'','harmful'=>true],$state);if($remainingTurns<=0)return;
     $introduced=onlineDeviceCondition($state,$effect['targetTokenId'],$label,true);
     if(count($state['devices']['timedConditions'])>=1000)dsError('Trop d’états temporisés actifs.',429);
-    $state['devices']['timedConditions'][]=['id'=>'condition-'.randomToken(16),'sceneId'=>$effect['sceneId'],'targetTokenId'=>$effect['targetTokenId'],'label'=>$label,
+    $state['devices']['timedConditions'][]=['id'=>'condition-'.randomToken(16),'sceneId'=>$effect['sceneId'],'targetTokenId'=>$effect['targetTokenId'],'label'=>$label,...(!empty($effect['fieldId'])?['fieldId'=>$effect['fieldId']]:[]),
         'targetCharacterId'=>applicationAbilityCastingOwner($state['map']['tokens'][dsIndex($state['map']['tokens'],$effect['targetTokenId'])])['characterId'],
         ...(($resisted?($rider['fallbackExpiry']??''):($rider['expiry']??''))==='end-next-turn'?['expiry'=>'end-next-turn','createdTurnSerial'=>(int)($state['initiative']['turnSerial']??0),'hasStarted'=>false,'escapeWindowClosed'=>false]:[]),
         'remainingTurns'=>$remainingTurns,...(!$resisted&&!empty($rider['attackPenalty'])?['attackPenalty'=>$rider['attackPenalty'],'sourceTokenId'=>$effect['sourceTokenId']??'']:[]),...(!empty($rider['escape'])&&!$resisted?['escape'=>$rider['escape'],'initialTurns'=>$rider['turns']]:[]),'blocksMovement'=>$resisted?$rider['fallbackBlocksMovement']:$rider['blocksMovement'],'blocksActions'=>$resisted?($rider['fallbackBlocksActions']??false):($rider['blocksActions']??false),'clockCombatId'=>$state['initiative']['combatId']??'','lastTurnSerial'=>(int)($state['initiative']['turnSerial']??0),'introduced'=>$introduced];
@@ -309,7 +323,7 @@ function onlineDeviceRider(PDO $db,array &$records,array &$pending,array $attack
     if(empty($attack['conditionRider'])||!empty($attack['areaAnchorOnly'])||($attack['riderApplied']??false)||!in_array($attack['status']??'', ($attack['conditionRider']['trigger']??'')==='attempt'?['applied','blocked','missed','defended']:['applied','blocked'],true))return $attack;
     $state=onlineDeviceState($db,$records,$pending);$i=dsIndex($state['map']['tokens'],$attack['targetTokenId']);if($i<0)return $attack;
     $target=$state['map']['tokens'][$i];$ownerId=applicationAbilityCastingOwner($target)['characterId'];$ci=dsIndex($state['characters'],$ownerId);$owner=$ci>=0?$state['characters'][$ci]:null;$rider=dsRider($attack['conditionRider']);
-    $effect=['sceneId'=>$attack['sceneId'],'targetTokenId'=>$target['id'],'sourceTokenId'=>$attack['sourceTokenId']??'','rider'=>$rider];$immune=in_array(normalizeOnlineCondition($rider['immunityLabel']?:$rider['label']),normalizeOnlineConditions($owner['conditionImmunities']??$target['conditionImmunities']??[]),true);
+    $effect=['sceneId'=>$attack['sceneId'],'targetTokenId'=>$target['id'],'sourceTokenId'=>$attack['sourceTokenId']??'','fieldId'=>$attack['spellFieldId']??$attack['cast']['spellFieldId']??'','rider'=>$rider];$immune=in_array(normalizeOnlineCondition($rider['immunityLabel']?:$rider['label']),normalizeOnlineConditions($owner['conditionImmunities']??$target['conditionImmunities']??[]),true);
     if($immune)onlineDeviceTimedCondition($state,[...$effect,'resisted'=>true]);
     elseif(!empty($rider['escape'])||($rider['resistance']??true)===false)onlineDeviceTimedCondition($state,[...$effect,'resisted'=>false]);
     else{
@@ -352,7 +366,7 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
     $rolls=[];foreach($store['pendingRolls']??[] as $roll)if(isset($roll['ownerId'])&&isset($own[$roll['ownerId']])){unset($roll['ability'],$roll['args'],$roll['cast']['_devicePlan'],$roll['cast']['_deviceIdentity']);$rolls[]=$roll;}
     $conditions=($context['paused']??false)?[]:array_values(array_filter($store['timedConditions']??[],static fn($entry)=>$entry['sceneId']===$context['sceneId']&&in_array($entry['targetTokenId'],$context['visibleTokenIds']??[],true)));
     $sceneId=$context['sceneId']??'';$manualTurn=$store['manualTurns'][$sceneId]??0;
-    return ['version'=>1,'devices'=>$devices,'opportunityAlerts'=>applicationPublicOpportunityAlerts($store,$identity,$characters,$context,$visible),'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[],...(array_key_exists('contactZones',$store)?['contactZones'=>applicationPublicContactZones($store['contactZones'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[])];
+    return ['version'=>1,'devices'=>$devices,'opportunityAlerts'=>applicationPublicOpportunityAlerts($store,$identity,$characters,$context,$visible),'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[],...(array_key_exists('spellFields',$store)?['spellFields'=>applicationPublicSpellFields($store['spellFields'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[]),...(array_key_exists('contactZones',$store)?['contactZones'=>applicationPublicContactZones($store['contactZones'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[])];
 }
 
 function onlineTrassBeamPresentation(PDO $db,array &$records,array &$pending,array $device,string $requestId):?array{

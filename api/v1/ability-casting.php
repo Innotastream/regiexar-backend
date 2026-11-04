@@ -116,6 +116,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $attack && ($arguments['opposed'] ?? false) === true,
         ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
         ...(array_key_exists('variantId',$arguments)?[['variantId'=>$arguments['variantId']]]:[]),
+        ...(array_key_exists('areaVariantId',$arguments)?[['areaVariantId'=>$arguments['areaVariantId']]]:[]),
         ...($attack && (array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
@@ -176,6 +177,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'fixedResultModifier'=>($ability['effect']??'')==='check'?(applicationStatCheckDefinition($ability['statCheck']??null)['resultModifier']??0):0,
         'manualD100'=>!empty($ability['manualD100']),'outcomeMessages'=>applicationOutcomeMessages($ability['outcomeMessages']??null),
         'attackEnhancement' => applicationAttackEnhancement($ability['attackEnhancement'] ?? null),
+        ...(!empty($ability['persistentArea'])?['persistentArea'=>applicationPersistentArea($ability['persistentArea']),'damageTargeting'=>$ability['damageTargeting']]:[]),
         'enhancementInitiative' => ['active' => ($initiative['active'] ?? false) === true, 'combatId' => $combatId, 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)],
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
         'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost,
@@ -201,7 +203,7 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
         $deviceRecords = applicationDomainRecords($connection, ['devices', 'map:'.$sceneId]);
         $mechanicsState = ['devices'=>dsStore(applicationDomainPayload($deviceRecords, 'devices', dsEmpty())), 'map'=>applicationDomainPayload($deviceRecords, 'map:'.$sceneId)];
     }
-    try{dsAssertActions($mechanicsState,$source,$sceneId);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'timed_action_block');}
+    try{if(!empty($ability['persistentArea']))applicationSpellFieldCapacity($mechanicsState['devices']);dsAssertActions($mechanicsState,$source,$sceneId);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'timed_action_block');}
     $stationIndex = dsProvider($mechanicsState['devices'], $source, $mechanicsState['map'], $sceneId, 'onlineDeviceDirect');
     if ($stationIndex !== null) {
         $station = $mechanicsState['devices']['devices'][$stationIndex];
@@ -377,6 +379,7 @@ function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pe
 }
 
 function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pending, array $plan, array $cast, array $source, array $identity, bool $recordRoll = true, bool $payCosts = true, bool $applyRecharge = true): array {
+    if(!empty($plan['persistentArea'])&&empty($cast['spellFieldId']))$cast['spellFieldId']='field-'.randomToken(24);
     $clockKey='initiative:'.$plan['sceneId'];
     if(!isset($pending[$clockKey])&&!isset($records[$clockKey]))$records=array_replace(applicationDomainRecords($connection,[$clockKey]),$records);
     $clock=$pending['initiative:'.$plan['sceneId']]['payload']??applicationDomainPayload($records,'initiative:'.$plan['sceneId']);
@@ -483,11 +486,18 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
     unset($cast['pendingValidation']);
     $countsUse=($cast['success']??false)||!empty($plan['manualD100'])&&($cast['outcome']['code']??'pending')!=='pending';
     if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null) {
+        $enchantment = $plan['enchantment'] ?? [];
+        $equipmentState = null;
+        if (($plan['attackEnhancement']['trigger'] ?? '') === 'enchanted-weapon') {
+            $equipmentState = onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$plan['sceneId']);
+            requireEnchantmentInstance($equipmentState,$enchantment);
+            $enchantment['weaponVisualProfile'] = applicationEnchantedItemVisualProfile($equipmentState['items'] ?? [], $enchantment['enchantedItemId']);
+            $enchantment['weaponVisualStartedAt'] = (int) floor(microtime(true) * 1000);
+            $enchantment['weaponVisualPublicStart'] = empty($source['hidden']) && ($cast['roll']['visibility'] ?? '') !== 'gm';
+        }
         applicationActivateAttackEnhancement($activity, ['id' => $plan['abilityId'], 'name' => $plan['label'], 'attackEnhancement' => $plan['attackEnhancement']],
-            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null, $plan['enchantment']??[]);
-        if(($plan['attackEnhancement']['trigger']??'')==='enchanted-weapon'){
-            $equipmentState=onlineDeviceSelectScene(onlineDeviceState($connection,$records,$pending),$plan['sceneId']);
-            requireEnchantmentInstance($equipmentState,$plan['enchantment']??[]);
+            $source, $plan['sceneId'], $plan['enhancementInitiative'], 'enhancement-' . randomToken(18), $plan['enhancementRecipient'] ?? null, $enchantment);
+        if ($equipmentState !== null) {
             $equipmentState['attackEnhancements']=$activity['attackEnhancements'];
             reconcileEquipmentEnchantments($equipmentState);
             $activity['attackEnhancements']=$equipmentState['attackEnhancements'];
@@ -519,8 +529,12 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         if ($index !== null) $timers[$index] = $timer; else array_unshift($timers, $timer);
         $activity['actionTimers'] = $timers;
     }
+    if(!empty($cast['success'])&&empty($plan['deferCue'])&&!empty($plan['persistentArea'])&&!applicationSpellFieldActive($pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty()),$cast['spellFieldId'])){
+        $records=array_replace(applicationDomainRecords($connection,['devices','map:'.$plan['sceneId']]),$records);$store=dsStore($pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty()));$map=$pending['map:'.$plan['sceneId']]['payload']??applicationDomainPayload($records,'map:'.$plan['sceneId']);$fieldId=$cast['spellFieldId'];
+        $field=applicationCreateSpellField($store,['ability'=>['id'=>$plan['abilityId'],'name'=>$plan['label'],'persistentArea'=>$plan['persistentArea'],'damageTargeting'=>$plan['damageTargeting']],'source'=>applicationTokenSpatialFootprint($source,$map),'sceneId'=>$plan['sceneId'],'map'=>$map,'targetPoint'=>$plan['persistentTargetPoint']??$plan['spellVisual']['targetPoint']??null,'initiative'=>$clock,'now'=>$now,'castId'=>$fieldId,'fieldId'=>$fieldId]);$cast['spellFieldId']=$field['id'];queueOnlineDomainUpsert($pending,$records,'devices',$store);
+    }
     $completionCue=applicationOutcomeCompletionCue($plan,$cast);
-    if(($cast['success']??false)===true&&empty($plan['deferCue'])&&applicationSpellVisual($plan['spellVisual']??null)!==null)$completionCue['spell']=applicationSpellVisual($plan['spellVisual']);
+    if(($cast['success']??false)===true&&empty($plan['deferCue'])&&empty($plan['persistentArea'])&&applicationSpellVisual($plan['spellVisual']??null)!==null)$completionCue['spell']=applicationSpellVisual($plan['spellVisual']);
     $cueEventId = empty($plan['deferCue'])&&(is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'||applicationAbilityIcon($completionCue['icon']??null)!==null||applicationSpellVisual($completionCue['spell']??null)!==null)
         ? appendApplicationAbilityCueEvent($activity, $completionCue, (string) $plan['sceneId'],
             (string) ($cast['roll']['mapEvent']['layerId'] ?? $source['layerId'] ?? 'ground'), (string) ($source['id'] ?? ''),

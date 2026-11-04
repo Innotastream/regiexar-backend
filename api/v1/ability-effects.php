@@ -11,6 +11,8 @@ require_once __DIR__ . '/tactical-effects.php';
 require_once __DIR__ . '/ability-stat-check.php';
 require_once __DIR__ . '/cone-area.php';
 require_once __DIR__ . '/area-cast-gate.php';
+require_once __DIR__.'/area-variants.php';
+require_once __DIR__.'/spell-fields.php';
 
 function applicationDamageComponents(mixed $value): array {
     if (!is_array($value) || !array_is_list($value) || count($value) > 3) return [];
@@ -53,6 +55,7 @@ function validApplicationDamageOverTime(mixed $value): bool {
         && is_int($value['turns'] ?? null) && $value['turns'] >= 1 && $value['turns'] <= 20;
 }
 function validApplicationDamageTargeting(mixed $value): bool {
+    if(is_array($value)&&($value['shape']??'')==='thorn-wall'&&(($value['origin']??'')!=='point'||($value['radiusCells']??null)!==2||!empty($value['singleTargetHalfMana'])))return false;
     if(is_array($value)&&($value['mode']??'')==='area'&&($value['shape']??'')==='cone')return is_int($value['lengthCells']??null)&&$value['lengthCells']>=1&&$value['lengthCells']<=20
         &&($value['origin']??'point')==='point'&&($value['defenseSelection']??'gm-agility')==='gm-agility'
         &&!isset($value['singleTargetHalfMana'])&&(!isset($value['affectCaster'])||is_bool($value['affectCaster']))&&(!isset($value['affectAllies'])||is_bool($value['affectAllies']))&&(!isset($value['affectEnemies'])||is_bool($value['affectEnemies']));
@@ -65,8 +68,8 @@ function validApplicationDamageTargeting(mixed $value): bool {
         && (!array_key_exists('affectEnemies', $value) || is_bool($value['affectEnemies']))
         && (($value['affectCaster'] ?? true) || ($value['affectAllies'] ?? true) || ($value['affectEnemies'] ?? true));
 }
-function applicationDamageAreaAffects(array $targeting, string $sourceId, string $sourceController, string $targetId, string $targetController): bool {
-    if ($sourceId === $targetId) return ($targeting['affectCaster'] ?? true) === true;
+function applicationDamageAreaAffects(array $targeting, string $sourceId, string $sourceController, string $targetId, string $targetController, string $sourceUnitId='', string $targetUnitId=''): bool {
+    if ($sourceId === $targetId || $sourceUnitId!=='' && $sourceUnitId===$targetUnitId) return ($targeting['affectCaster'] ?? true) === true;
     $allied = ($sourceController !== '') === ($targetController !== '');
     return $allied ? ($targeting['affectAllies'] ?? true) === true : ($targeting['affectEnemies'] ?? true) === true;
 }
@@ -74,7 +77,9 @@ function applicationDamageAreaAffects(array $targeting, string $sourceId, string
 function applicationAreaTargetPoint(mixed $value, string $layerId): ?array {
     if (!is_array($value) || !(is_int($value['x']??null)||is_float($value['x']??null)) || !(is_int($value['y']??null)||is_float($value['y']??null))
         || !is_finite((float)$value['x']) || !is_finite((float)$value['y']) || $value['x']<0 || $value['x']>100 || $value['y']<0 || $value['y']>100) return null;
-    return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId];
+    $rotation=$value['rotation']??null;
+    if(array_key_exists('rotation',$value)&&(!is_int($rotation)||$rotation<0||$rotation>=180))return null;
+    return ['x'=>$value['x'],'y'=>$value['y'],'layerId'=>$layerId,...($rotation===null?[]:['rotation'=>$rotation])];
 }
 function validApplicationAbilityEffects(array $entry): bool {
     if(isset($entry['mountedMovement'])&&!is_bool($entry['mountedMovement']))return false;
@@ -82,6 +87,10 @@ function validApplicationAbilityEffects(array $entry): bool {
     try {
         if(applicationVisionZoneDefinition($entry['visionZone']??null)!==null&&($entry['effect']??'damage')!=='movement')return false;
         applicationDamageVariants($entry['damageVariants']??null);
+        $persistentArea=applicationPersistentArea($entry['persistentArea']??null);
+        if($persistentArea!==null&&(($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['mode']??'')!=='area'||($entry['damageTargeting']['shape']??'')==='cone'))return false;
+        $areaVariants=applicationAreaVariants($entry['areaVariants']??null);
+        if($areaVariants!==[]&&(($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['mode']??'')!=='area'||($entry['damageTargeting']['shape']??'')==='cone'))return false;
         applicationAbilityItemRequirement($entry['itemRequirement']??null);
         if(applicationChanceCastGate($entry['castGate']??null)!==null && (($entry['effect']??'damage')!=='damage'||($entry['damageTargeting']['shape']??'')!=='cone'||($entry['castingStatId']??null)!==''||!empty($entry['reducedFailureCooldown'])||!empty($entry['projectile'])))return false;
     }catch(RuntimeException){return false;}
@@ -157,6 +166,8 @@ function applicationAbilityEffectFields(array $entry): array {
     $conditions = array_key_exists('onHitConditions', $entry) ? ['onHitConditions' => normalizeOnlineConditions($entry['onHitConditions'])] : [];
     if($gate=applicationChanceCastGate($entry['castGate']??null))$conditions['castGate']=$gate;
     if($variants=applicationDamageVariants($entry['damageVariants']??null))$conditions['damageVariants']=$variants;
+    if($variants=applicationAreaVariants($entry['areaVariants']??null))$conditions['areaVariants']=$variants;
+    if($area=applicationPersistentArea($entry['persistentArea']??null))$conditions['persistentArea']=$area;
     if($requirement=applicationAbilityItemRequirement($entry['itemRequirement']??null))$conditions['itemRequirement']=$requirement;
     if($visionZone=applicationVisionZoneDefinition($entry['visionZone']??null))$conditions['visionZone']=$visionZone;
     if (in_array($effect, ['damage', 'healing', 'movement', 'enhancement'], true) && applicationAttackEnhancement($entry['attackEnhancement'] ?? null) !== null)
@@ -205,6 +216,7 @@ function applicationAbilityEffectFields(array $entry): array {
         ...(validApplicationDamageTargeting($entry['damageTargeting'] ?? null) ? ['damageTargeting' => [
             'mode' => 'area', 'radiusCells' => $entry['damageTargeting']['lengthCells']??$entry['damageTargeting']['radiusCells'],
             ...(($entry['damageTargeting']['shape']??'')==='cone'?['shape'=>'cone','lengthCells'=>$entry['damageTargeting']['lengthCells'],'defenseSelection'=>'gm-agility']:[]),
+            ...(in_array($entry['damageTargeting']['shape']??'',['square','thorn-wall'],true)?['shape'=>$entry['damageTargeting']['shape']]:[]),
             'origin' => $entry['damageTargeting']['origin'] ?? (($entry['damageTargeting']['shape']??'')==='cone'?'point':'target'),
             ...(($entry['damageTargeting']['singleTargetHalfMana']??false)===true?['singleTargetHalfMana'=>true]:[]),
             'affectCaster' => $entry['damageTargeting']['affectCaster'] ?? (($entry['damageTargeting']['shape']??'')!=='cone'),
@@ -306,7 +318,7 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
             && (int) ($old['workflow']['version'] ?? 0) > (int) ($entry['workflow']['version'] ?? 0)) $entry['workflow'] = $old['workflow'];
         if (array_key_exists('effect', $entry)) return $entry;
         if (!array_key_exists('effect', $old) && !array_key_exists('damageComponents', $old)) return $entry;
-        foreach (['effect', 'attackEnhancement', 'damageComponents', 'damageOverTime', 'damageTargeting', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
+        foreach (['effect', 'attackEnhancement', 'damageComponents', 'damageOverTime', 'damageTargeting', 'areaVariants', 'persistentArea', 'opposition', 'healingFormula', 'formCharacterId', 'summonLinkedTokenId', 'onHitConditions', 'workflow', 'completionCue', 'formula', 'damageType'] as $field) if (array_key_exists($field, $old)) $entry[$field] = $old[$field];
         return $entry;
     }, $incoming);
 }

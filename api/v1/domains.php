@@ -1443,6 +1443,16 @@ function validApplicationWeaponAttacks(mixed $value): bool
 function validApplicationTokenDomain(array $payload): bool
 {
     if(isset($payload['terrainBarrier'])&&(!is_array($payload['terrainBarrier'])||($payload['terrainBarrier']['version']??0)!==1))return false;
+    if(applicationIsRectangularObstacle($payload)){
+        $barrier=$payload['terrainBarrier'];$rotation=$barrier['rotation']??null;
+        $door=applicationIsObstacleDoor($payload);
+        if(!is_int($rotation)||$rotation<0||$rotation>=($door?360:180))return false;
+        if($door&&isset($barrier['allowPeek'])&&!is_bool($barrier['allowPeek']))return false;
+        if($door&&isset($barrier['pickDifficulty'])&&(!is_int($barrier['pickDifficulty'])||$barrier['pickDifficulty']<0||$barrier['pickDifficulty']>100))return false;
+        if($door&&isset($barrier['pickReceipts'])&&(!is_array($barrier['pickReceipts'])||!array_is_list($barrier['pickReceipts'])||count($barrier['pickReceipts'])>32))return false;
+        if($door&&isset($barrier['widthCells'])&&(!is_int($barrier['widthCells'])&&!is_float($barrier['widthCells'])||applicationObstacleDoorWidth($payload)!==(float)$barrier['widthCells']))return false;
+        if($door?(!is_bool($barrier['open']??null)||isset($barrier['locked'])&&!is_bool($barrier['locked'])||isset($barrier['keyItemId'])&&!equipmentId($barrier['keyItemId'])):!is_bool($barrier['playerSide']??null))return false;
+    }
     if(isset($payload['fixedStructure'])&&(!is_array($payload['fixedStructure'])||($payload['fixedStructure']['version']??0)!==1))return false;
     if(isset($payload['nonCombatant'])&&!is_bool($payload['nonCombatant']))return false;
     if(array_key_exists('passiveAbilities',$payload)){try{applicationPassiveAbilities($payload['passiveAbilities']);}catch(RuntimeException){return false;}}
@@ -2455,9 +2465,14 @@ function prepareApplicationDomainUpsert(
     }
     if($protectAgainstStaleEntityWrite&&str_starts_with($key,'token:')&&is_array($payload)&&empty($current['payload']['fixedStructure']))unset($payload['fixedStructure']);
     if(str_starts_with($key,'token:')&&is_array($payload)){
-        $payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload));
-        if($protectAgainstStaleEntityWrite)foreach(['appearanceState','controlEffect','predatoryMarks'] as $field){
-            if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];else unset($payload[$field]);
+        $payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload,!$protectAgainstStaleEntityWrite));
+        if($protectAgainstStaleEntityWrite){
+            foreach(['appearanceState','controlEffect','predatoryMarks'] as $field){
+                if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];else unset($payload[$field]);
+            }
+            $previous=$current['payload']??[];$moved=false;
+            foreach(['x','y','layerId','mountedOnTokenId','_movedAt'] as $field)if(($payload[$field]??null)!=($previous[$field]??null)){$moved=true;break;}
+            if(!$moved&&!empty($previous['doorPeek']))$payload['doorPeek']=$previous['doorPeek'];else unset($payload['doorPeek']);
         }
     }
     if ($key === 'table' && $protectAgainstStaleEntityWrite && is_array($payload)) { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }

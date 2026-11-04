@@ -131,7 +131,7 @@ function applicationEnhancementAuraAffects(array $effect,array $source,array $st
     $controller=static fn($token)=>applicationUnitControllerId($token,$state);
     $recipients=isset($source['resources'])?array_values(array_filter($tokens,static fn($token)=>applicationEnhancementHolder($token)===applicationEnhancementHolder($source))):[$source];
     $a=[...$effect['aura'],'affectAllies'=>!empty($caster['friendlyFire'])||$effect['aura']['affectAllies']];$near=onlineDamageAreaTargets($recipients,$caster,$map,(float)$a['radiusCells'],true);
-    foreach($recipients as $recipient)foreach($near as $token)if(($token['id']??'')===($recipient['id']??null)&&applicationDamageAreaAffects($a,$caster['id'],$controller($caster),$token['id'],$controller($token)))return true;
+    foreach($recipients as $recipient)foreach($near as $token)if(($token['id']??'')===($recipient['id']??null)&&applicationDamageAreaAffects($a,$caster['id'],$controller($caster),$token['id'],$controller($token),unitIdForToken($caster),unitIdForToken($token)))return true;
     return false;
 }
 function onlineAttackEnhancementState(PDO $connection,array &$records,array $pending,string $sceneId,?array $activity=null):array {
@@ -164,7 +164,7 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
     $holder = applicationEnhancementHolder($recipient);
     if ($definition['mode'] === 'echo' && $holder !== applicationEnhancementHolder($source)) $definition['formula'] = $definition['allyFormula'];
     $effects = array_values(array_filter($activity['attackEnhancements'] ?? [], static fn(array $effect): bool =>
-        ($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || !($effect['abilityId'] === $ability['id'] || $definition['mode']==='next-item-use'&&($effect['mode']??'')==='next-item-use'&&($effect['itemKind']??'')===$definition['itemKind']))));
+        ($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['holder']??'')!==$holder&&($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || !($effect['abilityId'] === $ability['id'] || $definition['mode']==='next-item-use'&&($effect['mode']??'')==='next-item-use'&&($effect['itemKind']??'')===$definition['itemKind']))));
     if (count($effects) >= 100) throw new RuntimeException('Trop d’effets sur les attaques sont déjà actifs.', 409);
     $effects[] = [...$definition, 'id' => $id, 'holder' => $holder, 'abilityId' => $ability['id'], 'label' => $ability['name'].(!empty($enchantment['enchantedItemName'])?' — '.$enchantment['enchantedItemName']:''), 'sceneId' => $sceneId, ...$enchantment,
         ...(!empty($ability['image']) ? ['abilityImage' => $ability['image']] : []),
@@ -257,6 +257,7 @@ function onlineApplyAttackEchoes(PDO $connection, array &$records, array &$pendi
     $holder = applicationEnhancementHolder($source);
     $equipmentState=onlineEquipmentState($connection,$records,$pending,$sceneId);
     $enhancementState=array_replace($equipmentState,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity));
+    $weaponEchoCues = [];
     $attack['echoDefinitions'] ??= array_values(array_filter(applicationActiveAttackEnhancements($source,$enhancementState,$sceneId), static fn(array $effect): bool =>
         ($effect['mode'] ?? '') === 'echo' && applicationAttackTriggersEnhancement($effect, $attack)));
     if ($attack['echoDefinitions'] !== [] && $attack['status'] !== 'awaiting-opposition' && ($attack['status'] !== 'pending' || $approved)) {
@@ -276,12 +277,23 @@ function onlineApplyAttackEchoes(PDO $connection, array &$records, array &$pendi
             $execution = ['id' => $effect['id'], 'revision' => 1, 'abilityId' => $effect['abilityId'], 'abilityName' => $effect['label'],
                 'sourceTokenId' => $source['id'], 'sourceName' => $source['name'], 'sceneId' => $sceneId, 'layerId' => $attack['layerId'],
                 'echoParentId' => $attack['id'], 'echoAreaRadiusCells' => $attack['areaRadiusCells'] ?? 0, 'echoApproved' => $approved, 'currentStepIndex' => 0, 'workflow' => ['steps' => [['spendOptions' => [['id' => 'echo', 'label' => 'Frappe rémanente']]]]]];
-            $attack['echoAttacks'][] = onlineCounterDamageAttack($connection, $records, $pending, $identity, $execution,
+            $echo = onlineCounterDamageAttack($connection, $records, $pending, $identity, $execution,
                 ['targetTokenId' => $target['id'], 'optionId' => 'echo', 'opposed' => false, 'effect' => ['formula' => $effect['formula'], 'damageType' => applicationEnhancementDamageType($effect,$attack)]],
                 'echo-' . randomToken(18), $attack['attackerRole'] === 'gm');
+            $attack['echoAttacks'][] = $echo;
+            if (($effect['trigger'] ?? '') === 'enchanted-weapon') {
+                $visualMap ??= [...$equipmentState['map'], 'tokens' => onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
+                $spell = applicationTrustedWeaponEchoSpell($effect,$sceneId,$visualMap,$source,$target,$equipmentState['items']);
+                if ($spell !== null) $weaponEchoCues[] = ['id' => 'weapon-echo-'.$echo['id'], 'spell' => $spell];
+            }
         }
     }
     $activity = $pending['activity']['payload'] ?? $activity;
+    foreach ($weaponEchoCues as $cue) {
+        $spell = $cue['spell'];
+        appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),
+            $sceneId,$spell['layerId'],$source['id'],$attack['visibility']??'gm',$cue['id']);
+    }
     foreach ($activity['pendingAttacks'] ?? [] as $i => $entry) if ($entry['id'] === $attack['id']) $activity['pendingAttacks'][$i] = $attack;
     foreach ($activity['attackReceipts'] ?? [] as $i => $entry) if (($entry['attack']['id'] ?? '') === $attack['id']) $activity['attackReceipts'][$i]['attack'] = $attack;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);

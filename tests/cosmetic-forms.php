@@ -1,0 +1,48 @@
+<?php
+declare(strict_types=1);
+define('XAR_SPECIAL_FIXTURE_ONLY',true);
+require __DIR__.'/tactical-special-effects.php';
+$checks=0;
+function cosmeticCheck(bool $value,string $message):void{if(!$value)throw new RuntimeException($message);$GLOBALS['checks']++;}
+function cosmeticCastingUnchanged(array $after,array $before):bool{foreach(['actionTimers','resourceReceipts','rolls','abilityCueEvents','abilityExecutions','pendingAbilityCasts'] as $key)if(($after[$key]??[])!==($before[$key]??[]))return false;return true;}
+$legacy=['condition'=>'Empoisonné'];
+applicationAddArbitratedCondition($legacy,'Nausée');
+cosmeticCheck($legacy['conditions']===['Empoisonné','Nausée'],'Arbitrated nausea preserves legacy conditions');
+$cleared=['conditions'=>[],'condition'=>'Empoisonné'];
+applicationAddArbitratedCondition($cleared,'Nausée');
+cosmeticCheck($cleared['conditions']===['Nausée'],'Explicitly cleared conditions stay cleared');
+$db=specialFixture();$abilityId='ability-a8b354c7-87d2-41c9-83a8-25dd6de77e40';$form=applicationCosmeticForms()['keyrie-buzzard'];
+$db->mediaObjects=['abcdefghijklmnopqrstuvwx'=>['pending_delete_at'=>null],'ABCDEFGHIJKLMNOPQRSTUVWX'=>['pending_delete_at'=>null]];
+$owner=$db->payload('character:character-player');$owner['portrait']='/media/abcdefghijklmnopqrstuvwx';$owner['abilities']=[['id'=>$abilityId,'name'=>'Nom arbitraire','effect'=>'metamorphosis','formula'=>'0','description'=>'','formCharacterId'=>'other-form','castingStatId'=>'','manaCost'=>99,'fatigueCost'=>99,'restRecharge'=>'long','usesPerRest'=>1]];$db->put('character:character-player',$owner);
+$activity=$db->payload('activity');$activity['actionTimers']=[['id'=>'spent','abilityId'=>$abilityId,'characterId'=>'character-player','sceneId'=>'scene-one','restRecharge'=>'long','restUseCount'=>1,'restUseLimit'=>1]];$db->put('activity',$activity);
+$before=$db->payload('character:character-player');$token=$db->payload('token:scene-one:token-player');$token['image']=$owner['portrait'];$db->put('token:scene-one:token-player',$token);
+$args=['sourceTokenId'=>'token-player','layerId'=>'ground','abilityId'=>$abilityId,'formId'=>$form['id'],'active'=>true,'expectedAppearanceId'=>''];
+$r=specialMechanics($db,'appearance.change',$args,false);cosmeticCheck($r->status===200,'Free bird appearance succeeds: '.json_encode($r->body));
+$token=$db->payload('token:scene-one:token-player');cosmeticCheck($token['image']===$form['asset']&&$token['characterId']==='character-player','Only the portrait changes');
+cosmeticCheck($db->payload('character:character-player')===$before,'Sheet and resources remain identical');cosmeticCheck(cosmeticCastingUnchanged($db->payload('activity'),$activity),'No cast, cooldown, roll or cue added');
+$records=applicationDomainRecords($db);$projection=publicPlayerState(onlineDeviceState($db,$records,[]),['id'=>'account-player','effective_mode'=>'player','permanent_role'=>'player'],[]);
+$visible=array_values(array_filter($projection['map']['tokens'],static fn($t)=>$t['id']==='token-player'))[0];cosmeticCheck($visible['image']===$form['asset']&&$visible['tacticalEffects'][0]['presetId']===$form['id'],'Owner projection includes the selected appearance and return action');
+$r=specialMechanics($db,'appearance.change',[...$args,'active'=>false],false);cosmeticCheck($r->status===409,'Stale button does not toggle a newer appearance');
+$r=runCommand($db,'mechanics.command',['command'=>'appearance.change','arguments'=>[...$args,'active'=>false,'expectedAppearanceId'=>$token['appearanceState']['id'],'sceneId'=>'scene-one','requestId'=>'foreign-cosmetic-00001']],false,'account-other');cosmeticCheck($r->status===403,'Foreign player cannot remove the appearance');
+$owner['portrait']='/media/ABCDEFGHIJKLMNOPQRSTUVWX';$db->put('character:character-player',$owner);
+$r=specialMechanics($db,'appearance.change',[...$args,'active'=>false,'expectedAppearanceId'=>$token['appearanceState']['id']],false);cosmeticCheck($r->status===200,'Return succeeds for the owner');
+$token=$db->payload('token:scene-one:token-player');$after=$db->payload('character:character-player');
+cosmeticCheck($token['image']===$owner['portrait']&&empty($token['appearanceState']['active']),'Return uses the current normal portrait');
+cosmeticCheck(in_array('Nausée',$after['conditions'],true)&&in_array('Nausée',$token['conditions'],true),'Return persists arbitrated nausea on the effective unit');
+cosmeticCheck($after['resources']===$before['resources']&&$after['fatigue']===$before['fatigue']&&cosmeticCastingUnchanged($db->payload('activity'),$activity),'Return consumes nothing from the main spell');
+$r=specialMechanics($db,'appearance.change',$args,false);cosmeticCheck($r->status===200,'Arbitrated nausea has no automatic action penalty');$token=$db->payload('token:scene-one:token-player');
+$r=specialMechanics($db,'effect.revoke',['tokenId'=>'token-player','kind'=>'appearance','effectId'=>$token['appearanceState']['id']],false);cosmeticCheck($r->status===200,'The active-effects revoke action also restores normal appearance');
+cosmeticCheck(count(array_filter($db->payload('character:character-player')['conditions'],static fn($c)=>$c==='Nausée'))===1,'Nausea is not duplicated');
+cosmeticCheck(normalizePersistedImageReference($form['asset'])===$form['asset']&&normalizePersistedImageReference($form['asset'].'?x')===null,'Only exact bundled artwork is accepted');
+$renamed=applicationConfiguredAbilityText(['id'=>'ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2','name'=>'EMO SPHERE FLOTTANTE','description'=>'Texte personnalisé']);cosmeticCheck($renamed['name']==='Hémo-sphère flottante','Display spelling corrected without replacing custom description');
+$owner=$db->payload('character:character-player');$owner['conditions']=[];$owner['abilities'][0]['formDurationTurns']=1;$db->put('character:character-player',$owner);
+$shape=$owner;$shape['id']='other-form';$shape['name']='Forme fictive';$shape['abilities']=[];$db->put('character:other-form',$shape);
+$roster=$db->payload('roster');$roster['characterOrder'][]='other-form';$db->put('roster',$roster);$clock=$db->payload('initiative:scene-one');$clock['active']=false;$db->put('initiative:scene-one',$clock);
+$activity=$db->payload('activity');$activity['actionTimers']=[];$db->put('activity',$activity);
+$r=specialUse($db,$abilityId,'token-player');cosmeticCheck($r->status===200,'Main transformation succeeds: '.json_encode($r->body));$token=$db->payload('token:scene-one:token-player');
+cosmeticCheck(($token['transformation']['returnCondition']??'')==='Nausée','Main transformation records its own arbitrated return condition');
+$r=specialUse($db,'','token-player',['returnForm'=>true,'expectedFormRequestId'=>$token['transformation']['requestId']]);cosmeticCheck($r->status===200&&in_array('Nausée',$db->payload('character:character-player')['conditions'],true),'Manual Hibours return applies nausea');
+$owner=$db->payload('character:character-player');$owner['conditions']=[];$owner['resources']['mana']=100;$owner['fatigue']['current']=0;$db->put('character:character-player',$owner);$activity=$db->payload('activity');$activity['actionTimers']=[];$db->put('activity',$activity);$token=$db->payload('token:scene-one:token-player');
+$r=specialUse($db,$abilityId,'token-player',['expectedFormRequestId'=>$token['transformation']['requestId']]);cosmeticCheck($r->status===200,'Main form can be tested again after fixture rest');
+$r=specialMechanics($db,'scene.advance',[],true);$token=$db->payload('token:scene-one:token-player');cosmeticCheck($r->status===200&&$token['characterId']==='character-player'&&in_array('Nausée',$token['conditions'],true),'Automatic Hibours expiration applies nausea');
+echo 'Cosmetic forms: '.$checks." native checks OK\n";

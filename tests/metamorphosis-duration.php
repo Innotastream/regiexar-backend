@@ -59,4 +59,28 @@ $activity=$db->payload('activity');$activity['damageOverTime']=[['id'=>'manual-f
 morphCheck(specialMechanics($db,'scene.advance',[])->status===200,'Manual transformation and poison share one authoritative turn');
 $returned=$db->payload('token:scene-one:token-player');morphCheck($returned['characterId']==='character-player'&&$returned['hp']===63&&$db->payload('character:character-player')['resources']['hp']===63,'Return settles temporary HP before one poison tick on normal HP');
 morphCheck($db->payload('activity')['damageOverTime'][0]['remainingTurns']===2&&$db->payload('activity')['actionTimers'][0]['restUseCount']===1,'Poison duration advances once without restoring long-rest transformation quota');
+foreach ([['followCharacter'=>false],['usesCharacterSheet'=>false],['rollUsesCharacterSheet'=>false],
+    ['independent'=>true],['independentClone'=>true],['linkedTokenId'=>'original']] as $flags) {
+    $source=['id'=>'source','characterId'=>'base'];
+    $clone=['id'=>'clone','characterId'=>'base','hp'=>17,...$flags];
+    $state=['activeSceneId'=>'scene','initiative'=>[],'map'=>['tokens'=>[$source,$clone]],'characters'=>[
+        ['id'=>'base','ownerPlayerId'=>'owner','resources'=>['hp'=>20,'maxHp'=>40]],
+        ['id'=>'form','ownerPlayerId'=>'owner','resources'=>['hp'=>50,'maxHp'=>50]]
+    ]];
+    $ability=['id'=>'morph','effect'=>'metamorphosis','formCharacterId'=>'form','formDurationTurns'=>1,'formBonusHp'=>100];
+    $request=['requestId'=>'cast'];$refused=false;
+    try { planApplicationMetamorphosis($clone,$state['characters'],$state['map']['tokens'],$ability,$request,'owner',false); }
+    catch (RuntimeException $error) { $refused=str_contains($error->getMessage(),'pion lié'); }
+    morphCheck($refused,'An autonomous unit cannot change the shared sheet form');
+    $plan=planApplicationMetamorphosis($source,$state['characters'],$state['map']['tokens'],$ability,$request,'owner',false,[['sourceTokenId'=>'clone']]);
+    morphCheck(array_column(array_column(array_values($plan['changes']),'token'),'id')===['source'],'Independent pending attack does not lock the shared form');
+    applicationApplyMetamorphosisPlan($state,$plan);
+    morphCheck($state['map']['tokens'][0]['characterId']==='form'&&$state['map']['tokens'][1]===$clone,'Only the linked occurrence transforms');
+    $state['map']['tokens'][1]['characterId']='form';
+    $state['map']['tokens'][1]['transformation']=$state['map']['tokens'][0]['transformation'];
+    $transformedClone=$state['map']['tokens'][1];
+    applicationAdvanceMetamorphoses($state,[],true);
+    morphCheck($state['map']['tokens'][0]['characterId']==='base'&&$state['map']['tokens'][1]===$transformedClone,'Expiration preserves autonomous copies with historical metadata');
+    morphCheck($state['characters'][0]['resources']['hp']===20,'The base health is settled once');
+}
 echo json_encode(['ok'=>true,'checks'=>$morphChecks],JSON_THROW_ON_ERROR).PHP_EOL;

@@ -103,7 +103,7 @@ function applicationCollectContactZoneMovement(array &$state,array $mover,array 
         if($zone['sceneId']!==$scene||$zone['layerId']!==($mover['layerId']??'ground')||$zone['createdCombatId']!==$clock['combatId'])continue;
         if($unitId===$zone['sourceUnitId']&&!$zone['definition']['affectCaster'])continue;
         $def=$zone['definition'];$affects=[...$def,'affectAllies'=>$def['affectAllies']||$zone['friendlyFire']];
-        if($unitId!==$zone['sourceUnitId']&&!applicationDamageAreaAffects($affects,$zone['sourceTokenId'],$zone['sourceControllerId'],$mover['id'],applicationUnitControllerId($mover,$state)))continue;
+        if($unitId!==$zone['sourceUnitId']&&!applicationDamageAreaAffects($affects,$zone['sourceTokenId'],$zone['sourceControllerId'],$mover['id'],applicationUnitControllerId($mover,$state),$zone['sourceUnitId'],$unitId))continue;
         if(array_filter($zone['contacts'],static fn($c)=>$c['targetUnitId']===$unitId&&$c['combatId']===$clock['combatId']&&$c['turnSerial']===$clock['turnSerial']))continue;
         if(!applicationContactZoneTouchesPath($zone,$mover,$map,$points))continue;
         $requestId=isset($options['requestIdForContact'])?($options['requestIdForContact'])($zone['id'],$unitId,$clock['combatId'],$clock['turnSerial']):applicationContactZoneRequestId($zone['id'],$unitId,$clock['combatId'],$clock['turnSerial']);

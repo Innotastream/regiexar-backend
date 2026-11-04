@@ -60,6 +60,8 @@ jobs:
           php tests/stream-roll-projection.php > /dev/null
           php tests/stream-state-read.php
           php tests/caster-area-footprint.php
+          php tests/area-variants.php
+          php tests/spell-fields.php
       - name: Ability casting costs and cooldowns
         run: |
           php tests/ability-casting-contract.php
@@ -86,8 +88,10 @@ jobs:
       - name: Infusions, devices and individual consent
         run: |
           php tests/device-native-contract.php
+          php tests/device-roll-stock.php
           php tests/device-recovery-contract.php
           php tests/tactical-special-effects.php
+          php tests/cosmetic-forms.php
           php tests/active-items-poisons.php
           php tests/metamorphosis-duration.php
       - name: Unit inventories, independent clones and linked passages

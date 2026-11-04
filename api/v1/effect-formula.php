@@ -34,6 +34,22 @@ function parseEffectFormula(mixed $value): array {
     $tree=$expression();if($cursor!==strlen($formula))$invalid();return ['formula'=>$formula,...$tree];
 }
 function validEffectFormula(mixed $value):bool {try{parseEffectFormula($value);return true;}catch(InvalidArgumentException){return false;}}
+function meanEffectFormula(string $value): float {
+    $mean = static function (array $tree) use (&$mean): float {
+        $total = 0.0;
+        foreach ($tree['terms'] as ['operator'=>$operator, 'term'=>$term]) {
+            $amount = isset($term['terms']) ? $mean($term)
+                : (isset($term['dice']) ? $term['dice'] * ($term['sides'] + 1) / 2 : $term['number']);
+            $total = match ($operator) {
+                '*' => $total * $amount,
+                '-' => $total - $amount,
+                default => $total + $amount,
+            };
+        }
+        return $total;
+    };
+    return $mean(parseEffectFormula($value));
+}
 function evaluateEffectFormula(string $value,?callable $rollDie=null):array {
     $tree=parseEffectFormula($value);$dice=[];$rollDie??=static fn(int $sides):int=>random_int(1,$sides);
     $evaluate=function(array $tree,int $sign=1) use (&$evaluate,&$dice,$rollDie):array {

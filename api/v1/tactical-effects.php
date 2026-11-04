@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/passive-abilities.php';
+require_once __DIR__.'/cosmetic-forms.php';
 function applicationTacticalEffect(mixed $v):?array {
     if($v===null||empty($v['kind']))return null;
     if(!is_array($v)||($v['version']??0)!==1||!in_array($v['kind']??'',['appearance','control','mark','coating'],true))throw new RuntimeException('Version ou mécanique d’effet ciblé non prise en charge.',400);
@@ -13,7 +14,7 @@ function applicationTacticalEffect(mixed $v):?array {
         default=>['version'=>1,'kind'=>'appearance']};
 }
 function applicationTacticalController(array $token,string $fallback=''):string {return $token['controlEffect']['controllerId']??$fallback;}
-function applicationTacticalImage(array $token,mixed $base):mixed {return isset($token['appearanceState'])?(($token['appearanceState']['active']??false)?$token['appearanceState']['image']:$token['appearanceState']['baseImage']):$base;}
+function applicationTacticalImage(array $token,mixed $base):mixed {if(isset($token['appearanceState']['presetId']))return applicationCosmeticFormImage($token,$base);return isset($token['appearanceState'])?(($token['appearanceState']['active']??false)?$token['appearanceState']['image']:$token['appearanceState']['baseImage']):$base;}
 function applicationMaximumFormula(string $formula):int { return parseEffectFormula($formula)['max']; }
 
 function applicationApplyTacticalEffect(array $source,array $target,array $ability,string $controller,array $clock,string $id):array {
@@ -40,7 +41,7 @@ function applicationPredatoryResultBonus(array $source,string $opponent,string $
     $sum=0;foreach($source['predatoryMarks']??[] as $m)if(($m['active']??false)&&($m['trigger']==='after-target-attacks'||$m['targetTokenId']===$opponent))$sum+=$phase==='attack'?$m['attackBonus']:($phase==='defense'&&$statId==='character-stat-agility'?$m['dodgeBonus']:0);return $sum;
 }
 function applicationTacticalEffectsSummary(array $t):array {
-    $r=[];if($t['appearanceState']['active']??false)$r[]=['id'=>$t['appearanceState']['id'],'kind'=>'appearance','label'=>$t['appearanceState']['label'],'detail'=>'Apparence empruntée · jusqu’à révocation','ownerRevoke'=>true];
+    $r=[];$a=$t['appearanceState']??[];$form=applicationCosmeticForms()[$a['presetId']??'']??null;if(!empty($a['active'])&&($form===null||($a['boundCharacterId']??'')===($t['characterId']??'')))$r[]=['id'=>$a['id'],'kind'=>'appearance','label'=>$a['label'],'detail'=>$form?'Apparence uniquement · retour : '.$form['returnCondition'].' (arbitrée)':'Apparence empruntée · jusqu’à révocation','ownerRevoke'=>true,...($form?['presetId'=>$form['id'],'abilityId'=>$form['abilityId']]:[])];
     if(!empty($t['controlEffect']))$r[]=['id'=>$t['controlEffect']['id'],'kind'=>'control','label'=>$t['controlEffect']['label'],'detail'=>'Contrôle jusqu’à la fin du prochain tour complet joué par cette unité · révocable par le MJ'];
     foreach($t['predatoryMarks']??[] as $m)$r[]=['id'=>$m['id'],'kind'=>'mark','label'=>$m['label'],'detail'=>'Attaques +'.$m['attackBonus'].' · esquives +'.$m['dodgeBonus'].' au résultat · '.($m['active']?'actif':'attend une attaque de la cible').' · jusqu’à la fin du combat ou au retrait MJ'];return $r;
 }

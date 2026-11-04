@@ -2,10 +2,10 @@
 declare(strict_types=1);
 define('XAR_SPECIAL_FIXTURE_ONLY',true);require __DIR__.'/tactical-special-effects.php';
 $specialChecks=0;
-function gearFixture():MemoryConnection {
+function gearFixture(bool $preferFirst=false):MemoryConnection {
  $db=specialFixture();$items=['version'=>1,'templates'=>[],'instances'=>[],'equipmentLoadouts'=>['character-player'=>['sets'=>[['id'=>'pair','name'=>'Paire fictive','itemIds'=>['first','second']]],'equippedItemIds'=>['first','second'],'activeSetId'=>'pair']]];
  $seed=$db->payload('character:character-player');$seed['specialSuccessStock']=20;$db->put('character:character-player',$seed);
- foreach(['first','second'] as $id){$equipment=['version'=>1,'kind'=>'weapon','hands'=>1,'formula'=>'7','damageType'=>'magical','reach'=>'melee','projectile'=>false,'finesse'=>true];$items['templates'][]=['id'=>'template-'.$id,'name'=>'Arme fictive '.$id,'kind'=>'object','equipment'=>$equipment];$items['instances'][]=['id'=>$id,'templateId'=>'template-'.$id,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player'],'equipment'=>$equipment];}
+ foreach(['first','second'] as $id){$equipment=['version'=>1,'kind'=>'weapon','hands'=>1,'formula'=>$preferFirst&&$id==='second'?'6':'7','damageType'=>'magical','reach'=>'melee','projectile'=>false,'finesse'=>true];$items['templates'][]=['id'=>'template-'.$id,'name'=>'Arme fictive '.$id,'kind'=>'object','equipment'=>$equipment];$items['instances'][]=['id'=>$id,'templateId'=>'template-'.$id,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player'],'equipment'=>$equipment];}
  $db->put('items',normalizeItemStore($items));$c=$db->payload('character:character-player');$c['stats']['spirit']=80;$c['stats']['spiritSocial']=12;$c['weaponText']='Paire fictive 2d2+12';$c['weaponAttacks']=[['id'=>'pair-strike','formula'=>'2d2+12','damageType'=>'magical','equipmentBinding'=>['kind'=>'set','id'=>'pair']]];
  $c['abilities'][]=['id'=>'club-new','name'=>'Enchantement fictif','effect'=>'enhancement','formula'=>'0','castingStatId'=>'character-stat-spirit','manaCost'=>20,'attackEnhancement'=>['mode'=>'echo','trigger'=>'enchanted-weapon','formula'=>'2','allyFormula'=>'1','damageType'=>'ignore','turns'=>5]];$db->put('character:character-player',$c);return $db;
 }
@@ -32,7 +32,7 @@ specialCheck(resolveEquipmentAttack(['naturalWeapon'=>true,'formula'=>'3'],$sour
 $critical=['status'=>'pending','hit'=>['outcome'=>['code'=>'critical-failure']],'echoAttackContext'=>['torchLightId'=>'held']];specialCheck(!breakAttackTorch($state,$critical),'Pending critical does not break torch');specialCheck(breakAttackTorch($state,$critical,true),'Approved critical breaks torch');specialCheck(!breakAttackTorch($state,$critical,true),'Torch break idempotent');
 specialCheck(resolveEquipmentAttack(['equipmentBinding'=>['kind'=>'set','id'=>'pair']],$source,$state)['formula']==='7+7','Second weapon restored without re-equipping');
 $r=gearStrike($db);specialCheck($r->status===200,'Native equipped attack: '.json_encode($r->body));specialCheck(($r->body['attack']['appliedDamage']??-1)===14,'Native authority counts both weapons');
-$db=gearFixture();$r=gearCommand($db,'ability.use',['sourceTokenId'=>'token-player','targetTokenId'=>'token-player','abilityId'=>'club-new','enchantedItemId'=>'first','useJoker'=>true]);specialCheck($r->status===200,'Native enchantment selects one object: '.json_encode($r->body));specialCheck(($r->body['cast']['statId']??'')==='character-stat-spirit','Native new casting stat');
+$db=gearFixture(true);$r=gearCommand($db,'ability.use',['sourceTokenId'=>'token-player','targetTokenId'=>'token-player','abilityId'=>'club-new','enchantedItemId'=>'second','useJoker'=>true]);specialCheck($r->status===200,'Native enchantment selects one object: '.json_encode($r->body));specialCheck(($r->body['cast']['statId']??'')==='character-stat-spirit','Native new casting stat');
 $attack=$db->payload('activity')['attackEnhancements'][0];specialCheck($attack['enchantedItemId']==='first','One enchanted identity');specialCheck(applicationAttackTriggersEnhancement($attack,['echoAttackContext'=>['weaponBased'=>true,'equipmentItemIds'=>['first']]]),'Matching weapon triggers');specialCheck(!applicationAttackTriggersEnhancement($attack,['echoAttackContext'=>['weaponBased'=>true,'equipmentItemIds'=>['second']]]),'Other weapon does not trigger');specialCheck(!applicationAttackTriggersEnhancement($attack,['echoAttackContext'=>['weaponBased'=>true,'equipmentItemIds'=>['first'],'naturalWeapon'=>true]]),'Natural attack excluded');specialCheck(!applicationAttackTriggersEnhancement($attack,['echoAttackContext'=>['weaponBased'=>true,'equipmentItemIds'=>['first'],'projectile'=>true]]),'Projectile excluded');
 $items=$db->payload('items');$item=$items['instances'][0];$r=gearCommand($db,'item.equipment.update',['itemId'=>'first','expectedItemRevision'=>1,'name'=>'Arme révisée','equipment'=>[...$item['equipment'],'formula'=>'9']],true);specialCheck($r->status===200,'Per-instance edit route: '.json_encode($r->body));$items=$db->payload('items');specialCheck($items['instances'][0]['equipment']['formula']==='9'&&$items['templates'][0]['equipment']['formula']==='7','Model not changed by instance edit');specialCheck(gearCommand($db,'item.equipment.update',['itemId'=>'first','expectedItemRevision'=>1,'name'=>'Périmé','equipment'=>$item['equipment']],true)->status===409,'Stale revision refused');
 $loadout=$items['equipmentLoadouts']['character-player'];$r=gearCommand($db,'item.equipment.set.delete',['setId'=>'pair','expectedLoadout'=>$loadout]);specialCheck($r->status===200,'Set delete route available');specialCheck(count($db->payload('items')['instances'])===2,'Deleting set never destroys weapons');
@@ -63,12 +63,60 @@ $numeric=normalizeItemStore(['version'=>1,'templates'=>[['id'=>'numeric-stock','
 
 function pendingGearValidation(bool $success=true):array {
     for($attempt=0;$attempt<500;$attempt++){
-        $db=gearFixture();$c=$db->payload('character:character-player');foreach($c['abilities'] as &$ability)if($ability['id']==='club-new')$ability['reducedFailureCooldown']=true;unset($ability);$db->put('character:character-player',$c);
+        $db=gearFixture(true);$c=$db->payload('character:character-player');foreach($c['abilities'] as &$ability)if($ability['id']==='club-new')$ability['reducedFailureCooldown']=true;unset($ability);$db->put('character:character-player',$c);
         $r=gearCommand($db,'ability.use',['sourceTokenId'=>'token-player','targetTokenId'=>'token-player','abilityId'=>'club-new','enchantedItemId'=>'first']);
         if(($r->body['pendingValidation']??false)&&($r->body['cast']['success']??false)===$success)return [$db,$r->body];
     }
     throw new RuntimeException('No remarkable cast generated in 500 isolated trials.');
 }
+
+$db=gearFixture(true);
+$items=$db->payload('items');
+$items['templates'][0]['id']='v370-template-6f8e72ba624ecbbe481091a0';
+$items['instances'][0]['templateId']=$items['templates'][0]['id'];
+$db->put('items',$items);
+$cast=gearCommand($db,'ability.use',['sourceTokenId'=>'token-player','targetTokenId'=>'token-player','abilityId'=>'club-new','enchantedItemId'=>'first','useJoker'=>true]);
+$activity=$db->payload('activity');$effect=$activity['attackEnhancements'][0]??[];
+specialCheck($cast->status===200&&($effect['weaponVisualProfile']??'')==='barbed-chain'&&($effect['weaponVisualStartedAt']??0)>0
+    &&empty($activity['attackReceipts'])&&empty($activity['abilityCueEvents']),'Native cast creates chain formation with no attack or projectile');
+$state=domainsToApplicationState($db->domains,$db->revision);
+$visibleIds=['token-player'=>true];
+$startedAt=$effect['weaponVisualStartedAt'];
+$visible=applicationPublicEnchantedWeaponVisuals($state,$state['map'],'scene-one','ground',false,$visibleIds,static fn()=>true,$startedAt+400);
+$weaponVisual=['id'=>$effect['id'],'tokenId'=>'token-player','profile'=>'barbed-chain','startedAt'=>$startedAt];
+$casterVisual=['id'=>$effect['id'],'tokenId'=>'token-player','role'=>'caster','startedAt'=>$startedAt];
+specialCheck($visible===[$weaponVisual,$casterVisual],'Self cast projects both visual roles on the same visible token');
+specialCheck(applicationPublicEnchantedWeaponVisuals($state,$state['map'],'scene-one','ground',false,$visibleIds,static fn()=>true,$startedAt+2300)===[$weaponVisual],
+    'The caster aura ends while the actual weapon remains active');
+$privateTarget=$state;
+$privateTarget['attackEnhancements'][0]['targetTokenId']='token-monster';
+specialCheck(applicationPublicEnchantedWeaponVisuals($privateTarget,$state['map'],'scene-one','ground',false,$visibleIds,static fn()=>true,$startedAt+400)===[$casterVisual],
+    'A public caster bloom carries no hidden recipient data');
+$response=gearStrike($db);
+$events=array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],static fn($event)=>($event['completionCue']['spell']['presetId']??'')==='ethereal-weapon-echo'));
+$spell=$events[0]['completionCue']['spell']??[];
+specialCheck($response->status===200&&count($events)===1&&($spell['weaponProfile']??'')==='barbed-chain'
+    &&($spell['effectId']??'')===$effect['id']&&($spell['anchorTokenId']??'')==='token-monster','Native combined attack emits the one enchanted weapon');
+specialCheck(applicationPublicSpellVisual($spell,['sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player',
+    'visibleTokenIds'=>['token-player'],'visible'=>static fn()=>true])===null,'Echo cannot expose a hidden target');
+$expired=[...$state,'attackEnhancements'=>[]];
+specialCheck(applicationPublicEnchantedWeaponVisuals($expired,$state['map'],'scene-one','ground',false,['token-player'=>true],static fn()=>true)===[],
+    'Expired enchantment leaves no floating copy');
+
+$tied=gearFixture();$state=domainsToApplicationState($tied->domains,$tied->revision);
+$recipient=$tied->payload('token:scene-one:token-player');
+foreach (['first','second'] as $index=>$id) {
+    $picked=requireEnchantedWeapon($state,$recipient,static fn(int $count): int => $count===2?$index:-1);
+    specialCheck($picked['enchantedItemId']===$id,'Only the tie is sent to the random selector');
+}
+$state['items']['instances'][0]['equipment']['formula']='1d2*1d2';
+$state['items']['instances'][1]['equipment']['formula']='1d4';
+$noDraw=static function (): never {throw new RuntimeException('A strictly better weapon does not require a random draw');};
+specialCheck(requireEnchantedWeapon($state,$recipient,$noDraw)['enchantedItemId']==='second','Native mean respects independent multiplied dice');
+$state['items']['equipmentLoadouts']['character-player']['activeSetId']='';
+$state['items']['equipmentLoadouts']['character-player']['equippedItemIds']=['first'];
+specialCheck(requireEnchantedWeapon($state,$recipient,$noDraw)['enchantedItemId']==='first','Unequipped better weapon cannot win');
+
 $resolveGear=static fn($db,$p,$decision)=>runCommand($db,'ability.resolve',['requestId'=>'gear-validation-'.randomToken(20),'validationId'=>$p['validation']['id'],'decision'=>$decision,'confirmed'=>true],true,'account-gm');
 [$db,$p]=pendingGearValidation();specialCheck(gearCommand($db,'item.transfer',['itemId'=>'first','expectedItemRevision'=>1,'targetCharacterId'=>'unit_token-monster'],true)->status===200,'Pending enchantment weapon transfer');
 $r=$resolveGear($db,$p,'approve');specialCheck($r->status===200,'Transferred pending enchantment validates: '.json_encode($r->body));$effect=$db->payload('activity')['attackEnhancements'][0];

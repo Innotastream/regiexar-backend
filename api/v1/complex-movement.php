@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/ability-mount-movement.php';
+require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/terrain-barrier.php';
 
 function applicationTokenSpatialFootprint(array $token,array $map):array {
     $mountId=$token['mountedOnTokenId']??'';
@@ -18,6 +20,12 @@ function applicationMapDistanceInCells(array $a,array $b,array $map,bool $diagon
     if(!($grid>0&&$width>0&&$height>0))return INF;
     $dx=abs(($a['x']-$b['x'])*$width/(100*$grid));$dy=abs(($a['y']-$b['y'])*$height/(100*$grid));
     $radius=static fn($p)=>max(0,(float)(is_numeric($p['size']??null)?$p['size']:(!empty($p['id'])?40:0)))/(2*$grid);
+    if($fromEdges&&(applicationIsRectangularObstacle($a)||applicationIsRectangularObstacle($b))){
+        [$wall,$point]=applicationIsRectangularObstacle($b)?[$b,$a]:[$a,$b];$door=applicationIsObstacleDoor($wall);
+        return max(0,applicationObstacleRectOffset(($point['x']-$wall['x'])*$width/(100*$grid),
+            ($point['y']-$wall['y'])*$height/(100*$grid),$wall['terrainBarrier']['rotation']??0,
+            $door?applicationObstacleDoorWidth($wall):XAR_THORN_WALL_WIDTH,$door?applicationObstacleDoorHeight($wall):XAR_THORN_WALL_HEIGHT,$diagonalAsOne)-$radius($point));
+    }
     $edges=$fromEdges?$radius($a)+$radius($b):0;
     return $diagonalAsOne?max(0,$dx-$edges,$dy-$edges):max(0,hypot($dx,$dy)-$edges);
 }
@@ -107,7 +115,7 @@ function applicationComplexAbilityTargetEligible(array $execution, array $step, 
     $approaching=null;foreach($execution['workflow']['steps'] as $entry)if(($entry['charge']['targetStepId']??null)===$step['id'])$approaching=$entry;
     $rangeSource=$approaching!==null&&$source!==null?applicationAbilityMovementSource($source,$map,($approaching['mountedMovement']??false)===true):$source;
     if (!applicationComplexAbilityTargetInRange($strikeOrigin!==null?[...($source??[]),...$strikeOrigin]:$rangeSource, $target, $map, $range)) return false;
-    if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => !empty($source['friendlyFire']), 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? '')))) return false;
+    if (($targeting['targetRelation']??'') === 'enemies' && ($source === null || !applicationDamageAreaAffects(['affectCaster' => false, 'affectAllies' => !empty($source['friendlyFire']), 'affectEnemies' => true], $source['id'], (string) ($source['controllerAccountId'] ?? $source['controllerPlayerId'] ?? ''), $target['id'], (string) ($target['controllerAccountId'] ?? $target['controllerPlayerId'] ?? ''),unitIdForToken($source),unitIdForToken($target)))) return false;
     if(empty($targeting['sourceMovementStepId']))return true;$movementStep=null;foreach($execution['workflow']['steps']as$entry)if($entry['id']===$targeting['sourceMovementStepId'])$movementStep=$entry;$movementState=$execution['stepStates'][$targeting['sourceMovementStepId']]??[];
     return !empty($movementStep['pathStrike']['staged'])&&!empty($movementState['planned'])?in_array($target['id'],array_column($movementState['targets']??[],'tokenId'),true):applicationTargetTouchesComplexMovement($target,$movementState,$map);
 }

@@ -16,6 +16,8 @@
     }
   },
   "ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2": {
+    "names": ["Émo-sphère flottante", "Emosphere flotante", "Émosphère", "Émo-sphère"],
+    "name": "Hémo-sphère flottante",
     "from": [
       "Une activation par combat et par repos long, 15 fatigue, dure jusqu’à la fin du combat. Une blessure subie par un allié ou ennemi sous Hémorragie à 4 cases du lanceur, ou une nouvelle application d’Hémorragie dans ce rayon, crée une orbe (un seul gain pour la même attaque). Maximum 3 orbes simultanées. Aucun gain passif. Au tour du lanceur, une orbe explose au contact pour 1d2 dégâts physiques ou se durcit pour protéger une cible : 20 % de réduction sur ses prochains dégâts physiques ou magiques, cumulable par addition avec les autres orbes et l’armure/résistance applicable, plafonné à 100 %. Les orbes utilisées disparaissent ; les protections inutilisées expirent en fin de combat. Pour l’explosion, choisir si la cible peut se défendre. L’orbe est consommé dès le lancement, même si la défense réussit ; dans ce cas, aucun dégât n’est infligé. Un gain sur blessure exige une perte réelle de PV."
     ],

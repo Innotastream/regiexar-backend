@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/cosmetic-forms.php';
+require_once __DIR__.'/unit-authority.php';
 
 function applicationTrackTransformationHp(array $token, float|int $hp): array {
     $form = $token['transformation'] ?? [];
@@ -9,7 +11,7 @@ function applicationTrackTransformationHp(array $token, float|int $hp): array {
     return $token;
 }
 function applicationMorphLinked(array $token): bool {
-    return ($token['followCharacter'] ?? true) !== false && ($token['usesCharacterSheet'] ?? true) !== false && empty($token['independentClone']) && empty($token['linkedTokenId']);
+    return unitUsesCharacterSheet($token);
 }
 function applicationMorphTokens(array $state): array {
     $tokens = $state['map']['tokens'] ?? [];
@@ -17,10 +19,14 @@ function applicationMorphTokens(array $state): array {
     return $tokens;
 }
 function applicationSetMorphTokens(array &$state, array $ids, array $transformation, string $characterId): void {
+    $condition='';if(empty($transformation['active']))foreach(applicationMorphTokens($state) as $token)if(in_array($token['id'],$ids,true)&&!empty($token['transformation']['active'])){$condition=applicationMetamorphosisReturnCondition($transformation,$state['characters']??[]);break;}
+    if($condition!=='')foreach($state['characters'] as &$entry)if($entry['id']===$characterId)applicationAddArbitratedCondition($entry,$condition);unset($entry);
     $byId = array_fill_keys($ids, true); $characters = array_column($state['characters'] ?? [], null, 'id'); $character = $characters[$characterId] ?? [];
-    $update = static function(array $tokens) use ($byId, $transformation, $characterId, $character): array {
+    $update = static function(array $tokens) use ($byId, $transformation, $characterId, $character, $condition): array {
         foreach ($tokens as &$token) if (isset($byId[$token['id']]) && applicationMorphLinked($token)) {
+            if(($token['characterId']??'')!==$characterId&&isset($token['appearanceState']['presetId'])){$token['appearanceState']['active']=false;$token['image']=$character['portrait']??$character['image']??null;}
             $token['characterId'] = $characterId; $token['transformation'] = $transformation;
+            if($condition!==''){$token['conditions']=$character['conditions']??applicationAddArbitratedCondition($token,$condition);$token['condition']=implode(', ',$token['conditions']);}
             foreach (['hp', 'maxHp', 'mana', 'maxMana'] as $field) $token[$field] = $character['resources'][$field] ?? 0;
         } unset($token); return $tokens;
     };
