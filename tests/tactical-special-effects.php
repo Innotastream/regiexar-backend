@@ -108,6 +108,8 @@ specialCheck(!$covers($openedMask,50,50)&&$covers($openedMask,47.5,47)&&applicat
 $db=specialFixture();
 $door=applicationCreateTerrainBarrierToken(['id'=>'door','name'=>'Porte des archives','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>50,'size'=>40]],['x'=>53,'y'=>50,'rotation'=>270],'fixture-door');
 $db->put('token:scene-one:fixture-door',$door);
+$tokenIndex=$db->payload('token-index:scene-one');$tokenIndex['order'][]='fixture-door';$db->put('token-index:scene-one',$tokenIndex);
+specialCheck(in_array('fixture-door',array_column(domainsToApplicationState($db->domains,0)['map']['tokens'],'id'),true),'Door is indexed in the authoritative scene used by GM validation');
 $cmd=['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'fixture-door','sourceTokenId'=>'token-player'];
 specialCheck($door['armor']===20&&$door['maxHp']===50,'Ordinary door has medium armor and fifty HP');
 specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'lock'],true)->status===200,'GM locks the door');
@@ -130,32 +132,45 @@ for($i=0;$i<2;$i++){
     specialCheck($pickItem->status===200,'GM can give a real Passe partout: '.json_encode($pickItem->body));
 }
 specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'difficulty','difficulty'=>100],true)->status===200,'GM can set pick difficulty');
-$settledPick=static function(bool $success)use($db,$cmd):array {
+$picks=static fn($db)=>array_values(array_filter($db->payload('items')['instances'],static fn($item)=>$item['templateId']===XAR_PASS_PARTOUT_TEMPLATE));
+$picksById=static function($db)use($picks):array{$items=array_column($picks($db),null,'id');ksort($items,SORT_STRING);return $items;};
+$settledPick=static function(bool $success)use($db,$cmd,$picks,$picksById):array {
     for($i=0;$i<128;$i++){
+        $before=$picksById($db);
+        $available=array_values(array_filter($picks($db),static fn($item)=>$item['location']['kind']==='inventory'&&$item['location']['characterId']==='character-player'));
+        specialCheck(count($available)>0,'A real tool is available before the native lockpick');$toolId=$available[0]['id'];
         $args=[...$cmd,'action'=>'pick','requestId'=>'door-fixture-pick-'.randomToken(16)];
         $response=runCommand($db,'door.interact',$args);
         specialCheck($response->status===200,'Native lockpick request succeeds: '.json_encode($response->body));
         $attempt=$response->body['attempt'];
         if(!empty($attempt['pendingValidation'])){
             specialCheck($db->payload('token:scene-one:fixture-door')['terrainBarrier']['locked'],'Remarkable result waits for the GM without unlocking');
-            $decision=specialMechanics($db,'roll.resolve',['validationId'=>$attempt['validationId'],'approve'=>$attempt['success']===$success]);
+            $reserved=array_values(array_filter($db->payload('devices')['pendingRolls'],static fn($entry)=>$entry['id']===$attempt['validationId']));
+            specialCheck(count($reserved)===1&&$reserved[0]['toolId']===$toolId&&$reserved[0]['toolRevision']===$before[$toolId]['revision'],'The remarkable result reserves the exact available tool and revision');
+            specialCheck($picksById($db)===$before,'A pending remarkable check consumes no tool');
+            $approve=$attempt['success']===$success;
+            $decision=specialMechanics($db,'roll.resolve',['validationId'=>$attempt['validationId'],'approve'=>$approve]);
             specialCheck($decision->status===200,'GM can arbitrate a native remarkable lockpick: '.json_encode($decision->body));
-            if($attempt['success']!==$success)continue;
+            specialCheck(($decision->body['applied']??null)===$approve&&($decision->body['obsolete']??null)===false,'The indexed door produces the requested GM decision, never an obsolete cancellation: '.json_encode($decision->body));
             $response=runCommand($db,'door.interact',$args);
+            specialCheck(!empty($response->body['deduplicated'])&&($response->body['attempt']['pendingValidation']??null)===false&&($response->body['attempt']['applied']??null)===$approve&&($response->body['attempt']['cancelled']??null)===!$approve,'The replay reads the final decision receipt: '.json_encode($response->body));
+            if(!$approve){specialCheck($picksById($db)===$before,'Refusing a remarkable check preserves both tools and their revisions');continue;}
         }
-        return [$response,$args];
+        return [$response,$args,$toolId,$before];
     }
     throw new RuntimeException('No matching lockpick outcome after 128 real dice rolls');
 };
-[$failed,$pick]=$settledPick(false);
+[$failed,$pick,$failedToolId,$beforeFailure]=$settledPick(false);
 specialCheck($failed->status===200&&$failed->body['attempt']['success']===false&&$failed->body['locked'],'A failed check leaves the door locked: '.json_encode($failed->body));
-$picks=static fn($db)=>array_values(array_filter($db->payload('items')['instances'],static fn($item)=>$item['templateId']===XAR_PASS_PARTOUT_TEMPLATE));
-specialCheck(array_column(array_column($picks($db),'location'),'kind')===['destroyed','inventory'],'Only one tool in the stack is destroyed');
+$afterFailure=$picksById($db);$locations=array_count_values(array_column(array_column($afterFailure,'location'),'kind'));
+specialCheck(count($afterFailure)===2&&($locations['destroyed']??0)===1&&($locations['inventory']??0)===1,'Exactly one tool is destroyed and one stays in inventory: '.json_encode($afterFailure));
+foreach($beforeFailure as $id=>$item){$expected=$item;if($id===$failedToolId){$expected['revision']++;$expected['location']=['kind'=>'destroyed'];}specialCheck(($afterFailure[$id]??null)===$expected,'Only the selected or reserved tool is destroyed once; its sibling is unchanged: '.$id);}
 specialCheck(!empty(runCommand($db,'door.interact',$pick)->body['deduplicated']),'Replaying a failed request consumes nothing');
+specialCheck($picksById($db)===$afterFailure,'Failed-request replay preserves tool identities, revisions and locations');
 specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'difficulty','difficulty'=>0],true)->status===200,'GM can lower difficulty');
 [$success]=$settledPick(true);
 specialCheck($success->status===200&&$success->body['attempt']['success']===true&&!$success->body['locked']&&!$success->body['open'],'Successful picking unlocks without opening the door');
-specialCheck(array_column(array_column($picks($db),'location'),'kind')===['destroyed','inventory'],'Successful picking preserves the surviving tool');
+specialCheck($picksById($db)===$afterFailure,'Successful picking preserves both tool identities, revisions and locations');
 
 $db=specialFixture();
 $map=$db->payload('map:scene-one');$map['vision']=['enabled'=>true,'distance'=>15,'shared'=>false];$map['lightingMode']='day';$db->put('map:scene-one',$map);
