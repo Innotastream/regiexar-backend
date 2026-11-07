@@ -105,6 +105,19 @@ specialCheck(applicationTerrainBarrierPointVisible($door,$map,static fn($x,$y)=>
 $next=$door;$next['terrainBarrier']['open']=true;$door=applicationProtectTerrainBarrier($door,$next);
 $openedMask=applicationActiveMapOcclusionState($map,[$door])['walls'];
 specialCheck(!$covers($openedMask,50,50)&&$covers($openedMask,47.5,47)&&applicationPublicTerrainBarrier($door)['open'],'Opening pivots the blocker around its hinge');
+$double=applicationCreateTerrainBarrierToken(
+    ['id'=>'door','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>50,'size'=>40,'layout'=>'double']],
+    ['x'=>50,'y'=>50,'rotation'=>90],'fixture-double-door');
+specialCheck(applicationObstacleDoorWidth($double)===2.0&&applicationPublicTerrainBarrier($double)['layout']==='double','A new double door occupies two cells');
+$double['terrainBarrier']['widthCells']=2.5;
+$closedMask=applicationActiveMapOcclusionState($map,[$double])['walls'];
+specialCheck($covers($closedMask,50,44)&&$covers($closedMask,50,56)&&!$covers($closedMask,50,57),'A resized and rotated door blocks precisely across its full width');
+$double['terrainBarrier']['open']=true;
+$doubleMask=applicationActiveMapOcclusionState($map,[$double])['walls'];
+specialCheck($covers($doubleMask,53,45)&&$covers($doubleMask,53,55)&&!$covers($doubleMask,53,50)&&!$covers($doubleMask,50,50),'The two rotated leaves block separately and the middle passage opens');
+$double['terrainBarrier']['layout']='handle-left';
+$singleMask=applicationActiveMapOcclusionState($map,[$double])['walls'];
+specialCheck(!$covers($singleMask,53,45)&&$covers($singleMask,53,55)&&applicationObstacleDoorLockOffset($double)===-.37,'The left handle pivots on the right and moves the keyhole');
 $db=specialFixture();
 $door=applicationCreateTerrainBarrierToken(['id'=>'door','name'=>'Porte des archives','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>50,'size'=>40]],['x'=>53,'y'=>50,'rotation'=>270],'fixture-door');
 $db->put('token:scene-one:fixture-door',$door);
@@ -126,6 +139,26 @@ specialCheck(runCommand($db,'door.interact',[...$cmd,'action'=>'resize','widthCe
 $resized=runCommand($db,'door.interact',[...$cmd,'action'=>'resize','widthCells'=>2.8],true);
 specialCheck($resized->status===200&&$db->payload('token:scene-one:fixture-door')['terrainBarrier']['widthCells']===2.8,'GM adjusts the physical width');
 specialCheck(!isset(applicationPublicTerrainBarrier($db->payload('token:scene-one:fixture-door'))['keyItemId']),'Player projection keeps the key identifier private');
+$doorKey='token:scene-one:fixture-door';
+$before=$db->payload($doorKey);
+$configure=[...$cmd,'action'=>'configure','widthCells'=>2.5,'rotation'=>90,'layout'=>'double',
+    'expectedConfiguredAt'=>$before['terrainBarrier']['configuredAt']];
+specialCheck(runCommand($db,'door.interact',[...$configure,'isGm'=>true])->status===403,'A player cannot change geometry with a forged GM flag');
+specialCheck(runCommand($db,'door.interact',[...$configure,'layout'=>'triple'],true)->status===400&&$db->payload($doorKey)===$before,'Invalid geometry leaves the whole door unchanged');
+$configured=runCommand($db,'door.interact',$configure,true);
+$after=$db->payload($doorKey);$barrier=$after['terrainBarrier'];
+specialCheck($configured->status===200&&$barrier['widthCells']===2.5&&$barrier['rotation']===90&&$barrier['layout']==='double'
+    &&$barrier['configuredAt']>$before['terrainBarrier']['configuredAt'],'The authoritative command stores all three geometry fields');
+specialCheck($after['x']===$before['x']&&$after['y']===$before['y']&&$after['hp']===$before['hp']
+    &&$barrier['locked']&&!$barrier['open']&&$barrier['keyItemId']===$created->body['key']['id'],'Reconfiguring keeps position, health and the keyed lock');
+specialCheck(runCommand($db,'door.interact',$configure,true)->status===200&&$db->payload($doorKey)===$after,'Retrying the same settings is idempotent');
+specialCheck(runCommand($db,'door.interact',[...$configure,'rotation'=>0],true)->status===409&&$db->payload($doorKey)===$after,'A stale form cannot overwrite the later geometry');
+$public=applicationPublicTerrainBarrier($after);
+specialCheck($public['layout']==='double'&&$public['rotation']===90&&$public['widthCells']===2.5
+    &&!isset($public['configuredAt'])&&!isset($public['keyItemId']),'The double door geometry is public and its internal configuration remains private');
+$staleEdit=[...$before,'name'=>'Porte renommée','_updatedAt'=>$after['_updatedAt']+1];
+$staleWrite=prepareApplicationDomainUpsert($doorKey,$staleEdit,$db->domains[$doorKey],true);
+specialCheck(($staleWrite['payload']['terrainBarrier']??null)===$barrier,'An ordinary GM sync cannot undo authoritative geometry');
 $character=$db->payload('character:character-player');$character['stats']['dexterity']=100;$db->put('character:character-player',$character);
 for($i=0;$i<2;$i++){
     $pickItem=runCommand($db,'door.interact',[...$cmd,'action'=>'spawn-pick','recipientCharacterId'=>'character-player'],true);

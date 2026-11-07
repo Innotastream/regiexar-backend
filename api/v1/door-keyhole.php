@@ -14,7 +14,8 @@ function applicationKeyholeMovementCheckpoint(array $source,array $map): array {
 function applicationKeyholeDoorCheckpoint(array $door): array {
     $barrier=$door['terrainBarrier'];
     return [(float)$door['x'],(float)$door['y'],$door['layerId']??'ground',$door['_movedAt']??0,$barrier['swungAt']??0,
-        $barrier['peekPermissionAt']??0,$barrier['rotation'],applicationObstacleDoorWidth($door)];
+        $barrier['peekPermissionAt']??0,$barrier['rotation'],applicationObstacleDoorWidth($door),
+        ...(!empty($barrier['configuredAt'])?[$barrier['configuredAt']]:[])];
 }
 
 function applicationKeyholeDoorAvailable(array $door): bool {
@@ -30,7 +31,7 @@ function applicationKeyholeGeometry(array $source,array $door,array $map,array $
     $side=($pawn['x']-$door['x'])*$width/100*(-$ty)+($pawn['y']-$door['y'])*$height/100*$tx;
     if(abs($side)<1e-6)return null;
     $sign=$side>0?1:-1;$ux=$ty*$sign;$uy=-$tx*$sign;
-    $hole=applicationObstacleDoorWidth($door)*$grid*.37;
+    $hole=applicationObstacleDoorWidth($door)*$grid*applicationObstacleDoorLockOffset($door);
     $hx=$door['x']*$width/100+$tx*$hole;$hy=$door['y']*$height/100+$ty*$hole;
     $walls=$occlusion['walls'];
     $offset=max($grid*.16,2*max($width/max(1,$walls['width']-1),$height/max(1,$walls['height']-1)));

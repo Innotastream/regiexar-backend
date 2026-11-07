@@ -6,8 +6,10 @@ const XAR_THORN_WALL_WIDTH = 5;
 const XAR_THORN_WALL_HEIGHT = 1;
 const XAR_THORN_WALL_REACH = 2;
 const XAR_OBSTACLE_DOOR_WIDTH = 1.25;
+const XAR_OBSTACLE_DOUBLE_DOOR_WIDTH = 2;
 const XAR_OBSTACLE_DOOR_HEIGHT = .26;
 const XAR_OBSTACLE_DOOR_BLOCK_DEPTH = .13;
+const XAR_OBSTACLE_DOOR_LAYOUTS = ['handle-right','handle-left','double'];
 const XAR_PASS_PARTOUT_TEMPLATE = 'utility-passe-partout';
 
 function applicationIsThornWall(array $token): bool {
@@ -17,9 +19,28 @@ function applicationIsThornWall(array $token): bool {
 function applicationIsObstacleDoor(array $token): bool {
     return ($token['terrainBarrier']['shape'] ?? '') === 'door';
 }
+function applicationObstacleDoorLayout(array $token): string {
+    $layout=$token['terrainBarrier']['layout']??null;
+    return in_array($layout,XAR_OBSTACLE_DOOR_LAYOUTS,true)?$layout:'handle-right';
+}
+function applicationObstacleDoorHinges(array $token): array {
+    return match(applicationObstacleDoorLayout($token)){
+        'handle-left'=>['right'],
+        'double'=>['left','right'],
+        default=>['left'],
+    };
+}
+function applicationObstacleDoorLockOffset(array $token): float {
+    return match(applicationObstacleDoorLayout($token)){
+        'handle-left'=>-.37,
+        'double'=>0.0,
+        default=>.37,
+    };
+}
 function applicationObstacleDoorWidth(array $token): float {
     $width=$token['terrainBarrier']['widthCells']??null;
-    return (is_int($width)||is_float($width))&&is_finite((float)$width)&&$width>=.25&&$width<=12?(float)$width:XAR_OBSTACLE_DOOR_WIDTH;
+    if((is_int($width)||is_float($width))&&is_finite((float)$width)&&$width>=.25&&$width<=12)return (float)$width;
+    return applicationObstacleDoorLayout($token)==='double'?XAR_OBSTACLE_DOUBLE_DOOR_WIDTH:XAR_OBSTACLE_DOOR_WIDTH;
 }
 function applicationObstacleDoorHeight(array $token): float {
     return applicationObstacleDoorWidth($token)*XAR_OBSTACLE_DOOR_HEIGHT/XAR_OBSTACLE_DOOR_WIDTH;
@@ -78,25 +99,46 @@ function applicationTerrainBarrierWalls(array $walls,array $map): array {
     foreach($map['tokens']??[] as $token){
         if(!applicationTerrainBarrierActive($token)||!applicationTerrainBarrierPositioned($token)||($token['layerId']??'ground')!==$layer)continue;$changed=true;
         $rect=applicationIsRectangularObstacle($token);$door=applicationIsObstacleDoor($token);$grid=(float)(($map['gridSize']??0)?:50);
-        $open=$door&&!empty($token['terrainBarrier']['open']);
-        $doorWidth=applicationObstacleDoorWidth($token);$across=$door?$doorWidth*($open ? .8 : 1):XAR_THORN_WALL_WIDTH;
+        $across=$door?applicationObstacleDoorWidth($token):XAR_THORN_WALL_WIDTH;
         $depth=$door?max(XAR_OBSTACLE_DOOR_BLOCK_DEPTH,1.5*max($nw/$walls['width'],$nh/$walls['height'])/$grid):XAR_THORN_WALL_HEIGHT;
-        $rotation=$token['terrainBarrier']['rotation']??0;$angle=deg2rad($rotation);$shift=$open?-.4*$doorWidth*$grid:0;
-        $px=$token['x']*$nw/100+$shift*(cos($angle)-sin($angle));
-        $py=$token['y']*$nh/100+$shift*(sin($angle)+cos($angle));
-        $bounds=$rect?hypot($across,$depth)*$grid/2:$token['size']/2;
-        $cx=$px/$nw*($walls['width']-1);$cy=$py/$nh*($walls['height']-1);$rx=$bounds/$nw*($walls['width']-1);$ry=$bounds/$nh*($walls['height']-1);
-        for($y=max(0,(int)floor($cy-$ry));$y<=min($walls['height']-1,(int)ceil($cy+$ry));$y++)for($x=max(0,(int)floor($cx-$rx));$x<=min($walls['width']-1,(int)ceil($cx+$rx));$x++)
-            if($rect
-                ? applicationObstacleRectOffset(($x-$cx)*$nw/(max(1,$walls['width']-1)*$grid),($y-$cy)*$nh/(max(1,$walls['height']-1)*$grid),$rotation-($open?90:0),$across,$depth)===0.0
-                : (($x-$cx)/$rx)**2+(($y-$cy)/$ry)**2<=1)applicationSetMaskBit($bytes,$y*$walls['width']+$x,true);
+        $rotation=$token['terrainBarrier']['rotation']??0;
+        $pieces=[[$across,$rotation,0,0]];
+        if($door&&!empty($token['terrainBarrier']['open'])){
+            $hinges=applicationObstacleDoorHinges($token);
+            $length=.8*$across/count($hinges);
+            $angle=deg2rad($rotation);
+            $cos=cos($angle);$sin=sin($angle);
+            $pieces=[];
+            foreach($hinges as $hinge){
+                $side=$hinge==='left'?-1:1;
+                $hingeX=$side*.4*$across;$leafY=-$length/2;
+                $pieces[]=[$length,$rotation+$side*90,($hingeX*$cos-$leafY*$sin)*$grid,($hingeX*$sin+$leafY*$cos)*$grid];
+            }
+        }
+        foreach($pieces as [$length,$angle,$offsetX,$offsetY]){
+            $px=$token['x']*$nw/100+$offsetX;$py=$token['y']*$nh/100+$offsetY;
+            $bounds=$rect?hypot($length,$depth)*$grid/2:$token['size']/2;
+            $cx=$px/$nw*($walls['width']-1);$cy=$py/$nh*($walls['height']-1);
+            $rx=$bounds/$nw*($walls['width']-1);$ry=$bounds/$nh*($walls['height']-1);
+            for($y=max(0,(int)floor($cy-$ry));$y<=min($walls['height']-1,(int)ceil($cy+$ry));$y++){
+                for($x=max(0,(int)floor($cx-$rx));$x<=min($walls['width']-1,(int)ceil($cx+$rx));$x++){
+                    $inside=$rect
+                        ? applicationObstacleRectOffset(($x-$cx)*$nw/(max(1,$walls['width']-1)*$grid),($y-$cy)*$nh/(max(1,$walls['height']-1)*$grid),$angle,$length,$depth)===0.0
+                        : (($x-$cx)/$rx)**2+(($y-$cy)/$ry)**2<=1;
+                    if($inside)applicationSetMaskBit($bytes,$y*$walls['width']+$x,true);
+                }
+            }
+        }
     }
     if($changed)$walls['mask']=rtrim(strtr(base64_encode($bytes),'+/','-_'),'=');return $walls;
 }
 function applicationCreateTerrainBarrierToken(array $ability,array $point,string $id,bool $playerSide=false): array {
     $d=applicationTerrainBarrier($ability['terrainBarrier']??null);if(!$d)return [];
     $rectangle=in_array($d['shape']??'',['thorn-wall','door'],true);
-    $barrier=['version'=>1,'abilityId'=>$ability['id'],'minimumSize'=>$d['size'],...($rectangle?['shape'=>$d['shape'],'rotation'=>$point['rotation']??0,...($d['shape']==='door'?['open'=>false,'locked'=>false]:['playerSide'=>$playerSide,'raisedAt'=>(int)floor(microtime(true)*1000)])]:[])];
+    $layout=applicationObstacleDoorLayout($ability);
+    $barrier=['version'=>1,'abilityId'=>$ability['id'],'minimumSize'=>$d['size'],...($rectangle?['shape'=>$d['shape'],'rotation'=>$point['rotation']??0,...($d['shape']==='door'
+        ?['open'=>false,'locked'=>false,...($layout==='handle-right'?[]:['layout'=>$layout])]
+        :['playerSide'=>$playerSide,'raisedAt'=>(int)floor(microtime(true)*1000)])]:[])];
     return ['id'=>$id,'name'=>$ability['name']??'Mur','terrainBarrier'=>$barrier,
         'image'=>null,'color'=>'#658b3f','frameVariant'=>'creature','x'=>$point['x'],'y'=>$point['y'],'layerId'=>$point['layerId']??'ground',
         'size'=>$d['size'],'hp'=>$d['hp'],'maxHp'=>$d['hp'],'mana'=>0,'maxMana'=>0,'armorCategory'=>($d['shape']??'')==='door'?'medium':'none','armor'=>($d['shape']??'')==='door'?20:0,'magicArmorCategory'=>'none','magicArmor'=>0,
@@ -111,9 +153,8 @@ function applicationProtectTerrainBarrier(array $previous,array $next,bool $allo
     $door=applicationIsObstacleDoor($previous);
     if($door&&$allowDoorChanges){
         foreach(['open','locked','allowPeek'] as $field)if(is_bool($next['terrainBarrier'][$field]??null))$barrier[$field]=$next['terrainBarrier'][$field];
-        foreach(['swungAt','pickDifficulty','pickBrokeAt','pickReceipts','peekPermissionAt'] as $field)
+        foreach(['swungAt','pickDifficulty','pickBrokeAt','pickReceipts','peekPermissionAt','widthCells','rotation','layout','configuredAt'] as $field)
             if(isset($next['terrainBarrier'][$field]))$barrier[$field]=$next['terrainBarrier'][$field];
-        if(isset($next['terrainBarrier']['widthCells']))$barrier['widthCells']=$next['terrainBarrier']['widthCells'];
         if(!empty($next['terrainBarrier']['keyItemId']))$barrier['keyItemId']=$next['terrainBarrier']['keyItemId'];
         elseif(isset($next['terrainBarrier']))unset($barrier['keyItemId']);
     }
@@ -149,7 +190,7 @@ function onlineApplyTerrainBarrier(PDO $connection,array &$records,array &$pendi
 }
 
 function applicationPublicTerrainBarrier(array $token): array {
-    if(applicationIsObstacleDoor($token))return ['version'=>1,'shape'=>'door','rotation'=>$token['terrainBarrier']['rotation'],'open'=>($token['terrainBarrier']['open']??false)===true,'locked'=>($token['terrainBarrier']['locked']??false)===true,'allowPeek'=>($token['terrainBarrier']['allowPeek']??false)===true,'widthCells'=>applicationObstacleDoorWidth($token),...(isset($token['terrainBarrier']['swungAt'])?['swungAt'=>$token['terrainBarrier']['swungAt']]:[]),...(isset($token['terrainBarrier']['pickBrokeAt'])?['pickBrokeAt'=>$token['terrainBarrier']['pickBrokeAt']]:[])];
+    if(applicationIsObstacleDoor($token))return ['version'=>1,'shape'=>'door','rotation'=>$token['terrainBarrier']['rotation'],'layout'=>applicationObstacleDoorLayout($token),'open'=>($token['terrainBarrier']['open']??false)===true,'locked'=>($token['terrainBarrier']['locked']??false)===true,'allowPeek'=>($token['terrainBarrier']['allowPeek']??false)===true,'widthCells'=>applicationObstacleDoorWidth($token),...(isset($token['terrainBarrier']['swungAt'])?['swungAt'=>$token['terrainBarrier']['swungAt']]:[]),...(isset($token['terrainBarrier']['pickBrokeAt'])?['pickBrokeAt'=>$token['terrainBarrier']['pickBrokeAt']]:[])];
     return ['version'=>1,...(applicationIsThornWall($token)?['shape'=>'thorn-wall','rotation'=>$token['terrainBarrier']['rotation'],...isset($token['terrainBarrier']['raisedAt'])?['raisedAt'=>$token['terrainBarrier']['raisedAt']]:[]]:[])];
 }
 
@@ -262,10 +303,22 @@ function onlineInteractObstacleDoor(PDO $db,array &$records,array &$pending,arra
         $difficulty=$args['difficulty']??null;
         if(!is_int($difficulty)||$difficulty<0||$difficulty>100)throw new RuntimeException('Choisissez un malus de 0 à 100.',400);
         $barrier['pickDifficulty']=$difficulty;
-    }elseif($action==='resize'){
+    }elseif($action==='resize'||$action==='configure'){
         $width=$args['widthCells']??null;
         if((!is_int($width)&&!is_float($width))||!is_finite((float)$width)||$width<.25||$width>12)throw new RuntimeException('Choisissez une largeur de 0,25 à 12 cases.',400);
-        $barrier['widthCells']=$width;
+        $configure=$action==='configure';
+        $rotation=$args['rotation']??null;$layout=$args['layout']??null;
+        if($configure&&(!is_int($rotation)||$rotation<0||$rotation>=360))throw new RuntimeException('Choisissez une orientation entre 0 et 359 degrés.',400);
+        if($configure&&!in_array($layout,XAR_OBSTACLE_DOOR_LAYOUTS,true))throw new RuntimeException('Choisissez une disposition de battants valide.',400);
+        $changed=(float)$width!==applicationObstacleDoorWidth($door)
+            ||($configure&&($rotation!==$barrier['rotation']||$layout!==applicationObstacleDoorLayout($door)));
+        if($changed){
+            if($configure&&array_key_exists('expectedConfiguredAt',$args)&&$args['expectedConfiguredAt']!==($barrier['configuredAt']??0))
+                throw new RuntimeException('La porte a été modifiée. Rouvrez ses réglages.',409);
+            $barrier['widthCells']=$width;
+            if($configure){$barrier['rotation']=$rotation;$barrier['layout']=$layout;}
+            $barrier['configuredAt']=max((int)floor(microtime(true)*1000),($barrier['configuredAt']??0)+1);
+        }
     }elseif($action==='associate'){
         $id=$args['keyItemId']??'';
         if($id!==''&&!$findKey($id))throw new RuntimeException('Cet objet est introuvable ou a été consommé.',404);

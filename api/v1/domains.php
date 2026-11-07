@@ -1451,6 +1451,8 @@ function validApplicationTokenDomain(array $payload): bool
         if($door&&isset($barrier['pickDifficulty'])&&(!is_int($barrier['pickDifficulty'])||$barrier['pickDifficulty']<0||$barrier['pickDifficulty']>100))return false;
         if($door&&isset($barrier['pickReceipts'])&&(!is_array($barrier['pickReceipts'])||!array_is_list($barrier['pickReceipts'])||count($barrier['pickReceipts'])>32))return false;
         if($door&&isset($barrier['widthCells'])&&(!is_int($barrier['widthCells'])&&!is_float($barrier['widthCells'])||applicationObstacleDoorWidth($payload)!==(float)$barrier['widthCells']))return false;
+        if($door&&isset($barrier['layout'])&&!in_array($barrier['layout'],XAR_OBSTACLE_DOOR_LAYOUTS,true))return false;
+        if($door&&isset($barrier['configuredAt'])&&(!is_int($barrier['configuredAt'])||$barrier['configuredAt']<1))return false;
         if($door?(!is_bool($barrier['open']??null)||isset($barrier['locked'])&&!is_bool($barrier['locked'])||isset($barrier['keyItemId'])&&!equipmentId($barrier['keyItemId'])):!is_bool($barrier['playerSide']??null))return false;
     }
     if(isset($payload['fixedStructure'])&&(!is_array($payload['fixedStructure'])||($payload['fixedStructure']['version']??0)!==1))return false;

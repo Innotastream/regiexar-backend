@@ -4,7 +4,8 @@ declare(strict_types=1);
 function applicationDoorPickCheckpoint(array $door): array {
     $barrier=$door['terrainBarrier'];
     return [$door['x'],$door['y'],$door['layerId']??'ground',$barrier['rotation'],applicationObstacleDoorWidth($door),
-        ($barrier['open']??false)===true,($barrier['locked']??false)===true,$barrier['pickDifficulty']??0,$barrier['swungAt']??0];
+        ($barrier['open']??false)===true,($barrier['locked']??false)===true,$barrier['pickDifficulty']??0,$barrier['swungAt']??0,
+        ...(!empty($barrier['configuredAt'])?[$barrier['configuredAt']]:[])];
 }
 
 function applicationResolveDoorPick(array &$state,array $pending,bool $approve): array {
