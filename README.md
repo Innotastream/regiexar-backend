@@ -1,3 +1,9 @@
+## Backend 0.19.11 — client 4.2.6 — préparation du 8 novembre 2026
+
+Build `client-4-2-6-multiplayer-workbench-20261108-1`. Prépare la mise en service de la base multijoueur optimisée : lectures transactionnelles cohérentes, calculs de vision et de halos réutilisés dans des caches privés à attente bornée, autorité des portes/dispositifs/objets et confidentialité des reçus. Les contrôles de concurrence et les budgets de calcul restent les barrières des futurs ajouts.
+
+La politique de connexion admet exclusivement **4.2.6**. Le basculement de génération conserve le drainage de **30 secondes** des sessions précédentes, puis leur fermeture ; les clients 4.2.5 doivent être mis à jour pour se reconnecter. Le schéma SQL reste **24**, les schémas de session/domaines/fiche restent **22/1/10**. Aucune nouvelle migration ni réparation versionnée des données depuis 0.19.10 ; aucun import de fiches requis. La préparation, les contrôles, le déploiement OVH et la disponibilité Windows sont attestés séparément.
+
 ## Maintenance des sources du 8 novembre 2026
 
 Chantier depuis le backend 0.19.10, pour la base cliente 4.2.5 : cohérence transactionnelle des lectures, autorité des portes/dispositifs/objets, confidentialité des reçus, raccords d'ombre et optimisation exacte des calculs de vision et de halos. Les caches privés partagent les calculs identiques avec attente bornée ; les budgets de calcul, l'équivalence visuelle et les scénarios concurrents sont couverts par les contrats automatiques.
