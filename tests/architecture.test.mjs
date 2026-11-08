@@ -477,7 +477,7 @@ test("le statut Discord MJ expose seulement configuré et activé sans renvoyer 
 test("les lectures techniques de domaines peuvent exclure la présence sans changer le défaut", async () => {
   const domains = await read("api/v1/domains.php");
   assert.match(domains, /\$includePresence = \(string\) \(\$_GET\['presence'\] \?\? '1'\) !== '0'/);
-  assert.match(domains, /\.\.\.\(\$includePresence \? \['presence' => liveOnlinePresence\(\$connection\)\] : \[\]\)/);
+  assert.match(domains, /if \(\$includePresence\) \$response\['presence'\] = liveOnlinePresence\(\$connection\)/);
 });
 
 test("le Compte de la Régie est une file sérialisée, pausable et sans identité matérielle", async () => {

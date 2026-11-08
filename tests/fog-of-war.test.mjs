@@ -21,8 +21,11 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   assert.match(domains, /function applicationComputeVisionMask/);
   assert.match(vision, /\$wallEncountered = false/);
   assert.match(vision, /if \(\$wallEncountered && !\$cellIsWall\)[\s\S]*?break/);
-  assert.match(vision, /\$ellipseDeltaX = \(\$column - \$centerX\) \/ \$radiusX/);
-  assert.match(vision, /if \(\$ellipseDeltaX \* \$ellipseDeltaX \+ \$ellipseDeltaY \* \$ellipseDeltaY > 1\.0 \+ 1\.0e-12\)[\s\S]*?break/);
+  // The same ellipse is now precomputed per column/row. Exact masks are
+  // exercised against the previous engine by vision-cache-geometry.php.
+  assert.match(vision, /\$delta = \(\$column - \$centerX\) \/ \$radiusX;\s*\$ellipseXSquares\[\$column\] = \$delta \* \$delta/);
+  assert.match(vision, /\$delta = \(\$row - \$centerY\) \/ \$radiusY;\s*\$ellipseYSquares\[\$row\] = \$delta \* \$delta/);
+  assert.match(vision, /if \(\$ellipseXSquares\[\$column\] \+ \$ellipseYSquares\[\$row\] > 1\.0 \+ 1\.0e-12\)[\s\S]*?break/);
   assert.match(vision, /\$firstWallBodyReachesCell/);
   assert.match(vision, /foreach \(\$wallCellIndexes as \$cellIndex\)/);
   assert.match(vision, /if \(\$firstWallBodyReachesCell\(\$centerX, \$centerY, \$column, \$row\)\)/);

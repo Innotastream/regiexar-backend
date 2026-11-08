@@ -538,7 +538,10 @@ function publicItemStore(array $store, array $characters, ?array $identity, arra
         if($mayRead)$readableIds[$template['id']]=true;
         $templates[]=$mayRead?publicItemPhysical($template):array_intersect_key($template,array_fill_keys(['id','name','kind','image','permissions','size','potionVessel','potionColor'],true));
     }
-    foreach($instances as &$instance)if(!isset($owned[$instance['location']['characterId']??''])&&!isset($readableIds[$instance['templateId']]))unset($instance['description'],$instance['equipment']);unset($instance);
+    foreach($instances as &$instance)if(!isset($readableIds[$instance['templateId']])){
+        unset($instance['description']);
+        if(!isset($owned[$instance['location']['characterId']??'']))unset($instance['equipment']);
+    }unset($instance);
     $uses=[];if(empty($context['paused']))foreach($store['pendingUses']??[] as $u){if($u['phase']!=='opposition'||$u['sceneId']!==($context['sceneId']??'')||$u['layerId']!==($context['layerId']??''))continue;$targets=[];foreach($u['targets'] as $t)foreach($context['tokens']??[] as $token)if($token['id']===$t['tokenId']&&isset($owned[unitIdForToken($token)]))$targets[]=['tokenId'=>$t['tokenId'],'status'=>$t['status']];if($targets)$uses[]=[...array_intersect_key($u,array_flip(['id','itemId','itemRevision','sceneId','layerId','name','phase'])),'targets'=>$targets];}
     $favorites=isset($store['favorites'])?array_values(array_filter($store['favorites'],static fn($entry)=>!empty($identity['id'])&&$entry['accountId']===$identity['id']&&isset($owned[$entry['unitId']],$ids[$entry['templateId']]))):null;
     return ['version' => 1, ...($hasOwnedVessel?['vesselPotionOptions'=>potionVesselOptions($store['templates']??[])]:[]),'templates' => $templates, 'instances' => array_map('publicItemPhysical', $instances), ...($favorites!==null?['favorites'=>$favorites]:[]), ...(isset($store['pendingUses'])?['pendingUses'=>$uses]:[]),...(isset($store['categories'])?['categories'=>array_values(array_filter($store['categories'],static fn($c)=>in_array($c['id'],array_column($templates,'category'),true)))]:[]),...(isset($store['inventoryCatalog'])?['inventoryCatalog'=>array_intersect_key($store['inventoryCatalog'],$owned)]:[]),...(isset($store['equipmentLoadouts'])?['equipmentLoadouts'=>array_intersect_key($store['equipmentLoadouts'],$owned)]:[])];
@@ -550,7 +553,15 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     if (!is_string($requestId) || preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Référence d’objet invalide.', 'invalid_item_request');
     $signature = hash('sha256', json_encode(canonicalApplicationDomainValue(['command' => $command, 'arguments' => $args]), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     $context = onlinePersistentCommandReceipt($connection, $records, 'item-command', $requestId, $identity['id'], $signature, 'item');
-    if (is_array($context['receipt'] ?? null)) return [...($isGm ? $context['receipt']['result'] : publicItemCommandResult($context['receipt']['result'])), 'deduplicated' => true];
+    if (is_array($context['receipt'] ?? null)) {
+        $result=$context['receipt']['result'];
+        if(!$isGm){
+            $state=onlineDeviceState($connection,$records,$pending);
+            $visibleItems=publicPlayerState($state,$identity,[])['items'];
+            $result=publicItemCommandResult($result,$state['items']['templates']??[],$visibleItems['instances']??[]);
+        }
+        return [...$result, 'deduplicated' => true];
+    }
     $records = array_replace($records, applicationDomainRecords($connection, ['items', 'devices', 'scene-index']), applicationDomainRecordsByPrefix($connection, 'character:'));
     $sceneId = $isGm && itemId($args['sceneId'] ?? null) ? $args['sceneId'] : onlineActiveSceneId($table);
     $records = array_replace($records, applicationDomainRecords($connection, ['map:' . $sceneId,'initiative:'.$sceneId]));
@@ -605,7 +616,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     }
     if($command==='item.opposition'){foreach($state['map']['tokens']??[]as$target)if(($target['id']??'')===($args['targetTokenId']??''))foreach($applied['result']['rolls']as&$r)onlineAwardNaturalJoker($connection,$records,$pending,$target,$r,$r['outcome']??null,$sceneId);unset($r);}
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
-    if (!$isGm) $result = publicItemCommandResult($result);
+    if (!$isGm) $result = publicItemCommandResult($result,$applied['items']['templates']??[]);
     if(in_array($command,['item.consume','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){
         onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'action','summary'=>'Résout une utilisation d’objet']);
     }

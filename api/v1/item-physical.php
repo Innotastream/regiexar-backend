@@ -15,9 +15,28 @@ function normalizeItemHealth(mixed $value): array {
     return ['current' => $value['current'], 'max' => $max];
 }
 function publicItemPhysical(array $value): array { unset($value['health'], $value['maxHp']); return $value; }
-function publicItemCommandResult(array $result): array {
-    if (isset($result['item'])) $result['item'] = publicItemPhysical($result['item']);
-    if (isset($result['items'])) $result['items'] = array_map('publicItemPhysical', $result['items']);
+function publicItemCommandResult(array $result, array $templates = [], ?array $visibleInstances = null): array {
+    $models=array_column($templates,null,'id');
+    $visible=$visibleInstances===null?null:array_column($visibleInstances,null,'id');
+    $project=static function(array $item)use($models,$visible):?array {
+        // A receipt acknowledges an earlier action; it does not retain access to
+        // a foreign inventory after a transfer or an effective-role change.
+        if($visible!==null){
+            $current=$visible[$item['id']??'']??null;
+            if($current===null)return null;
+            // Even a visible item may have changed since a privileged receipt:
+            // only its currently public values may be returned to this player.
+            $item=array_intersect_key($current,$item);
+        }
+        $model=$models[$item['templateId']??'']??null;
+        if($model===null||!itemPermissions($model)['read'])unset($item['description']);
+        return publicItemPhysical($item);
+    };
+    if (isset($result['item'])) {
+        $item=$project($result['item']);
+        if($item===null)unset($result['item']);else $result['item']=$item;
+    }
+    if (isset($result['items'])) $result['items'] = array_values(array_filter(array_map($project, $result['items']),static fn($item)=>$item!==null));
     if(isset($result['rolls']))$result['rolls']=array_map(static fn($roll)=>($roll['mapEvent']['kind']??'')==='damage'?publicOnlineAttackRoll($roll,false,'damage',false):$roll,$result['rolls']);
     return $result;
 }

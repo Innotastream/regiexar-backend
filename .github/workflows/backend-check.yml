@@ -76,6 +76,9 @@ jobs:
           php tests/divine-strike.php
           php tests/brute-force.php
           php tests/riposte.php
+          php tests/blood-activation.php
+          php tests/inho-passives.php
+          php tests/mania-passives.php
           php tests/stackable-effects.php
           php tests/body-charge.php
           php tests/body-charge-undo.php
@@ -91,6 +94,11 @@ jobs:
           php tests/device-roll-stock.php
           php tests/device-recovery-contract.php
           php tests/tactical-special-effects.php
+          php tests/door-source-authority.php
+          php tests/door-jamb-shadows.php
+          php tests/door-reservations.php
+          php tests/keyhole-barriers.php
+          php tests/audit-device-authority.php
           php tests/cosmetic-forms.php
           php tests/active-items-poisons.php
           php tests/metamorphosis-duration.php
@@ -105,6 +113,7 @@ jobs:
       - name: Complex multi-step ability lifecycle
         run: |
           php tests/complex-abilities-contract.php
+          php tests/ability-receipt-visibility.php
           php tests/complex-chain-critical-cases.php
           php tests/native-abilities-contract.php
           php tests/allocated-attacks-contract.php
@@ -137,6 +146,7 @@ jobs:
           php -n tests/character-honors.php
           php tests/item-activations.php
           php tests/item-destruction.php
+          php tests/item-read-authority.php
           php tests/armor-reduction.php
           php tests/movement-effect-projection.php
           php tests/terrain-effects.php
@@ -159,9 +169,13 @@ jobs:
           php tests/vision-cache-geometry.php
           php -n tests/vision-cache-geometry.php
           php tests/vision-cache-storage.php
+          php tests/vision-relays-lazy.php
+          php tests/vision-work-budget.php
+          php -n tests/vision-work-budget.php
       - name: Reliability audit regressions
         run: |
           php tests/backend-future-schema.php
+          php tests/domain-read-consistency.php
           php tests/connection-heartbeat.php
           php tests/path-footprint.php
           php tests/media-access-lifecycle.php
@@ -198,6 +212,8 @@ jobs:
           php tests/mist-vision-casting.php
           php tests/perfidious-poison-contact.php
           php tests/potion-vessels.php
+          php tests/potion-catalog.php
+          php tests/super-potion.php
           php tests/venom-visual-hooks.php
       - name: Real SQL media concurrency and heartbeat
         env:
@@ -221,6 +237,8 @@ jobs:
           grep -Fq 'Local MySQL device concurrency integration passed.' mysql-devices-concurrency.log
           php tests/mysql-domain-schema.php | tee mysql-domain-schema.log
           grep -Fq 'Local MySQL domain schema integration passed.' mysql-domain-schema.log
+          php tests/mysql-domain-read-consistency.php | tee mysql-domain-read-consistency.log
+          grep -Fq 'Local MySQL consistent domain read integration passed.' mysql-domain-read-consistency.log
           php tests/mysql-ability-stat-check.php | tee mysql-ability-stat-check.log
           grep -Fq 'Local MySQL stat check integration passed.' mysql-ability-stat-check.log
           php tests/mysql-luck-reset.php | tee mysql-luck-reset.log

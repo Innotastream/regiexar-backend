@@ -15,22 +15,30 @@ function storageRequire(bool $ok, string $message): void {
 function storageMask(int $value=255): array {
     return ['version'=>1,'enabled'=>true,'width'=>32,'height'=>32,'mask'=>rtrim(strtr(base64_encode(str_repeat(chr($value),128)),'+/','-_'),'=')];
 }
+function storageGlow(): array {
+    $chunk=static fn(string $type,string $body):string=>pack('N',strlen($body)).$type.$body.hash('crc32b',$type.$body,true);
+    $png="\x89PNG\r\n\x1a\n".$chunk('IHDR',pack('NNCCCCC',32,32,8,2,0,0,0))
+        .$chunk('IDAT',gzcompress(str_repeat("\0".str_repeat("\x60",96),32),3)).$chunk('IEND','');
+    return ['version'=>1,'width'=>32,'height'=>32,'png'=>base64_encode($png)];
+}
 $worker=$argv[1]??null;
 if ($worker==='worker') {
     [$unused,$unused2,$root,$mode,$seed]=array_pad($argv,5,'default');
     $_SERVER['DOCUMENT_ROOT']=$root.'/public';
     $GLOBALS['visionTestPrivate']=$root.($mode==='public'?'/public':'/private').'/config.php';
     if ($mode==='no-root') unset($_SERVER['DOCUMENT_ROOT']);
-    $calls=0;
-    $compute=static function () use (&$calls):array {++$calls;return storageMask();};
-    $mask=applicationMemoizedVisionMask('base',['test'=>$seed],$compute);
+    $calls=0;$kind=$mode==='glow'?'glow':'base';$expected=$kind==='glow'?storageGlow():storageMask();
+    $compute=static function () use (&$calls,$mode,$expected):array {++$calls;if($mode==='slow')usleep(200000);return $expected;};
+    $started=hrtime(true);
+    $mask=applicationMemoizedVisionMask($kind,['test'=>$seed],$compute);
     $mask['mask']='modified copy';
-    if (applicationMemoizedVisionMask('base',['test'=>$seed],$compute)!==storageMask()) throw new RuntimeException('Returned mask was shared by reference');
+    if (applicationMemoizedVisionMask($kind,['test'=>$seed],$compute)!==$expected) throw new RuntimeException('Returned mask was shared by reference');
     if ($mode==='fill') {
         for($i=0;$i<600;++$i)applicationMemoizedVisionMask('base',['fill'=>$i],static fn():array=>storageMask($i%256));
         for($i=0;$i<80;++$i)applicationMemoizedVisionMask('render',['fill'=>$i],static fn():array=>storageMask($i%256));
+        for($i=0;$i<80;++$i)applicationMemoizedVisionMask('glow',['fill'=>$i],static fn():array=>storageGlow());
     }
-    echo json_encode(['calls'=>$calls,'directory'=>applicationVisionCacheDirectory(),'ok'=>true]).PHP_EOL;
+    echo json_encode(['calls'=>$calls,'directory'=>applicationVisionCacheDirectory(),'elapsedMs'=>(hrtime(true)-$started)/1000000,'ok'=>true]).PHP_EOL;
     exit;
 }
 $checks=0;
@@ -68,6 +76,16 @@ try {
     $directory=$cold['directory'];
     storageRequire(is_string($directory)&&!applicationVisionCacheWithin($directory,$root.'/public'),'Cache must be outside public root');
     storageRequire(storageRun($root)['calls']===0,'Fresh PHP process must reuse geometry');
+    storageRequire(storageRun($root,'glow','glow-persist')['calls']===1,'A first glow computes its PNG');
+    storageRequire(storageRun($root,'glow','glow-persist')['calls']===0,'A fresh PHP process reuses the same glow PNG');
+    $glowFile=glob($directory.'/glow-*.json')[0];
+    $glowEnvelope=json_decode(file_get_contents($glowFile),true,32,JSON_THROW_ON_ERROR);
+    foreach(['private-field'=>[...storageGlow(),'account'=>'forbidden'],
+        'wrong-dimensions'=>[...storageGlow(),'width'=>64],
+        'invalid-png'=>[...storageGlow(),'png'=>base64_encode('not PNG')]] as $label=>$badGlow) {
+        file_put_contents($glowFile,json_encode([...$glowEnvelope,'mask'=>$badGlow,'hash'=>hash('sha256',json_encode($badGlow))]));
+        storageRequire(storageRun($root,'glow','glow-persist')['calls']===1,'Invalid cached glow must recompute: '.$label);
+    }
     $file=glob($directory.'/base-*.json')[0];
     $valid=file_get_contents($file);$envelope=json_decode($valid,true,32,JSON_THROW_ON_ERROR);
     $damage=[
@@ -100,11 +118,31 @@ try {
     $parallel=[];
     for($i=0;$i<8;++$i)$parallel[]=storageStart($root,'normal','concurrent');
     foreach($parallel as $running)storageRequire(storageFinish($running)['calls']<=1,'Concurrent request computes at most once');
+    $parallel=[];$totalComputations=0;
+    for($i=0;$i<7;++$i)$parallel[]=storageStart($root,'slow','seven-readers-one-computation');
+    foreach($parallel as $running)$totalComputations+=storageFinish($running)['calls'];
+    storageRequire($totalComputations===1,'Seven simultaneous readers share one cold geometry computation');
+    $leaseSeed='bounded-lease';
+    $leaseKey=hash('sha256',json_encode(['engine'=>1,'backend'=>defined('XAR_BACKEND_VERSION')?XAR_BACKEND_VERSION:'fixture','kind'=>'base','inputs'=>['test'=>$leaseSeed]],JSON_PRESERVE_ZERO_FRACTION));
+    $leaseFile=$directory.'/base-'.substr($leaseKey,0,2).'.json';
+    $lease=applicationAcquireVisionCacheLease($leaseFile,$leaseKey,0);
+    storageRequire(is_resource($lease),'Fixture holds a competing lease');
+    try {
+        $bounded=storageRun($root,'normal',$leaseSeed);
+        storageRequire($bounded['calls']===1&&$bounded['elapsedMs']>=250&&$bounded['elapsedMs']<1800,'Stalled lease has a bounded wait then computes fresh geometry');
+    } finally {flock($lease,LOCK_UN);fclose($lease);}
+    unlink($leaseFile);
+    $lease=applicationAcquireVisionCacheLease($leaseFile,str_repeat('f',64),0);
+    try {
+        $collision=storageRun($root,'normal',$leaseSeed);
+        storageRequire($collision['calls']===1&&$collision['elapsedMs']<250,'Different geometry in the same slot never waits behind its lease');
+    } finally {flock($lease,LOCK_UN);fclose($lease);}
     storageRequire(storageRun($root,'normal','concurrent')['calls']===0,'Concurrent writes must produce a reusable complete file');
     storageRequire(glob($directory.'/.vision-*')===[],'Atomic writes must leave no temporary files');
     storageRun($root,'fill','bounded');
     storageRequire(count(glob($directory.'/base-*.json'))<=256,'Base cache slots must be bounded');
     storageRequire(count(glob($directory.'/render-*.json'))<=32,'Render cache slots must be bounded');
+    storageRequire(count(glob($directory.'/glow-*.json'))<=16,'Glow cache slots must be bounded');
     storageRequire(storageRun($root)['calls']<=1,'Eviction or slot collision must recompute the correct mask');
     $memoryCalls=0;
     $largeMask=['version'=>1,'enabled'=>true,'width'=>512,'height'=>512,

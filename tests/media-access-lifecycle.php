@@ -48,6 +48,10 @@ final class MediaConnection extends PDO {
     public bool $attachAtLock = false; public int $references = 0; public ?array $record; public ?array $owner = null;
     public array $domains = [];
     public function __construct(string $id) { $this->record = ['id' => $id, 'stored_name' => $id . '.player.png', 'pending_delete_at' => null, 'public_slug' => null]; }
+    public function exec(string $statement): int|false {
+        if ($statement !== 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' || $this->inTransaction()) throw new RuntimeException('Unexpected transaction setting: ' . $statement);
+        return 0;
+    }
     public function beginTransaction(): bool { mediaCheck(!$this->transaction, 'No nested media transaction.'); $this->transaction = true; return true; }
     public function commit(): bool { $this->transaction = false; $this->clockLocked = $this->mediaLocked = false; return true; }
     public function rollBack(): bool { return $this->commit(); }

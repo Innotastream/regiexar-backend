@@ -52,10 +52,33 @@ function applicationKeyholeWallPoint(array $walls,?string $bytes,float $x,float 
     return applicationMaskBit($bytes,$row*$walls['width']+$col);
 }
 
+function applicationKeyholePassageBlocked(array $mask,?string $bytes,float $x0,float $y0,float $x1,float $y1):bool {
+    if(min($x0,$y0,$x1,$y1)<0||max($x0,$y0,$x1,$y1)>100)return true;
+    if($bytes===null)return false;
+    $cuts=[0.0,1.0];
+    // Split at raster cell boundaries, so even a thin cell between samples is visited.
+    foreach([[$x0/100*($mask['width']-1),$x1/100*($mask['width']-1)],
+        [$y0/100*($mask['height']-1),$y1/100*($mask['height']-1)]] as [$start,$end]){
+        if(abs($end-$start)<1e-12)continue;
+        for($edge=floor(min($start,$end)+.5)+.5;$edge<max($start,$end);$edge++){
+            $t=($edge-$start)/($end-$start);if($t>0&&$t<1)$cuts[]=$t;
+        }
+    }
+    sort($cuts,SORT_NUMERIC);
+    foreach($cuts as $i=>$t){
+        foreach($i>0?[($cuts[$i-1]+$t)/2,$t]:[$t] as $at)
+            if(applicationKeyholeWallPoint($mask,$bytes,$x0+($x1-$x0)*$at,$y0+($y1-$y0)*$at))return true;
+    }
+    return false;
+}
+
 function applicationProjectDoorKeyhole(array $map,string $accountId,array $characterOwners,array $characters,array $occlusion,mixed $fog,array $mistVision): ?array {
     $tokens=$map['tokens']??[];$source=null;
     foreach($tokens as $token)if(($token['doorPeek']['accountId']??null)===$accountId&&onlineEffectiveTokenControllerId($token,$characterOwners)===$accountId){$source=$token;break;}
-    if(!$source||!empty($source['hidden'])||($source['hp']??0)<=0||($source['healthOverride']??'')==='dead')return null;
+    if(!$source)return null;
+    $character=$characters[$source['characterId']??'']??null;
+    if($character!==null)$source=synchronizeOnlineCharacterToken($source,$character);
+    if(!empty($source['hidden'])||($source['hp']??0)<=0||onlineTokenIsDead($source,true))return null;
     $peek=$source['doorPeek'];$door=array_column($tokens,null,'id')[$peek['doorId']??'']??[];
     if(!applicationKeyholeDoorAvailable($door)||!onlineTokenOnActiveLayer($door,$map)
         ||($peek['movement']??null)!=applicationKeyholeMovementCheckpoint($source,$map)
@@ -64,17 +87,14 @@ function applicationProjectDoorKeyhole(array $map,string $accountId,array $chara
     if($geometry===null)return null;
     ['x'=>$x,'y'=>$y,'hx'=>$hx,'hy'=>$hy,'ux'=>$ux,'uy'=>$uy,'width'=>$width,'height'=>$height,'slope'=>$slope,
         'range'=>$range,'left'=>$left,'right'=>$right,'top'=>$top,'bottom'=>$bottom]=$geometry;
-    $character=$characters[$source['characterId']??'']??null;
     $origin=['x'=>$x/$width*100,'y'=>$y/$height*100,'source'=>'token',
         'visionDistance'=>min(XAR_KEYHOLE_RANGE,onlineTokenVisionDistance($source,$character)),
         'darkVision'=>onlineTokenDarkVision($source,$character)];
     $otherWalls=applicationActiveMapOcclusionState($map,array_values(array_filter($tokens,static fn($token)=>$token['id']!==$door['id'])))['walls'];
     $otherBytes=applicationWallMaskBytes($otherWalls);
     $view=['doorId'=>$door['id'],'doorName'=>$door['name']??'Porte','sourceTokenId'=>$source['id']];
-    foreach([0,.5,1] as $factor){
-        $px=($hx+($x-$hx)*$factor)/$width*100;$py=($hy+($y-$hy)*$factor)/$height*100;
-        if(applicationKeyholeWallPoint($otherWalls,$otherBytes,$px,$py)||applicationFogCoversPoint($fog,$px,$py))return [...$view,'obscured'=>true];
-    }
+    if(applicationKeyholePassageBlocked($otherWalls,$otherBytes,$hx/$width*100,$hy/$height*100,$x/$width*100,$y/$height*100)
+        ||!empty($fog['enabled'])&&applicationKeyholePassageBlocked($fog,applicationFogMaskBytes($fog),$hx/$width*100,$hy/$height*100,$x/$width*100,$y/$height*100))return [...$view,'obscured'=>true];
     $mask=applicationComputeVisionMask([...$occlusion,'vision'=>[...$occlusion['vision'],'enabled'=>true]],[$origin],$map['gridSize']);
     $visionBytes=applicationFogMaskBytes([...$mask,'version'=>XAR_FOG_MASK_VERSION]);
     if(empty($mask['enabled'])||$visionBytes===null)return [...$view,'obscured'=>true];

@@ -115,6 +115,11 @@ function applicationTerrainBarrierWalls(array $walls,array $map): array {
                 $pieces[]=[$length,$rotation+$side*90,($hingeX*$cos-$leafY*$sin)*$grid,($hingeX*$sin+$leafY*$cos)*$grid];
             }
         }
+        if($door){
+            // Fixed jambs overlap the adjacent wall by 4% of the door width.
+            $angle=deg2rad($rotation);
+            foreach([-1,1] as $side)$pieces[]=[$across*.18,$rotation,$side*.45*$across*cos($angle)*$grid,$side*.45*$across*sin($angle)*$grid];
+        }
         foreach($pieces as [$length,$angle,$offsetX,$offsetY]){
             $px=$token['x']*$nw/100+$offsetX;$py=$token['y']*$nh/100+$offsetY;
             $bounds=$rect?hypot($length,$depth)*$grid/2:$token['size']/2;
@@ -228,8 +233,11 @@ function onlineInteractObstacleDoor(PDO $db,array &$records,array &$pending,arra
         if(!equipmentId($sourceId)||!in_array($action,['open','close','pick','peek'],true)||($map['activeLayerId']??'ground')!==$layer||!empty($door['hidden']))throw new RuntimeException('Cette porte est hors d’accès.',403);
         $tokens=onlineSceneTokensForLights($db,$records,$pending,$scene);$map['tokens']=$tokens;
         $source=array_column($tokens,null,'id')[$sourceId]??[];
+        $sourceController=$source?onlineTokenControllerIdFromRecords($db,$records,$source):'';
+        $sourceCharacter=applicationDomainPayload($records,'character:'.($source['characterId']??''));
+        if($sourceCharacter!==[])$source=synchronizeOnlineCharacterToken($source,$sourceCharacter);
         if(!$source||!empty($source['hidden'])||($source['hp']??0)<=0||onlineTokenIsDead($source,true)
-            ||onlineTokenControllerIdFromRecords($db,$records,$source)!==$identity['id']
+            ||$sourceController!==$identity['id']
             ||!onlineAttackTargetVisible($db,$records,$map,$door,$identity['id'],$scene))throw new RuntimeException('Cette porte est hors d’accès.',403);
         if(applicationMapDistanceInCells($source,$door,$map,true,true)>2+1e-9)throw new RuntimeException('Approchez un pion contrôlé à deux cases de la porte.',409);
         if($action==='open'&&empty($barrier['open'])&&!empty($barrier['locked'])){
@@ -256,6 +264,7 @@ function onlineInteractObstacleDoor(PDO $db,array &$records,array &$pending,arra
             return ['attempt'=>$receipt['attempt'],'deduplicated'=>true,'open'=>!empty($barrier['open']),'locked'=>!empty($barrier['locked'])];
         }
         if(empty($barrier['locked'])||!empty($barrier['open']))throw new RuntimeException('La porte doit être fermée et verrouillée pour être crochetée.',409);
+        $records=array_replace($records,applicationDomainRecords($db,['devices']));
         $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());
         foreach($store['pendingRolls'] as $entry)if(($entry['type']??'')==='door-pick'&&$entry['sceneId']===$scene&&$entry['doorId']===$doorId)
             throw new RuntimeException('Ce crochetage attend la décision du MJ.',409);

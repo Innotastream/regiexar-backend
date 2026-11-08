@@ -930,21 +930,36 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         return ['version' => XAR_WALL_MASK_VERSION, 'enabled' => false, 'width' => $width, 'height' => $height, 'mask' => ''];
     }
     $wallBytes = applicationWallMaskBytes($walls) ?? str_repeat("\0", (int) ceil(($width * $height) / 8));
-    static $wallIndexCache = [];
+    // Work on byte-addressable cells during the ray sweep. Packing and
+    // unpacking happen in native string operations, preserving every bit and
+    // the original ray samples without millions of PHP bit manipulations.
+    static $expandBits = [], $packBits = [], $wallIndexCache = [];
+    if ($expandBits === []) {
+        for ($byte = 0; $byte < 256; ++$byte) {
+            $cells = '';
+            for ($bit = 0; $bit < 8; ++$bit) $cells .= ($byte & (1 << $bit)) !== 0 ? "\xff" : "\0";
+            $expandBits[chr($byte)] = $cells;
+            $packBits[$cells] = chr($byte);
+        }
+    }
     $wallKey = $width . ':' . $height . ':' . hash('sha256', $wallBytes);
     if (isset($wallIndexCache[$wallKey])) {
-        $wallCellIndexes = $wallIndexCache[$wallKey];
+        [$wallCellIndexes, $wallCells] = $wallIndexCache[$wallKey];
     } else {
         $wallCellIndexes = [];
+        $wallCells = strtr($wallBytes, $expandBits);
         if (($walls['mask'] ?? '') !== '') {
-            for ($index = 0; $index < $width * $height; $index += 1) {
-                if (applicationMaskBit($wallBytes, $index)) $wallCellIndexes[] = $index;
+            $offset = 0;
+            while (($index = strpos($wallCells, "\xff", $offset)) !== false && $index < $width * $height) {
+                $wallCellIndexes[] = $index;
+                $offset = $index + 1;
             }
         }
         if (count($wallIndexCache) >= 2) array_shift($wallIndexCache);
-        $wallIndexCache[$wallKey] = $wallCellIndexes;
+        $wallIndexCache[$wallKey] = [$wallCellIndexes, $wallCells];
     }
-    $hiddenBytes = str_repeat("\xff", (int) ceil(($width * $height) / 8));
+    // Keep padding bits hidden exactly as in the compact mask.
+    $hiddenCells = str_repeat("\xff", (int) ceil(($width * $height) / 8) * 8);
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $safeGridSize = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
@@ -953,7 +968,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         float $centerY,
         int $targetColumn,
         int $targetRow
-    ) use ($wallBytes, $width, $height): bool {
+    ) use ($wallCells, $width, $height): bool {
         $deltaX = $targetColumn - $centerX;
         $deltaY = $targetRow - $centerY;
         $steps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
@@ -971,9 +986,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
                 continue;
             }
             $previousIndex = $cellIndex;
-            // The column and row were checked above; avoid a function call
-            // for every pixel crossed by every visibility ray.
-            $cellIsWall = (ord($wallBytes[intdiv($cellIndex, 8)]) & (1 << ($cellIndex % 8))) !== 0;
+            $cellIsWall = $wallCells[$cellIndex] !== "\0";
             if ($wallEncountered && !$cellIsWall) {
                 return false;
             }
@@ -992,7 +1005,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
             return;
         }
-        applicationSetMaskBit($bytes, $row * $width + $column, false);
+        $bytes[$row * $width + $column] = "\0";
     };
     foreach (array_slice($origins, 0, 40) as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) {
@@ -1003,11 +1016,20 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         $radiusY = max(1.0, $radiusNatural / $naturalHeight * max(1, $height - 1));
         $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
         $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
-        $clearCell($hiddenBytes, $centerX, $centerY);
+        $clearCell($hiddenCells, $centerX, $centerY);
         $originColumn = (int) round($centerX);
         $originRow = (int) round($centerY);
-        if (applicationMaskBit($wallBytes, $originRow * $width + $originColumn)) {
+        if ($wallCells[$originRow * $width + $originColumn] !== "\0") {
             continue;
+        }
+        $ellipseXSquares = $ellipseYSquares = [];
+        for ($column = 0; $column < $width; ++$column) {
+            $delta = ($column - $centerX) / $radiusX;
+            $ellipseXSquares[$column] = $delta * $delta;
+        }
+        for ($row = 0; $row < $height; ++$row) {
+            $delta = ($row - $centerY) / $radiusY;
+            $ellipseYSquares[$row] = $delta * $delta;
         }
         if (($walls['mask'] ?? '') === '') {
             $minimumX = max(0, (int) floor($centerX - $radiusX));
@@ -1016,10 +1038,8 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
             $maximumY = min($height - 1, (int) ceil($centerY + $radiusY));
             for ($y = $minimumY; $y <= $maximumY; $y += 1) {
                 for ($x = $minimumX; $x <= $maximumX; $x += 1) {
-                    $deltaX = ($x - $centerX) / $radiusX;
-                    $deltaY = ($y - $centerY) / $radiusY;
-                    if ($deltaX * $deltaX + $deltaY * $deltaY <= 1.0) {
-                        $clearCell($hiddenBytes, (float) $x, (float) $y);
+                    if ($ellipseXSquares[$x] + $ellipseYSquares[$y] <= 1.0) {
+                        $hiddenCells[$y * $width + $x] = "\0";
                     }
                 }
             }
@@ -1062,18 +1082,14 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
                     continue;
                 }
                 $previousIndex = $cellIndex;
-                $ellipseDeltaX = ($column - $centerX) / $radiusX;
-                $ellipseDeltaY = ($row - $centerY) / $radiusY;
-                if ($ellipseDeltaX * $ellipseDeltaX + $ellipseDeltaY * $ellipseDeltaY > 1.0 + 1.0e-12) {
+                if ($ellipseXSquares[$column] + $ellipseYSquares[$row] > 1.0 + 1.0e-12) {
                     break;
                 }
-                $byteIndex = intdiv($cellIndex, 8);
-                $cellBit = 1 << ($cellIndex % 8);
-                $cellIsWall = (ord($wallBytes[$byteIndex]) & $cellBit) !== 0;
+                $cellIsWall = $wallCells[$cellIndex] !== "\0";
                 if ($wallEncountered && !$cellIsWall) {
                     break;
                 }
-                $hiddenBytes[$byteIndex] = chr(ord($hiddenBytes[$byteIndex]) & ~$cellBit);
+                $hiddenCells[$cellIndex] = "\0";
                 if ($step > 0 && $cellIsWall) {
                     $wallEncountered = true;
                 }
@@ -1084,20 +1100,16 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         // exact : seul le premier corps solide rencontré est révélé, jamais un
         // second mur séparé par une cellule libre ni l'espace situé derrière.
         foreach ($wallCellIndexes as $cellIndex) {
-            $byteIndex = intdiv($cellIndex, 8);
-            $cellBit = 1 << ($cellIndex % 8);
-            if ((ord($hiddenBytes[$byteIndex]) & $cellBit) === 0) {
+            if ($hiddenCells[$cellIndex] === "\0") {
                 continue;
             }
             $column = $cellIndex % $width;
             $row = intdiv($cellIndex, $width);
-            $ellipseDeltaX = ($column - $centerX) / $radiusX;
-            $ellipseDeltaY = ($row - $centerY) / $radiusY;
-            if ($ellipseDeltaX * $ellipseDeltaX + $ellipseDeltaY * $ellipseDeltaY > 1.0 + 1.0e-12) {
+            if ($ellipseXSquares[$column] + $ellipseYSquares[$row] > 1.0 + 1.0e-12) {
                 continue;
             }
             if ($firstWallBodyReachesCell($centerX, $centerY, $column, $row)) {
-                $hiddenBytes[$byteIndex] = chr(ord($hiddenBytes[$byteIndex]) & ~$cellBit);
+                $hiddenCells[$cellIndex] = "\0";
             }
         }
     }
@@ -1106,7 +1118,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         'enabled' => true,
         'width' => $width,
         'height' => $height,
-        'mask' => rtrim(strtr(base64_encode($hiddenBytes), '+/', '-_'), '='),
+        'mask' => rtrim(strtr(base64_encode(strtr($hiddenCells, $packBits)), '+/', '-_'), '='),
     ];
 }
 
@@ -1227,36 +1239,45 @@ function applicationResolveVisionRelays(array $occlusion, array $origins, mixed 
         static fn (array $light): bool => $light['enabled'] && !applicationLightCenterBlocked($occlusion, $light)));
     $remoteMasks = [];
     $lightingMode = normalizeApplicationMapLightingMode($occlusion['lightingMode'] ?? null);
-    if (array_key_exists('lightingMode', $occlusion) && in_array($lightingMode, ['dark', 'normal'], true)) {
-        foreach ($origins as $origin) {
-            $remoteMasks[] = applicationComputeBaseVisionMask($occlusion, [[
-                ...$origin,
-                'visionDistance' => applicationRemoteLightDetectionDistance($origin['visionDistance'] ?? null, $lightingMode),
-                'environmentAdjusted' => true,
-            ]], $gridSize);
-        }
-    }
+    $allowsRemoteDetection = array_key_exists('lightingMode', $occlusion) && in_array($lightingMode, ['dark', 'normal'], true);
     // Hidden bits combine with AND: each new relay contributes exactly once.
     $distantBytes = null;
-    if (array_filter($remaining,static fn(array $light):bool=>($light['visibleFromAfar']??false)===true)) {
-        $distance = (int) ceil(hypot((float)($occlusion['naturalWidth']??1600),(float)($occlusion['naturalHeight']??900))/max(12,(float)($gridSize?:50)))+1;
-        $distantBytes = applicationWallMaskBytes(applicationComputeBaseVisionMask($occlusion,$origins,$gridSize,$distance));
-    }
+    $distantComputed = false;
     // Initial token origins keep their own forty slots; lights never displace them.
     do {
         $changed = false;
         foreach ($remaining as $index => $light) {
             $column = (int) round($light['x'] / 100 * ($mask['width'] - 1));
             $row = (int) round($light['y'] / 100 * ($mask['height'] - 1));
-            $remotelyVisible = ($light['visibleFromAfar']??false) === true && $distantBytes !== null && !applicationMaskBit($distantBytes,$row*$mask['width']+$column);
-            foreach ($remoteMasks as $remoteMask) {
-                $remoteBytes = applicationWallMaskBytes($remoteMask);
-                if ($remoteBytes !== null && !applicationMaskBit($remoteBytes, $row * $mask['width'] + $column)) {
-                    $remotelyVisible = true;
-                    break;
+            $visible = !applicationMaskBit($bytes, $row * $mask['width'] + $column);
+            // Most lights are already in ordinary sight. Computing every
+            // observer's triple-range mask before testing that fact made a
+            // shared view expensive even when the scene had no lights at all.
+            if (!$visible && ($light['visibleFromAfar'] ?? false) === true) {
+                if (!$distantComputed) {
+                    $distance = (int) ceil(hypot((float)($occlusion['naturalWidth']??1600),(float)($occlusion['naturalHeight']??900))/max(12,(float)($gridSize?:50)))+1;
+                    $distantBytes = applicationWallMaskBytes(applicationComputeBaseVisionMask($occlusion,$origins,$gridSize,$distance));
+                    $distantComputed = true;
+                }
+                $visible = $distantBytes !== null && !applicationMaskBit($distantBytes, $row * $mask['width'] + $column);
+            }
+            if (!$visible && $allowsRemoteDetection) {
+                foreach ($origins as $originIndex => $observer) {
+                    if (!array_key_exists($originIndex, $remoteMasks)) {
+                        $remoteMasks[$originIndex] = applicationWallMaskBytes(applicationComputeBaseVisionMask($occlusion, [[
+                            ...$observer,
+                            'visionDistance' => applicationRemoteLightDetectionDistance($observer['visionDistance'] ?? null, $lightingMode),
+                            'environmentAdjusted' => true,
+                        ]], $gridSize));
+                    }
+                    $remoteBytes = $remoteMasks[$originIndex];
+                    if ($remoteBytes !== null && !applicationMaskBit($remoteBytes, $row * $mask['width'] + $column)) {
+                        $visible = true;
+                        break;
+                    }
                 }
             }
-            if (applicationMaskBit($bytes, $row * $mask['width'] + $column) && !$remotelyVisible) continue;
+            if (!$visible) continue;
             $origin = [
                 'x' => $light['x'], 'y' => $light['y'], 'visionDistance' => $light['visionDistance'],
                 'darkVision' => 'none', 'source' => 'light', 'environmentAdjusted' => true,
@@ -1303,15 +1324,23 @@ function applicationCalculateVisionRenderMask(array $occlusion, array $origins, 
     $strictBytes = applicationWallMaskBytes($strict);
     if ($strictBytes === null) return $strict;
     $tokenBytes = $strictBytes;
-    $opacity = str_repeat("\xff", $width * $height);
-    for ($index = 0; $index < $width * $height; ++$index) {
-        if (!applicationMaskBit($strictBytes, $index)) $opacity[$index] = "\0";
+    static $expandBits = [];
+    if ($expandBits === []) {
+        for ($byte = 0; $byte < 256; ++$byte) {
+            $cells = '';
+            for ($bit = 0; $bit < 8; ++$bit) $cells .= ($byte & (1 << $bit)) !== 0 ? "\xff" : "\0";
+            $expandBits[chr($byte)] = $cells;
+        }
     }
+    $cellCount = $width * $height;
+    $opacity = substr(strtr($strictBytes, $expandBits), 0, $cellCount);
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
     $vision = normalizeApplicationVisionSettings($occlusion['vision'] ?? null);
     $environmentLighting = array_key_exists('lightingMode', $occlusion);
+    $lastColumn = max(1, $width - 1);
+    $lastRow = max(1, $height - 1);
     foreach ($resolved['origins'] as $origin) {
         if (!is_array($origin) || !is_numeric($origin['x'] ?? null) || !is_numeric($origin['y'] ?? null)) continue;
         $originDistance = applicationOriginVisionDistance($origin, $vision);
@@ -1321,13 +1350,21 @@ function applicationCalculateVisionRenderMask(array $occlusion, array $origins, 
         if ($extendedBytes === null) continue;
         if (($resolved['viewerSeesFade'] ?? false) === true) $tokenBytes = $tokenBytes & $extendedBytes;
         $radius = $originDistance * $grid;
-        $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * max(1, $width - 1);
-        $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * max(1, $height - 1);
-        for ($index = 0; $index < $width * $height; ++$index) {
-            if ($opacity[$index] === "\0" || applicationMaskBit($extendedBytes, $index)) continue;
-            $distance = hypot(($index % $width - $centerX) / max(1, $width - 1) * $naturalWidth,
-                (intdiv($index, $width) - $centerY) / max(1, $height - 1) * $naturalHeight);
-            $t = max(0.0, min(1.0, ($distance - $radius) / ($fadeDistance * $grid)));
+        $centerX = max(0.0, min(100.0, (float) $origin['x'])) / 100 * $lastColumn;
+        $centerY = max(0.0, min(100.0, (float) $origin['y'])) / 100 * $lastRow;
+        $columnDistances = $rowDistances = [];
+        for ($column = 0; $column < $width; ++$column) $columnDistances[$column] = ($column - $centerX) / $lastColumn * $naturalWidth;
+        for ($row = 0; $row < $height; ++$row) $rowDistances[$row] = ($row - $centerY) / $lastRow * $naturalHeight;
+        // Only the ring hidden by strict vision and reached by this extension
+        // can gain opacity. Skip whole hidden/strictly visible regions in C.
+        $fadeCells = strtr($strictBytes & ~$extendedBytes, $expandBits);
+        $fadeRadius = $fadeDistance * $grid;
+        $offset = 0;
+        while (($index = strpos($fadeCells, "\xff", $offset)) !== false && $index < $cellCount) {
+            $offset = $index + 1;
+            if ($opacity[$index] === "\0") continue;
+            $distance = hypot($columnDistances[$index % $width], $rowDistances[intdiv($index, $width)]);
+            $t = max(0.0, min(1.0, ($distance - $radius) / $fadeRadius));
             $alpha = (int) round(255 * $t * $t * (3 - 2 * $t));
             if ($alpha < ord($opacity[$index])) $opacity[$index] = chr($alpha);
         }
@@ -2924,11 +2961,29 @@ function ensureDomainStoreInitialized(PDO $connection): void
     }
 }
 
+function applicationConsistentDomainRead(PDO $connection, callable $read): mixed
+{
+    if ($connection->inTransaction()) return $read();
+    // Bind the clock, indexes and documents to one committed MVCC snapshot.
+    // This setting applies only to the next transaction and takes no write lock.
+    $connection->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    $connection->beginTransaction();
+    try {
+        $result = $read();
+        $connection->commit();
+        return $result;
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
+    }
+}
+
 function domainApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
-    $clock = domainClockRecord($connection);
-    $records = applicationDomainRecords($connection);
+    [$clock, $records] = applicationConsistentDomainRead($connection, static fn(): array => [
+        domainClockRecord($connection), applicationDomainRecords($connection),
+    ]);
     $state = domainsToApplicationState($records, $clock['globalRevision']);
     return [
         'schemaVersion' => XAR_SESSION_SCHEMA_VERSION,
@@ -2940,6 +2995,16 @@ function domainApplicationStateRecord(PDO $connection): array
 function playerApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
+    [$clock, $records] = applicationConsistentDomainRead($connection, static fn(): array => playerApplicationDomainRecords($connection));
+    return [
+        'schemaVersion' => XAR_SESSION_SCHEMA_VERSION,
+        'revision' => $clock['globalRevision'],
+        'state' => domainsToApplicationState($records, $clock['globalRevision']),
+    ];
+}
+
+function playerApplicationDomainRecords(PDO $connection): array
+{
     $clock = domainClockRecord($connection);
     $records = applicationDomainRecords($connection, ['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat']);
     $table = applicationDomainPayload($records, 'table');
@@ -2995,12 +3060,7 @@ function playerApplicationStateRecord(PDO $connection): array
         'payload' => ['order' => $hasActiveScene ? [$sceneId] : []],
         'updatedAt' => '',
     ];
-    $state = domainsToApplicationState($records, $clock['globalRevision']);
-    return [
-        'schemaVersion' => XAR_SESSION_SCHEMA_VERSION,
-        'revision' => $clock['globalRevision'],
-        'state' => $state,
-    ];
+    return [$clock, $records];
 }
 
 function persistDomainChangesInTransaction(PDO $connection, array $identity, array $clock, array $pending): int
@@ -3055,13 +3115,20 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
 {
     requireGmIdentity($connection);
     ensureDomainStoreInitialized($connection);
-    $clock = domainClockRecord($connection);
     $since = max(0, (int) ($_GET['since'] ?? 0));
     $prefix = trim((string) ($_GET['prefix'] ?? ''));
     $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     if ($prefix !== '' && (!validApplicationDomainPrefix($prefix) || $since !== 0)) {
         sendError(400, 'Sélection de domaines invalide.', 'invalid_domain_selection');
     }
+    $response = applicationConsistentDomainRead($connection, static fn(): array => applicationDomainReadResponse($connection, $since, $prefix));
+    if ($includePresence) $response['presence'] = liveOnlinePresence($connection);
+    sendJson(200, $response, $headOnly);
+}
+
+function applicationDomainReadResponse(PDO $connection, int $since, string $prefix): array
+{
+    $clock = domainClockRecord($connection);
     $reset = applicationDomainReadRequiresReset($since, $clock['globalRevision']);
     $wanted = [];
     $deleted = [];
@@ -3101,7 +3168,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
             'payload' => applicationDomainFatiguePayload($key, $records[$key]['payload']),
         ];
     }
-    sendJson(200, [
+    return [
         'ok' => true,
         'architecture' => 'revisioned-domains',
         'serverNow' => (int) floor(microtime(true) * 1000),
@@ -3115,8 +3182,7 @@ function readApplicationDomains(PDO $connection, bool $headOnly = false): never
         'domains' => $entries,
         'deleted' => array_values($deleted),
         ...($prefix !== '' ? ['selection' => ['prefix' => $prefix]] : []),
-        ...($includePresence ? ['presence' => liveOnlinePresence($connection)] : []),
-    ], $headOnly);
+    ];
 }
 
 function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, array &$pending, array $identity, ?array $manual = null): void

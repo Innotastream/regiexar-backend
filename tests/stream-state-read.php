@@ -22,6 +22,11 @@ final class StreamReadConnection extends PDO
     public array $selectedKeys = [];
     public int $presenceReads = 0;
     public function __construct(public MemoryConnection $storage) {}
+    public function exec(string $statement): int|false { return $this->storage->exec($statement); }
+    public function inTransaction(): bool { return $this->storage->inTransaction(); }
+    public function beginTransaction(): bool { return $this->storage->beginTransaction(); }
+    public function commit(): bool { return $this->storage->commit(); }
+    public function rollBack(): bool { return $this->storage->rollBack(); }
     public function prepare(string $query, array $options = []): PDOStatement|false { return new StreamReadStatement($this, $query); }
     public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false { $s = $this->prepare($query); $s->execute(); return $s; }
     public function readRows(string $sql, array $params): array

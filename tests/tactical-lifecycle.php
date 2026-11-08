@@ -46,6 +46,10 @@ final class MemoryConnection extends PDO
         $this->domains[$key] = ['domain_key' => $key, 'schema_version' => 1, 'revision' => $revision, 'payload' => $payload, 'updated_at' => '2026-09-07T00:00:00Z'];
     }
     public function payload(string $key): array { return $this->domains[$key]['payload'] ?? []; }
+    public function exec(string $statement): int|false {
+        if ($statement !== 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ' || $this->inTransaction()) throw new RuntimeException('Unexpected transaction setting: ' . $statement);
+        return 0;
+    }
     public function prepare(string $query, array $options = []): PDOStatement|false { return new MemoryStatement($this, $query); }
     public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false { $s = $this->prepare($query); $s->execute(); return $s; }
     public function beginTransaction(): bool { $this->snapshot = [$this->domains, $this->revision, $this->mediaObjects]; return true; }

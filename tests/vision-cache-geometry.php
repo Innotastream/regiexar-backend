@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../api/v1/domains.php';
 require_once __DIR__ . '/fixtures/vision-base-reference.php';
+require_once __DIR__ . '/fixtures/vision-render-reference.php';
 set_error_handler(static function (int $severity, string $message): bool {
     if (!(error_reporting() & $severity)) return false;
     throw new RuntimeException($message);
@@ -18,7 +19,8 @@ function visionEqual(array $occlusion, array $origins, mixed $grid, int $extensi
     visionRequire(applicationComputeBaseVisionMask($occlusion, $origins, $grid, $extension) === $expected, 'Warm base geometry must match');
 }
 function renderEqual(array $occlusion, array $origins, mixed $grid): array {
-    $expected = applicationCalculateVisionRenderMask($occlusion, $origins, $grid);
+    $expected = referenceVisionRenderMask($occlusion, $origins, $grid);
+    visionRequire(applicationCalculateVisionRenderMask($occlusion, $origins, $grid) === $expected, 'Optimized renderer must preserve original opacity and visibility byte for byte');
     visionRequire(applicationComputeVisionRenderMask($occlusion, $origins, $grid) === $expected, 'Cached render must match uncached geometry, opacity and token visibility');
     visionRequire(applicationComputeVisionRenderMask($occlusion, $origins, $grid) === $expected, 'Warm render must match');
     return $expected;
@@ -77,4 +79,36 @@ for($case=0;$case<80;++$case) {
     visionEqual($occlusion,$randomOrigins,$grid,$case%7);
     renderEqual($occlusion,$randomOrigins,$grid);
 }
-echo json_encode(['ok'=>true,'geometryChecks'=>$checks,'randomGeometries'=>80,'productionAccess'=>false]).PHP_EOL;
+// Cover the production-size ray sweep, edge origins, long-distance shadows,
+// empty maps, solid first wall bodies and every possible packed input byte.
+$bytes=str_repeat("\0",32768);
+foreach([90,210,350] as $column)for($row=40;$row<470;++$row){
+    if($row>200&&$row<240)continue;
+    applicationSetMaskBit($bytes,$row*512+$column,true);
+    if($column===210)applicationSetMaskBit($bytes,$row*512+$column+1,true);
+}
+$large=$base;$large['walls']=['version'=>1,'width'=>512,'height'=>512,'mask'=>rtrim(strtr(base64_encode($bytes),'+/','-_'),'=')];
+$large['naturalWidth']=$large['naturalHeight']=1000.0;
+foreach([[15.0,45.0,0],[100.0,0.0,30],[41.0958904109589,50.0,6]] as [$x,$y,$extension]){
+    $origin=[['x'=>$x,'y'=>$y,'visionDistance'=>8]];
+    visionEqual($large,$origin,50,$extension);
+    renderEqual($large,$origin,50);
+}
+$large['walls']['mask']='';visionEqual($large,[['x'=>0.0,'y'=>100.0,'visionDistance'=>40]],50);
+$rectangle=$base;$rectangle['walls']=['version'=>1,'width'=>512,'height'=>288,'mask'=>''];
+$rectangle['naturalWidth']=1672.0;$rectangle['naturalHeight']=941.0;
+$roomBytes=str_repeat("\0",18432);
+foreach([[80,170,40,240],[230,250,60,260]] as [$left,$right,$top,$bottom]){
+    for($column=$left;$column<=$right;++$column){applicationSetMaskBit($roomBytes,$top*512+$column,true);applicationSetMaskBit($roomBytes,$bottom*512+$column,true);}
+    for($row=$top;$row<=$bottom;++$row){if($row<135||$row>145)applicationSetMaskBit($roomBytes,$row*512+$left,true);applicationSetMaskBit($roomBytes,$row*512+$right,true);}
+}
+$rectangle['walls']['mask']=rtrim(strtr(base64_encode($roomBytes),'+/','-_'),'=');
+$fogBytes=str_repeat("\0",1152);for($row=5;$row<60;++$row)applicationSetMaskBit($fogBytes,$row*128+52,true);
+$rectangle['fog']=['version'=>1,'enabled'=>true,'width'=>128,'height'=>72,'mask'=>rtrim(strtr(base64_encode($fogBytes),'+/','-_'),'=')];
+$roomOrigins=[['x'=>23.5,'y'=>48,'visionDistance'=>8],['x'=>47,'y'=>70,'visionDistance'=>4]];
+foreach([array_slice($roomOrigins,0,1),$roomOrigins] as $roomView){visionEqual($rectangle,$roomView,50,6);renderEqual($rectangle,$roomView,50);}
+$allBytes='';for($byte=0;$byte<256;++$byte)$allBytes.=chr($byte);
+$packed=$base;$packed['walls']=['version'=>1,'width'=>64,'height'=>32,'mask'=>rtrim(strtr(base64_encode($allBytes),'+/','-_'),'=')];
+visionEqual($packed,[['x'=>0,'y'=>0,'visionDistance'=>40],['x'=>15.7,'y'=>3.3,'visionDistance'=>40]],50);
+renderEqual($packed,[['x'=>0,'y'=>0,'visionDistance'=>40]],50);
+echo json_encode(['ok'=>true,'geometryChecks'=>$checks,'randomGeometries'=>80,'largeGeometries'=>6,'allPackedBytes'=>true,'mixedRasterSizes'=>true,'productionAccess'=>false]).PHP_EOL;

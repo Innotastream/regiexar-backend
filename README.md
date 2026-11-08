@@ -1,3 +1,9 @@
+## Maintenance des sources du 8 novembre 2026
+
+Chantier depuis le backend 0.19.10, pour la base cliente 4.2.5 : cohérence transactionnelle des lectures, autorité des portes/dispositifs/objets, confidentialité des reçus, raccords d'ombre et optimisation exacte des calculs de vision et de halos. Les caches privés partagent les calculs identiques avec attente bornée ; les budgets de calcul, l'équivalence visuelle et les scénarios concurrents sont couverts par les contrats automatiques.
+
+Ce push de sources ne déploie pas OVH et ne change pas la politique de connexion. La mise en service et ses versions doivent être qualifiées séparément lors d'une livraison autorisée. Les sections suivantes sont historiques.
+
 ## Backend 0.19.7 — client 4.2.2
 
 Build `client-4-2-2-combat-inventory-hira-20261102-1`. Intègre le chantier de combat, potions, inventaires et compétences de Hira ; politique de connexion exacte 4.2.2, drainage des anciennes sessions pendant 30 secondes. Le déploiement est attesté séparément par les reçus de livraison.

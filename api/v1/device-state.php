@@ -118,6 +118,7 @@ function dsToken(array $state,array $owner,array $args): array {
     foreach($state['map']['tokens']??[] as $token) if (($token['id']??'')===($args['sourceTokenId']??'') && unitIdForToken($token)===$owner['id']
         && (($owner['effectiveRole']??'')==='gm'||!($token['hidden']??false))
         && ($token['layerId']??'ground')===($state['map']['activeLayerId']??'ground')) {
+        if(unitUsesCharacterSheet($token))$token=synchronizeOnlineCharacterToken($token,$owner);
         if (($owner['resources']['hp']??$token['hp']??0)<=0||($owner['healthOverride']??'')==='dead'||($token['healthOverride']??'')==='dead') dsError('Un personnage KO ou mort ne peut pas utiliser ce dispositif.');
         dsAssertActions($state,$token,$state['activeSceneId']);
         return $token;
@@ -125,7 +126,7 @@ function dsToken(array $state,array $owner,array $args): array {
     dsError('Placez votre personnage sur le niveau courant avant cette action.');
 }
 function dsAssertActions(array $state,array $token,string $sceneId):void {
-    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
+    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||unitUsesCharacterSheet($token)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
 }
 function dsTurn(array $state,array $actor,array $token): void {
     $i=$state['initiative']??[];
@@ -511,8 +512,18 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     } elseif($command==='roll.resolve') {
         if($actor['role']!=='gm') dsError('Seul le MJ peut traiter ce résultat remarquable.',403);$i=dsIndex($store['pendingRolls'],$args['validationId']??'');if($i<0) dsError('Ce résultat a déjà été traité.');
         $p=$store['pendingRolls'][$i];array_splice($store['pendingRolls'],$i,1);$owner=null;
+        if(($args['approve']??false)!==true&&in_array($p['type'],['deploy','bomb','channel','luck','condition','escape'],true)){
+            // Refusal must not depend on a unit that may have been removed meanwhile.
+            if(in_array($p['type'],['bomb','channel','luck'],true)){
+                $di=dsIndex($store['devices'],$p['deviceId']);
+                if($di>=0){$store['devices'][$di]['status']=match($p['type']){'bomb'=>'failed','channel'=>'stopped','luck'=>'broken'};$store['devices'][$di]['revision']++;}
+            }
+            $result['resolved']=true;
+        }else{
+        if($p['type']!=='door-pick'&&($p['sceneId']??'')!==$sceneId)dsError('La scène de ce résultat a changé. Ouvrez sa scène avant de le valider.');
         if(!in_array($p['type'],['condition','door-pick'],true)){$owner=ownedUnit($state,$actor,$p['ownerId']);}
         $ti=dsIndex($state['map']['tokens'],$p['tokenId']);if($ti<0&&$p['type']!=='door-pick') dsError('Le pion de ce résultat n’existe plus.');$token=$ti<0?[]:$state['map']['tokens'][$ti];
+        if($owner!==null&&unitIdForToken($token)!==$owner['id'])dsError('L’unité de ce résultat a changé. Refusez cette demande et préparez à nouveau l’action.');
         $success=($args['approve']??false)===true && $p['cast']['success'];
         if($p['type']==='door-pick'){$result=[...$result,...applicationResolveDoorPick($state,$p,($args['approve']??false)===true)];}
         elseif(in_array($p['type'],['deploy','bomb'],true)) {
@@ -523,6 +534,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         elseif($p['type']==='condition'){if(!empty($p['cast']['manualResistance'])&&($args['approve']??false)===true&&!is_bool($args['resisted']??null))dsError('Le MJ doit choisir si cette unité résiste au piège.',400);if(($args['approve']??false)===true)$effects[]=['type'=>'condition',...$p['effect'],'resisted'=>!empty($p['cast']['manualResistance'])?$args['resisted']:$p['cast']['success']];}
         elseif($p['type']==='escape'){$ci=dsIndex($store['timedConditions'],$p['effect']['conditionId']);if($ci>=0&&$success){$condition=$store['timedConditions'][$ci];array_splice($store['timedConditions'],$ci,1);$effects[]=['type'=>'condition.expire','condition'=>$condition];}}
         else dsError('Ce résultat n’est pas reconnu.');$result['resolved']=true;
+        }
     } else dsError('Commande de dispositif inconnue.',400);
     ensureDeviceItems($state,$id);
     if(isset($state['items'])) $state['items']=normalizeItemStore($state['items']);

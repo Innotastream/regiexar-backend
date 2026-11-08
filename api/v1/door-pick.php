@@ -14,8 +14,9 @@ function applicationResolveDoorPick(array &$state,array $pending,bool $approve):
     $toolIndex=array_search($pending['toolId'],array_column($state['items']['instances']??[],'id'),true);
     $tool=$toolIndex===false?[]:$state['items']['instances'][$toolIndex];
     $owner=$source?unitById($state,unitIdForToken($source),false):null;
+    if($owner!==null&&unitUsesCharacterSheet($source))$source=synchronizeOnlineCharacterToken($source,$owner);
     $current=$state['activeSceneId']===$pending['sceneId']&&applicationIsObstacleDoor($door)&&applicationTerrainBarrierActive($door)&&empty($door['hidden'])
-        &&$source&&empty($source['hidden'])&&($source['healthOverride']??'')!=='dead'&&($owner['resources']['hp']??0)>0
+        &&$source&&empty($source['hidden'])&&!onlineTokenIsDead($source,true)&&($owner['resources']['hp']??0)>0
         &&applicationUnitControllerId($source,$state)===$pending['accountId']
         &&applicationDoorPickCheckpoint($door)==$pending['doorCheckpoint']
         &&applicationKeyholeMovementCheckpoint($source,$map)==$pending['sourceCheckpoint']

@@ -34,6 +34,56 @@ function onlineComplexAbilityRequestSignature(array $arguments): string
     ]);
 }
 
+// A receipt prevents another cast; it does not preserve the actor's former
+// authority. Project its historical result against current unit ownership.
+function onlineComplexAbilityReceiptResult(PDO $connection, array &$records, array $table, string $accountId,
+    array $arguments, array $result, bool $isGm, string $authorityRole = ''): array
+{
+    if ($isGm) return $result;
+    if ($authorityRole === 'gm' || ($result['attack']['attackerRole'] ?? '') === 'gm') {
+        rejectOnlineCommand($connection, 403, 'Ce reçu privé nécessite le mode MJ.', 'ability_receipt_forbidden');
+    }
+    onlineAssertAbilityReceiptVisibility($connection, $result, false);
+    $records = array_replace($records, applicationDomainRecords($connection));
+    $execution = is_array($result['execution'] ?? null) ? $result['execution'] : null;
+    $sceneId = (string) ($execution['sceneId'] ?? $result['attack']['sceneId'] ?? $arguments['sceneId'] ?? '');
+    $sourceId = (string) ($execution['sourceTokenId'] ?? $result['attack']['sourceTokenId'] ?? $arguments['sourceTokenId'] ?? '');
+    $map = applicationDomainPayload($records, 'map:' . $sceneId);
+    $source = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $sourceId));
+    $participant = !empty($execution['participantOnly']);
+    if ($sceneId !== onlineActiveSceneId($table)
+        || ($execution['layerId'] ?? $result['attack']['layerId'] ?? onlineTokenLayerId($source, $map)) !== onlineTokenLayerId([], $map)
+        || (!$participant && ($source === [] || !empty($source['hidden']) || !onlineTokenOnActiveLayer($source, $map)))) {
+        rejectOnlineCommand($connection, 403, 'Cette compétence ne vous est plus accessible.', 'complex_ability_forbidden');
+    }
+    $ownsSource = !$participant && $source !== [] && onlineTokenControllerIdFromRecords($connection, $records, $source) === $accountId;
+    if (!$ownsSource && !$participant) {
+        rejectOnlineCommand($connection, 403, 'Cette compétence ne vous est plus accessible.', 'complex_ability_forbidden');
+    }
+    if ($execution !== null) {
+        $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, false);
+        if (!$participant && !in_array($sourceId, array_column($tokens, 'id'), true)) {
+            rejectOnlineCommand($connection, 403, 'Cette compétence ne vous est plus accessible.', 'complex_ability_forbidden');
+        }
+        // An execution remembers its launch controller; a transferred unit must
+        // not turn that historical field into a current read permission.
+        $execution['controllerAccountId'] = $ownsSource ? $accountId : '';
+        $projected = publicApplicationComplexAbilityExecution($execution, $accountId, false, $tokens);
+        if ($projected === null && $participant) {
+            foreach ($tokens as $token) {
+                if (($token['controllerAccountId'] ?? '') !== $accountId) continue;
+                $projected = publicApplicationComplexAbilityExecution($execution, $accountId, false, $tokens, (string) $token['id']);
+                if ($projected !== null) break;
+            }
+        }
+        if ($projected === null) {
+            rejectOnlineCommand($connection, 403, 'Cette compétence ne vous est plus accessible.', 'complex_ability_forbidden');
+        }
+        $result['execution'] = $projected;
+    }
+    return $result;
+}
+
 function onlineComplexAbilitySceneTokens(
     PDO $connection,
     array &$records,
@@ -250,14 +300,16 @@ function onlineUseComplexAbility(
         if(($receipt['accountId']??'')!==$accountId)rejectOnlineCommand($connection,403,'Cette demande appartient à un autre intervenant.','defense_receipt_forbidden');
         if($receipt['requestSignature']!==$signature)rejectOnlineCommand($connection,409,'Cette référence désigne une autre préparation.','defense_receipt_mismatch');
         $attack=$receipt['attack'];$execution=null;foreach($deferredActivity['abilityExecutions']??[]as$entry)if($entry['id']===($attack['areaGate']['executionId']??''))$execution=$entry;
-        return ['attack'=>$isGm?$attack:publicOnlineAttackResult($attack,true,false),'pendingAreaGate'=>$attack['status']==='pending','execution'=>$execution,'deduplicated'=>true,'rolls'=>[]];
+        $result=['attack'=>$isGm?$attack:publicOnlineAttackResult($attack,true,false),'pendingAreaGate'=>$attack['status']==='pending','execution'=>$execution,'deduplicated'=>true,'rolls'=>[]];
+        return onlineComplexAbilityReceiptResult($connection,$records,$table,$accountId,$arguments,$result,$isGm,(string)($attack['attackerRole']??''));
     }
     $receiptContext = $continuation === null ? onlinePersistentCommandReceipt(
         $connection, $records, 'ability-workflow', $requestId, $accountId, $signature, 'complex_ability'
     ) : [];
     if (is_array($receiptContext['receipt'] ?? null)) {
-        onlineAssertAbilityReceiptVisibility($connection, $receiptContext['receipt']['result'], $isGm);
-        return [...$receiptContext['receipt']['result'], 'deduplicated' => true];
+        $result = onlineComplexAbilityReceiptResult($connection, $records, $table, $accountId, $arguments,
+            $receiptContext['receipt']['result'], $isGm, (string) ($receiptContext['receipt']['authoritySignature'] ?? ''));
+        return [...$result, 'deduplicated' => true];
     }
     $records = array_replace($records, applicationDomainRecords($connection));
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
@@ -395,7 +447,7 @@ function onlineUseComplexAbility(
         $result = ['effect' => 'complex', 'castSucceeded' => ($cast['success'] ?? false) === true, 'cast' => $cast,
             ...$bundle, 'execution' => $execution,...($defenseApproval!==null||$emptyPathSelection?['initialSelectionApplied'=>true]:[])];
         if ($continuation === null) onlineStorePersistentCommandReceipt($records, $pending, $receiptContext, 'ability-workflow', $requestId,
-            $accountId, $actionEntry['id'], $sourceKey, $signature, $result);
+            $accountId, $actionEntry['id'], $sourceKey, $signature, $result, $isGm ? 'gm' : 'player');
         return [...$result, 'deduplicated' => false];
     }
 
@@ -660,7 +712,7 @@ function onlineUseComplexAbility(
     $result = ['effect' => 'complex', 'execution' => $projected, 'rolls' => $responseRolls,
         'chargeEffect' => $effectResult === null ? null : array_diff_key($effectResult, ['health' => true])];
     onlineStorePersistentCommandReceipt($records, $pending, $receiptContext, 'ability-workflow', $requestId,
-        $accountId, $actionEntry['id'], $executionId, $signature, $result);
+        $accountId, $actionEntry['id'], $executionId, $signature, $result, $isGm ? 'gm' : 'player');
     foreach(array_filter([$chargeTravel,$pathTravel,$finalPathTravel])as$travel)foreach($travel['moves']as$move){$moved=$pending[onlineTokenDomainKey($sceneId,$move['tokenId'])]['payload']??null;if($moved!==null)onlineContactZoneMovement($connection,$records,$pending,$identity,$sceneId,$moved,$travel['from'],$travel['to'],$travel['path']??[$travel['from'],$travel['to']]);}
     return [...$result, 'deduplicated' => false];
 }
