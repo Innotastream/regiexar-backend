@@ -25,6 +25,7 @@ require_once __DIR__ . '/vision-cache.php';
 require_once __DIR__ . '/ability-movement-leases.php';
 require_once __DIR__ . '/vision-zones.php';
 require_once __DIR__ . '/mist-vision.php';
+require_once __DIR__ . '/token-map-scale.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -285,6 +286,7 @@ function validApplicationFogState(mixed $value): bool
 
 function validApplicationMapFogState(array $map): bool
 {
+    if (!applicationValidMapScaleSettings($map)) return false;
     if(array_key_exists('terrainEffects',$map))try{normalizeApplicationTerrainEffects($map['terrainEffects']);}catch(RuntimeException){return false;}
     if(array_key_exists('visionZones',$map))try{normalizeApplicationVisionZones($map['visionZones']);}catch(RuntimeException){return false;}
     try{normalizePassages($map['passages']??null);}catch(RuntimeException $error){return false;}
@@ -313,6 +315,7 @@ function validApplicationMapFogState(array $map): bool
     foreach ($map['layers'] as $layerId => $layer) {
         if (!in_array($layerId, ['basement', 'ground', 'upper'], true)
             || !is_array($layer)
+            || !applicationValidMapScaleSettings($layer)
             || (array_key_exists('fog', $layer) && !validApplicationFogState($layer['fog']))
             || (array_key_exists('walls', $layer) && !validApplicationWallState($layer['walls']))
             || (array_key_exists('lights', $layer) && !validApplicationMapLights($layer['lights']))
@@ -777,7 +780,7 @@ function applicationResolveWallCollision(
     $height = (int) $rawWalls['height'];
     $safeNaturalWidth = is_numeric($naturalWidth) && (float) $naturalWidth > 0 ? (float) $naturalWidth : 1600.0;
     $safeNaturalHeight = is_numeric($naturalHeight) && (float) $naturalHeight > 0 ? (float) $naturalHeight : 900.0;
-    $diameter = max(10.0, min(220.0, is_numeric($tokenSize) ? (float) $tokenSize : 40.0));
+    $diameter = max(10.0, min(1000.0, is_numeric($tokenSize) ? (float) $tokenSize : 40.0));
     $startX = max(0.0, min(100.0, (float) ($start['x'] ?? 0)));
     $startY = max(0.0, min(100.0, (float) ($start['y'] ?? 0)));
     $desiredX = max(0.0, min(100.0, (float) ($desired['x'] ?? 0)));
@@ -1479,6 +1482,7 @@ function validApplicationWeaponAttacks(mixed $value): bool
 
 function validApplicationTokenDomain(array $payload): bool
 {
+    if (array_key_exists('sizeCategory', $payload) && !applicationUnitSizeCategoryValid($payload['sizeCategory'])) return false;
     if(isset($payload['terrainBarrier'])&&(!is_array($payload['terrainBarrier'])||($payload['terrainBarrier']['version']??0)!==1))return false;
     if(applicationIsRectangularObstacle($payload)){
         $barrier=$payload['terrainBarrier'];$rotation=$barrier['rotation']??null;
@@ -1555,7 +1559,7 @@ function validApplicationTokenDomain(array $payload): bool
         && !validApplicationDomainNumber($payload['hitThreshold'], 0, 100)) {
         return false;
     }
-    foreach (['x' => [0, 100], 'y' => [0, 100], 'size' => [10, 220], '_updatedAt' => [0, 9007199254740991], '_movedAt' => [0, 9007199254740991]] as $key => [$minimum, $maximum]) {
+    foreach (['x' => [0, 100], 'y' => [0, 100], 'size' => [10, applicationUnitScalesWithMap($payload) ? 1000 : 220], '_updatedAt' => [0, 9007199254740991], '_movedAt' => [0, 9007199254740991]] as $key => [$minimum, $maximum]) {
         if (array_key_exists($key, $payload) && !validApplicationDomainNumber($payload[$key], $minimum, $maximum)) {
             return false;
         }
@@ -1793,6 +1797,7 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if(array_key_exists('sizeCategory',$payload)&&!applicationUnitSizeCategoryValid($payload['sizeCategory']))return false;
     if(array_key_exists('honorificTitles',$payload)&&!validApplicationHonorificTitles($payload['honorificTitles']))return false;
     if(array_key_exists('fortune',$payload)&&(!applicationHonorificInteger($payload['fortune'])||$payload['fortune']<0||$payload['fortune']>5))return false;
     if(isset($payload['sheetKind'])&&!in_array($payload['sheetKind'],['notes','character'],true))return false;
@@ -1833,6 +1838,7 @@ function validApplicationCharacterDomain(array $payload): bool
         }
     }
     foreach (is_array($payload['linkedTokens'] ?? null) ? $payload['linkedTokens'] : [] as $linkedToken) {
+        if(is_array($linkedToken)&&array_key_exists('sizeCategory',$linkedToken)&&!applicationUnitSizeCategoryValid($linkedToken['sizeCategory']))return false;
         if (is_array($linkedToken) && array_key_exists('darkVision', $linkedToken)
             && !validApplicationDarkVision($linkedToken['darkVision'])) return false;
     }
@@ -3449,6 +3455,12 @@ function reconcileApplicationMountedTokenDomains(PDO $connection, array &$record
                 || (string) ($rider['layerId'] ?? 'ground') !== (string) ($mount['layerId'] ?? 'ground')) {
                 $next['x'] = $mount['x'] ?? 50;
                 $next['y'] = $mount['y'] ?? 50;
+                if (($rider['layerId']??'ground')!==($mount['layerId']??'ground')) {
+                    $mapKey='map:'.$sceneId;
+                    if (!isset($records[$mapKey])) $records=array_replace($records,applicationDomainRecords($connection,[$mapKey]));
+                    $map=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);
+                    $next=applicationScaleUnitForMap($next,$map,$mount['layerId']??'ground');
+                }
                 $next['layerId'] = $mount['layerId'] ?? 'ground';
                 $next['_movedAt'] = (int) floor(microtime(true) * 1000);
             }

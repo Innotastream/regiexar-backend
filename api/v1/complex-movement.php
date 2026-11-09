@@ -16,7 +16,7 @@ function applicationMapDistanceInCells(array $a,array $b,array $map,bool $diagon
     $a=applicationTokenSpatialFootprint($a,$map);$b=applicationTokenSpatialFootprint($b,$map);
     $layer=$a['layerId']??$map['activeLayerId']??'ground';$level=$map['layers'][$layer]??$map;
     if(($b['layerId']??$layer)!==$layer)return INF;
-    $grid=(float)($map['gridSize']??0);$width=(float)(($level['naturalWidth']??0)?:($map['naturalWidth']??0));$height=(float)(($level['naturalHeight']??0)?:($map['naturalHeight']??0));
+    $grid=(float)($level['gridSize']??$map['gridSize']??0);$width=(float)(($level['naturalWidth']??0)?:($map['naturalWidth']??0));$height=(float)(($level['naturalHeight']??0)?:($map['naturalHeight']??0));
     if(!($grid>0&&$width>0&&$height>0))return INF;
     $dx=abs(($a['x']-$b['x'])*$width/(100*$grid));$dy=abs(($a['y']-$b['y'])*$height/(100*$grid));
     $radius=static fn($p)=>max(0,(float)(is_numeric($p['size']??null)?$p['size']:(!empty($p['id'])?40:0)))/(2*$grid);

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/ability-movement-lock.php';
 require_once __DIR__.'/device-items.php';
+require_once __DIR__.'/token-map-scale.php';
 
 function onlineTokenLayerId(array $token, array $map = []): string
 {
@@ -65,7 +66,7 @@ function normalizeOnlineSceneTokenIdentity(array $token, array $map): array
 
 function onlineGroupTokenSize(array $token): float
 {
-    return max(10.0, min(220.0, (float) ($token['size'] ?? 40)));
+    return max(10.0, min(1000.0, (float) ($token['size'] ?? 40)));
 }
 
 function onlineGroupTranslation(array $tokens, float $dx, float $dy, array $map): array
@@ -161,7 +162,8 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
         foreach (['x', 'y'] as $key) if ((!is_int($base[$key] ?? null) && !is_float($base[$key] ?? null)) || !is_finite((float) $base[$key]) || (($request['rebasePositions'] ?? false) !== true && abs((float) ($token[$key] ?? 50) - $base[$key]) > 0.000001)) throw new DomainException('Un pion a changé de position.', 409);
         $tokens[] = $token;
     }
-    $destination = $map['layers'][$targetLayerId] ?? ($targetLayerId === $layerId ? $map : []);
+    $destination = applicationMapForUnitLayer($map, $targetLayerId);
+    if ($targetLayerId !== $layerId) $tokens = array_map(static fn(array $token): array => applicationScaleUnitForMap($token, $map, $targetLayerId), $tokens);
     $destination['naturalWidth'] = (float) ($destination['naturalWidth'] ?? 1600) ?: 1600.0;
     $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
     $wallFree = onlineGroupPositionValidator($destination);
@@ -174,14 +176,14 @@ function planApplicationTokenGroupTransform(array $map, array $request): array
         $desired = ['x' => round($token['x'] + $delta['x'], 4), 'y' => round($token['y'] + $delta['y'], 4)];
         // MJ-only placement ignores the path, never a wall at the destination.
         if (onlineGroupPositionIsFree($desired, $token, $destination['naturalWidth'], $destination['naturalHeight'], $occupied, $wallFree, 0, true)) {
-            $placements[$token['id']] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayerId, 'relocated' => false];
+            $placements[$token['id']] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayerId, ...($targetLayerId!==$layerId?array_intersect_key($token, array_flip(['size', 'sizeCategory'])):[]), 'relocated' => false];
             if ($blocksPlacement(array_replace($token, $desired))) $occupied[] = array_replace($token, $desired);
         } else $blocked[] = [$token, $desired];
     }
     foreach ($blocked as [$token, $desired]) {
         $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied, null, 0, null, true);
         if ($position === null) throw new DomainException('Aucune place libre et accessible près du groupe. Aucun pion n’a été déplacé.', 409);
-        $placements[$token['id']] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayerId, 'relocated' => true];
+        $placements[$token['id']] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayerId, ...($targetLayerId!==$layerId?array_intersect_key($token, array_flip(['size', 'sizeCategory'])):[]), 'relocated' => true];
         if ($blocksPlacement(array_replace($token, $position))) $occupied[] = array_replace($token, $position);
     }
     return array_map(static fn (string $id): array => $placements[$id], $ids);
@@ -205,7 +207,7 @@ function applyOnlineTokenGroupCommand(PDO $connection, array &$records, array &$
     foreach ($placements as $placement) {
         $key = onlineTokenDomainKey($sceneId, $placement['id']);
         $token = applicationDomainPayload($records, $key);
-        $token = array_replace($token, array_intersect_key($placement, array_flip(['x', 'y', 'layerId'])));
+        $token = array_replace($token, array_intersect_key($placement, array_flip(['x', 'y', 'layerId', 'size', 'sizeCategory'])));
         $token['_movedAt'] = (int) floor(microtime(true) * 1000);
         queueOnlineDomainUpsert($pending, $records, $key, $token);
         $tokens[] = $token;
@@ -235,7 +237,7 @@ function planApplicationTokenLayers(array $map, array $arguments): array
             if (($arguments['rebasePositions'] ?? false) !== true && abs((float) ($token[$axis] ?? 50) - $request[$axis]) > 0.000001) throw new DomainException('Un pion a changé de position.', 409);
         }
     }
-    $destination = $map['layers'][$targetLayer] ?? ($targetLayer === onlineTokenLayerId([], $map) ? $map : []);
+    $destination = applicationMapForUnitLayer($map, $targetLayer);
     $destination['naturalWidth'] = (float) ($destination['naturalWidth'] ?? 1600) ?: 1600.0;
     $destination['naturalHeight'] = (float) ($destination['naturalHeight'] ?? 900) ?: 900.0;
     $fog = applicationActiveMapFogState([...$map, 'activeLayerId' => $targetLayer]);
@@ -249,9 +251,10 @@ function planApplicationTokenLayers(array $map, array $arguments): array
             $placements[] = ['id' => $token['id'], ...$desired, 'layerId' => $targetLayer, 'relocated' => false];
             continue;
         }
+        $token = applicationScaleUnitForMap($token, $map, $targetLayer);
         $position = nearestOnlineGroupPosition($desired, $token, $destination, $occupied, null, 0, null, true);
         if ($position === null) throw new DomainException('Aucune place libre près du groupe. Aucun pion n’a changé de niveau.', 409);
-        $placements[] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayer, 'relocated' => abs($position['x'] - $desired['x']) > 0.000001 || abs($position['y'] - $desired['y']) > 0.000001];
+        $placements[] = ['id' => $token['id'], ...$position, 'layerId' => $targetLayer, ...array_intersect_key($token, array_flip(['size', 'sizeCategory'])), 'relocated' => abs($position['x'] - $desired['x']) > 0.000001 || abs($position['y'] - $desired['y']) > 0.000001];
         if ($blocksPlacement(array_replace($token, $position))) $occupied[] = array_replace($token, $position);
     }
     return $placements;
@@ -276,7 +279,7 @@ function applyOnlineTokenLayersCommand(PDO $connection, array &$records, array &
         $key = onlineTokenDomainKey($sceneId, $placement['id']);
         $token = applicationDomainPayload($records, $key);
         if (onlineTokenLayerId($token, $map) !== $placement['layerId'] || abs(($token['x'] ?? 50) - $placement['x']) > 0.000001 || abs(($token['y'] ?? 50) - $placement['y']) > 0.000001) {
-            $token = array_replace($token, array_intersect_key($placement, array_flip(['x', 'y', 'layerId'])));
+            $token = array_replace($token, array_intersect_key($placement, array_flip(['x', 'y', 'layerId', 'size', 'sizeCategory'])));
             $token['_movedAt'] = (int) floor(microtime(true) * 1000);
             queueOnlineDomainUpsert($pending, $records, $key, $token);
         }
@@ -313,11 +316,13 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
         'cloneSourceTokenId' => $source['id'], 'layerId' => onlineTokenLayerId($source, $map), 'libraryTemplateId' => null,
         'initiative' => null, 'resourcePulse' => null, '_updatedAt' => (int) floor(microtime(true) * 1000), '_movedAt' => (int) floor(microtime(true) * 1000)]);
     unset($clone['transformation']);
+    if (applicationUnitScalesWithMap($clone)) $clone['sizeCategory'] = applicationUnitSizeCategory($source);
+    $clone = applicationScaleUnitForMap($clone, $map, $clone['layerId']);
     if(unitUsesCharacterSheet($source)&&!empty($character))$clone['stats']=applicationIndependentCharacterStats($character);
-    $layer = $map['layers'][$clone['layerId']] ?? $map;
+    $layer = applicationMapForUnitLayer($map, $clone['layerId']);
     $layer['naturalWidth'] = (float) ($layer['naturalWidth'] ?? 1600) ?: 1600.0;
     $layer['naturalHeight'] = (float) ($layer['naturalHeight'] ?? 900) ?: 900.0;
-    $desired = ['x' => $source['x'] + (onlineGroupTokenSize($source) + 2) / $layer['naturalWidth'] * 100, 'y' => $source['y']];
+    $desired = ['x' => $source['x'] + ((onlineGroupTokenSize($source) + onlineGroupTokenSize($clone))/2 + 2) / $layer['naturalWidth'] * 100, 'y' => $source['y']];
     $position = nearestOnlineGroupPosition($desired, $clone, $layer, array_values(array_filter($occupied, static fn (array $t): bool => onlineTokenLayerId($t, $map) === $clone['layerId'])));
     if ($position === null) rejectOnlineCommand($connection, 409, 'Aucune place libre près de ce pion pour son clone.', 'clone_position_unavailable');
     $clone = array_replace($clone, $position);
@@ -371,10 +376,15 @@ function prepareOnlineSceneTokenChanges(PDO $connection, array &$records, array 
         $characterKey = empty($token['characterId']) ? '' : 'character:' . $token['characterId'];
         $wanted = [$mapKey]; if ($characterKey !== '') $wanted[] = $characterKey;
         $records = array_replace($records, applicationDomainRecords($connection, array_values(array_filter($wanted, static fn (string $k): bool => !isset($records[$k])))));
-        $token = normalizeOnlineSceneTokenIdentity($token, applicationDomainPayload($records, $mapKey));
+        $map = $byKey[$mapKey]['payload'] ?? applicationDomainPayload($records, $mapKey);
+        $previous = $records[$key]['payload'] ?? null;
+        $token = normalizeOnlineSceneTokenIdentity($token, $map);
         if (!empty($token['characterId']) && ($byKey[$characterKey]['operation'] ?? '') !== 'delete') {
             $character = $byKey[$characterKey]['payload'] ?? applicationDomainPayload($records, $characterKey);
-            if ($character !== []) $token = synchronizeOnlineCharacterToken($token, $character);
+            if ($character !== []) $token = synchronizeOnlineCharacterToken($token, $character, $map);
+        }
+        if (!is_array($previous) || onlineTokenLayerId($previous, $map) !== $token['layerId']) {
+            $token = applicationScaleUnitForMap($token, $map, $token['layerId']);
         }
         $prepared = prepareApplicationDomainUpsert($key, $token, $records[$key] ?? null);
         if ($prepared === null) unset($byKey[$key]); else $byKey[$key] = $prepared;

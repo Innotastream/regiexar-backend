@@ -53,7 +53,7 @@ function applicationPathPositionValidator(array $walls, float $size, float $natu
             $index = $i * 8 + $bit; $rows[intdiv($index, $width)][] = $index % $width;
         }
     }
-    $radius = max(10.0, min(220.0, $size > 0 ? $size : 40.0)) / 2;
+    $radius = max(10.0, min(1000.0, $size > 0 ? $size : 40.0)) / 2;
     $rx = max(0.75, $radius / $naturalWidth * ($width - 1));
     $ry = max(0.75, $radius / $naturalHeight * ($height - 1));
     return static function(array $point) use ($rows, $width, $height, $rx, $ry): bool {
@@ -108,7 +108,7 @@ function findApplicationVisibleTokenPath(array $walls, array $origin, array $goa
     foreach ([$origin['x'], $origin['y'], $goal['x'], $goal['y']] as $value) if (!is_numeric($value) || !is_finite((float) $value) || $value < 0 || $value > 100) return $failed('invalid-position');
     if (!is_finite($naturalWidth) || !is_finite($naturalHeight) || $naturalWidth <= 0 || $naturalHeight <= 0) return $failed('invalid-position');
     $width = (int) $walls['width']; $height = (int) $walls['height'];
-    $diameter = max(10.0, min(220.0, $tokenSize > 0 ? $tokenSize : 40.0)); $radius = $diameter / 2;
+    $diameter = max(10.0, min(1000.0, $tokenSize > 0 ? $tokenSize : 40.0)); $radius = $diameter / 2;
     // Every destination and travelled segment keeps the complete footprint.
     $wallFree = applicationPathPositionValidator($walls, $diameter, $naturalWidth, $naturalHeight);
     $visibleDisk = static fn (array $point): bool => $visible($point['x'], $point['y'], $radius, $naturalWidth, $naturalHeight);

@@ -186,5 +186,6 @@ foreach (['group','floor'] as $kind) {
 // Geometric parity is shared with the JavaScript local authority, at 1/10000 percent.
 foreach (json_decode(file_get_contents(__DIR__ . '/token-group-geometry.json'), true, 512, JSON_THROW_ON_ERROR) as $case) {
     $result = planApplicationTokenGroupTransform($case['map'], $case['request']);
-    requireTactical(json_encode($result) === json_encode($case['expected']), 'PHP/JS group geometry parity: ' . $case['name']);
+    $geometry=array_map(static fn($p)=>array_intersect_key($p,array_flip(['id','x','y','layerId','relocated'])),$result);
+    requireTactical(json_encode($geometry) === json_encode($case['expected']), 'PHP/JS group geometry parity: ' . $case['name']);
 }

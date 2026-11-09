@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/ability-movement-lock.php';
 require_once __DIR__.'/attack-enhancements.php';
+require_once __DIR__.'/token-map-scale.php';
 
 const PASSAGE_USE_RANGE_CELLS=2.5;
 
@@ -141,11 +142,12 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         if(($target['destination']['sceneId']??'')!==$sceneId||($target['destination']['passageId']??'')!==$entry['id'])passageFailure('Cette liaison a changé. Actualisez le passage.');
         if($targetScene!==$sceneId&&array_intersect($travelerIds,array_column($targetMap['tokens']??[],'id')))passageFailure('La scène de destination possède déjà un pion avec cette identité.');
         if($targetScene!==$sceneId&&count($targetMap['tokens']??[])+count($travelers)>2000)passageFailure('La scène de destination n’a pas assez de places pour la monture et ses cavaliers.',429);
-        $destination=array_replace($targetMap,$targetMap['layers'][$target['layerId']]??[],['activeLayerId'=>$target['layerId']]);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
+        $destination=applicationMapForUnitLayer($targetMap,$target['layerId']);$desired=['x'=>$target['x']+($destination['gridSize']??50)/($destination['naturalWidth']??1600)*100,'y'=>$target['y']];
+        if($targetScene!==$sceneId||$target['layerId']!==($token['layerId']??'ground'))$travelers=array_map(static fn(array $traveler):array=>applicationScaleUnitForMap($traveler,$targetMap,$target['layerId']),$travelers);
         $fog=applicationActiveMapFogState([...$targetMap,'activeLayerId'=>$target['layerId']]);
         $occupied=array_values(array_filter($targetMap['tokens']??[],static fn($other)=>$other['id']!==$token['id']&&empty($other['hidden'])&&empty($other['mountedOnTokenId'])&&!applicationFogCoversPoint($fog,$other['x'],$other['y'])&&($other['layerId']??'ground')===$target['layerId']));
         // Expand to neighbouring cells while keeping a direct, wall-free arrival.
-        $arrivalToken=[...$token,'size'=>max(array_map(static fn(array $unit):float=>(float)($unit['size']??40),$travelers))];
+        $arrivalToken=[...$travelers[0],'size'=>max(array_map(static fn(array $unit):float=>(float)($unit['size']??40),$travelers))];
         $position=nearestOnlineGroupPosition($desired,$arrivalToken,$destination,$occupied,$target,0,passageArrivalValidator($destination,$target),true,(float)($destination['gridSize']??50));
         if(!$position)passageFailure('Aucune place libre accessible sans traverser un mur, un bloqueur ou le brouillard autour de l’arrivée. Le pion reste au départ.');
         $leaderId=$token['id'];$movedAt=$context['now']??(int)round(microtime(true)*1000);

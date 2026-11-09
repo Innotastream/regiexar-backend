@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/token-map-scale.php';
 function applicationItemPayload(array &$state,array $template,array &$unit,array $token,array $a,int $index,array $context,array &$result):void {
  $scene=$state['activeSceneId'];$clock=$state['initiative']??[];$id=$context['id'];
  if(($a['timing']??'')==='on-hit'){
@@ -27,7 +28,8 @@ function validateItemSummonPlacement(array $state,array $actions,array $point):v
  foreach($actions as $action){
   $model=null;foreach($state['tokenLibrary']??[] as $t)if($t['id']===$action['templateId']){$model=$t;break;}
   if(!$model)itemFailure('Le modèle de cette invocation n’existe plus dans le bestiaire.',409);
-  $radius=max(10,min(220,$model['size']??40))/2;$x=$point['x']*$w/100;$y=$point['y']*$h/100;
+  $model=applicationScaleUnitForMap($model,$map,$point['layerId']??$map['activeLayerId']??'ground');
+  $radius=max(10,min(1000,$model['size']??40))/2;$x=$point['x']*$w/100;$y=$point['y']*$h/100;
   if($x<$radius||$x>$w-$radius||$y<$radius||$y>$h-$radius)itemFailure('Le pion invoqué doit rester entièrement dans la carte.',409);
   $checked=applicationResolveGmTokenPlacement($level['walls']??$map['walls']??null,$point,$point,$model['size']??40,$w,$h);
   if($checked['blocked'])itemFailure('Le pion invoqué doit arriver entièrement hors des murs.',409);
@@ -36,5 +38,6 @@ function validateItemSummonPlacement(array $state,array $actions,array $point):v
 function applicationSummonItemToken(array &$state,array $a,array $point,string $ownerId,string $id):array {
  $model=null;foreach($state['tokenLibrary']??[] as $t)if($t['id']===$a['templateId']){$model=$t;break;}if(!$model)itemFailure('Le modèle de cette invocation n’existe plus dans le bestiaire.',409);
  if(count($state['map']['tokens'])>=2000)itemFailure('La limite de pions de cette scène est atteinte.',429);
+ $model=applicationScaleUnitForMap($model,$state['map'],$point['layerId']??'ground');
  $now=(int)floor(microtime(true)*1000);$token=[...$model,'id'=>$id,'libraryTemplateId'=>$model['id'],'characterId'=>null,'linkedTokenId'=>null,'followCharacter'=>false,'usesCharacterSheet'=>false,'rollUsesCharacterSheet'=>false,'independent'=>true,'controllerPlayerId'=>!empty($a['controllable'])&&empty($a['nonCombatant'])?($ownerId?:null):null,'x'=>$point['x'],'y'=>$point['y'],'layerId'=>$point['layerId']??'ground','initiative'=>null,'hidden'=>false,'artworkOnly'=>true,'nonCombatant'=>!empty($a['nonCombatant']),'immovable'=>!empty($a['nonCombatant']),'_updatedAt'=>$now,'_movedAt'=>$now];$state['map']['tokens'][]=$token;return $token;
 }

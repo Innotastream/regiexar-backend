@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/ability-stat-check-online.php';
+require_once __DIR__ . '/token-map-scale.php';
 
 function planApplicationMetamorphosis(array $source, array $characters, array $tokens, ?array $ability, array $request, string $accountId, bool $isGm, array $pendingAttacks = [], array $initiative = []): array {
     if (!unitUsesCharacterSheet($source)) throw new RuntimeException('La métamorphose nécessite un pion lié à une fiche.');
@@ -192,9 +193,11 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
                 'name' => $template['name'] ?? 'Invocation', 'image' => $template['image'] ?? null, 'color' => $template['color'] ?? $character['color'] ?? '#8d72cb',
                 'frameVariant' => 'player', 'x' => $source['x'], 'y' => $source['y'], 'layerId' => onlineTokenLayerId($source, $map),
                 'size' => $template['size'] ?? 40, 'visionDistance' => $template['visionDistance'] ?? 8, 'darkVision' => $template['darkVision'] ?? 'none',
+                ...(applicationUnitSizeCategoryValid($template['sizeCategory'] ?? null) ? ['sizeCategory' => $template['sizeCategory']] : []),
                 'hp' => (float) ($template['hp'] ?? 1), 'maxHp' => (float) ($template['maxHp'] ?? 1), 'mana' => (float) ($template['mana'] ?? 0), 'maxMana' => (float) ($template['maxMana'] ?? 0),
                 'damageDice' => (string) ($template['damageDice'] ?? ''), 'hitThreshold' => $template['hitThreshold'] ?? null, 'initiativeBonus' => $template['initiativeBonus'] ?? 0,
                 'stats' => [], 'abilities' => [], 'conditions' => [], 'hidden' => false, '_updatedAt' => (int) floor(microtime(true) * 1000)];
+            $token = applicationScaleUnitForMap($token, $map, $token['layerId']);
             if (!validApplicationTokenDomain($token)) rejectOnlineCommand($connection, 400, 'Le modèle d’invocation contient des valeurs invalides.', 'invalid_summoning_template');
             queueOnlineDomainUpsert($pending, $records, onlineTokenDomainKey($sceneId, $token['id']), $token);
             $index['order'][] = $token['id']; queueOnlineDomainUpsert($pending, $records, $indexKey, $index);

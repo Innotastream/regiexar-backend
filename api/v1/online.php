@@ -1018,6 +1018,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         ? $fullState['tacticalSync']['publishedMap']
         : ($fullState['map'] ?? []);
     $visibleLayerId = onlineTokenLayerId([], is_array($map) ? $map : []);
+    $map = array_replace($map, applicationMapScaleSettings($map, $visibleLayerId));
     $fog = applicationActiveMapFogState(is_array($map) ? $map : []);
     $occlusion = applicationActiveMapOcclusionState(
         is_array($map) ? $map : [],
@@ -1128,6 +1129,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             'y' => (float) ($token['y'] ?? 50),
             'size' => (float) ($token['size'] ?? 40),
             'visionDistance' => onlineTokenVisionDistance($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
+            ...(applicationUnitSizeCategoryValid($token['sizeCategory'] ?? null) ? ['sizeCategory' => $token['sizeCategory']] : []),
             'darkVision' => onlineTokenDarkVision($token, $charactersById[(string) ($token['characterId'] ?? '')] ?? null),
             'initiative' => $token['initiative'] ?? null,
             'conditions' => normalizeOnlineConditions($token['conditions'] ?? null, $token['condition'] ?? ''),
@@ -2507,6 +2509,8 @@ function normalizeOnlineLinkedTokens(mixed $value): array
         $entry['image'] = normalizePersistedImageReference($entry['image'] ?? null);
         $entry['visionDistance'] = normalizeApplicationVisionDistance($entry['visionDistance'] ?? null);
         $entry['darkVision'] = normalizeApplicationDarkVision($entry['darkVision'] ?? null);
+        if (array_key_exists('sizeCategory',$entry) && !applicationUnitSizeCategoryValid($entry['sizeCategory'])) unset($entry['sizeCategory']);
+        $entry['size']=max(10,min(1000,is_numeric($entry['size']??null)?(float)$entry['size']:40));
         $normalized[] = $entry;
     }
     return $normalized;
@@ -5102,7 +5106,7 @@ function onlineCompactComplexResult(array $execution, array $receipts): ?string
     return substr(implode("\n", $lines), 0, 1900);
 }
 
-function synchronizeOnlineCharacterToken(array $token, array $character): array
+function synchronizeOnlineCharacterToken(array $token, array $character, ?array $map = null): array
 {
     if(!unitUsesCharacterSheet($token)&&empty($token['linkedTokenId']))return $token;
     $updatedAt = (int) ($character['_updatedAt'] ?? floor(microtime(true) * 1000));
@@ -5119,9 +5123,19 @@ function synchronizeOnlineCharacterToken(array $token, array $character): array
         if ($linked === null) {
             return $token;
         }
+        $linkedCategory=applicationUnitSizeCategory($linked);
+        $previousCategory=$token['sizeCategory']??null;
         foreach (['name', 'color', 'image', 'size', 'visionDistance', 'darkVision'] as $key) {
             if (array_key_exists($key, $linked)) {
+                if ($key === 'size' && applicationUnitSizeCategoryValid($previousCategory) && $linkedCategory!=='custom') continue;
                 $token[$key] = $key==='image'?applicationTacticalImage($token,$linked[$key]):$linked[$key];
+            }
+        }
+        if (applicationUnitSizeCategoryValid($previousCategory)) {
+            if ($linkedCategory === 'custom') $token['sizeCategory'] = $linkedCategory;
+            elseif ($linkedCategory !== $previousCategory && $map !== null) {
+                $token['sizeCategory'] = $linkedCategory;
+                $token = applicationScaleUnitForMap($token, $map, $token['layerId'] ?? null);
             }
         }
         $token['controllerPlayerId'] = $character['ownerPlayerId'] ?? null;
