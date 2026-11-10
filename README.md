@@ -1,3 +1,9 @@
+## Backend 0.19.12 — client 4.2.7 — préparation du 10 novembre 2026
+
+Build `client-4-2-7-token-map-scale-20261110-1`. Adaptation autoritaire des gabarits à la grille à la création et à l’arrivée, réglages indépendants par étage, passages atomiques des montures et cavaliers, maintien des tailles de compagnons. Les portes et structures gardent leur géométrie propre ; aucune boucle réseau supplémentaire.
+
+La connexion exige **4.2.7** après le basculement. Les sessions précédentes conservent leur drainage de **30 secondes**, puis les clients 4.2.6 doivent être mis à jour. Schémas SQL/session/domaines/fiche inchangés **24/22/1/10** : aucune nouvelle migration ni import de fiches. Qualification et déploiement sont attestés séparément.
+
 ## Backend 0.19.11 — client 4.2.6 — préparation du 8 novembre 2026
 
 Build `client-4-2-6-multiplayer-workbench-20261108-1`. Prépare la mise en service de la base multijoueur optimisée : lectures transactionnelles cohérentes, calculs de vision et de halos réutilisés dans des caches privés à attente bornée, autorité des portes/dispositifs/objets et confidentialité des reçus. Les contrôles de concurrence et les budgets de calcul restent les barrières des futurs ajouts.
