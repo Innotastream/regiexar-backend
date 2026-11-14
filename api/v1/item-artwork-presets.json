@@ -3,7 +3,10 @@
     "name": "Potion de soin petit",
     "kind": "potion",
     "image": "/assets/item-art/potion-soin-petite.png",
-    "potionColor": "#e2232c"
+    "potionColor": "#e2232c",
+    "aliases": [
+      "Potion de soin petite"
+    ]
   },
   "v370-template-727a86a4f1b7c3acfeb269c0": {
     "name": "Potion de soin moyenne",
@@ -38,5 +41,323 @@
     "name": "Capsule de réactif",
     "kind": "object",
     "image": "/assets/item-art/capsule-reactif.png"
+  },
+  "v370-template-a65bfdc7c5ae7960ed5b92a5": {
+    "name": "Bandage",
+    "kind": "object",
+    "image": "/assets/item-art/bandage.png"
+  },
+  "v370-template-563edf31fde48c8109ec2cc1": {
+    "name": "Bourse",
+    "kind": "object",
+    "image": "/assets/item-art/bourse.png"
+  },
+  "v370-template-eb64bec52cb81b5a7feb862d": {
+    "name": "Kit de couture",
+    "kind": "object",
+    "image": "/assets/item-art/kit-couture.png"
+  },
+  "v370-template-4dd392ca7348951de46b669b": {
+    "name": "Rations",
+    "kind": "object",
+    "image": "/assets/item-art/rations.png"
+  },
+  "v370-template-cbd27f3330a398f0187ac6a9": {
+    "name": "Bouteille d’alcool",
+    "kind": "object",
+    "image": "/assets/item-art/bouteille-alcool.png"
+  },
+  "v370-template-731a6b3577674fa99b2afbab": {
+    "name": "Beau gant en cuir noir (femme)",
+    "kind": "object",
+    "image": "/assets/item-art/gant-cuir-noir.png"
+  },
+  "v370-template-ba4dfb0b15f73294e033428f": {
+    "name": "Cape",
+    "kind": "object",
+    "image": "/assets/item-art/cape.png"
+  },
+  "v370-template-86aff7fdb106d10b6a9d5ce6": {
+    "name": "Caillou",
+    "kind": "object",
+    "image": "/assets/item-art/caillou.png"
+  },
+  "v370-template-a46bf2c1931c81da1199adda": {
+    "name": "Champignon fluorescent · 2",
+    "kind": "object",
+    "image": "/assets/item-art/champignon-fluorescent.png"
+  },
+  "v370-template-561a4c2b23d79e5d3ba98d7b": {
+    "name": "Parchemin",
+    "kind": "object",
+    "image": "/assets/item-art/parchemin.png"
+  },
+  "v370-template-efc1c626445f61c4da904a0f": {
+    "name": "Boucle de minuit",
+    "kind": "object",
+    "image": "/assets/item-art/boucle-minuit.png"
+  },
+  "v370-template-d268ad94552b7fdf6c9c8c3a": {
+    "name": "Kit d’alchimie",
+    "kind": "object",
+    "image": "/assets/item-art/kit-alchimie.png"
+  },
+  "v370-template-5a8953de67406bb83cc623ba": {
+    "name": "Luth",
+    "kind": "object",
+    "image": "/assets/item-art/luth.png"
+  },
+  "v370-template-50191b666aedcf2f1f57feab": {
+    "name": "Peau de lézard",
+    "kind": "object",
+    "image": "/assets/item-art/peau-lezard.png"
+  },
+  "item-template-00126659-a5fa-489c-a2d0-e363aa23819b": {
+    "name": "Vielle lettre",
+    "kind": "letter",
+    "image": "/assets/item-art/vieille-lettre.png"
+  },
+  "v370-template-1ed91c1043da790f93301f1a": {
+    "name": "Jeu de cartes truqué",
+    "kind": "object",
+    "image": "/assets/item-art/jeu-cartes-truque.png"
+  },
+  "v370-template-f4c3cb763186c6c7315d1d3a": {
+    "name": "LA CANNE",
+    "kind": "object",
+    "image": "/assets/item-art/canne-aigle-bronze.png"
+  },
+  "v370-template-db1a71ca37b0dca9c9dba0bb": {
+    "name": "Amulette de saut",
+    "kind": "object",
+    "image": "/assets/item-art/amulette-saut.png"
+  },
+  "v370-template-cbe480d3e4b2ab5d719da473": {
+    "name": "Cristal de brume",
+    "kind": "object",
+    "image": "/assets/item-art/cristal-brume.png"
+  },
+  "v370-template-7dc64ee6c7ef831c3f595a4a": {
+    "name": "Aphrodisiaque",
+    "kind": "object",
+    "image": "/assets/item-art/aphrodisiaque.png"
+  },
+  "v370-template-bdd2d9a674dc144334b6fdda": {
+    "name": "Somnifère",
+    "kind": "object",
+    "image": "/assets/item-art/somnifere.png"
+  },
+  "v370-template-c3881af35354b01f05d50006": {
+    "name": "Cachet baie",
+    "kind": "object",
+    "image": "/assets/item-art/cachet-baie-sans-halo.png"
+  },
+  "v370-template-29b440469f4830c3dc5ac158": {
+    "name": "Cachet champi",
+    "kind": "object",
+    "image": "/assets/item-art/cachet-champi.png"
+  },
+  "v370-template-2cd56d3eb589e7d84fcc418d": {
+    "name": "Cachet de Boramole",
+    "kind": "potion",
+    "image": "/assets/item-art/cachet-boramole.png"
+  },
+  "v370-template-cd318f8265b44dbd65c1ffa0": {
+    "name": "Mouchoir soyeux d’Inno",
+    "kind": "object",
+    "image": "/assets/item-art/mouchoir-inho.png"
+  },
+  "v370-template-cd0f58e992bff8c380c7b802": {
+    "name": "Sac magique",
+    "kind": "object",
+    "image": "/assets/item-art/sac-magique.png"
+  },
+  "v370-template-90c4224c47c50f82fe2696cd": {
+    "name": "Protections de fléchettes",
+    "kind": "object",
+    "image": "/assets/item-art/protections-flechettes.png"
+  },
+  "v370-template-56f7619809ee647c12c89b7c": {
+    "name": "Arbalète de poing",
+    "kind": "object",
+    "image": "/assets/item-art/arbalete-poing.png"
+  },
+  "v370-template-965bbd10f7c383ad87aacc86": {
+    "name": "Cimeterre",
+    "kind": "object",
+    "image": "/assets/item-art/cimeterre.png"
+  },
+  "v370-template-c5581f16dc6efde977dd373f": {
+    "name": "Dague — 1d20+4 physique",
+    "kind": "object",
+    "image": "/assets/item-art/dague-simple.png"
+  },
+  "v370-template-3f73ea9f89037ff4f264a551": {
+    "name": "Dague de jet",
+    "kind": "object",
+    "image": "/assets/item-art/dague-lancer.png"
+  },
+  "v370-template-e0bcc82b8344b295205a0dab": {
+    "name": "Dague de lancer",
+    "kind": "object",
+    "image": "/assets/item-art/dague-lancer.png"
+  },
+  "v370-template-b21158f7704255486a925a82": {
+    "name": "Épée bâtarde",
+    "kind": "object",
+    "image": "/assets/item-art/epee-batarde.png"
+  },
+  "v370-template-ad90c00b6d2b0f4fc33fb7e5": {
+    "name": "Fléchettes",
+    "kind": "object",
+    "image": "/assets/item-art/flechettes.png"
+  },
+  "v370-template-f8b1472bb15c167d10351ffa": {
+    "name": "Rapière droite",
+    "kind": "object",
+    "image": "/assets/item-art/rapiere-simple.png"
+  },
+  "v370-template-88491631fc6b2467da4b12db": {
+    "name": "Rapière gauche",
+    "kind": "object",
+    "image": "/assets/item-art/rapiere-simple.png"
+  },
+  "v370-template-6f8e72ba624ecbbe481091a0": {
+    "name": "Chaîne lacérante",
+    "kind": "object",
+    "image": "/assets/item-art/chaine-lacerante.png"
+  },
+  "v370-template-bc70eea5b124221f0cade694": {
+    "name": "Chaîne lacérante — 1d70+20 physique",
+    "kind": "object",
+    "image": "/assets/item-art/chaine-lacerante.png"
+  },
+  "v370-template-89b3acc87a18f696747bdae1": {
+    "name": "Clé de Bataille",
+    "kind": "object",
+    "image": "/assets/melee-vfx/leahr-battle-wrench.png"
+  },
+  "potion-catalog-strength-1": {
+    "name": "Petite potion de force",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-force-petite.png"
+  },
+  "potion-catalog-strength-2": {
+    "name": "Potion de force",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-force-moyenne.png"
+  },
+  "potion-catalog-strength-3": {
+    "name": "Grande potion de force",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-force-grande.png"
+  },
+  "potion-catalog-speed-1": {
+    "name": "Petite potion de vitesse",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-vitesse-petite.png"
+  },
+  "potion-catalog-speed-2": {
+    "name": "Potion de vitesse",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-vitesse-moyenne.png"
+  },
+  "potion-catalog-speed-3": {
+    "name": "Grande potion de vitesse",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-vitesse-grande.png"
+  },
+  "potion-catalog-resistance-1": {
+    "name": "Petite potion de résistance",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-resistance-petite.png"
+  },
+  "potion-catalog-resistance-2": {
+    "name": "Potion de résistance",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-resistance-moyenne.png"
+  },
+  "potion-catalog-resistance-3": {
+    "name": "Grande potion de résistance",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-resistance-grande.png"
+  },
+  "potion-catalog-entanglement-1": {
+    "name": "Petite potion d’enchevêtrement",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-enchevetrement-petite.png"
+  },
+  "potion-catalog-entanglement-2": {
+    "name": "Potion d’enchevêtrement",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-enchevetrement-moyenne.png"
+  },
+  "potion-catalog-entanglement-3": {
+    "name": "Grande potion d’enchevêtrement",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-enchevetrement-grande.png"
+  },
+  "potion-catalog-stench-1": {
+    "name": "Petite potion puante",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-puanteur-petite.png"
+  },
+  "potion-catalog-stench-2": {
+    "name": "Potion puante",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-puanteur-moyenne.png"
+  },
+  "potion-catalog-stench-3": {
+    "name": "Grande potion puante",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-puanteur-grande.png"
+  },
+  "v370-template-3721f61256d6a492d9f5c7b2": {
+    "name": "Potion de force",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-force-moyenne.png"
+  },
+  "v370-template-3259db0547a0c9021e74309b": {
+    "name": "Petite potion de vitesse",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-vitesse-petite.png"
+  },
+  "item-template-d5c7307d-5e94-4ed3-b1b9-9b2be63c2fcb": {
+    "name": "Petite potion de résistance",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-resistance-petite.png"
+  },
+  "item-template-935fb56c-3c02-40ac-b22d-242610bf84f2": {
+    "name": "Petite Potion D'enchevetrement",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-enchevetrement-petite.png",
+    "aliases": [
+      "Petite potion d’enchevêtrement"
+    ]
+  },
+  "v370-template-ab44fdccba36be669331ded4": {
+    "name": "Petite potion puante",
+    "kind": "potion",
+    "image": "/assets/item-art/potion-puanteur-petite.png"
+  },
+  "v370-template-8f1c8fa54adff5977ba4bca3": {
+    "name": "Amulette de Tyr",
+    "kind": "object",
+    "image": "/assets/item-art/amulette-tyr.png"
+  },
+  "v370-template-db82789b1e68d051619ebcca": {
+    "name": "Tenue",
+    "kind": "object",
+    "image": "/assets/item-art/tenue-soie-araignee.png"
+  },
+  "v370-template-0c3709549793f2ba26c3baae": {
+    "name": "Carte honorifique de la guilde des marchands",
+    "kind": "object",
+    "image": "/assets/item-art/carte-guilde-marchands.png"
+  },
+  "v370-template-0fb9046dc5871bbb7f99f4d6": {
+    "name": "Bottes du Serpent Céleste",
+    "kind": "object",
+    "image": "/assets/item-art/talons-serpent-celeste.png"
   }
 }

@@ -43,6 +43,7 @@ jobs:
       - name: Domain backward compatibility
         run: |
           php tests/dynamic-items-contract.php
+          php tests/item-template-aliases.php
           php tests/item-physical-cases.php
           php -n tests/dynamic-items-contract.php
           php tests/domain-backward-compatibility.php

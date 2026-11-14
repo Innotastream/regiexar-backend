@@ -1,3 +1,9 @@
+## Backend 0.19.13 — client 4.2.8 — 14 novembre 2026
+
+Build `client-4-2-8-item-art-dice-verdicts-20261114-1`. Complète les images absentes par identités exactes, conserve les illustrations importées, et réunit Poison rudimentaire avec Fiole de poison mortel uniquement si leurs règles correspondent aux définitions confirmées. Les copies, stocks, emplacements, révisions et propriétés sont conservés ; une personnalisation ou une utilisation en cours empêche la fusion. Aucune nouvelle boucle réseau.
+
+La connexion exige **4.2.8** après le basculement, avec drainage des sessions précédentes de **30 secondes**. Schémas SQL/session/domaines/fiche inchangés **24/22/1/10**. La normalisation existante applique les illustrations et la fusion lors des lectures/écritures habituelles ; aucune correction SQL manuelle n'est nécessaire.
+
 ## Backend 0.19.12 — client 4.2.7 — préparation du 10 novembre 2026
 
 Build `client-4-2-7-token-map-scale-20261110-1`. Adaptation autoritaire des gabarits à la grille à la création et à l’arrivée, réglages indépendants par étage, passages atomiques des montures et cavaliers, maintien des tailles de compagnons. Les portes et structures gardent leur géométrie propre ; aucune boucle réseau supplémentaire.
