@@ -1,3 +1,11 @@
+## Backend 0.19.14 — client 4.2.9 — préparation du 17 novembre 2026
+
+Build `client-4-2-9-competences-mana-20261117-1`. Réunit les liaisons des cinématiques de compétences validées, l’Accélération métabolique forcée d’Inho, les tailles ajustables de la toile et le bénéfice du lanceur dans l’Emblème. Le MJ peut régler la réserve de mana des objets compatibles depuis l’inventaire, même rangés et sans pion présent ; la pose et la récupération conservent la même réserve. Les droits, révisions, reçus et frais restent autoritaires ; aucune boucle réseau d’animation supplémentaire.
+
+Corrige la fatigue différée lorsqu’un pion est supprimé et borne l’attente du propriétaire d’un calcul de vision avant de réutiliser son résultat. Les images de la potion élémentaire et de la station sont associées aux modèles exacts sans remplacer les images personnalisées.
+
+La connexion exige **4.2.9** après le basculement, avec drainage des sessions précédentes de **30 secondes**. Schémas SQL/session/domaines/fiche inchangés **24/22/1/10** ; aucune nouvelle migration SQL ni réparation versionnée depuis 0.19.13. Les ajouts de compétences, réglages ciblés et illustrations utilisent la normalisation habituelle, sans import manuel de fiches. La préparation, la qualification, le déploiement et la disponibilité Windows sont attestés séparément.
+
 ## Backend 0.19.13 — client 4.2.8 — 14 novembre 2026
 
 Build `client-4-2-8-item-art-dice-verdicts-20261114-1`. Complète les images absentes par identités exactes, conserve les illustrations importées, et réunit Poison rudimentaire avec Fiole de poison mortel uniquement si leurs règles correspondent aux définitions confirmées. Les copies, stocks, emplacements, révisions et propriétés sont conservés ; une personnalisation ou une utilisation en cours empêche la fusion. Aucune nouvelle boucle réseau.
