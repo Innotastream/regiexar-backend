@@ -104,7 +104,7 @@ function dsStore(mixed $value): array {
         if($entry['definition']['kind']==='dome'&&array_key_exists('mode',$entry)&&!in_array($entry['mode'],['carried','placed'],true))dsError('L’état du bouclier est invalide.');
         if(isset($entry['image'])&&$entry['image']!==''&&dsImage($entry['image'])==='')dsError('L’image du dispositif est invalide.',400);
         if(array_key_exists('size',$entry))normalizeItemSize($entry['size']);
-        if (isset($entry['mana'])) {if(in_array($entry['definition']['kind'],['beam','battery'],true)){if(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000)dsError('La réserve de ce rayon est invalide.');}else dsAmount($entry['mana']);}
+        if (isset($entry['mana'])&&(!dsNumber($entry['mana'])||$entry['mana']<0||$entry['mana']>1000000000))dsError('La réserve de mana de ce dispositif est invalide.');
     }
     return $value;
 }
@@ -133,7 +133,7 @@ function dsTurn(array $state,array $actor,array $token): void {
     if ($actor['role']!=='gm' && ($i['active']??false) && ($i['order'][$i['currentIndex']??0]??'')!==$token['id']) dsError('Cette action attend le tour de votre personnage.',403);
 }
 function dsAbility(array $owner,string $id): array {
-    foreach($owner['abilities']??[] as $entry) if ($entry['id']===$id && ($entry['effect']??'')==='device') return $entry;
+    foreach($owner['abilities']??[] as $entry) if ($entry['id']===$id && ($entry['effect']??'')==='device') return applicationConfiguredStructureSizing($entry);
     dsError('Ce dispositif n’existe plus dans vos compétences.',404);
 }
 function dsDistance(array $a,array $b,array $map,bool $diagonalAsOne=false,bool $fromEdges=false): float { return applicationMapDistanceInCells($a,$b,$map,$diagonalAsOne,$fromEdges); }
@@ -207,7 +207,7 @@ function dsDeployment(array &$state,array &$store,array $actor,array $owner,arra
     $definition=dsDefinition($ability['device']); $extra=match($definition['kind']) {
         'battery'=>['mana'=>0], 'dome'=>['mode'=>dsDomeMode($args,$definition),'channelCount'=>0,'activeTurns'=>0,'lastChannelTurn'=>null],
         'beam'=>['mana'=>0,'participants'=>array_map(static fn($id)=>['characterId'=>$id,'status'=>'pending'],$args['participantCharacterIds']),'mark'=>$args['mark'],'waitingForConsent'=>true],
-        'structure'=>['status'=>'preparing','controlOnly'=>true,'variantId'=>applicationStructureVariant($definition,$args['variantId']??'')['id'],'preparationRemainingTurns'=>$definition['preparationTurns']],default=>[] };
+        'structure'=>['status'=>'preparing','controlOnly'=>true,'variantId'=>applicationQuoteStructureSize($definition,$args)['variantId'],...(array_key_exists('structureSize',$args)?['structureSize'=>applicationQuoteStructureSize($definition,$args)['size']]:[]),'preparationRemainingTurns'=>$definition['preparationTurns']],default=>[] };
     $device=dsAppend($store,['id'=>($context['id'])('device'),'revision'=>1,'status'=>'active','creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']?:$actor['id'],
         'sourceTokenId'=>$token['id'],'abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'image'=>dsImage($ability['image']??''),'sceneId'=>$state['activeSceneId'],'x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground','definition'=>$definition,
         'activatedRound'=>(int)($state['initiative']['round']??1),'activatedTurn'=>(int)($state['initiative']['turnSerial']??0),...$extra,...($definition['kind']==='dome'&&$extra['mode']==='carried'?['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground']:dsPlacement($state,$actor,$token,$definition,$args,$context))]);
@@ -256,7 +256,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(($state['tacticalSync']['paused']??false) && $actor['role']!=='gm') dsError('La table est verrouillée.',423);
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
-    ensureDeviceItems($state,$id);
+    if($command!=='device.mana.set')ensureDeviceItems($state,$id);
     if($command==='appearance.change'){
         $ti=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
         $owner=ownedUnit($state,$actor,unitIdForToken($token));
@@ -343,7 +343,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         $owner=ownedUnit($state,$actor,$args['characterId']??''); $token=dsToken($state,$owner,$args); dsTurn($state,$actor,$token);
         $ability=dsAbility($owner,$args['abilityId']??''); $definition=dsDefinition($ability['device']);
         dsAssertDeploymentLimit($store,$owner['id'],$ability);
-        if($definition['kind']==='structure'){$variant=applicationStructureVariant($definition,$args['variantId']??'');$ability['restUseCost']=$variant['uses'];$ability['reusableInTurn']=false;foreach($store['devices'] as $d)if($d['creatorCharacterId']===$owner['id']&&$d['abilityId']===$ability['id']&&$d['status']==='preparing')dsError('Cette mise en place est déjà en cours.');}
+        if($definition['kind']==='structure'){$variant=applicationQuoteStructureSize($definition,$args);$ability['restUseCost']=$variant['uses'];$ability['reusableInTurn']=false;foreach($store['devices'] as $d)if($d['creatorCharacterId']===$owner['id']&&$d['abilityId']===$ability['id']&&$d['status']==='preparing')dsError('Cette mise en place est déjà en cours.');}
         if($definition['kind']==='explosive') dsError('Utilisez la fabrication puis le lancement de la bombe.',400);
         foreach($store['pendingRolls'] as $entry) if(($entry['ownerId']??'')===$owner['id'] && ($entry['ability']['id']??'')===$ability['id']) dsError('Ce lancement attend déjà le MJ.');
         if($definition['kind']==='beam') {
@@ -369,6 +369,19 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if($actor['role']!=='gm'&&($state['tacticalSync']['paused']??false))dsError('La table est temporairement verrouillée.',423);
         if(!is_string($args['image']??null)||$args['image']!==''&&dsImage($args['image'])==='')dsError('Importez une image du pion valide.',400);
         $device['image']=dsImage($args['image']);$device['imageCustomized']=$device['image']!=='';$device['revision']++;$result=['deviceId'=>$device['id'],'imageUpdated'=>true];
+    } elseif($command==='device.mana.set') {
+        if($actor['role']!=='gm')dsError('Seul le MJ peut modifier la réserve de mana d’un objet.',403);
+        $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
+        if(!is_int($args['expectedRevision']??null)||$args['expectedRevision']!==$device['revision'])dsError('Ce dispositif a changé. Actualisez ses actions.');
+        if(!dsNumber($device['mana']??null)||in_array($device['status'],['spent','stopped','failed'],true))dsError('Cet objet ne possède plus de réserve de mana modifiable.');
+        if(!empty($device['itemId'])){
+            $itemIndex=dsIndex($state['items']['instances']??[],$device['itemId']);
+            if($itemIndex<0||in_array($state['items']['instances'][$itemIndex]['location']['kind']??'',['consumed','destroyed'],true))dsError('Cet exemplaire n’est plus disponible.');
+        }
+        $mana=$args['mana']??null;
+        if(!dsNumber($mana)||$mana<0||$mana>1000000000)dsError('Renseignez une réserve de mana comprise entre 0 et 1 000 000 000.',400);
+        $previousMana=$device['mana'];$device['mana']=$mana;$device['revision']++;
+        $result=['deviceId'=>$device['id'],'mana'=>$mana,'previousMana'=>$previousMana];
     } elseif($command==='device.size') {
         if($actor['role']!=='gm')dsError('La taille des dispositifs est réservée au MJ.',403);
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
@@ -536,8 +549,8 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         else dsError('Ce résultat n’est pas reconnu.');$result['resolved']=true;
         }
     } else dsError('Commande de dispositif inconnue.',400);
-    ensureDeviceItems($state,$id);
-    if(isset($state['items'])) $state['items']=normalizeItemStore($state['items']);
+    if($command!=='device.mana.set')ensureDeviceItems($state,$id);
+    if($command!=='device.mana.set'&&isset($state['items'])) $state['items']=normalizeItemStore($state['items']);
     dsAssertItemLimits($state);
     $store['receipts'][]=['requestId'=>$args['requestId'],'actorId'=>$actor['id'],'role'=>$actor['role'],'signature'=>$signature,'result'=>$result,'at'=>$now];
     return ['state'=>$state,'effects'=>$effects,'result'=>$result];

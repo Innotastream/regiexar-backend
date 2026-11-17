@@ -1,6 +1,14 @@
 {
   "version": 1,
   "bindings": {
+    "ability-566f321d-ca05-4b02-92ad-8149076076e6": {
+      "placement": "dash",
+      "presetId": "token-body-charge",
+      "chargeTravel": {
+        "startPresetId": "token-body-charge-ultimate",
+        "segmentPresetId": "token-body-charge-slow"
+      }
+    },
     "ability-1e0ff514-d775-46cb-89c9-81c3cdded8d5": {
       "placement": "area",
       "presetId": "moonlight-density",
@@ -27,7 +35,7 @@
         "guard": "blood-crystal"
       },
       "activation": {
-        "presetId": "blood-awakening",
+        "presetId": "arvin-blood-invocation",
         "placement": "source",
         "radiusCells": 1,
         "followSource": true,
@@ -150,6 +158,30 @@
     "ability-832949db-79d2-4e1a-a916-fea5c439edc1": {
       "presetId": "root-entanglement",
       "placement": "area"
+    },
+    "ability-3dcf5d02-9d9d-479c-9dc0-a31900d8a000": {
+      "presetId": "healing-touch",
+      "placement": "target",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true,
+      "fitTarget": true
+    },
+    "ability-6136fa6c-d93d-49ba-a396-2c374b535306": {
+      "presetId": "hypnotic-words",
+      "placement": "target",
+      "radiusCells": 1,
+      "followTarget": true,
+      "followSource": true
+    },
+    "ability-7BG1hkmR6vBEbTLL": {
+      "activation": {
+        "presetId": "arvin-valse-prologue",
+        "placement": "source",
+        "radiusCells": 1,
+        "followSource": true,
+        "followAnchor": true
+      }
     }
   },
   "tacticalEffects": {

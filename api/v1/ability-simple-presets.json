@@ -5,10 +5,28 @@
     "effect": "damage",
     "values": {
       "manaCost": 30,
-      "terrainBarrier": {"version": 1, "shape": "thorn-wall", "hp": 75, "size": 150},
+      "terrainBarrier": {
+        "version": 1,
+        "shape": "thorn-wall",
+        "hp": 75,
+        "size": 150
+      },
       "onHitConditions": [],
-      "damageTargeting": {"mode": "area", "origin": "point", "shape": "thorn-wall", "radiusCells": 2, "affectCaster": true, "affectAllies": true, "affectEnemies": true},
-      "damageOverTime": {"label": "Poison · Mur de ronces", "formula": "1d10+10", "damageType": "ignore", "turns": 2},
+      "damageTargeting": {
+        "mode": "area",
+        "origin": "point",
+        "shape": "thorn-wall",
+        "radiusCells": 2,
+        "affectCaster": true,
+        "affectAllies": true,
+        "affectEnemies": true
+      },
+      "damageOverTime": {
+        "label": "Poison · Mur de ronces",
+        "formula": "1d10+10",
+        "damageType": "ignore",
+        "turns": 2
+      },
       "description": "Place un mur orientable de 5 × 1 cases. À sa création, chaque cible à 2 cases ou moins du mur subit 1d30+10 dégâts magiques et 1d10+10 de poison ignorant l’armure. Le poison frappe encore aux deux tours suivants de chaque victime. Cet obstacle attaquable de 75 PV bloque la vue et le déplacement. Le MJ peut le déplacer ou le détruire. Tout ennemi qui attaque le mur subit 1d30+10 dégâts magiques."
     }
   },
@@ -542,5 +560,24 @@
       "reach": "ranged",
       "rangeCells": 15
     }
+  },
+  "ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b": {
+    "presetId": "sacred-circle-includes-caster",
+    "revision": 1,
+    "effect": "enhancement",
+    "enhancementMode": "bonus",
+    "enhancementAuraUpgrade": {
+      "affectCaster": true
+    },
+    "descriptionReplacements": [
+      [
+        "Les alliés présents dans le cercle gagnent",
+        "Le lanceur et les alliés présents dans le cercle gagnent"
+      ],
+      [
+        "Le lanceur n’en bénéficie pas.",
+        "Le lanceur bénéficie lui aussi de ces bonus."
+      ]
+    ]
   }
 }

@@ -1,13 +1,13 @@
 <?php
 declare(strict_types=1);
 function applicationTokenDash(mixed $value): ?array {
-    if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='dash'||!in_array($value['presetId']??'',['token-afterimage-dash','token-body-charge','token-fulgurant-dash','token-celestial-dash'],true)||!in_array($value['layerId']??'',['ground','upper','basement'],true))return null;
+    if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='dash'||!in_array($value['presetId']??'',['token-afterimage-dash','token-body-charge','token-body-charge-ultimate','token-body-charge-slow','token-fulgurant-dash','token-celestial-dash'],true)||!in_array($value['layerId']??'',['ground','upper','basement'],true))return null;
     foreach(['sceneId','sourceTokenId']as$key)if(!is_string($value[$key]??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value[$key])!==1)return null;
     $point=static fn($p)=>is_array($p)&&array_reduce(['x','y'],static fn($ok,$key)=>$ok&&(is_int($p[$key]??null)||is_float($p[$key]??null))&&is_finite((float)$p[$key])&&$p[$key]>=0&&$p[$key]<=100,true);
     $source=$value['source']??null;$path=$value['path']??null;
     if(!$point($source)||(!is_int($source['size']??null)&&!is_float($source['size']??null))||!is_finite((float)$source['size'])||$source['size']<10||$source['size']>10000||!is_array($path)||!array_is_list($path)||count($path)<2||count($path)>256)return null;
     foreach($path as$p)if(!$point($p))return null;
-    $impact=($value['presetId']??'')==='token-body-charge'?($value['impact']??null):null;
+    $impact=in_array($value['presetId']??'',['token-body-charge','token-body-charge-ultimate','token-body-charge-slow'],true)?($value['impact']??null):null;
     if($impact!==null&&(!is_array($impact)||!is_string($impact['targetTokenId']??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$impact['targetTokenId'])!==1||$impact['targetTokenId']===$value['sourceTokenId']||!$point($impact['point']??null)||!is_numeric($impact['point']['size']??null)||$impact['point']['size']<10||$impact['point']['size']>10000))return null;
     if(abs($source['x']-$path[0]['x'])>1e-5||abs($source['y']-$path[0]['y'])>1e-5||$impact===null&&!array_filter($path,static fn($p)=>abs($p['x']-$source['x'])>1e-5||abs($p['y']-$source['y'])>1e-5))return null;
     if(isset($value['startedAt'])&&(!in_array($value['presetId']??'',['token-fulgurant-dash','token-celestial-dash'],true)||!is_int($value['startedAt'])||$value['startedAt']<0))return null;
@@ -26,5 +26,14 @@ function applicationTrustedMovementSpellVisual(array $execution,array $context):
 }
 
 function appendApplicationChargeTravelCue(array &$activity,array $execution,array $travel):void {
- foreach($travel['moves']as$move){$source=$move['tokenId']===$travel['sourceTokenId'];$impact=$source&&!empty($travel['finalContact']);if(!$impact&&applicationChargeSame($move['from'],$move['to']))continue;$spell=applicationTokenDash(['version'=>1,'placement'=>'dash','presetId'=>$source?'token-body-charge':'token-afterimage-dash','sceneId'=>$execution['sceneId'],'layerId'=>$execution['layerId'],'sourceTokenId'=>$move['tokenId'],'source'=>[...$move['from'],'size'=>$source?$travel['size']:($move['size']??40)],'path'=>[$move['from'],$move['to']],...($impact?['impact'=>['targetTokenId'=>$travel['targetTokenId'],'point'=>$travel['targetPoint']]]:[])]);if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['version'=>1,'spell'=>$spell]),$execution['sceneId'],$execution['layerId'],$move['tokenId'],'public');}
+ foreach($travel['moves']as$move){$source=$move['tokenId']===$travel['sourceTokenId'];$impact=$source&&!empty($travel['finalContact']);if(!$impact&&applicationChargeSame($move['from'],$move['to']))continue;$spell=applicationTokenDash(['version'=>1,'placement'=>'dash','presetId'=>$source?applicationChargeTravelVisualPreset($execution):'token-afterimage-dash','sceneId'=>$execution['sceneId'],'layerId'=>$execution['layerId'],'sourceTokenId'=>$move['tokenId'],'source'=>[...$move['from'],'size'=>$source?$travel['size']:($move['size']??40)],'path'=>[$move['from'],$move['to']],...($impact?['impact'=>['targetTokenId'=>$travel['targetTokenId'],'point'=>$travel['targetPoint']]]:[])]);if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['version'=>1,'spell'=>$spell]),$execution['sceneId'],$execution['layerId'],$move['tokenId'],'public');}
+}
+
+function applicationChargeTravelVisualPreset(array $execution):string {
+ $binding=applicationSpellVisualBindings()[$execution['abilityId']??'']['chargeTravel']??null;if(!$binding)return 'token-body-charge';
+ $step=$execution['workflow']['steps'][$execution['currentStepIndex']??0]??[];$state=$execution['stepStates'][$step['id']??'']??[];$done=0;foreach($state['targets']??[]as$target)$done+=count($target['attacks']??[]);
+ $movement=$execution['stepStates'][$step['sourceStepId']??'']??[];$plan=$movement['attackPlan']??null;
+ if(!is_array($plan))return $done?$binding['segmentPresetId']:$binding['startPresetId'];
+ $point=$movement['origin']??null;$played=false;foreach(array_slice($plan,0,$done)as$strike){if(!empty($strike['finalContact'])||!$point||abs($point['x']-$strike['movePoint']['x'])>1e-5||abs($point['y']-$strike['movePoint']['y'])>1e-5)$played=true;$point=$strike['movePoint'];}
+ return $played?$binding['segmentPresetId']:$binding['startPresetId'];
 }

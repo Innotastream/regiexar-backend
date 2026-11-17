@@ -472,7 +472,7 @@ if (is_array($deduplicatedAttack)) {
     $conditionAttackPenalty=applicationTimedAttackPenalty($passiveState,$source,(string)$target['id'],$sceneId)+$targetPassivePenalty($target)+($chargeStrike['thresholdPenalty']??0);
     $thresholdModifier = ($hitModifierMode === 'threshold' ? $hitModifierValue : 0) - ($castingPlan['difficultyPenalty'] ?? 0) - $conditionAttackPenalty;
     $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus);
-    $rollMode = normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal');
+    $rollMode = applicationOverdriveRollMode($source,$activity,$sceneId,(string)($stats[$statIndex]['id']??''),normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'));
     $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     onlineCloseFixedEscapeWindows($connection,$records,$pending,(string)$source['id'],$sceneId);
     $joker=applicationRequestsSpecialSuccess($arguments);

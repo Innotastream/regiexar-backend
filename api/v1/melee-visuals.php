@@ -6,7 +6,7 @@ function applicationMeleeVisualCatalogue(): array {
         'ethereal-instant'=>370,'ethereal-cross'=>440,'ethereal-dash-cross'=>1210,'requiem-judgement'=>1115,'requiem-grand-cleave'=>1065,'requiem-overhead'=>1270];
 }
 function applicationMeleeVisualDeliverySlack(string $presetId): int {
-    return in_array($presetId,['sabre-fire-flurry','sabre-frost-flurry','ethereal-alternating'],true)?720:0;
+    return $presetId==='ethereal-dash-cross'?2040:(in_array($presetId,['sabre-fire-flurry','sabre-frost-flurry'],true)?4520:($presetId==='ethereal-alternating'?720:0));
 }
 function applicationMeleeVisual(mixed $value): ?array {
     if(!is_array($value)||($value['version']??null)!==1||($value['placement']??'')!=='melee'

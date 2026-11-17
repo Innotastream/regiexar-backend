@@ -1391,7 +1391,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         ];
     }
     $visibleAttackTokenIds = array_keys($clearlyVisibleIds);
-    $visibleDevices=publicDeviceStore($fullState['devices']??dsEmpty(),$streamPov?null:['id'=>$accountId],$characters,['sceneId'=>$visibleSceneId,'layerId'=>$visibleLayerId,'paused'=>$paused,'initiative'=>$initiative,'authorityState'=>$fullState,'items'=>$fullState['items']??[],'map'=>$map,'tokens'=>$map['tokens'],'visibleTokenIds'=>$visibleAttackTokenIds],static fn($location)=>!$strictPointIsHidden($location['x'],$location['y']));
+    $visibleDevices=publicDeviceStore($fullState['devices']??dsEmpty(),$streamPov?null:['id'=>$accountId],$characters,['sceneId'=>$visibleSceneId,'layerId'=>$visibleLayerId,'paused'=>$paused,'initiative'=>$initiative,'authorityState'=>$fullState,'items'=>$fullState['items']??[],'map'=>$map,'tokens'=>$map['tokens'],'visibleTokenIds'=>$visibleAttackTokenIds,'clearlyVisibleTokenIds'=>array_keys($clearlyVisibleIds),'telluricMap'=>[...$map,'tokens'=>array_values($sourceTokensById)],'occlusion'=>$occlusion],static fn($location)=>!$strictPointIsHidden($location['x'],$location['y']));
     $enchantedWeapons = applicationPublicEnchantedWeaponVisuals($fullState,$map,$visibleSceneId,$visibleLayerId,
         $paused,$clearlyVisibleIds,static fn($x,$y)=>!$strictPointIsHidden($x,$y));
     foreach($visibleDevices['devices'] as $device)if(empty($device['controlOnly'])&&!in_array($device['status'],['inventory','awaiting-launch'],true))$visibleAttackTokenIds[]=$device['id'];
@@ -1547,10 +1547,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         'armorReductionZones' => $paused ? [] : applicationPublicArmorReductionZones($fullState['attackEnhancements'] ?? [],$visibleSceneId,$visibleLayerId,static fn($x,$y)=>!$strictPointIsHidden($x,$y)),
         ...($enchantedWeapons!==[]?['enchantedWeaponVisuals'=>$enchantedWeapons]:[]),
         ...($movementEffectZones!==[]?['movementEffectZones'=>$movementEffectZones]:[]),
-        'attackEnhancements' => array_values(array_filter($fullState['attackEnhancements'] ?? [], static fn(array $effect): bool =>
+        'attackEnhancements' => array_values(array_map(static fn(array $effect):array=>applicationPublicOverdriveEffect($effect,!$streamPov&&(in_array(str_replace('character:','',$effect['holder']??''),array_column($myCharacters,'id'),true)||isset($ownedVisibleIds[$effect['targetTokenId']??'']))),array_filter($fullState['attackEnhancements'] ?? [], static fn(array $effect): bool =>
             in_array($effect['expiry']??'',['rests','long-rest','combat-or-rest'],true)
                 ? (in_array($effect['expiry']??'',['long-rest','combat-or-rest'],true)&&in_array(str_replace('character:','',$effect['holder']??''),array_column($myCharacters,'id'),true))|| (bool)array_filter($map['tokens']??[],static fn($t)=>applicationEnhancementHolder($t)===($effect['holder']??'')&&(($visibleTokenDetails[$t['id']]??false)||isset($ownedVisibleIds[$t['id']])))
-                : ($effect['sceneId'] ?? '') === $visibleSceneId && (($visibleTokenDetails[$effect['targetTokenId'] ?? ''] ?? false) || isset($ownedVisibleIds[$effect['targetTokenId'] ?? ''])))),
+                : ($effect['sceneId'] ?? '') === $visibleSceneId && (($visibleTokenDetails[$effect['targetTokenId'] ?? ''] ?? false) || isset($ownedVisibleIds[$effect['targetTokenId'] ?? '']))))),
         'nextAttackGuards' => array_values(array_map(static fn(array $guard): array => publicOnlineAttackProjectionFields($guard,
             ['id', 'sceneId', 'targetTokenId', 'label', 'percent', 'trigger', 'persistent','effectId','budget','lifecycle','damageTypes','stackGroup','armorStacking']),
             array_filter($fullState['nextAttackGuards'] ?? [], static fn(array $guard): bool => ($guard['sceneId'] ?? '') === $visibleSceneId
@@ -2834,6 +2834,7 @@ function queueOnlineDomainUpsert(array &$pending, array $records, string $key, m
     }
     $prepared = prepareApplicationDomainUpsert($key, $payload, $records[$key] ?? null);
     if ($prepared !== null) {
+        if($key==='activity'&&isset($pending[$key]['settledOverdriveDebtIds']))$prepared['settledOverdriveDebtIds']=$pending[$key]['settledOverdriveDebtIds'];
         $pending[$key] = $prepared;
     }
 }
@@ -6441,7 +6442,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         $modifierMode = ($arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
                         $thresholdModifier = $modifierMode === 'threshold' ? $modifierValue : 0;
                         $resultModifier = ($modifierMode === 'result' ? $modifierValue : 0)-applicationPredatoryResultBonus($target,(string)$attack['sourceTokenId'],'defense',(string)$stats[$statIndex]['id']);
-                        $rollMode = normalizeOnlineRollMode(!empty($attack['defenseStatId']) ? ($attack['defenseRollMode'] ?? 'normal') : ($arguments['rollMode'] ?? 'normal'));
+                        $rollMode = applicationOverdriveRollMode($target,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId,(string)$stats[$statIndex]['id'],normalizeOnlineRollMode(!empty($attack['defenseStatId']) ? ($attack['defenseRollMode'] ?? 'normal') : ($arguments['rollMode'] ?? 'normal')));
                         $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
                         $joker=applicationRequestsSpecialSuccess($arguments);
                         $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$target,$sceneId):onlineRollFormulaWithMode($formula, $rollMode, $threshold, $thresholdModifier, true);
@@ -6958,7 +6959,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             try{$passiveSpec=applicationApplyPassiveStatRoll(['kind'=>$kind,'statId'=>$arguments['statId']??'','label'=>$label,'formula'=>$formula,'modifier'=>$modifier,'resultModifier'=>$resultModifier,'modifierMode'=>$modifierMode,'rollMode'=>$rollMode],$token,$arguments,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));}
             catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:400,$error->getMessage(),'passive_roll_option_refused');}
-            $label=$passiveSpec['label'];$formula=$passiveSpec['formula'];$modifier=$passiveSpec['modifier'];$resultModifier=$passiveSpec['resultModifier'];$modifierMode=$passiveSpec['modifierMode'];$rollMode=$passiveSpec['rollMode'];
+            $label=$passiveSpec['label'];$formula=$passiveSpec['formula'];$modifier=$passiveSpec['modifier'];$resultModifier=$passiveSpec['resultModifier'];$modifierMode=$passiveSpec['modifierMode'];$rollMode=applicationOverdriveRollMode($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId,(string)($arguments['statId']??''),$passiveSpec['rollMode']);
             $rollLayerId = $tokenKey !== ''
                 ? onlineTokenLayerId($token, applicationDomainPayload($records, 'map:' . $sceneId))
                 : '';
@@ -7545,6 +7546,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
 
+        applicationDeferNewFatigue($connection,$pending,$records);
+        applicationSettleOverdriveDebts($connection,$pending,$records);
         $targetScenes = [];
         foreach ($pending as $key => $_entry) {
             if (!str_starts_with((string) $key, 'token:')) continue;

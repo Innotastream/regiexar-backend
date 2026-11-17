@@ -524,10 +524,11 @@ function onlineUseComplexAbility(
                     && (($current['combatId'] ?? '') === '' || ($current['combatId'] ?? '') === ($initiative['combatId'] ?? '')),
                 'currentTokenId' => (string) ($initiative['order'][$initiative['currentIndex'] ?? 0] ?? ''),
                 'turnKey' => $sceneId . ':' . (string) ($initiative['combatId'] ?? '') . ':' . (string) ($initiative['turnSerial'] ?? 0),
-                'roll' => static function (string $formula, string $mode = 'normal', bool $d100RollUnder = false) use (&$generatedRolls, $useJoker, $jokerRollCount, $participantTokenId, $current, $sceneId, $connection, &$records, &$pending): array {
-                    $sourceKey = onlineTokenDomainKey($sceneId, $participantTokenId ?: $current['sourceTokenId']);
+                'roll' => static function (string $formula, string $mode = 'normal', bool $d100RollUnder = false,array $rollContext=[]) use (&$generatedRolls, $useJoker, $jokerRollCount, $participantTokenId, $current, $sceneId, $connection, &$records, &$pending): array {
+                    $sourceKey = onlineTokenDomainKey($sceneId, $rollContext['tokenId']??($participantTokenId ?: $current['sourceTokenId']));
                     $jokerSource = $pending[$sourceKey]['payload'] ?? applicationDomainPayload($records, $sourceKey);
                     $joker = $useJoker && ($jokerRollCount === null || count(array_filter($generatedRolls, static fn($roll) => ($roll['joker'] ?? false) === true)) < $jokerRollCount);
+                    $mode=applicationOverdriveRollMode($jokerSource,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId,(string)($rollContext['statId']??''),$mode);
                     $rolled = $joker ? onlineConsumeSpecialSuccess($connection, $records, $pending, $jokerSource, $sceneId) : onlineRollFormulaWithMode($formula, $mode, null, 0, $d100RollUnder);
                     $rolled['criticalFailureAsFailure']=applicationRollCriticalFailureProtected($jokerSource,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId);
                     $generatedRolls[] = $rolled;

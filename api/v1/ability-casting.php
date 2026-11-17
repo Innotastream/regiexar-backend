@@ -161,9 +161,9 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     $availableMana = max(0, min((float) ($source['maxMana'] ?? 0), (float) ($source['mana'] ?? 0)));
     if ($availableMana < $manaCost) throw new RuntimeException('ability_mana_insufficient');
     if(applicationAbilityActivationHealthReason($ability,$source)!=='')throw new RuntimeException('ability_activation_health');
-    $hpCost = (int) ($ability['hpCost'] ?? 0); $fatigueCost = applicationAbilityFatigueCost($ability,$source);
-    if ((float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
-    if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
+    $hpCost = applicationAbilityHpPayment($ability,$source); $fatigueCost = applicationAbilityFatigueCost($ability,$source);
+    if (applicationOverdrive($ability['attackEnhancement']??null)===null && (float) ($source['hp'] ?? 0) < $hpCost) throw new RuntimeException('ability_hp_insufficient');
+    if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + ($source['_reservedFatigue']??0) + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
     // Absence preserves the old attack-dialogue statistic; an explicit empty
     // string means no casting check. Legacy simple rolls had no check.
     $statId = !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
@@ -180,7 +180,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         ...(!empty($ability['persistentArea'])?['persistentArea'=>applicationPersistentArea($ability['persistentArea']),'damageTargeting'=>$ability['damageTargeting']]:[]),
         'enhancementInitiative' => ['active' => ($initiative['active'] ?? false) === true, 'combatId' => $combatId, 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)],
         'trackUses' => ($ability['reusableInTurn'] ?? false) === true || ($ability['difficultyIncrement'] ?? 0) > 0, 'turnKey' => $turnKey, 'useCount' => $useCount + 1, 'difficultyPenalty' => min(100, $useCount * (int) ($ability['difficultyIncrement'] ?? 0)),
-        'hpCost' => $hpCost, 'fatigueCost' => $fatigueCost,
+        'hpCost' => $hpCost, 'hpBacklash'=>applicationOverdrive($ability['attackEnhancement']??null)!==null, 'fatigueCost' => $fatigueCost,
         'fatigueGained' => min($fatigueCost, 150 - normalizeApplicationFatigue($source['fatigue'] ?? null)['current']),
         'combatId' => $combatId, 'combatUseLimit' => $combatUseLimit, 'combatUseCount' => $combatUseCount,
         'restRecharge' => $ability['restRecharge'] ?? 'none', 'restUseCost'=>$restUseCost,'restUseCount' => $restUseCount, 'restUseLimit' => $restUseLimit, 'reusableInTurn' => ($ability['reusableInTurn'] ?? false) === true,
@@ -211,8 +211,9 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
     }
     try {
         $statRecords=[];
-        $statSource=[...$source,'stats'=>onlineEnhancedStatRows($connection,$statRecords,[],$source,$sceneId,$activity)];
+        $statSource=[...$source,'_reservedFatigue'=>applicationReservedOverdriveFatigue($source,$activity,$sceneId),'stats'=>onlineEnhancedStatRows($connection,$statRecords,[],$source,$sceneId,$activity)];
         $plan = applicationAbilityCastingPlan($ability, $statSource, $sceneId, $initiative, $activity['actionTimers'] ?? [], $legacyStatId, $manaMultiplier);
+        $plan['overdriveAdvantage']=applicationOverdriveRollMode($source,$activity,$sceneId,(string)$plan['statId'])==='advantage';
         if($requirement=applicationAbilityItemRequirement($ability['itemRequirement']??null))$plan['itemRequirement']=$requirement;
         $plan['criticalFailureAsFailure']=applicationRollCriticalFailureProtected($source,onlineAttackEnhancementState($connection,$statRecords,[],$sceneId,$activity),$sceneId);
         if ($stationIndex !== null) $plan['manaProviderDeviceId'] = $station['id'];
@@ -238,7 +239,7 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
     $resultModifier = ($modifierMode === 'result' ? $modifierValue : 0) + ($plan['fixedResultModifier'] ?? 0);
     $formula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     if(!empty($plan['manualD100'])){$formula='1d100';$thresholdModifier=0;$resultModifier=0;}
-    $rolled = $joker?applicationSpecialSuccessRoll():onlineRollFormulaWithMode($formula, !empty($plan['manualD100'])?'normal':normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'), $plan['threshold'], $thresholdModifier, true);
+    $rolled = $joker?applicationSpecialSuccessRoll():onlineRollFormulaWithMode($formula, !empty($plan['manualD100'])?'normal':(!empty($plan['overdriveAdvantage'])?'advantage':normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal')), $plan['threshold'], $thresholdModifier, true);
     $outcome = $joker?applicationSpecialSuccessOutcome($plan['threshold']):classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $plan['threshold'], $thresholdModifier, $resultModifier, true, true, !empty($plan['criticalFailureAsFailure']));
     if(!empty($plan['manualD100']))$outcome=applicationManualD100Outcome((int)$rolled['rawD100'],'pending',!empty($plan['criticalFailureAsFailure']));
     applyOnlineD100ResultToRoll($rolled, $outcome);
@@ -355,12 +356,17 @@ function appendApplicationAttackVisualEvent(array &$activity,array $attack,array
     }
 }
 
-function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pending, string $sceneId, string $sourceTokenId, string $characterId, int|float $amount): int|float {
+function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pending, string $sceneId, string $sourceTokenId, string $characterId, int|float $amount,string $deferredEffectId=''): int|float {
     if ($amount <= 0) return 0;
     $key = $characterId !== '' ? 'character:' . $characterId : onlineTokenDomainKey($sceneId, $sourceTokenId);
     $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
     if ($owner === [] || ($characterId === '' && unitUsesCharacterSheet($owner))) {
         rejectOnlineCommand($connection, 409, 'Le porteur qui a payé cette tentative n’existe plus ou a changé de fiche.', 'ability_refund_source_changed');
+    }
+    if($deferredEffectId!==''){
+        $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+        $refund=applicationChangeDeferredFatigue($owner,$activity,$sceneId,-$amount,$deferredEffectId);
+        if($refund!==null){queueOnlineDomainUpsert($pending,$records,'activity',$activity);return -$refund['amount'];}
     }
     $before = normalizeApplicationFatigue($owner['fatigue'] ?? null)['current'];
     $owner['fatigue'] = normalizeApplicationFatigue(['current' => $before - $amount]);
@@ -443,11 +449,18 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $value = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
         if ($resource === 'fatigue') {
             $fatigue = normalizeApplicationFatigue($value['fatigue'] ?? null);
-            if ($fatigue['current'] + $amount > 150) rejectOnlineCommand($connection, 409, 'Fatigue trop élevée : cette compétence ferait dépasser 150.', 'ability_fatigue_insufficient');
+            $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+            if ($fatigue['current'] + applicationReservedOverdriveFatigue($source,$activity,$plan['sceneId']) + $amount > 150) rejectOnlineCommand($connection, 409, 'Fatigue trop élevée : cette compétence ferait dépasser 150.', 'ability_fatigue_insufficient');
+            $deferred=applicationChangeDeferredFatigue($source,$activity,$plan['sceneId'],$amount);
+            if($deferred!==null){
+                $cast['deferredFatigueEffectId']=$deferred['effectId'];
+                queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+                continue;
+            }
             $value['fatigue'] = normalizeApplicationFatigue(['current' => $fatigue['current'] + $amount]);
         } else {
             $hp = (float) ($characterKey !== '' ? ($value['resources']['hp'] ?? 0) : ($value['hp'] ?? 0));
-            if ($hp < $amount) rejectOnlineCommand($connection, 409, 'PV insuffisants.', 'ability_hp_insufficient');
+            if (empty($plan['hpBacklash']) && $hp < $amount) rejectOnlineCommand($connection, 409, 'PV insuffisants.', 'ability_hp_insufficient');
             if ($characterKey !== '') $value['resources']['hp'] = $hp - $amount; else $value['hp'] = $hp - $amount;
         }
         $value['_updatedAt'] = $now;
@@ -470,7 +483,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         if (!array_key_exists('fatigueRefunded', $cast)) {
             $gained = max(0, onlineResourceNumber($cast['fatigueGained'] ?? $plan['fatigueGained'] ?? 0));
             $cast['fatigueRefunded'] = onlineRefundAbilityFatigue($connection, $records, $pending,
-                (string) $plan['sceneId'], (string) ($source['id'] ?? ''), (string) $plan['characterId'], $gained);
+                (string) $plan['sceneId'], (string) ($source['id'] ?? ''), (string) $plan['characterId'], $gained,(string)($cast['deferredFatigueEffectId']??''));
             $cast['fatigueGained'] = max(0, $gained - $cast['fatigueRefunded']);
         }
         $plan['fatigueGained'] = $cast['fatigueGained'];

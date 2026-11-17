@@ -307,6 +307,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     }
     try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, in_array($error->getCode(),[400,403],true)?$error->getCode():400, $error->getCode()?$error->getMessage():'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
+    $spec['rollMode']=applicationOverdriveRollMode($source,$activity,$sceneId,(string)($arguments['statId']??''),$spec['rollMode']);
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
     $outcome = $joker?applicationSpecialSuccessOutcome($spec['threshold']):($spec['threshold'] !== null

@@ -15,7 +15,7 @@ $request=['action'=>'start','requestId'=>'blood-start-'.randomToken(20),'sceneId
 $started=runCommand($db,'ability.complex',$request);
 specialCheck($started->status===200,'Blood activation starts: '.json_encode($started->body));
 $execution=$db->payload('activity')['abilityExecutions'][0];
-$awakenings=static fn()=>array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],static fn($e)=>($e['completionCue']['spell']['presetId']??'')==='blood-awakening'));
+$awakenings=static fn()=>array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],static fn($e)=>($e['completionCue']['spell']['presetId']??'')==='arvin-blood-invocation'));
 specialCheck(count($awakenings())===1,'Initial activation produces exactly one blood ascent');
 specialCheck($awakenings()[0]['id']==='activation-'.$execution['id'],'Activation event has a stable execution identity');
 specialCheck($awakenings()[0]['completionCue']['spell']['placement']==='source','Blood climbs on the actual caster');

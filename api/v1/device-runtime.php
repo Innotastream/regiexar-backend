@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/device-state.php';
+require_once __DIR__.'/telluric-station.php';
+require_once __DIR__.'/silk-web.php';
 require_once __DIR__.'/device-defense-gates.php';
 require_once __DIR__.'/trass-beam.php';
 require_once __DIR__.'/explosion-presentation.php';
@@ -216,7 +218,7 @@ function onlineDeviceEffects(PDO $db,array &$records,array &$pending,array $iden
             }
         } elseif($effect['type']==='structure.created'){
             $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$effect['sceneId']);$i=dsIndex($state['map']['tokens'],$effect['tokenId']);if($i<0)continue;$web=$state['map']['tokens'][$i];$d=$web['fixedStructure']['definition'];
-            foreach($state['map']['tokens'] as $target)if(!applicationIsNonCombatant($target)&&($target['hp']??0)>0&&($target['layerId']??'ground')===($web['layerId']??'ground')&&(($d['affectCreator']??false)||$target['id']!==$web['fixedStructure']['creatorTokenId'])&&dsDistance(['x'=>$web['x'],'y'=>$web['y'],'layerId'=>$web['layerId']],$target,$state['map'],false,true)<=$d['contactRadiusCells'])onlineStructureContactTarget($db,$records,$pending,$state,$web,$target);
+            foreach($state['map']['tokens'] as $target)if(!applicationIsNonCombatant($target)&&($target['hp']??0)>0&&($target['layerId']??'ground')===($web['layerId']??'ground')&&(($d['affectCreator']??false)||$target['id']!==$web['fixedStructure']['creatorTokenId'])&&dsDistance($web,$target,$state['map'],false,true)<=$d['contactRadiusCells'])onlineStructureContactTarget($db,$records,$pending,$state,$web,$target);
             onlineDeviceFlush($state,$records,$pending);
         }elseif(in_array($effect['type'],['explosion','beam'],true)) {
             $device=$effect['device'];$state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$device['sceneId'],$device['layerId']);$beam=$effect['type']==='beam';
@@ -276,7 +278,7 @@ function onlineDeviceTimedCondition(array &$state,array $effect): void {
     $remainingTurns=applicationPassiveEffectTurns($target,$resisted?$rider['fallbackTurns']:$rider['turns'],['family'=>applicationEffectFamily($label),'sourceItemKind'=>$effect['sourceItemKind']??'','harmful'=>true],$state);if($remainingTurns<=0)return;
     $introduced=onlineDeviceCondition($state,$effect['targetTokenId'],$label,true);
     if(count($state['devices']['timedConditions'])>=1000)dsError('Trop d’états temporisés actifs.',429);
-    $state['devices']['timedConditions'][]=['id'=>'condition-'.randomToken(16),'sceneId'=>$effect['sceneId'],'targetTokenId'=>$effect['targetTokenId'],'label'=>$label,...(!empty($effect['fieldId'])?['fieldId'=>$effect['fieldId']]:[]),
+    $state['devices']['timedConditions'][]=['id'=>'condition-'.randomToken(16),'sceneId'=>$effect['sceneId'],'targetTokenId'=>$effect['targetTokenId'],'label'=>$label,...(!$resisted&&!empty($rider['blocksMovement'])?applicationSilkWebConditionVisual($state['map'],$effect['sourceTokenId']??''):[]),...(!empty($effect['fieldId'])?['fieldId'=>$effect['fieldId']]:[]),
         'targetCharacterId'=>applicationAbilityCastingOwner($state['map']['tokens'][dsIndex($state['map']['tokens'],$effect['targetTokenId'])])['characterId'],
         ...(($resisted?($rider['fallbackExpiry']??''):($rider['expiry']??''))==='end-next-turn'?['expiry'=>'end-next-turn','createdTurnSerial'=>(int)($state['initiative']['turnSerial']??0),'hasStarted'=>false,'escapeWindowClosed'=>false]:[]),
         'remainingTurns'=>$remainingTurns,...(!$resisted&&!empty($rider['attackPenalty'])?['attackPenalty'=>$rider['attackPenalty'],'sourceTokenId'=>$effect['sourceTokenId']??'']:[]),...(!empty($rider['escape'])&&!$resisted?['escape'=>$rider['escape'],'initialTurns'=>$rider['turns']]:[]),'blocksMovement'=>$resisted?$rider['fallbackBlocksMovement']:$rider['blocksMovement'],'blocksActions'=>$resisted?($rider['fallbackBlocksActions']??false):($rider['blocksActions']??false),'clockCombatId'=>$state['initiative']['combatId']??'','lastTurnSerial'=>(int)($state['initiative']['turnSerial']??0),'introduced'=>$introduced];
@@ -346,7 +348,7 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
         elseif(in_array($device['status'],['inventory','awaiting-launch'],true)){if(!isset($items[$device['itemId']]))continue;}
         elseif(($context['paused']??false)||$device['sceneId']!==$context['sceneId']||$device['layerId']!==$context['layerId']||!$visible($device))continue;
         $device['image']=dsImage(array_key_exists('image',$device)?$device['image']:($device['ability']['image']??''));
-        unset($device['artworkPreset']);$preset=['launcher'=>'stationary-launcher','explosive'=>'timed-explosive'][$device['definition']['kind']]??'';
+        unset($device['artworkPreset']);$preset=['launcher'=>'stationary-launcher','explosive'=>'timed-explosive','battery'=>'telluric-station'][$device['definition']['kind']]??'';
         if($preset!==''&&($device['image']===''||empty($device['imageCustomized'])&&$device['image']===dsImage($device['ability']['image']??'')))$device['artworkPreset']=$preset;
         unset($device['ability'],$device['controllerAccountId']);
         if(isset($device['sourceTokenId'])&&!in_array($device['sourceTokenId'],$context['visibleTokenIds']??[],true))unset($device['sourceTokenId']);
@@ -365,8 +367,11 @@ function publicDeviceStore(array $store,?array $identity,array $characters,array
     $requests=[];foreach($store['craftRequests']??[] as $request)if(isset($own[$request['characterId']])){$request['abilityName']=$request['ability']['name'];unset($request['ability'],$request['controllerAccountId']);$requests[]=$request;}
     $rolls=[];foreach($store['pendingRolls']??[] as $roll)if(isset($roll['ownerId'])&&isset($own[$roll['ownerId']])){unset($roll['ability'],$roll['args'],$roll['cast']['_devicePlan'],$roll['cast']['_deviceIdentity']);$rolls[]=$roll;}
     $conditions=($context['paused']??false)?[]:array_values(array_filter($store['timedConditions']??[],static fn($entry)=>$entry['sceneId']===$context['sceneId']&&in_array($entry['targetTokenId'],$context['visibleTokenIds']??[],true)));
+    foreach($conditions as &$condition)unset($condition['structureTokenId'],$condition['visualPreset'],$condition['visualCreatedAt']);unset($condition);
     $sceneId=$context['sceneId']??'';$manualTurn=$store['manualTurns'][$sceneId]??0;
-    return ['version'=>1,'devices'=>$devices,'opportunityAlerts'=>applicationPublicOpportunityAlerts($store,$identity,$characters,$context,$visible),'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[],...(array_key_exists('spellFields',$store)?['spellFields'=>applicationPublicSpellFields($store['spellFields'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[]),...(array_key_exists('contactZones',$store)?['contactZones'=>applicationPublicContactZones($store['contactZones'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[])];
+    $silkWebVisuals=applicationSilkWebVisuals($store,$context['telluricMap']??$context['map']??[], $context);
+    $telluricVisuals=applicationTelluricStationVisuals($store,$devices,$characters,$context,$visible);
+    return ['version'=>1,'devices'=>$devices,...($silkWebVisuals['webs']||$silkWebVisuals['bindings']?['silkWebVisuals'=>$silkWebVisuals]:[]),...($telluricVisuals?['telluricVisuals'=>$telluricVisuals]:[]),'opportunityAlerts'=>applicationPublicOpportunityAlerts($store,$identity,$characters,$context,$visible),'manualTurns'=>$sceneId!==''&&!($context['paused']??false)?[$sceneId=>is_int($manualTurn)&&$manualTurn>=0?$manualTurn:0]:(object)[],'craftRequests'=>$requests,'pendingRolls'=>$rolls,'timedConditions'=>$conditions,'receipts'=>[],...(array_key_exists('spellFields',$store)?['spellFields'=>applicationPublicSpellFields($store['spellFields'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[]),...(array_key_exists('contactZones',$store)?['contactZones'=>applicationPublicContactZones($store['contactZones'],[...$context,'visible'=>static fn($x,$y)=>$visible(['x'=>$x,'y'=>$y])])]:[])];
 }
 
 function onlineTrassBeamPresentation(PDO $db,array &$records,array &$pending,array $device,string $requestId):?array{

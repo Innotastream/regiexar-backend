@@ -1880,6 +1880,7 @@ function normalizeApplicationFatigue(mixed $value): array
 function applicationDomainFatiguePayload(string $key, array $payload): array
 {
     if (str_starts_with($key, 'character:')) {
+        $payload=applicationActiveAbilityDefaults($payload);
         $payload['fatigue'] = normalizeApplicationFatigue($payload['fatigue'] ?? null);
         $payload['stats'] = applicationCharacterStats($payload['stats']??[]);
     } elseif (str_starts_with($key, 'token:') && array_key_exists('fatigue', $payload)) {
@@ -3074,6 +3075,8 @@ function persistDomainChangesInTransaction(PDO $connection, array $identity, arr
     // Les migrations historiques appellent cette fonction sans identité avant
     // la création des actifs 3.3.5. Les écritures produit, elles, doivent
     // toujours rattacher la référence à un son réellement contrôlé.
+    applicationDeferNewFatigue($connection,$pending);
+    applicationSettleOverdriveDebts($connection,$pending);
     if ($identity !== []) assertApplicationAbilitySoundAssets($connection, $pending);
     $globalRevision = (int) $clock['globalRevision'] + 1;
     $accountId = (string) ($identity['id'] ?? '');

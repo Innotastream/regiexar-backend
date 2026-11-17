@@ -162,7 +162,7 @@ function onlineRefundAbilityValidation(PDO $connection, array &$records, array &
         }
     }
     $refunded['fatigue'] = onlineRefundAbilityFatigue($connection, $records, $pending,
-        (string) $entry['sceneId'], (string) $entry['sourceTokenId'], $characterId, $fatigue);
+        (string) $entry['sceneId'], (string) $entry['sourceTokenId'], $characterId, $fatigue,(string)($cast['deferredFatigueEffectId']??''));
     return $refunded;
 }
 

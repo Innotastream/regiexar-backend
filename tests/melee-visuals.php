@@ -52,7 +52,7 @@ appendApplicationAttackVisualEvent($activity,$valseAttack,$map,$items);
 $event=$activity['abilityCueEvents'][0]['completionCue'];
 $check($event['spell']['presetId']==='sabre-frost-flurry'&&$event['spell']['strikeIndex']===1,'Allocated strikes count actual previous attacks, excluding echoes');
 $check($event['spell']['targetTokenId']==='target'&&$event['sound']===null,'Actual recipient, no sound');
-$check(applicationSpellVisualDuration($event['spell'])===2960,'Half-speed delivery window also covers the queued strike margin');
+$check(applicationSpellVisualDuration($event['spell'])===6760,'Half-speed delivery window covers the Valse prologue and all five queued strikes');
 $activity['attackReceipts'][]=['attack'=>$valseAttack];$activity['abilityExecutions'][0]['currentStepIndex']=1;
 $valseAttack['hit']['outcome']['requiresGmValidation']=true;
 appendApplicationAttackVisualEvent($activity,$valseAttack,$map,$items,[],true);

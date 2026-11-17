@@ -799,7 +799,7 @@ function applicationComplexAbilityPrepareChainBatch(array &$execution, array $st
     $successes = count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? false) === true));
     while (count($state['rolls']) < $step['count'] && count(array_filter($state['rolls'], static fn(array $entry): bool => ($entry['success'] ?? true) === false)) === 0 && applicationChainCritical($step, $state) === null) {
         $modifier = -min(100, $successes * $step['penaltyPerSuccess']);
-        $rolled = $roll('1d100', normalizeOnlineRollMode($rollMode), true);
+        $rolled = $roll('1d100', normalizeOnlineRollMode($rollMode), true,['statId'=>$step['statId'],'tokenId'=>$source['id']]);
         $raw = $rolled['rawD100'] ?? $rolled['total'] ?? null;
         $outcome = ($rolled['joker'] ?? false) === true ? applicationSpecialSuccessOutcome($baseThreshold) : classifyOnlineD100Outcome($raw, $baseThreshold, $modifier, 0, true, true, !empty($rolled['criticalFailureAsFailure']));
         if ($outcome === null) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
@@ -1543,7 +1543,7 @@ function applyApplicationComplexAbilityCommand(
                     foreach ($nextState['targets'] as &$target) {
                         $token = applicationComplexAbilityTokenById($tokens, $target['tokenId']);
                         $threshold = applicationComplexAbilityTokenThreshold($token, ['thresholdMode' => 'stat', 'targetStatId' => $nextStep['awarenessStatId']]);
-                        $rolled = $roll('1d100');
+                        $rolled = $roll('1d100','normal',true,['statId'=>$nextStep['awarenessStatId'],'tokenId'=>$token['id']]);
                         $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;
                         if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
                         $success = in_array($raw, [1, 11, 22, 33, 44, 55], true)
@@ -1614,7 +1614,7 @@ function applyApplicationComplexAbilityCommand(
             $modifier = -min(100, count($state['attacks'] ?? []) * $step['penaltyPerSuccess']);
             $threshold = max(1, $baseThreshold + $modifier);
             if (!is_callable($roll)) applicationComplexAbilityFail('Le service de dés est indisponible.', 'complex_ability_roll_unavailable', 503);
-            $rolled = $roll('1d100');
+            $rolled = $roll('1d100','normal',true,['statId'=>$step['statId'],'tokenId'=>$source['id']]);
             $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
@@ -1700,7 +1700,7 @@ function applyApplicationComplexAbilityCommand(
             if ($targetIndex === false || !is_array($token)) applicationComplexAbilityFail('La cible n’est plus disponible.', 'complex_ability_target_missing', 404);
             $threshold = applicationComplexAbilityTokenThreshold($token, ['thresholdMode' => 'stat', 'targetStatId' => $step['awarenessStatId']]);
             if (!is_callable($roll)) applicationComplexAbilityFail('Le service de dés est indisponible.', 'complex_ability_roll_unavailable', 503);
-            $rolled = $roll('1d100');
+            $rolled = $roll('1d100','normal',true,['statId'=>$step['awarenessStatId'],'tokenId'=>$token['id']]);
             $raw = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : 0;
             if ($raw < 1 || $raw > 100) applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);
             $success = ($rolled['joker'] ?? false) === true || in_array($raw, [1, 11, 22, 33, 44, 55], true) || (!in_array($raw, [66, 77, 88, 99, 100], true) && $raw <= $threshold);
@@ -1751,8 +1751,8 @@ function applyApplicationComplexAbilityCommand(
             if (!is_array($token)) applicationComplexAbilityFail('La cible n’est plus disponible.', 'complex_ability_target_missing', 404);
             $threshold = applicationComplexAbilityTokenThreshold($token, $step);
             $requestedMode = normalizeOnlineRollMode($command['rollMode'] ?? 'normal');
-            $rolled = $roll('1d100', $requestedMode, true);
-            $rollMode = ($rolled['joker'] ?? false) ? 'normal' : $requestedMode;
+            $rolled = $roll('1d100', $requestedMode, true,['statId'=>$step['targetStatId']??'','tokenId'=>$token['id']]);
+            $rollMode = ($rolled['joker'] ?? false) ? 'normal' : normalizeOnlineRollMode($rolled['rollMode']??$requestedMode);
             $total = is_array($rolled) && is_numeric($rolled['rawD100'] ?? $rolled['total'] ?? null) ? (int) ($rolled['rawD100'] ?? $rolled['total']) : null;
             if ($total === null || $total < 1 || $total > 100 || ($rollMode !== 'normal' && count($rolled['attempts'] ?? []) !== 2)) {
                 applicationComplexAbilityFail('Le résultat du d100 est invalide.', 'complex_ability_roll_invalid', 500);

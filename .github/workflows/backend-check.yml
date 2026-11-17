@@ -78,6 +78,12 @@ jobs:
           php tests/brute-force.php
           php tests/riposte.php
           php tests/blood-activation.php
+          php tests/champion-blood.php
+          php tests/emblem-caster.php
+          php tests/emblem-visual.php
+          php tests/healing-touch.php
+          php tests/stigma-cinematic.php
+          php tests/metabolic-overdrive.php
           php tests/inho-passives.php
           php tests/mania-passives.php
           php tests/stackable-effects.php
@@ -94,6 +100,7 @@ jobs:
           php tests/device-native-contract.php
           php tests/device-roll-stock.php
           php tests/device-recovery-contract.php
+          php tests/device-mana.php
           php tests/tactical-special-effects.php
           php tests/door-source-authority.php
           php tests/door-jamb-shadows.php

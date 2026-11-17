@@ -105,7 +105,12 @@ function applicationAcquireVisionCacheLease(string $file, string $key, int $maxi
             // Windows locks prohibit reads of the locked file itself. Keep
             // its bounded geometry identity in a separate private sidecar.
             $owner = @file_get_contents($ownerFile, false, null, 0, 65);
-            if ($owner !== $key || hrtime(true) >= $deadline) {
+            // A newly acquired lease may not have published its sidecar yet.
+            // Treat a missing/partial identity as an in-progress publication,
+            // still bounded by the deadline; only a complete different key
+            // proves a collision that should bypass this lease immediately.
+            $otherGeometry = is_string($owner) && preg_match('/^[a-f0-9]{64}$/D', $owner) === 1 && $owner !== $key;
+            if ($otherGeometry || hrtime(true) >= $deadline) {
                 fclose($lease);
                 return null;
             }

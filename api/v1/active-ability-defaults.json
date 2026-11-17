@@ -1,0 +1,38 @@
+{
+  "character-inho": {
+    "revision": "inho-metabolic-v1",
+    "abilities": [
+      {
+        "id": "ability-inho-metabolic-acceleration",
+        "name": "Accélération métabolique forcée",
+        "image": "/assets/spell-effects/inho-metabolic-card-v1.png",
+        "description": "Accélère la perception du temps jusqu’au début du prochain tour d’Inho. À chaque utilisation, retire immédiatement 10 % des PV maximum aux PV courants (arrondi supérieur). Recharge toutes les compétences, y compris les utilisations limitées par repos et par combat. Avantage à tous les jets d’Agilité pendant l’effet. La fatigue gagnée pendant l’effet est reportée et appliquée au début du prochain tour ; la fatigue déjà présente reste inchangée. Peut enchaîner plusieurs compétences et se déplacer sous arbitrage du MJ. Réactiver paie de nouveau les PV sans prolonger l’effet ni effacer la fatigue en attente.",
+        "effect": "enhancement",
+        "formula": "0",
+        "castingStatId": "",
+        "manaCost": 0,
+        "hpCost": 0,
+        "fatigueCost": 0,
+        "fatigueCostIncludesPassive": true,
+        "cooldownRounds": 0,
+        "restRecharge": "none",
+        "reusableInTurn": true,
+        "difficultyIncrement": 0,
+        "attackEnhancement": {
+          "mode": "overdrive",
+          "target": "self",
+          "turns": 1,
+          "expiry": "start-next-turn",
+          "hpPercent": 10,
+          "advantageStatIds": [
+            "character-stat-agility"
+          ],
+          "deferFatigue": true,
+          "resetCooldowns": true,
+          "resetRestUses": true,
+          "resetCombatUses": true
+        }
+      }
+    ]
+  }
+}

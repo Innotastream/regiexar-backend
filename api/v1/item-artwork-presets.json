@@ -359,5 +359,15 @@
     "name": "Bottes du Serpent Céleste",
     "kind": "object",
     "image": "/assets/item-art/talons-serpent-celeste.png"
+  },
+  "item-template-036af6e5-51fd-421b-a7a0-21142bdb05ec": {
+    "name": "Potion élémentaire",
+    "kind": "object",
+    "image": "/assets/item-art/potion-elementaire.png"
+  },
+  "template-SKqd1W55uL5yYhzghsdc6g": {
+    "name": "Station d’interpolation tellurique",
+    "kind": "object",
+    "image": "/assets/device-vfx/telluric-station-v1.png"
   }
 }

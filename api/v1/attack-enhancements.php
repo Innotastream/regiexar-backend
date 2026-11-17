@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/ability-overdrive.php';
 require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__.'/item-use-enhancements.php';
 require_once __DIR__ . '/character-statistics.php';
@@ -8,6 +9,7 @@ require_once __DIR__ . '/unit-authority.php';
 require_once __DIR__.'/active-items.php';
 require_once __DIR__.'/ability-rule-presets.php';
 function applicationAttackEnhancementDefinition(mixed $value): ?array {
+    if(is_array($value)&&($value['mode']??'')==='overdrive')return applicationOverdrive($value);
     if(is_array($value)&&($value['mode']??'')==='arbitration-zone'){try{$d=applicationSpecialItemEffect([...$value,'kind'=>'arbitration-zone']);}catch(RuntimeException){return null;}$area=applicationFixedEffectArea($value['fixedArea']??null);return $d&&$area?['mode'=>'arbitration-zone','label'=>$d['label'],'turns'=>$d['turns'],'color'=>$d['color'],'fixedArea'=>$area]:null;}
     if(is_array($value)&&($value['mode']??'')==='next-item-use')return applicationItemUseEnhancementDefinition($value);
     if(is_array($value)&&($value['mode']??'')==='on-hit-effects'){$p=normalizeItemPayload($value['payload']??null);return $p&&in_array($p['kind'],['dot','condition'],true)&&activeItemInt($value['turns']??null,1,999)&&in_array($value['trigger']??'',['all-attacks','melee-weapon','main-weapon'],true)?['mode'=>'on-hit-effects','turns'=>$value['turns'],'trigger'=>$value['trigger'],'requiresHit'=>true,...((applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])) ? ['family'=>applicationEffectFamily($p)?:applicationEffectFamily($p['rider']??[])]:[]),'payload'=>$p]:null;}
@@ -61,6 +63,21 @@ function applicationEnhancementHolder(array $source): string {
             ? 'character:' . $source['characterId'] : 'token:' . ($source['id'] ?? ''));
 }
 
+// Presentation only: stable identifiers, no name-based gameplay rule.
+function applicationBloodEnhancementSkin(array $effect): array {
+    if(($effect['abilityId']??'')!=='ability-2e0bbf2b-ba81-4af6-b377-017615292509')return [];
+    $start=$effect['visualStartedAt']??null;
+    return ['skin'=>'champion-blood',...(is_int($start)&&$start>0?['startedAt'=>$start]:[])];
+}
+
+function applicationEnhancementVisualSkin(array $effect): array {
+    $blood=applicationBloodEnhancementSkin($effect);if($blood!==[])return $blood;
+    $skins=['ability-inho-metabolic-acceleration'=>'metabolic-overdrive','ability-6a6d080e-96b7-4d12-b25b-d179d5e17766'=>'stigma-awakening','ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b'=>'sacred-circle'];
+    $skin=$skins[$effect['abilityId']??'']??null;if($skin===null)return [];
+    $start=$effect['visualStartedAt']??null;
+    return ['skin'=>$skin,...(is_int($start)&&$start>0&&$start<=9007199254740991?['startedAt'=>$start]:[])];
+}
+
 function applicationTokenBuffVisuals(array $token, array $state, string $sceneId): array {
     if (($token['dimSilhouette'] ?? false) === true) return [];
     $holder = applicationEnhancementHolder($token); $result = [];
@@ -78,10 +95,12 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
             foreach ($abilities as $ability) if (($ability['id'] ?? '') === ($effect['abilityId'] ?? '')) $image = $ability['image'] ?? null;
         }
         $result[] = ['id' => (string) $effect['id'], 'label' => $fixed?'Zone d’affaiblissement d’armure':(string) ($effect['label'] ?? 'Effet actif'),
-            'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...(($effect['mode']??'')==='next-item-use'?['remainingUses'=>1,'durationLabel'=>($effect['expiry']??'')==='combat-or-rest'?'Prochaine potion · fin du combat ou repos court/long':'Prochaine potion · jusqu’au repos long','symbol'=>'⚗']:[]),...(($effect['mode']??'')==='on-attack-dot'&&(applicationAttackEnhancement($effect)['trigger']??'')==='melee-weapon'&&($effect['targetTokenId']??'')===($token['id']??'')?['skin'=>'venom-source']:[]),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
+            'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...applicationEnhancementVisualSkin($effect),...(($effect['mode']??'')==='next-item-use'?['remainingUses'=>1,'durationLabel'=>($effect['expiry']??'')==='combat-or-rest'?'Prochaine potion · fin du combat ou repos court/long':'Prochaine potion · jusqu’au repos long','symbol'=>'⚗']:[]),...(($effect['mode']??'')==='on-attack-dot'&&(applicationAttackEnhancement($effect)['trigger']??'')==='melee-weapon'&&($effect['targetTokenId']??'')===($token['id']??'')?['skin'=>'venom-source']:[]),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
     }
     $poisonTurns=0;foreach($state['damageOverTime']??[] as $dot)if(($dot['family']??'')==='poison'&&($dot['sceneId']??'')===$sceneId&&($dot['targetTokenId']??'')===($token['id']??'')&&($dot['remainingTurns']??0)>0)$poisonTurns=max($poisonTurns,(int)$dot['remainingTurns']);
     if($poisonTurns>0)$result[]=['id'=>'status-poison-'.$token['id'],'label'=>'Empoisonné','remainingTurns'=>min(999,$poisonTurns),'skin'=>'venom-target','symbol'=>'☠','image'=>null];
+    $bleedingTurns=0;foreach($state['damageOverTime']??[] as $dot)if(($dot['family']??'')==='bleeding'&&($dot['sceneId']??'')===$sceneId&&($dot['targetTokenId']??'')===($token['id']??'')&&($dot['remainingTurns']??0)>0)$bleedingTurns=max($bleedingTurns,(int)$dot['remainingTurns']);
+    if($bleedingTurns>0)$result[]=['id'=>'status-bleeding-'.$token['id'],'label'=>'Saignement','remainingTurns'=>min(999,$bleedingTurns),'skin'=>'bleeding','symbol'=>'🩸','image'=>null];
     $protection=0;foreach($state['nextAttackGuards']??[] as $guard)if(($guard['effectId']??'')==='protection'&&($guard['sceneId']??'')===$sceneId&&($guard['targetTokenId']??'')===($token['id']??''))$protection+=(int)$guard['percent'];
     if($protection>0){$attacks=(int)ceil($protection/100);$result[]=['id'=>'status-protection-'.$token['id'],'label'=>'Protection · réserve '.$protection.' %','remainingTurns'=>$attacks,'remainingAttacks'=>$attacks,'symbol'=>'🛡','image'=>null];}
     return array_slice($result, 0, 100);
@@ -163,15 +182,20 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
     if((applicationEffectFamily($definition)==='poison'||applicationEffectFamily($ability)==='poison')&&applicationHasEffectImmunity($recipient,$activity,$sceneId,'poison'))return;
     $holder = applicationEnhancementHolder($recipient);
     if ($definition['mode'] === 'echo' && $holder !== applicationEnhancementHolder($source)) $definition['formula'] = $definition['allyFormula'];
+    $previousOverdrive=null;if($definition['mode']==='overdrive')foreach($activity['attackEnhancements']??[] as $entry)if(($entry['mode']??'')==='overdrive'&&($entry['holder']??'')===$holder){$previousOverdrive=$entry;break;}
     $effects = array_values(array_filter($activity['attackEnhancements'] ?? [], static fn(array $effect): bool =>
-        ($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['holder']??'')!==$holder&&($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || !($effect['abilityId'] === $ability['id'] || $definition['mode']==='next-item-use'&&($effect['mode']??'')==='next-item-use'&&($effect['itemKind']??'')===$definition['itemKind']))));
+        !($definition['mode']==='overdrive'&&($effect['mode']??'')==='overdrive'&&($effect['holder']??'')===$holder) &&
+        (($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['holder']??'')!==$holder&&($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || !($effect['abilityId'] === $ability['id'] || $definition['mode']==='next-item-use'&&($effect['mode']??'')==='next-item-use'&&($effect['itemKind']??'')===$definition['itemKind'])))));
     if (count($effects) >= 100) throw new RuntimeException('Trop d’effets sur les attaques sont déjà actifs.', 409);
     $effects[] = [...$definition, 'id' => $id, 'holder' => $holder, 'abilityId' => $ability['id'], 'label' => $ability['name'].(!empty($enchantment['enchantedItemName'])?' — '.$enchantment['enchantedItemName']:''), 'sceneId' => $sceneId, ...$enchantment,
+        ...(in_array($ability['id']??'',['ability-inho-metabolic-acceleration','ability-2e0bbf2b-ba81-4af6-b377-017615292509','ability-6a6d080e-96b7-4d12-b25b-d179d5e17766','ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b'],true)?['visualStartedAt'=>(int)floor(microtime(true)*1000)]:[]),
         ...(!empty($ability['image']) ? ['abilityImage' => $ability['image']] : []),
         ...(($definition['trigger']??'')==='main-weapon'?['weaponId'=>$recipient['weaponAttacks'][0]['id']??'']:[]),...(($definition['expiry']??'')==='after-next-turn'?['hasStarted'=>false]:[]),
         'targetTokenId' => $recipient['id'], 'casterTokenId' => $source['id'], 'remainingTurns' => $definition['turns'],
-        'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0)];
+        'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0),
+        ...($previousOverdrive?array_intersect_key($previousOverdrive,array_flip(['id','remainingTurns','combatId','lastTurnSerial','deferredFatigue'])):[])];
     $activity['attackEnhancements'] = $effects;
+    if($definition['mode']==='overdrive')applicationRechargeOverdriveTimers($activity,$source,$definition);
 }
 
 function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, array $previous, array $initiative, bool $manual = false, array $tokens = []): array {

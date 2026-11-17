@@ -1,0 +1,43 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../api/v1/domains.php';
+require_once __DIR__.'/../api/v1/online.php';
+define('XAR_TACTICAL_FIXTURE_ONLY',true);
+require_once __DIR__.'/tactical-lifecycle.php';
+$checks=0;
+function bloodCheck(bool $ok,string $message):void {if(!$ok)throw new RuntimeException($message);$GLOBALS['checks']++;}
+$id='ability-2e0bbf2b-ba81-4af6-b377-017615292509';
+$token=['id'=>'hero','characterId'=>'sheet','followCharacter'=>true,'x'=>40,'y'=>50,'size'=>60,'layerId'=>'ground'];
+$ability=['id'=>$id,'name'=>'Nom éditable','effect'=>'enhancement','castingStatId'=>'','fatigueCost'=>5,'activationHpMaxPercent'=>10,
+  'attackEnhancement'=>['mode'=>'bonus','formula'=>'30','damageType'=>'inherit','turns'=>5,'trigger'=>'all-attacks','target'=>'self']];
+$state=['activeSceneId'=>'scene','map'=>['tokens'=>[$token]],'characters'=>[]];
+applicationActivateAttackEnhancement($state,$ability,$token,'scene',[],'effect');
+$effect=$state['attackEnhancements'][0];
+bloodCheck(is_int($effect['visualStartedAt'])&&$effect['visualStartedAt']>(int)(microtime(true)*1000)-2000,'One authoritative timestamp');
+bloodCheck($effect['formula']==='30'&&$effect['remainingTurns']===5,'Rules preserved');
+$visual=applicationTokenBuffVisuals($token,$state,'scene');
+bloodCheck($visual[0]['skin']==='champion-blood'&&$visual[0]['startedAt']===$effect['visualStartedAt'],'Cosmetic projection');
+$again=applicationTokenBuffVisuals($token,$state,'scene');bloodCheck($again===$visual,'No replay on projection');
+bloodCheck(!isset($visual[0]['formula'])&&!isset($visual[0]['casterTokenId']),'Safe visual fields');
+bloodCheck(applicationTokenBuffVisuals([...$token,'followCharacter'=>false],$state,'scene')===[],'Independent clone');
+bloodCheck(applicationTokenBuffVisuals([...$token,'dimSilhouette'=>true],$state,'scene')===[],'No silhouette');
+bloodCheck(applicationTokenBuffVisuals($token,$state,'other')===[],'Scene isolated');
+$state['damageOverTime']=[['id'=>'dot','family'=>'bleeding','sceneId'=>'scene','targetTokenId'=>'hero','remainingTurns'=>2]];
+$visual=applicationTokenBuffVisuals($token,$state,'scene');bloodCheck(count($visual)===2&&$visual[1]['skin']==='bleeding','Active bleeding family');
+$state['damageOverTime'][0]['remainingTurns']=0;bloodCheck(count(applicationTokenBuffVisuals($token,$state,'scene'))===1,'Bleeding ends with effect');
+unset($state['attackEnhancements'][0]['visualStartedAt']);$old=applicationTokenBuffVisuals($token,$state,'scene');bloodCheck($old[0]['skin']==='champion-blood'&&!isset($old[0]['startedAt']),'Legacy buff does not invent activation');
+bloodCheck(applicationBloodEnhancementSkin(['abilityId'=>'other'])===[],'No name matching');
+for($i=0;$i<5;$i++)$state['attackEnhancements']=applicationAdvanceAttackEnhancements($state['attackEnhancements'],'scene',[],[],true);
+bloodCheck(applicationTokenBuffVisuals($token,$state,'scene')===[],'Five turns expire cosmetics with mechanics');
+$db=fixture();$character=$db->payload('character:character-player');
+$character['resources']=['hp'=>8,'maxHp'=>100,'mana'=>100,'maxMana'=>100];$character['fatigue']=['current'=>0,'max'=>150];$character['abilities']=normalizeOnlineAbilities([$ability]);$db->put('character:character-player',$character);
+$request=['requestId'=>'champion-visual-request-0001','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','layerId'=>'ground','abilityId'=>$id];
+$response=runCommand($db,'ability.use',$request);bloodCheck($response->status===200,'Canonical activation command: '.json_encode($response->body));
+$stored=$db->payload('activity')['attackEnhancements'][0];bloodCheck(is_int($stored['visualStartedAt'])&&$stored['remainingTurns']===5,'Timestamp persists in authoritative storage');
+bloodCheck($db->payload('character:character-player')['fatigue']['current']===5,'Canonical cost once');
+$replay=runCommand($db,'ability.use',$request);bloodCheck($replay->status===200&&($replay->body['deduplicated']??false),'Persistent command receipt');
+bloodCheck($db->payload('activity')['attackEnhancements'][0]===$stored,'Replay preserves visual identity and timestamp');
+bloodCheck($db->payload('character:character-player')['fatigue']['current']===5,'No repeated visual payment');
+$stored['remainingTurns']=0;$activity=$db->payload('activity');$activity['attackEnhancements']=[$stored];
+bloodCheck(applicationTokenBuffVisuals($db->payload('token:scene-one:token-player'),[...$activity,'activeSceneId'=>'scene-one'],'scene-one')===[],'Expired storage has no visual');
+echo json_encode(['ok'=>true,'checks'=>$checks,'visual'=>$visual],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);

@@ -122,6 +122,17 @@ try {
     for($i=0;$i<7;++$i)$parallel[]=storageStart($root,'slow','seven-readers-one-computation');
     foreach($parallel as $running)$totalComputations+=storageFinish($running)['calls'];
     storageRequire($totalComputations===1,'Seven simultaneous readers share one cold geometry computation');
+    // The lease is acquired before its owner sidecar is published. A reader
+    // arriving inside that interval must not start another cold computation.
+    $publishingSeed='owner-not-published';
+    $publishingKey=hash('sha256',json_encode(['engine'=>1,'backend'=>defined('XAR_BACKEND_VERSION')?XAR_BACKEND_VERSION:'fixture','kind'=>'base','inputs'=>['test'=>$publishingSeed]],JSON_PRESERVE_ZERO_FRACTION));
+    $publishingFile=$directory.'/base-'.substr($publishingKey,0,2).'.json';
+    if(is_file($publishingFile.'.owner'))unlink($publishingFile.'.owner');
+    $publishingLease=fopen($publishingFile.'.lock','c+b');flock($publishingLease,LOCK_EX);
+    try {
+        $publishing=storageRun($root,'normal',$publishingSeed);
+        storageRequire($publishing['calls']===1&&$publishing['elapsedMs']>=250&&$publishing['elapsedMs']<1800,'Reader waits a bounded interval when a competing lease has not published its identity yet');
+    } finally {flock($publishingLease,LOCK_UN);fclose($publishingLease);}
     $leaseSeed='bounded-lease';
     $leaseKey=hash('sha256',json_encode(['engine'=>1,'backend'=>defined('XAR_BACKEND_VERSION')?XAR_BACKEND_VERSION:'fixture','kind'=>'base','inputs'=>['test'=>$leaseSeed]],JSON_PRESERVE_ZERO_FRACTION));
     $leaseFile=$directory.'/base-'.substr($leaseKey,0,2).'.json';

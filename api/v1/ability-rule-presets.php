@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/fixed-structure-size.php';
 require_once __DIR__.'/ability-description-presets.php';
 require_once __DIR__.'/path-strike-presets.php';
 function applicationConfiguredOppositionAbility(array $source): array {
@@ -9,9 +10,16 @@ function applicationConfiguredOppositionAbility(array $source): array {
 }
 function applicationConfiguredAbilityRules(array $source): array {
     static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
-    $configured=applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source)));$preset=$presets[$source['id']??'']??null;
+    $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
     if($preset===null)foreach($presets as $candidate){$match=$candidate['match']??null;if(is_array($match)&&($source['effect']??null)===($match['effect']??null)&&($source['tacticalEffect']['version']??null)===($match['tacticalEffect']['version']??null)&&($source['tacticalEffect']['kind']??null)===($match['tacticalEffect']['kind']??null)){$preset=$candidate;break;}}
     if(($preset['retired']??false)===true)return $configured;
+    if(isset($preset['enhancementAuraUpgrade'])&&($source['effect']??null)===($preset['effect']??null)&&($configured['attackEnhancement']['mode']??null)===($preset['enhancementMode']??null)&&is_array($configured['attackEnhancement']['aura']??null)){
+        $applied=applicationAbilityRulePreset($source['rulePreset']??null);
+        if($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])return $configured;
+        $description=$configured['description']??null;
+        if(is_string($description))foreach($preset['descriptionReplacements']??[] as [$from,$to])$description=str_replace($from,$to,$description);
+        return [...$configured,'attackEnhancement'=>[...$configured['attackEnhancement'],'aura'=>[...$configured['attackEnhancement']['aura'],...$preset['enhancementAuraUpgrade']]],...(is_string($description)?['description'=>$description]:[]),'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
+    }
     if(isset($preset['workflowUpgrade'])&&($source['effect']??null)===($preset['effect']??null)){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
         if($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])return $configured;
@@ -44,7 +52,7 @@ function applicationConfiguredAbilityRules(array $source): array {
         }
         return $applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision']?$configured:[...$configured,...$preset['values'],'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
     }
-    return $preset!==null&&!isset($preset['values'])&&!isset($preset['attackEnhancementTrigger'])&&($source['effect']??'damage')==='damage'&&!array_key_exists('rangeCells',$source)&&!array_key_exists('infusion',$source)?[...$configured,...$preset]:$configured;
+    return $preset!==null&&!isset($preset['values'])&&!isset($preset['attackEnhancementTrigger'])&&!isset($preset['enhancementAuraUpgrade'])&&($source['effect']??'damage')==='damage'&&!array_key_exists('rangeCells',$source)&&!array_key_exists('infusion',$source)?[...$configured,...$preset]:$configured;
 }
 function applicationConfiguredInclusiveFatigue(array $source):array{static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-inclusive-fatigue-presets.json'),true,512,JSON_THROW_ON_ERROR);$preset=$presets[$source['id']??'']??null;if($preset===null)return $source;if(is_string($source['description']??null))$source['description']=str_replace($preset['inclusive'].' fatigue (passif compris)',$preset['base'].' fatigue de base',$source['description']);if(($source['fatigueCostIncludesPassive']??null)===false||!is_int($source['fatigueCost']??null))return $source;$cost=($source['fatigueCostIncludesPassive']??false)===true?max(0,$source['fatigueCost']-($preset['inclusive']-$preset['base'])):($source['fatigueCost']===$preset['inclusive']?$preset['base']:$source['fatigueCost']);return [...$source,'fatigueCost'=>$cost,'fatigueCostIncludesPassive'=>false];}
 function applicationAbilityRulePreset(mixed $value): ?array {

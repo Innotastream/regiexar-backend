@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-const APPLICATION_TERRAIN_KINDS=['fire','poison','ice','acid','lightning','darkness','roots'];
+const APPLICATION_TERRAIN_KINDS=['fire','poison','ice','acid','lightning','darkness','roots','water'];
 function normalizeApplicationTerrainHue(mixed $value): int
 {
     if(!is_int($value)||$value<0||$value>360)throw new RuntimeException('Choisissez une teinte de 0 à 360 degrés.');
