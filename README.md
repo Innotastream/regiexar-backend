@@ -1,3 +1,7 @@
+## Backend 0.19.15 — client 4.2.10 — 20 novembre 2026
+
+Le build `client-4-2-10-supra-miroir-20261120-1` prolonge la diffusion du Supra-miroir à 7,6 secondes, avec sa marge de livraison habituelle. Le passage à la **4.2.10** conserve le drainage de 30 secondes des connexions précédentes. Les schémas SQL, session, domaines et fiches restent **24/22/1/10**.
+
 ## Backend 0.19.14 — client 4.2.9 — préparation du 17 novembre 2026
 
 Build `client-4-2-9-competences-mana-20261117-1`. Réunit les liaisons des cinématiques de compétences validées, l’Accélération métabolique forcée d’Inho, les tailles ajustables de la toile et le bénéfice du lanceur dans l’Emblème. Le MJ peut régler la réserve de mana des objets compatibles depuis l’inventaire, même rangés et sans pion présent ; la pose et la récupération conservent la même réserve. Les droits, révisions, reçus et frais restent autoritaires ; aucune boucle réseau d’animation supplémentaire.
