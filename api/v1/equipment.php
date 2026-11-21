@@ -139,6 +139,20 @@ function abilityEquipmentAttackRows(array $attacks,array $source,array $state):a
     }
     return array_values($rows);
 }
+function applicationInventoryWeaponForAbilityDraw(array $rule, array $weapons, array $source, array $state): ?array
+{
+    $unitId = equipmentUnitId($source);
+    $itemIds = [];
+    foreach ($state['items']['instances'] ?? [] as $item) {
+        if (($item['location']['kind'] ?? '') === 'inventory' && ($item['location']['characterId'] ?? '') === $unitId
+            && in_array($item['templateId'] ?? '', $rule['templateIds'], true)) $itemIds[$item['id']] = true;
+    }
+    foreach ($weapons as $weapon) {
+        if (($weapon['equipmentBinding']['kind'] ?? '') === 'item' && count($weapon['equipmentItemIds'] ?? []) === 1
+            && isset($itemIds[$weapon['equipmentItemIds'][0]])) return $weapon;
+    }
+    return null;
+}
 function requireEnchantedWeapon(array $state,array $recipient,?callable $pickIndex=null):array {
     $weapons = enchantableWeapons($state,$recipient);
     if ($weapons === []) equipmentFailure('Le bénéficiaire doit manier une arme fabriquée compatible.');

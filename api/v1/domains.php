@@ -3296,6 +3296,8 @@ function applicationDomainReadResponse(PDO $connection, int $since, string $pref
 }
 
 function validApplicationInitiativeRoundOrders(array $clock):bool {
+    if (array_key_exists('rewoundTurnSerial',$clock) && (!is_int($clock['rewoundTurnSerial']) || $clock['rewoundTurnSerial'] < 1
+        || $clock['rewoundTurnSerial'] > (int) ($clock['turnSerial'] ?? 0))) return false;
     foreach (['roundBaseOrder','delayedTurnIds'] as $field) {
         if (array_key_exists($field,$clock)&&!validApplicationDomainIdentifierList($clock[$field],2000)) return false;
     }
@@ -3319,6 +3321,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         if($advanced!==$zoneMap['visionZones']){$zoneMap['visionZones']=$advanced;queueOnlineDomainUpsert($pending,$records,$mapKey,$zoneMap);}
     }
     $turns = [];
+    $startedScenes = [];
     $endedScenes = [];
     $advancedInitiative = false;
     foreach ($pending as $key => $change) {
@@ -3330,6 +3333,8 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $endedScenes[$sceneId] = true;
             continue;
         }
+        if (($previous['active'] ?? false) !== true && ($next['active'] ?? false) === true && !empty($next['combatId']))
+            $startedScenes[$sceneId] = (string) $next['combatId'];
         if (($next['active'] ?? false) !== true || (int) ($next['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) continue;
         $advancedInitiative = true;
         [, $next]=applicationInitiativeEffectClocks($previous,$next);
@@ -3337,9 +3342,14 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         if (validApplicationDomainIdentifier($tokenId, 80)) $turns[] = [$sceneId, (string) $tokenId, $next, 0];
     }
     if($manual!==null)$turns=[[(string)$manual['sceneId'],'',applicationDomainPayload($records,'initiative:'.$manual['sceneId']),(int)$manual['turn']]];
-    if ($turns === [] && $endedScenes === [] && !$advancedInitiative) return;
+    if ($turns === [] && $endedScenes === [] && $startedScenes === [] && !$advancedInitiative) return;
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    if ($startedScenes !== [] && !empty($activity['abilityExecutions'])) {
+        $now = (int) floor(microtime(true) * 1000);
+        foreach ($startedScenes as $sceneId => $combatId)
+            $activity['abilityExecutions'] = applicationBindPrecombatComplexAbilities($activity['abilityExecutions'], $sceneId, $combatId, $now);
+    }
     $dots = is_array($activity['damageOverTime'] ?? null) ? $activity['damageOverTime'] : [];
     foreach ($pending as $key => $change) {
         if (!str_starts_with((string) $key, 'initiative:') || ($change['operation'] ?? '') !== 'upsert') continue;
@@ -3371,7 +3381,9 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $sameCombat = ($dot['combatId'] ?? '') === ($initiative['combatId'] ?? '');
             $alreadyTicked = $manualTurn > 0 ? (int) ($dot['lastManualTurn'] ?? 0) >= $manualTurn
                 : (!$manualHp && ($dot['combatId'] ?? '') !== '' && !$sameCombat)
-                    || ((!$manualHp || $sameCombat) && (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial']);
+                    || ((!$manualHp || $sameCombat) && (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial'])
+                    || ($manualHp && (($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']
+                        || ($sameCombat && (int) ($dot['lastTargetRound'] ?? 0) >= (int) ($initiative['round'] ?? 1))));
             if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId || $alreadyTicked) continue;
             $key = onlineTokenDomainKey($sceneId, $tokenId);
             $records = array_replace($records, applicationDomainRecords($connection, [$key]));
@@ -3386,14 +3398,18 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             }
             if (!validApplicationAbilityFormula($dot['formula'] ?? null)) { $keep = false; break; }
             if ($manualHp) {
-                $roll = onlineTickManualHpEffect($connection, $records, $pending, $identity, $dot, $target);
-                if ($roll === null) { $keep = false; break; }
+                $tick = onlineTickManualHpEffect($connection, $records, $pending, $identity, $dot, $target);
+                if ($tick === null) { $keep = false; break; }
                 $activity = $pending['activity']['payload'] ?? $activity;
-                $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
+                $activity['rolls'] = array_slice([$tick['roll'], ...($activity['rolls'] ?? [])], 0, 100);
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 $dot['remainingTurns']--;
                 if ($manualTurn > 0) $dot['lastManualTurn'] = $manualTurn;
-                else { $dot['combatId'] = $initiative['combatId'] ?? ''; $dot['lastTurnSerial'] = $initiative['turnSerial']; }
+                else {
+                    $dot['combatId'] = $initiative['combatId'] ?? '';
+                    $dot['lastTurnSerial'] = $initiative['turnSerial'];
+                    $dot['lastTargetRound'] = (int) ($initiative['round'] ?? 1);
+                }
                 $keep = $dot['remainingTurns'] > 0;
                 break;
             }

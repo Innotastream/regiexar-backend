@@ -17,6 +17,53 @@ $approved=runCommand($db,'token.attack.area.resolve',$decision,true);specialChec
 specialCheck(($byId['token-monster']['status']??'')==='awaiting-opposition'&&$byId['token-monster']['opposed']===true,'Chosen target gets an opposition');specialCheck(($byId['token-monster-two']['opposed']??true)===false,'Other target cannot choose its own opposition');specialCheck($db->payload('token:scene-one:token-monster')['hp']===$monsterBefore['hp'],'Defense waits before damage');specialCheck($db->payload('token:scene-one:token-monster-two')['hp']===$otherBefore['hp']-7,'Unopposed damage applies after MJ only');specialCheck($db->payload('character:character-player')['resources']['mana']===$before['resources']['mana']-3,'Mana spent exactly once on approval');
 $committed=$db->payload('character:character-player');specialCheck((runCommand($db,'token.attack.area.resolve',$decision,true)->body['deduplicated']??false)===true,'MJ receipt replay deduplicated');specialCheck((runCommand($db,'token.attack',$args)->body['deduplicated']??false)===true,'Original preparation replay deduplicated');specialCheck($db->payload('character:character-player')===$committed,'Neither replay spends twice');
 
+$groupDb = specialFixture();
+$groupDb->put('character:character-player', $before);
+$groupDb->put('map:scene-one', $map);
+foreach (['token-player'=>20, 'token-monster'=>25, 'token-monster-two'=>27, 'token-independent'=>90] as $id => $x) {
+    $key = 'token:scene-one:' . $id;
+    $token = [...$groupDb->payload($key), 'x'=>$x, 'y'=>$x === 90 ? 90 : 50];
+    if (in_array($id, ['token-monster', 'token-monster-two'], true)) {
+        $token['stats'] = [['id'=>'character-stat-agility', 'label'=>'Agilité', 'value'=>'50'],
+            ['id'=>'character-stat-force', 'label'=>'Force', 'value'=>'65']];
+    }
+    $groupDb->put($key, $token);
+}
+$groupParent = runCommand($groupDb, 'token.attack', [...$args, 'requestId'=>'group-area-launch-' . randomToken(16)])->body['attack'];
+$groupApproved = runCommand($groupDb, 'token.attack.area.resolve', [...$decision, 'attackId'=>$groupParent['id'],
+    'requestId'=>'group-area-approve-' . randomToken(16), 'defenseTokenIds'=>['token-monster', 'token-monster-two']], true);
+$groupActivity = $groupDb->payload('activity');
+$groupChildren = array_values(array_filter($groupActivity['pendingAttacks'], static fn($child) =>
+    ($child['areaGateParentId'] ?? '') === $groupParent['id'] && $child['status'] === 'awaiting-opposition'));
+specialCheck($groupApproved->status === 200 && count($groupChildren) === 2, 'The prepared zone authors both pending children with the same parent');
+$batch = ['requestId'=>'group-area-oppositions-'.randomToken(16), 'attackId'=>$groupParent['id'], 'confirmed'=>true,
+    'defenses'=>[['attackId'=>$groupChildren[0]['id'], 'statId'=>'character-stat-agility'],
+        ['attackId'=>$groupChildren[1]['id'], 'statId'=>'character-stat-force']]];
+specialCheck(runCommand($groupDb, 'token.attack.area.oppose', $batch)->status === 403, 'Only a GM can resolve area defenses in one command');
+$staleBatch = [...$batch, 'defenses'=>[$batch['defenses'][0], ['attackId'=>$groupParent['id'], 'statId'=>'character-stat-force']]];
+specialCheck(runCommand($groupDb, 'token.attack.area.oppose', $staleBatch, true)->status === 409, 'The batch may not contain a non-child attack');
+$badBatch = $batch;
+$badBatch['defenses'][1]['statId'] = 'obsolete-stat';
+$beforeHp = $groupDb->payload('token:scene-one:token-monster')['hp'];
+$badResult = runCommand($groupDb, 'token.attack.area.oppose', $badBatch, true);
+specialCheck($badResult->status === 404
+    && $groupDb->payload('activity') === $groupActivity && $groupDb->payload('token:scene-one:token-monster')['hp'] === $beforeHp,
+    'An invalid second defense rolls back the first and publishes no result: ' . json_encode($badResult->body));
+// The original PHP path kept the correct linkage on the receipt alone.
+foreach ($groupActivity['pendingAttacks'] as &$pendingAttack) unset($pendingAttack['areaGateParentId'], $pendingAttack['areaGateParties']);
+unset($pendingAttack);
+$groupDb->put('activity', $groupActivity);
+$groupRoll = runCommand($groupDb, 'token.attack.area.oppose', $batch, true);
+$groupOppositions = array_column($groupRoll->body['attacks'] ?? [], 'opposition');
+specialCheck($groupRoll->status === 200 && array_column($groupOppositions, 'statId') === ['character-stat-agility', 'character-stat-force']
+    && count(array_unique(array_column($groupOppositions, 'rollId'))) === 2, 'One batch resolves two separate selected defenses, including the legacy pending copies: '
+    . json_encode($groupRoll->status === 200 ? $groupOppositions : $groupRoll->body, JSON_INVALID_UTF8_SUBSTITUTE));
+$replayedBatch = runCommand($groupDb, 'token.attack.area.oppose', $batch, true);
+specialCheck(($replayedBatch->body['deduplicated'] ?? false) === true && array_column($replayedBatch->body['attacks'], 'opposition') === $groupOppositions,
+    'An exact retry returns the authoritative dice without a second roll');
+specialCheck($groupDb->payload('character:character-player')['resources']['mana'] === $before['resources']['mana'] - 3,
+    'Grouped opposition never charges the cast again');
+
 // A legacy pending zone whose preparation receipt disappeared can be cleared by its MJ.
 $orphanId='orphan-area-preparation';
 $activity=$db->payload('activity');

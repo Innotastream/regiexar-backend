@@ -44,15 +44,17 @@ function onlineCreateManualHpEffect(PDO $connection, array &$records, array &$pe
     $formula = normalizeEffectFormula($arguments['formula'] ?? '');
     $turns = $arguments['turns'] ?? null;
     $direction = $arguments['direction'] ?? null;
+    $applyNow = ($arguments['startNextTurn'] ?? true) === false;
     $requestId = (string) ($arguments['requestId'] ?? '');
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1 || preg_match('/^.{1,120}$/usD', $label) !== 1
-        || !is_int($turns) || $turns < 1 || $turns > 20 || !in_array($direction, [-1, 1], true) || !validEffectFormula($formula))
+        || !is_int($turns) || $turns < 1 || $turns > 20 || !in_array($direction, [-1, 1], true) || !validEffectFormula($formula)
+        || (array_key_exists('startNextTurn', $arguments) && !is_bool($arguments['startNextTurn'])))
         rejectOnlineCommand($connection, 400, 'Renseignez un nom, une durée de 1 à 20 tours et une formule de dés valide.', 'periodic_hp_invalid');
     $sceneId = (string) ($arguments['sceneId'] ?? '');
     $tokenId = (string) ($arguments['tokenId'] ?? '');
     $layerId = (string) ($arguments['layerId'] ?? '');
     $kind = 'manual-hp-effect';
-    $signature = hash('sha256', json_encode([$sceneId, $tokenId, $layerId, $label, $formula, $turns, $direction], JSON_THROW_ON_ERROR));
+    $signature = hash('sha256', json_encode([$sceneId, $tokenId, $layerId, $label, $formula, $turns, $direction, ...($applyNow ? [false] : [])], JSON_THROW_ON_ERROR));
     $context = onlinePersistentCommandReceipt($connection, $records, $kind, $requestId, $identity['id'], $signature, 'periodic_hp');
     if ($context['receipt'] !== null) return [...$context['receipt']['result'], 'deduplicated' => true];
     $target = onlineOngoingEffectTarget($connection, $records, $pending, $sceneId, $tokenId);
@@ -61,25 +63,36 @@ function onlineCreateManualHpEffect(PDO $connection, array &$records, array &$pe
     if (($target['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== ''))
         rejectOnlineCommand($connection, 409, 'Ce pion doit être vivant et disposer de PV.', 'periodic_hp_target_unavailable');
     $activity = $context['activity'];
-    if (count($activity['damageOverTime'] ?? []) >= 100)
+    if ((!$applyNow || $turns > 1) && count($activity['damageOverTime'] ?? []) >= 100)
         rejectOnlineCommand($connection, 429, 'La table contient déjà trop d’effets périodiques.', 'periodic_hp_capacity');
     $clockKey = 'initiative:' . $sceneId;
     $records = array_replace($records, applicationDomainRecords($connection, [$clockKey, 'devices']));
     $clock = $pending[$clockKey]['payload'] ?? applicationDomainPayload($records, $clockKey);
     $devices = $pending['devices']['payload'] ?? applicationDomainPayload($records, 'devices');
+    $targetIndex = array_search($tokenId, $clock['order'] ?? [], true);
     $effect = ['id' => 'manual-hp-' . $requestId, 'sceneId' => $sceneId, 'targetTokenId' => $tokenId,
         'targetIdentity' => onlineDotTargetIdentity($target), 'manualHp' => true, 'family' => 'manual-hp',
         'direction' => $direction, 'label' => $label, 'formula' => $formula, 'remainingTurns' => $turns,
         'combatId' => (string) ($clock['combatId'] ?? ''), 'lastTurnSerial' => (int) ($clock['turnSerial'] ?? 0),
-        'lastManualTurn' => (int) ($devices['manualTurns'][$sceneId] ?? 0)];
-    $activity['damageOverTime'][] = $effect;
+        'lastManualTurn' => (int) ($devices['manualTurns'][$sceneId] ?? 0),
+        ...(!empty($clock['active']) && $targetIndex !== false && $targetIndex <= ($clock['currentIndex'] ?? 0)
+            ? ['lastTargetRound' => (int) ($clock['round'] ?? 1)] : [])];
+    $firstTick = $applyNow ? onlineTickManualHpEffect($connection, $records, $pending, $identity, $effect, $target) : null;
+    if ($applyNow && $firstTick === null)
+        rejectOnlineCommand($connection, 409, 'Ce pion ne peut plus recevoir cet effet.', 'periodic_hp_target_unavailable');
+    if ($firstTick !== null) {
+        $activity = $pending['activity']['payload'] ?? $activity;
+        $activity['rolls'] = array_slice([$firstTick['roll'], ...($activity['rolls'] ?? [])], 0, 100);
+        $effect['remainingTurns']--;
+    }
+    if ($effect['remainingTurns'] > 0) $activity['damageOverTime'][] = $effect;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
         'kind' => 'effect', 'characterName' => $target['name'] ?? 'Pion',
         'summary' => 'Applique ' . $label . ' · ' . ($direction > 0 ? 'soins' : 'perte de PV'),
-        'detail' => $formula . ' par tour · ' . $turns . ' tour(s)',
+        'detail' => $formula . ' par tour · ' . $effect['remainingTurns'] . ' tour(s) restant(s)',
     ]);
-    $result = ['effect' => $effect];
+    $result = ['effect' => $effect, ...($firstTick ?? [])];
     onlineStorePersistentCommandReceipt($records, $pending, $context, $kind, $requestId, $identity['id'], $action['id'], $tokenId, $signature, $result);
     return [...$result, 'deduplicated' => false];
 }
@@ -100,7 +113,7 @@ function onlineTickManualHpEffect(PDO $connection, array &$records, array &$pend
     if (!empty($target['hidden'])) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
     $roll['mapEvent'] = ['kind' => 'roll', 'label' => $dot['label'], 'value' => $rolled['total'], 'tokenId' => $target['id'],
         'targetTokenId' => $target['id'], 'targetName' => $target['name'], 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
-    return $roll;
+    return ['roll' => $roll, 'appliedDelta' => $delta];
 }
 
 function onlineCaptureEndedDots(PDO $connection, array &$records, array &$pending, array &$activity, array $endedScenes): void {

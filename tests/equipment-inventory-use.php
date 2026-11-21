@@ -57,4 +57,41 @@ $r=inventoryGearAttack($db,'ability','inventory-sweep');specialCheck($r->status=
 specialCheck($db->payload('character:character-player')===$after,'Missing weapon refuses before paying');
 $source=$db->payload('token:scene-one:token-player');$source['followCharacter']=false;
 specialCheck(abilityEquipmentAttackRows($c['weaponAttacks'],$source,['items'=>$before])===[],'Independent clone cannot borrow source-sheet inventory');
+
+$db = inventoryGearFixture();
+$itemStore = $db->payload('items');
+$chainTemplate = 'v370-template-bc70eea5b124221f0cade694';
+$itemStore['templates'][1]['id'] = $chainTemplate;
+$itemStore['instances'][1]['templateId'] = $chainTemplate;
+$db->put('items', $itemStore);
+$character = $db->payload('character:character-player');
+$danceId = 'ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79';
+$character['abilities'][] = ['id'=>$danceId,'name'=>'Danse de la griffe','effect'=>'damage','formula'=>'13',
+    'damageType'=>'physical','castingStatId'=>'','fatigueCost'=>5,'manaCost'=>7,
+    'damageTargeting'=>['mode'=>'area','origin'=>'target','radiusCells'=>4]];
+$db->put('character:character-player', $character);
+$danceRequest = ['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player',
+    'attackKind'=>'ability','attackId'=>$danceId,'requestId'=>'claw-dance-'.randomToken(20),'opposed'=>false];
+$prepared = runCommand($db, 'token.attack', $danceRequest);
+specialCheck($prepared->status === 200 && !empty($prepared->body['pendingAreaGate']) && $db->payload('items') === $itemStore,
+    'Danse prepares a real inventory chain while the original blade stays equipped: ' . json_encode($prepared->body));
+$resolved = fixtureApproveDefenseGate($db, $prepared);
+specialCheck($resolved->status === 200 && $db->payload('token:scene-one:token-monster')['hp'] === 487,
+    'Danse uses its configured 13 physical damage instead of the chain’s 17 magical damage: ' . json_encode($resolved->body));
+$childReceipt = array_values(array_filter($db->payload('activity')['attackReceipts'], static fn($row) =>
+    ($row['attack']['attackId'] ?? '') === $danceId && ($row['attack']['targetTokenId'] ?? '') === 'token-monster'
+))[0]['attack'];
+specialCheck($childReceipt['echoAttackContext']['equipmentItemIds'] === ['chain'] && $childReceipt['echoAttackContext']['weaponBased'] === true,
+    'The hit records the actual chain instance');
+specialCheck($db->payload('items') === $itemStore, 'The original blade stays equipped after the swing');
+$cue = array_values(array_filter($db->payload('activity')['abilityCueEvents'], static fn($event) =>
+    ($event['completionCue']['spell']['presetId'] ?? '') === 'barbed-chain-area-sweep'));
+specialCheck(count($cue) === 1, 'The successful swing emits its bound chain animation once');
+$itemStore['instances'][1]['location'] = ['kind'=>'inventory','characterId'=>'another-owner'];
+$db->put('items', $itemStore);
+$after = $db->payload('character:character-player');
+$missing = runCommand($db, 'token.attack', [...$danceRequest,'requestId'=>'claw-dance-missing-'.randomToken(20)]);
+specialCheck($missing->status === 409 && ($missing->body['code'] ?? '') === 'ability_weapon_missing'
+    && $db->payload('character:character-player') === $after && $db->payload('items') === $itemStore,
+    'Danse cannot borrow an unavailable chain and pays nothing on refusal');
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

@@ -56,6 +56,21 @@
       ]
     }
   },
+  "ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2": {
+    "presetId": "blood-sphere-precombat",
+    "revision": 2,
+    "effect": "complex",
+    "workflowUpgrade": {
+      "activeSnapshot": true,
+      "steps": [
+        {
+          "match": { "type": "counter", "combatPersistent": true },
+          "values": { "activateOutsideCombat": true, "spendOutsideCombat": true, "spendOnSourceTurn": false },
+          "damageSpendFormula": "1d25+5"
+        }
+      ]
+    }
+  },
   "ability-1c96374f-b73d-440f-a1de-c149022c6dee": {
     "presetId": "mind-influence-recharge",
     "revision": 2,
@@ -491,6 +506,13 @@
     "presetId": "claw-dance-caster-area",
     "revision": 1,
     "effect": "damage",
+    "weaponDraw": {
+      "name": "Chaîne lacérante",
+      "templateIds": [
+        "v370-template-6f8e72ba624ecbbe481091a0",
+        "v370-template-bc70eea5b124221f0cade694"
+      ]
+    },
     "targetingUpgradeOnly": true,
     "targetingDefaults": {
       "radiusCells": 4

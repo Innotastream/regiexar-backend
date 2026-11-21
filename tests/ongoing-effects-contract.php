@@ -81,14 +81,38 @@ requireTactical(runCommand($db,'combat.effect.periodic-hp',$periodic)->status===
 $created = runCommand($db,'combat.effect.periodic-hp',$periodic,true,'account-gm');
 requireTactical($created->status===200 && $created->body['effect']['remainingTurns']===2, 'Manual effect is created for exactly two turns: '.json_encode($created->body));
 requireTactical(runCommand($db,'combat.effect.periodic-hp',$periodic,true,'account-gm')->body['deduplicated']===true,'The same request creates one effect');
+requireTactical(runCommand($db,'combat.effect.periodic-hp',[...$periodic,'startNextTurn'=>true],true,'account-gm')->body['deduplicated']===true,'Explicit default is compatible with an older receipt');
 requireTactical((int)$db->payload('token:scene-one:token-monster')['hp']===40,'Creating the effect leaves HP until the target turn');
-$records = applicationDomainRecords($db); $pending = [];
-queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$before,'active'=>true,'turnsStarted'=>true,
-    'order'=>['token-player','token-monster'],'currentIndex'=>1,'turnSerial'=>(int)($before['turnSerial']??0)+1]);
-applyApplicationDamageOverTimeOnTurn($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm']);
-foreach($pending as $id=>$change)$db->put($id,$change['payload']);
+$progress = static function(MemoryConnection $db,array $initiative):void {
+    $records=applicationDomainRecords($db);$pending=[];
+    queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',$initiative);
+    applyApplicationDamageOverTimeOnTurn($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm']);
+    foreach($pending as $id=>$change)$db->put($id,$change['payload']);
+};
+$clock = [...$before,'active'=>true,'turnsStarted'=>true,'order'=>['token-player','token-monster'],'currentIndex'=>1,'round'=>1];
+$progress($db,[...$clock,'turnSerial'=>1,'rewoundTurnSerial'=>1]);
+requireTactical((int)$db->payload('token:scene-one:token-monster')['hp']===40 && $db->payload('activity')['damageOverTime'][0]['remainingTurns']===2,'A backward visit does not apply the effect');
+$progress($db,[...$clock,'turnSerial'=>2]);
+requireTactical((int)$db->payload('token:scene-one:token-monster')['hp']===40 && $db->payload('activity')['damageOverTime'][0]['remainingTurns']===2,'Redisplaying the placement turn does not apply the effect');
+$progress($db,[...$clock,'turnSerial'=>3,'round'=>2]);
 requireTactical(in_array((int)$db->payload('token:scene-one:token-monster')['hp'],[35,36],true),'The target loses the rolled HP on its next turn');
 requireTactical($db->payload('activity')['damageOverTime'][0]['remainingTurns']===1,'One turn was consumed');
 $removed=runCommand($db,'combat.effect.remove',['kind'=>'dot','effectId'=>$created->body['effect']['id'],'requestId'=>'manual-hp-remove-php-0001'],true,'account-gm');
 requireTactical($removed->status===200 && $db->payload('activity')['damageOverTime']===[],'The GM can remove the remaining periodic effect');
+
+$db=fixture();
+$db->put('initiative:scene-one',[...$db->payload('initiative:scene-one'),'active'=>false]);
+$now=[...$periodic,'startNextTurn'=>false,'tokenId'=>'token-player','direction'=>1,'formula'=>'4','label'=>'Soin de recette','requestId'=>'manual-hp-php-immediate-0001'];
+$immediate=runCommand($db,'combat.effect.periodic-hp',$now,true,'account-gm');
+requireTactical($immediate->status===200 && $immediate->body['appliedDelta']===4 && $immediate->body['effect']['remainingTurns']===1
+    && $db->payload('character:character-player')['resources']['hp']===14,'Immediate healing makes one roll and leaves one of the two turns');
+$activity=$db->payload('activity');
+$merge=preserveApplicationAbilityExtensions('activity',['resourceReceipts'=>[]],$activity);
+requireTactical(count($merge['resourceReceipts'])===1,'A stale activity update cannot remove the receipt for the immediate roll');
+requireTactical(runCommand($db,'combat.effect.periodic-hp',$now,true,'account-gm')->body['deduplicated']===true
+    && $db->payload('character:character-player')['resources']['hp']===14,'Retry never rolls immediate healing twice');
+requireTactical(runCommand($db,'combat.effect.periodic-hp',[...$now,'startNextTurn'=>true],true,'account-gm')->status===409,'The same reference cannot change the start timing');
+$advanced=runCommand($db,'mechanics.command',['command'=>'scene.advance','arguments'=>['sceneId'=>'scene-one','requestId'=>'manual-hp-php-turn-0001']],true,'account-gm');
+requireTactical($advanced->status===200 && $db->payload('character:character-player')['resources']['hp']===18
+    && $db->payload('activity')['damageOverTime']===[],'One manual advance completes the immediate two-turn effect');
 echo "Ongoing effects, residual damage and roll revelation contracts passed.\n";

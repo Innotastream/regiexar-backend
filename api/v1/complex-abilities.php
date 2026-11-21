@@ -15,6 +15,7 @@ require_once __DIR__ . '/ability-messages.php';
 require_once __DIR__ . '/ability-icon.php';
 require_once __DIR__ . '/spell-visuals.php';
 require_once __DIR__ . '/complex-defense-gate.php';
+require_once __DIR__ . '/ability-rule-presets.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -451,6 +452,8 @@ function normalizeApplicationComplexAbilityWorkflow(mixed $value, bool $snapshot
             $step['spendOnSourceTurn'] = ($raw['spendOnSourceTurn'] ?? false) === true;
             $step['visual'] = ($raw['visual'] ?? '') === 'orbs' ? 'orbs' : 'none';
             $step['combatPersistent'] = ($raw['combatPersistent'] ?? false) === true;
+            if ($step['combatPersistent'] && ($raw['activateOutsideCombat'] ?? false) === true) $step['activateOutsideCombat'] = true;
+            if (!empty($step['activateOutsideCombat']) && ($raw['spendOutsideCombat'] ?? false) === true) $step['spendOutsideCombat'] = true;
             $step['resetOnEnd'] = ($raw['resetOnEnd'] ?? null) === true
                 || ($step['combatPersistent'] && ($raw['resetOnEnd'] ?? null) !== false);
         } elseif ($type === 'condition') {
@@ -637,6 +640,7 @@ function createApplicationComplexAbilityExecution(array $context): array
     $error = applicationComplexAbilityWorkflowError($ability['workflow'] ?? null);
     if ($error !== '') applicationComplexAbilityFail($error, 'complex_ability_definition_invalid', 400);
     $workflow = normalizeApplicationComplexAbilityWorkflow($ability['workflow'] ?? null);
+    $rulePreset = applicationAbilityRulePreset($ability['rulePreset'] ?? null);
     if (($ability['noDefensePossible'] ?? false) === true) {
         foreach ($workflow['steps'] as &$step) if ($step['type'] === 'attack-chain') $step['allowOpposition'] = false;
         unset($step);
@@ -665,6 +669,7 @@ function createApplicationComplexAbilityExecution(array $context): array
         'targetRangeCells'=>applicationAbilityRangeCells($ability,$context['sourcePosition']['weaponAttacks']??[]),
         ...(!empty($ability['rangeCells'])||!empty($ability['reach'])?['targetRangeExplicit'=>true]:[]),
         'abilityId' => applicationComplexAbilityIdentifier($ability['id'] ?? '', '', 120),
+        ...($rulePreset !== null ? ['rulePreset'=>$rulePreset] : []),
         'abilityName' => applicationComplexAbilityText($ability['name'] ?? '', 120, 'Compétence complexe'),
         ...(($ability['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
         'castGate' => ($cast['success'] ?? false) && is_array($cast['outcome'] ?? null) ? [
@@ -725,7 +730,8 @@ function applicationComplexAbilityGateRoll(array $gate, array $rolls = []): arra
 function normalizeApplicationComplexAbilityExecution(mixed $value): array
 {
     $source = is_array($value) ? $value : [];
-    $workflow = normalizeApplicationComplexAbilityWorkflow($source['workflow'] ?? null, (int) ($source['workflow']['version'] ?? 1) < 7);
+    [$workflow, $rulePreset] = applicationConfiguredActiveAbilityWorkflow($source,
+        normalizeApplicationComplexAbilityWorkflow($source['workflow'] ?? null, (int) ($source['workflow']['version'] ?? 1) < 7));
     if (($source['noDefensePossible'] ?? false) === true) {
         foreach ($workflow['steps'] as &$step) if ($step['type'] === 'attack-chain') $step['allowOpposition'] = false;
         unset($step);
@@ -745,6 +751,7 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         ...(!empty($source['targetRangeCells'])?['targetRangeCells'=>$source['targetRangeCells']]:[]),
         ...(!empty($source['targetRangeExplicit'])?['targetRangeExplicit'=>true]:[]),
         'abilityId' => applicationComplexAbilityIdentifier($source['abilityId'] ?? '', '', 120),
+        ...($rulePreset !== null ? ['rulePreset'=>$rulePreset] : []),
         'abilityName' => applicationComplexAbilityText($source['abilityName'] ?? '', 120, 'Compétence complexe'),
         ...(($source['noDefensePossible'] ?? false) === true ? ['noDefensePossible' => true] : []),
         'castGate' => is_array($source['castGate'] ?? null) ? $source['castGate'] : null,
@@ -921,7 +928,8 @@ function applicationComplexAbilityGainBleedingCharges(mixed $value, array $conte
         if ($execution['status'] !== 'active' || $execution['sceneId'] !== $sceneId || $execution['layerId'] !== $layerId) continue;
         $step = $execution['workflow']['steps'][$execution['currentStepIndex']] ?? null;
         if (!is_array($step) || $step['type'] !== 'counter' || !in_array($step['gainTrigger'], ['hp-loss', 'bleeding-hp-loss', 'condition-applied', 'hp-loss-or-condition'], true)
-            || ($step['combatPersistent'] && ($combatId === '' || $execution['combatId'] !== $combatId))) continue;
+            || (!empty($context['outsideCombat']) ? empty($step['activateOutsideCombat']) || $execution['combatId'] !== ''
+                : $step['combatPersistent'] && ($combatId === '' || $execution['combatId'] !== $combatId))) continue;
         if ($step['gainCondition'] !== '' && !in_array(onlineConditionKey(normalizeOnlineConditions([$step['gainCondition']])[0] ?? $step['gainCondition']),
             array_map('onlineConditionKey', normalizeOnlineConditions($target['conditions'] ?? [], $target['condition'] ?? '')), true)) continue;
         $applied = $step['gainCondition'] !== '' && in_array(onlineConditionKey(normalizeOnlineConditions([$step['gainCondition']])[0] ?? $step['gainCondition']), array_map('onlineConditionKey', normalizeOnlineConditions($added)), true);
@@ -1295,10 +1303,31 @@ function applicationComplexAbilityResetCountersOnEnd(array &$execution, int $now
     }
 }
 
+function applicationBindPrecombatComplexAbilities(array $executions, string $sceneId, string $combatId, int $now): array
+{
+    if ($combatId === '') return $executions;
+    foreach ($executions as &$execution) {
+        if (($execution['status'] ?? '') !== 'active' || ($execution['sceneId'] ?? '') !== $sceneId || !empty($execution['combatId'])) continue;
+        foreach ($execution['workflow']['steps'] ?? [] as $step) {
+            if (($step['type'] ?? '') !== 'counter' || ($step['activateOutsideCombat'] ?? false) !== true) continue;
+            $execution['combatId'] = $combatId;
+            $execution['revision']++;
+            $execution['updatedAt'] = $now;
+            break;
+        }
+    }
+    unset($execution);
+    return $executions;
+}
+
 function applicationEndComplexCombatEffects(array $executions,string $sceneId,string $combatId):array {
     $now=(int)floor(microtime(true)*1000);$executions=normalizeApplicationComplexAbilityExecutions($executions);
     foreach($executions as &$e){
-        if($e['status']!=='active'||$e['sceneId']!==$sceneId||$combatId===''||$e['combatId']!==$combatId)continue;
+        if($e['status']!=='active'||$e['sceneId']!==$sceneId||$combatId==='')continue;
+        $chargeSteps=array_filter($e['workflow']['steps'],static fn($step)=>!empty($step['charge']['staged']));
+        $legacyCharge=$e['combatId']===''&&$chargeSteps!==[];
+        if($e['combatId']!==$combatId&&!$legacyCharge)continue;
+        foreach($chargeSteps as $step)unset($e['stepStates'][$step['id']]['movementLockUntil']);
         $e['status']='completed';applicationComplexAbilityResetCountersOnEnd($e,$now);$e['completedAt']=$now;$e['endedByCombat']=true;$e['revision']++;$e['updatedAt']=$now;
         applicationComplexAbilityAppendEvent($e,['type'=>'completed','actorId'=>'system','actorName'=>'Combat','label'=>'Sort terminé avec le combat'],$now);
     }unset($e);return $executions;
@@ -1795,11 +1824,17 @@ function applyApplicationComplexAbilityCommand(
             applicationComplexAbilityAppendEvent($execution, ['type' => 'counter', 'actorId' => $actorId, 'actorName' => $actorName,
                 'stepId' => $step['id'], 'label' => $step['counterLabel'] . ' : ' . $previous . ' → ' . $next, 'detail' => $step['gainLabel']], $now);
         } elseif ($step['type'] === 'counter' && $action === 'counter-spend') {
-            if ($step['combatPersistent'] && ($context['combatActive'] ?? false) !== true) applicationComplexAbilityFail('Ce sort prend fin avec le combat.', 'complex_ability_combat_ended');
+            $spendingOutsideCombat = !empty($step['spendOutsideCombat']) && ($context['combatActive'] ?? false) !== true && $execution['combatId'] === '';
+            if ($step['combatPersistent'] && ($context['combatActive'] ?? false) !== true && !$spendingOutsideCombat) {
+                if (!empty($step['activateOutsideCombat']) && $execution['combatId'] === '')
+                    applicationComplexAbilityFail('Les charges de cette compétence s’utilisent en combat.', 'complex_ability_combat_required');
+                applicationComplexAbilityFail('Ce sort prend fin avec le combat.', 'complex_ability_combat_ended');
+            }
             $turnKey = applicationComplexAbilityIdentifier($context['turnKey'] ?? '', '', 180);
-            if ($step['spendOnSourceTurn'] && ($context['currentTokenId'] ?? '') !== $execution['sourceTokenId'])
+            if ($step['spendOnSourceTurn'] && !$spendingOutsideCombat && ($context['currentTokenId'] ?? '') !== $execution['sourceTokenId'])
                 applicationComplexAbilityFail('Les charges de cette compétence s’utilisent pendant le tour du lanceur.', 'complex_ability_source_turn_required');
-            if ($step['spendOncePerTurn'] && ($turnKey === '' || ($state['lastSpendTurnKey'] ?? '') === $turnKey)) applicationComplexAbilityFail('Une seule utilisation de ce compteur est autorisée durant ce tour.', 'complex_ability_turn_spend_limit');
+            $limitedByTurn = $step['spendOncePerTurn'] && !$spendingOutsideCombat;
+            if ($limitedByTurn && ($turnKey === '' || ($state['lastSpendTurnKey'] ?? '') === $turnKey)) applicationComplexAbilityFail('Une seule utilisation de ce compteur est autorisée durant ce tour.', 'complex_ability_turn_spend_limit');
             $option = null; $optionId = applicationComplexAbilityIdentifier($command['optionId'] ?? '');
             foreach ($step['spendOptions'] as $candidate) if ($candidate['id'] === $optionId) { $option = $candidate; break; }
             if (!is_array($option)) applicationComplexAbilityFail('Cette utilisation de charge n’existe plus.', 'complex_ability_spend_missing', 400);
@@ -1825,7 +1860,7 @@ function applyApplicationComplexAbilityCommand(
             $state['value'] = $effect['kind'] === 'marker' ? $previous : $previous - $option['cost'];
             if ($markerId !== '') $state['deployments'] = [...$deployments, ['id' => $markerId, 'x' => (float) $source['x'],
                 'y' => (float) $source['y'], 'label' => $option['label'], 'movable' => $effect['movable'] === true]];
-            if ($step['spendOncePerTurn']) $state['lastSpendTurnKey'] = $turnKey;
+            if ($limitedByTurn) $state['lastSpendTurnKey'] = $turnKey;
             $state['lastUse'] = ['optionId' => $optionId, 'effect' => $effect, 'targetTokenId' => $targetId,
                 ...($effect['kind'] === 'damage' ? ['opposed' => ($execution['noDefensePossible'] ?? false) !== true && ($command['opposed'] ?? true) !== false] : []),
                 'targetName' => is_array($target) ? applicationComplexAbilityText($target['name'] ?? '', 120, 'Cible') : '',

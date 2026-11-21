@@ -346,15 +346,16 @@ function onlineUseComplexAbility(
         if($initialMovement===null)foreach($ability['workflow']['steps'] as $step)if(($step['charge']['targetStepId']??null)===($first['id']??'')){$initialMovement=$step;break;}
         if($initialMovement!==null)onlineAssertAbilityMountPilot($connection,$records,$pending,$source,[...$initialMovement,'mountedMovement'=>$initialMovement['mountedMovement']??$ability['mountedMovement']??false],$sceneId,$accountId,$isGm);
         $initiative = applicationDomainPayload($records, 'initiative:' . $sceneId);
-        $persistent = count(array_filter($ability['workflow']['steps'] ?? [], static fn(mixed $step): bool => is_array($step)
-            && ($step['type'] ?? '') === 'counter' && ($step['combatPersistent'] ?? false) === true)) > 0;
-        $requiresCombat = $persistent || count(array_filter($ability['workflow']['steps'] ?? [],
-            static fn(mixed $step): bool => is_array($step) && ($step['type'] ?? '') === 'guard')) > 0;
-        $combatId = ($initiative['active'] ?? false) === true ? trim((string) ($initiative['combatId'] ?? '')) : '';
-        if ($requiresCombat && (($initiative['active'] ?? false) !== true || $combatId === '')) {
+        $steps = $ability['workflow']['steps'];
+        $combatActive = ($initiative['active'] ?? false) === true;
+        $combatId = $combatActive ? trim((string) ($initiative['combatId'] ?? '')) : '';
+        $persistentCounters = array_filter($steps, static fn(array $step): bool => $step['type'] === 'counter' && $step['combatPersistent']);
+        $requiresCombat = array_filter($steps, static fn(array $step): bool => $step['type'] === 'guard')
+            || array_filter($persistentCounters, static fn(array $step): bool => $combatActive || empty($step['activateOutsideCombat']));
+        if ($requiresCombat && $combatId === '') {
             rejectOnlineCommand($connection, 409, 'Cette compétence exige un combat actif.', 'complex_ability_combat_required');
         }
-        if ($persistent) foreach ($activity['abilityExecutions'] as $execution) {
+        if ($persistentCounters !== [] && $combatId !== '') foreach ($activity['abilityExecutions'] as $execution) {
             if (($execution['sceneId'] ?? '') === $sceneId && ($execution['sourceTokenId'] ?? '') === ($source['id'] ?? '')
                 && ($execution['abilityId'] ?? '') === ($ability['id'] ?? '') && ($execution['combatId'] ?? '') === $combatId) {
                 rejectOnlineCommand($connection, 409, 'Ce sort a déjà été activé pendant ce combat.', 'complex_ability_combat_once');
@@ -410,7 +411,7 @@ function onlineUseComplexAbility(
                     'controllerAccountId' => $controllerId !== '' ? $controllerId : $accountId,
                     'controllerName' => $identity['display_name'] ?? '', 'ability' => applicationConfiguredStackableAbility($ability), 'cast' => $cast, 'now' => $now,
                     'targetTokenId' => $arguments['targetTokenId'] ?? '',
-                    'combatId' => $persistent ? $combatId : '',
+                    'combatId' => ($persistentCounters !== [] || array_filter($ability['workflow']['steps'], static fn($step) => !empty($step['charge']['staged']))) ? $combatId : '',
                 ]);
             } catch (ApplicationComplexAbilityException $error) {
                 rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
@@ -495,7 +496,21 @@ function onlineUseComplexAbility(
     $map['_abilityTimedConditions']=$isGm?[]:onlineDeviceState($connection,$records,$pending)['devices']['timedConditions'];
     if($workflowAction==='prepare-target')foreach($current['workflow']['steps'] as $movement)if($movement['id']===($currentStep['sourceStepId']??'')&&!empty($movement['charge']['staged']))onlineAssertAbilityMountPilot($connection,$records,$pending,applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$current['sourceTokenId'])),$movement,$sceneId,$accountId,$isGm);
     if($workflowAction==='resolve-defenses'){if(isset($current['defenseGate']['parties'])){$gate=$current['defenseGate'];onlineAssertDeferredDefenseParties($connection,$records,$pending,['sceneId'=>$sceneId,'sourceTokenId'=>$current['sourceTokenId'],'areaGate'=>[...$gate,'definition'=>['noDefensePossible'=>$current['noDefensePossible']??false],'sourceParty'=>$gate['parties']['source'],'targetParties'=>$gate['parties']['targets']]],$arguments['command']['defenseTokenIds']??[]);}elseif(isset($current['defenseGate']))rejectOnlineCommand($connection,409,'Cette ancienne décision doit être préparée à nouveau.','complex_defense_snapshot_missing');}
-    $chargeTravel=applicationStagedChargeTravel($current,$workflowCommand,$tokens,[...$map,'tokens'=>$tokens,'_abilityExecutions'=>$activity['abilityExecutions']??[],'_abilityMovementLeases'=>$activity['abilityMovementLeases']??[]]);$tokens=applicationChargeTravelTokens($tokens,$chargeTravel);
+    $chargeTravel = null;
+    $chargeInterruption = '';
+    try {
+        $chargeTravel=applicationStagedChargeTravel($current,$workflowCommand,$tokens,[...$map,'tokens'=>$tokens,'_abilityExecutions'=>$activity['abilityExecutions']??[],'_abilityMovementLeases'=>$activity['abilityMovementLeases']??[]]);
+    } catch (ApplicationComplexAbilityException $error) {
+        $expected = $arguments['expectedRevision'] ?? null;
+        if ($error->errorCode !== 'complex_ability_charge_interrupted' || ($current['status'] ?? '') !== 'active'
+            || ($current['defenseGate']['status'] ?? '') === 'pending' || !is_numeric($expected)
+            || (float) $expected !== (float) $current['revision']
+            || (!$isGm && ($current['controllerAccountId'] ?? '') !== $accountId)) {
+            rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
+        }
+        $chargeInterruption = $error->getMessage();
+    }
+    $tokens=applicationChargeTravelTokens($tokens,$chargeTravel);
     $pathTravel=applicationPathStrikeTravel($current,$workflowCommand,$tokens,[...$map,'tokens'=>$tokens,'_abilityExecutions'=>$activity['abilityExecutions']??[],'_abilityMovementLeases'=>$activity['abilityMovementLeases']??[]]);$tokens=applicationChargeTravelTokens($tokens,$pathTravel);
     $map['tokens']=$tokens;$map['_abilityExecutions']=$activity['abilityExecutions']??[];$map['_abilityMovementLeases']=$activity['abilityMovementLeases']??[];
     $generatedRolls = [];
@@ -513,7 +528,7 @@ function onlineUseComplexAbility(
     try {
         $next = applyApplicationComplexAbilityCommand(
             $current,
-            [...(is_array($arguments['command'] ?? null) ? $arguments['command'] : []),
+            [...$workflowCommand, ...($chargeInterruption !== '' ? ['action' => 'cancel'] : []),
                 'expectedRevision' => $arguments['expectedRevision'] ?? null],
             [
                 'actor' => ['id' => $accountId, 'name' => $identity['display_name'] ?? '', 'role' => $isGm ? 'gm' : 'player'],
@@ -536,6 +551,11 @@ function onlineUseComplexAbility(
         );
     } catch (ApplicationComplexAbilityException $error) {
         rejectOnlineCommand($connection, $error->httpStatus, $error->getMessage(), $error->errorCode);
+    }
+    if ($chargeInterruption !== '') {
+        $key = array_key_last($next['events']);
+        $next['events'][$key] = [...$next['events'][$key], 'type' => 'charge-interrupted',
+            'label' => 'Charge interrompue', 'detail' => $chargeInterruption];
     }
     $finalPathTravel=applicationPathStrikeFinalTravel($next,$tokens,$map);if($pathTravel!==null)onlineCommitPathStrikeTravel($connection,$records,$pending,$identity,$next,$activity,$pathTravel);if($finalPathTravel!==null){onlineCommitPathStrikeTravel($connection,$records,$pending,$identity,$next,$activity,$finalPathTravel);$movement=applicationPathStrikeMovementFor($next);$next['stepStates'][$movement['step']['id']]['finalMoveApplied']=true;}
     if(isset($next['defenseGate'])&&!isset($next['defenseGate']['parties'])){$partyMap=[...$map,'tokens'=>$tokens];$sourceToken=applicationComplexAbilityTokenById($tokens,$next['sourceTokenId']);$targetParties=[];foreach($next['defenseGate']['targetTokenIds']as$id)$targetParties[$id]=onlineDefenseParty($connection,$records,applicationComplexAbilityTokenById($tokens,$id),$partyMap);$next['defenseGate']['parties']=['source'=>onlineDefenseParty($connection,$records,$sourceToken,$partyMap),'targets'=>$targetParties];}
@@ -587,16 +607,19 @@ function onlineUseComplexAbility(
                 rejectOnlineCommand($connection, 409, 'La cible de cet effet a changé de niveau ou n’existe plus.', 'complex_ability_effect_target_changed');
             }
             if ($effect['kind'] === 'guard') {
-                if (($initiative['active'] ?? false) !== true || ($initiative['combatId'] ?? '') === '') {
+                $stackable = applicationConfiguredStackableEffect((string)$next['abilityId'], 'guard');
+                $counter = $next['workflow']['steps'][$current['currentStepIndex']];
+                $combatId = ($initiative['active'] ?? false) === true ? (string) ($initiative['combatId'] ?? '') : '';
+                $mayProtectOutsideCombat = !empty($counter['spendOutsideCombat']) && empty($next['combatId']) && $stackable !== null;
+                if ($combatId === '' && !$mayProtectOutsideCombat) {
                     rejectOnlineCommand($connection, 409, 'La protection de la prochaine attaque exige un combat actif.', 'complex_ability_guard_outside_combat');
                 }
                 $guards = array_values(array_filter(is_array($activity['nextAttackGuards'] ?? null) ? $activity['nextAttackGuards'] : [],
                     static fn(mixed $guard): bool => is_array($guard) && (($guard['sceneId'] ?? '') !== $sceneId
-                        || ($guard['combatId'] ?? '') === ($initiative['combatId'] ?? '')||($guard['lifecycle']??'')==='status')));
+                        || ($guard['combatId'] ?? '') === $combatId || ($guard['lifecycle'] ?? '') === 'status')));
                 if (count($guards) >= 60) rejectOnlineCommand($connection, 409, 'Trop de protections attendent déjà une attaque.', 'complex_ability_guard_capacity');
-                $stackable=applicationConfiguredStackableEffect((string)$next['abilityId'],'guard');
                 $guards[] = $stackable!==null?applicationMakeStackableEffect($stackable,$sceneId,(string)$target['id'],'guard-'.randomToken(12)):['id' => 'guard-' . randomToken(12), 'sceneId' => $sceneId,
-                    'targetTokenId' => (string) $target['id'], 'combatId' => (string) ($initiative['combatId'] ?? ''),
+                    'targetTokenId' => (string) $target['id'], 'combatId' => $combatId,
                     'percent' => $effect['percent'], 'sourceExecutionId' => $next['id'], 'lifecycle' => ($effect['persistAfterEnd'] ?? false) ? 'next-attack' : 'execution',
                     'stackGroup' => ($effect['stackable'] ?? false) ? (string) $next['abilityId'] : '', 'trigger' => $effect['trigger'] ?? 'attack', 'damageTypes' => $effect['damageTypes'], 'armorStacking' => $effect['armorStacking']];
                 $activity['nextAttackGuards'] = $guards;
@@ -607,7 +630,7 @@ function onlineUseComplexAbility(
                     $visualSource=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$next['sourceTokenId']));
                     $visualMap=[...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
                     $spell=applicationTrustedSpellVisual(['id'=>$next['abilityId']],['sceneId'=>$sceneId,'map'=>$visualMap,'source'=>$visualSource,'targetPoint'=>$target,'variantId'=>'guard']);
-                    if($spell!==null){appendApplicationAbilityCueEvent($activity,['version'=>1,'spell'=>$spell],$sceneId,$next['layerId'],$next['sourceTokenId'],!empty($visualSource['hidden'])?'gm':'public');queueOnlineDomainUpsert($pending,$records,'activity',$activity);}
+                    if($spell!==null){appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['version'=>1,'spell'=>$spell]),$sceneId,$next['layerId'],$next['sourceTokenId'],!empty($visualSource['hidden'])?'gm':'public');queueOnlineDomainUpsert($pending,$records,'activity',$activity);}
                 }
             } else {
                 $counterUse = $use;

@@ -331,10 +331,22 @@ if (is_array($deduplicatedAttack)) {
     if ($complexExecutionId !== '') $weaponConditions = normalizeOnlineConditions([...$weaponConditions, ...($execution['onHitConditions'] ?? [])]);
     $mechanicsDefinition = $chainDefinition === null ? ($attackKind==='ability' ? $abilities[$abilityIndex] : ($attackKind==='weapon' ? $weapons[$weaponIndex] : [])) : [];
     $selectedWeapon = [];
+    $weaponDraw = $attackKind === 'ability' ? applicationAbilityWeaponDrawRule($mechanicsDefinition ?? []) : null;
+    if ($weaponDraw !== null) {
+        $selectedWeapon = applicationInventoryWeaponForAbilityDraw($weaponDraw, $source['abilityWeaponAttacks'], $source, $equipmentState);
+        if ($selectedWeapon === null)
+            rejectOnlineCommand($connection,409,$weaponDraw['name'].' doit être présente dans votre inventaire.','ability_weapon_missing');
+        if (!empty($arguments['weaponAttackId']) && $arguments['weaponAttackId'] !== $selectedWeapon['id'])
+            rejectOnlineCommand($connection,400,'Cette compétence tire automatiquement '.$weaponDraw['name'].'.','ability_weapon_required');
+        $preparedItemId = $defenseApproval['gate']['preparedHit']['drawnItemId'] ?? '';
+        if ($preparedItemId !== '' && $preparedItemId !== $selectedWeapon['equipmentItemIds'][0])
+            rejectOnlineCommand($connection,409,'L’arme préparée a changé. Relancez la compétence.','ability_weapon_changed');
+    }
     if (($mechanicsDefinition['useWeaponDamage']??false)===true) {
         $weaponList=$source['abilityWeaponAttacks'];
         $enhancementState=onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity);$weaponList=array_map(static fn($weapon)=>applicationEnhancedBasicAttack($weapon,$source,$enhancementState,$sceneId,false),$weaponList);
-        try{$weaponResult=applicationSimpleWeaponDamage($mechanicsDefinition,$weaponList,(string)($arguments['weaponAttackId']??''),$source['weaponAttacks']);}
+        $weaponAbility=$weaponDraw!==null?[...$mechanicsDefinition,'requiredWeaponAttackId'=>$selectedWeapon['id'],'mainWeaponOnly'=>false,'equippedWeaponOnly'=>false]:$mechanicsDefinition;
+        try{$weaponResult=applicationSimpleWeaponDamage($weaponAbility,$weaponList,(string)($arguments['weaponAttackId']??''),$source['weaponAttacks']);}
         catch(RuntimeException $error){rejectOnlineCommand($connection,400,$error->getMessage(),'ability_weapon_required');}
         $selectedWeapon=$weaponResult['selectedWeapon'];$damageComponents=$weaponResult['damageComponents'];$damageFormula=$weaponResult['damageFormula'];$damageType=$weaponResult['damageType'];
     }
@@ -491,7 +503,7 @@ if (is_array($deduplicatedAttack)) {
     if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
     $weaponOutcomes=[];
     foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||!empty($hitOutcome['automatic'])||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty($passiveState,$source,$id,$sceneId)-$targetPassivePenalty($recipient),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
-    if($prepareDefenseOnly){$outcomes=[];foreach($liveAreaTargets as$recipient)$outcomes[$recipient['id']]=$weaponOutcomes[$recipient['id']]??$hitOutcome;return ['rolled'=>$hitRolled,'hasStatCheck'=>$hasCastingCheck,'hit'=>['raw'=>$hitRolled['rawD100']??null,'total'=>$hitRolled['total'],'formula'=>$hitRolled['formula']??$hitFormula,'statId'=>$hasCastingCheck?($stats[$statIndex]['id']??''):'','statLabel'=>$hasCastingCheck?($stats[$statIndex]['label']??'Statistique'):'Sans jet','outcome'=>$hitOutcome],'outcomes'=>$outcomes];}
+    if($prepareDefenseOnly){$outcomes=[];foreach($liveAreaTargets as$recipient)$outcomes[$recipient['id']]=$weaponOutcomes[$recipient['id']]??$hitOutcome;return ['rolled'=>$hitRolled,'hasStatCheck'=>$hasCastingCheck,'hit'=>['raw'=>$hitRolled['rawD100']??null,'total'=>$hitRolled['total'],'formula'=>$hitRolled['formula']??$hitFormula,'statId'=>$hasCastingCheck?($stats[$statIndex]['id']??''):'','statLabel'=>$hasCastingCheck?($stats[$statIndex]['label']??'Statistique'):'Sans jet','outcome'=>$hitOutcome],'outcomes'=>$outcomes,...($weaponDraw!==null?['drawnItemId'=>$selectedWeapon['equipmentItemIds'][0]]:[])];}
     $infusionMissed=$weaponOutcomes!==[]?!array_filter($weaponOutcomes,static fn($o)=>!empty($o['success'])):!($hitOutcome['success']??false);
     if(!empty($infusion['payment'])&&$infusion['refundOnMiss']&&$infusionMissed)onlineDeviceRefund($connection,$records,$pending,$infusion['payment']);
     $baseDamagePercent=$damagePercent;
@@ -577,7 +589,7 @@ if (is_array($deduplicatedAttack)) {
         ...($complexExecutionId !== '' ? ['complexExecutionId' => $complexExecutionId] : []),
         ...(($attackSeries['count'] ?? 0) > 1 ? ['attackSeries' => $attackSeries] : []),
         'attackId' => $attackId,
-        'echoAttackContext' => ['equipmentItemIds'=>($selectedWeapon?:$mechanicsDefinition)['equipmentItemIds']??[],'naturalWeapon'=>($selectedWeapon?:$mechanicsDefinition)['naturalWeapon']??false,'torchLightId'=>($selectedWeapon?:$mechanicsDefinition)['torchLightId']??'', 'weaponId'=>$attackKind==='weapon'?$attackId:($selectedWeapon['id']??''),'weaponBased' => $attackKind === 'weapon' || ($mechanicsDefinition['useWeaponDamage'] ?? false) === true,
+        'echoAttackContext' => ['equipmentItemIds'=>($selectedWeapon?:$mechanicsDefinition)['equipmentItemIds']??[],'naturalWeapon'=>($selectedWeapon?:$mechanicsDefinition)['naturalWeapon']??false,'torchLightId'=>($selectedWeapon?:$mechanicsDefinition)['torchLightId']??'', 'weaponId'=>$attackKind==='weapon'?$attackId:($selectedWeapon['id']??''),'weaponBased' => $attackKind === 'weapon' || $selectedWeapon !== [],
             'projectile' => ($mechanicsDefinition['projectile'] ?? false) === true || ($selectedWeapon['projectile'] ?? false) === true, 'reach'=>applicationWeaponReach($selectedWeapon?:$mechanicsDefinition)],
         'opposed' => $opposed,
         ...(!empty($chainDefinition['defenseStatId']) ? ['defenseStatId' => $chainDefinition['defenseStatId'], 'defenseRollMode' => $chainDefinition['defenseRollMode']] : []),

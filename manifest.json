@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.19.20",
-  "announcedApplicationVersion": "4.3.2",
+  "backendVersion": "0.19.21",
+  "announcedApplicationVersion": "4.3.3",
   "allowedApplicationVersions": [
-    "4.3.2"
+    "4.3.3"
   ],
   "apiVersion": "v1",
   "publicOrigin": "https://regie-xar-tsaroth.fr",
@@ -11,7 +11,7 @@
   "privateConfigDirectory": "regie-private",
   "applicationIntegration": "revisioned-domains",
   "databaseSchemaVersion": 25,
-  "minimumApplicationVersion": "4.3.2",
+  "minimumApplicationVersion": "4.3.3",
   "imageStudioMinimumApplicationVersion": "2.1.0",
   "abilityAssistantMinimumApplicationVersion": "3.3.5"
 }

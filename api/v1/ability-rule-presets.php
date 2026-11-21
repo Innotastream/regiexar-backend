@@ -13,6 +13,39 @@ function applicationConfiguredOppositionAbility(array $source): array {
     $preset=$presets[$source['id']??'']??null;
     return $preset!==null&&($source['effect']??'')==='movement'&&(!isset($source['opposition'])||($source['opposition']['statId']??'')==='character-stat-dexterity')?[...$source,...$preset,'onHitConditions'=>[]]:$source;
 }
+function applicationUpgradeAbilityWorkflow(mixed $workflow, array $upgrade): ?array
+{
+    if (!is_array($workflow) || !is_array($workflow['steps'] ?? null)) return null;
+    $changed = false;
+    foreach ($workflow['steps'] as $index => $step) {
+        if (!is_array($step)) continue;
+        foreach ($upgrade['steps'] ?? [] as $patch) {
+            $matches = true;
+            foreach ($patch['match'] as $key => $value) if (($step[$key] ?? null) !== $value) { $matches = false; break; }
+            if (!$matches) continue;
+            $step = array_replace($step, $patch['values']);
+            if (isset($patch['damageSpendFormula'])) {
+                foreach ($step['spendOptions'] ?? [] as $optionIndex => $option) {
+                    if (($option['effect']['kind'] ?? '') === 'damage') $step['spendOptions'][$optionIndex]['effect']['formula'] = $patch['damageSpendFormula'];
+                }
+            }
+            $workflow['steps'][$index] = $step;
+            $changed = true;
+        }
+    }
+    return $changed ? $workflow : null;
+}
+function applicationConfiguredActiveAbilityWorkflow(array $execution, array $workflow): array
+{
+    $rulePreset = applicationAbilityRulePreset($execution['rulePreset'] ?? null);
+    $preset = applicationSimpleAbilityPresets()[$execution['abilityId'] ?? ''] ?? null;
+    if (($execution['status'] ?? '') === 'active' && !empty($preset['workflowUpgrade']['activeSnapshot'])
+        && !(($rulePreset['id'] ?? '') === $preset['presetId'] && $rulePreset['revision'] >= $preset['revision'])) {
+        $patched = applicationUpgradeAbilityWorkflow($workflow, $preset['workflowUpgrade']);
+        if ($patched !== null) return [$patched, ['id'=>$preset['presetId'], 'revision'=>$preset['revision']]];
+    }
+    return [$workflow, $rulePreset];
+}
 function applicationConfiguredAbilityRules(array $source): array {
     $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
@@ -28,13 +61,8 @@ function applicationConfiguredAbilityRules(array $source): array {
     if(isset($preset['workflowUpgrade'])&&($source['effect']??null)===($preset['effect']??null)){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
         if($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])return $configured;
-        $workflow=$configured['workflow']??null;$changed=false;
-        if(is_array($workflow)&&is_array($workflow['steps']??null))foreach($workflow['steps'] as &$step){if(!is_array($step))continue;foreach($preset['workflowUpgrade']['steps']??[] as $patch){
-            $matches=true;foreach($patch['match'] as $key=>$value)if(($step[$key]??null)!==$value){$matches=false;break;}
-            if($matches){$step=array_replace($step,$patch['values']);$changed=true;}
-        }
-        }
-        unset($step);if(!$changed)return $configured;
+        $workflow=applicationUpgradeAbilityWorkflow($configured['workflow']??null,$preset['workflowUpgrade']);
+        if($workflow===null)return $configured;
         $description=$configured['description']??null;
         if(is_string($description))foreach($preset['workflowUpgrade']['descriptionReplacements']??[] as [$from,$to])$description=str_replace($from,$to,$description);
         return [...$configured,'workflow'=>$workflow,...(is_string($description)?['description'=>$description]:[]),'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
@@ -73,4 +101,10 @@ function applicationConfiguredAttackEnhancement(string $abilityId,array $enhance
 
 function applicationIsRetiredAbility(mixed $id): bool {
     return is_string($id)&&(applicationSimpleAbilityPresets()[$id]['retired']??false)===true;
+}
+
+function applicationAbilityWeaponDrawRule(array $ability): ?array
+{
+    $preset = applicationSimpleAbilityPresets()[$ability['id'] ?? ''] ?? [];
+    return isset($preset['weaponDraw']) && $preset['effect'] === ($ability['effect'] ?? '') ? $preset['weaponDraw'] : null;
 }

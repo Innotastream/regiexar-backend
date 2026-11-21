@@ -86,7 +86,10 @@ function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array 
     }
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$childIds=[];if(!empty($released['attack']['id']))$childIds[]=$released['attack']['id'];foreach($released['areaAttacks']??[]as$child)$childIds[]=$child['id'];$children=[];
     foreach($activity['attackReceipts']as&$receipt)if(in_array($receipt['attack']['id']??'',$childIds,true)){$child=&$receipt['attack'];$child['areaGateParentId']=$attack['id'];$child['areaGateParties']=['sourceUnitId'=>$gate['sourceParty']['unitId'],'targetUnitId'=>$gate['targetParties'][$child['targetTokenId']]['unitId']??''];$children[]=$child;unset($child);}unset($receipt);
-    foreach($activity['pendingAttacks']??[]as&$child)if(in_array($child['id'],$childIds,true)){$child['areaGateParentId']=$attack['id'];$child['areaGateParties']=['sourceUnitId'=>$gate['sourceParty']['unitId'],'targetUnitId'=>$gate['targetParties'][$child['targetTokenId']]['unitId']??''];}unset($child);
+    foreach($activity['pendingAttacks']??[]as$index=>$child)if(in_array($child['id'],$childIds,true)){
+        $activity['pendingAttacks'][$index]['areaGateParentId']=$attack['id'];
+        $activity['pendingAttacks'][$index]['areaGateParties']=['sourceUnitId'=>$gate['sourceParty']['unitId'],'targetUnitId'=>$gate['targetParties'][$child['targetTokenId']]['unitId']??''];
+    }
     $gate['resolutionSignature']=$signature;$gate['defenseTokenIds']=$allowed;if(!empty($released['execution']['id']))$gate['executionId']=$released['execution']['id'];unset($gate['resolving']);$attack['areaGate']=$gate;$attack['status']=$arguments['decision']==='approve'?'resolved':'rejected';$attack['resolvedAt']=(int)floor(microtime(true)*1000);
     $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>$entry['id']!==$attack['id']));
     foreach ($activity['attackReceipts'] as &$receipt) {
