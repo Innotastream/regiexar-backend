@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.18';
-const XAR_BACKEND_BUILD = 'client-4-3-1-validation-vision-diagnostics-20261121-1';
+const XAR_BACKEND_VERSION = '0.19.19';
+const XAR_BACKEND_BUILD = 'client-4-3-1-combat-recovery-map-scale-20261121-1';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.1';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.1'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 24;
+const XAR_DATABASE_SCHEMA_VERSION = 25;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_SESSION_TOUCH_INTERVAL_SECONDS = 30;
@@ -1137,6 +1137,9 @@ function ensureCurrentSchema(PDO $connection): void
             migrateApplicationSpiritStatistics($connection);
             $version = 24;
         }
+        if ($version < 25) {
+            migrateApplicationDefaultMapScales($connection);
+        }
     } finally {
         try {
             $connection->query("SELECT RELEASE_LOCK('xar-regie-schema-v11')");
@@ -2150,6 +2153,7 @@ installBackendDiagnostics();
 require_once __DIR__ . '/character-lore.php';
 require_once __DIR__ . '/online.php';
 require_once __DIR__ . '/domains.php';
+require_once __DIR__ . '/map-scale-defaults.php';
 require_once __DIR__ . '/ability-assistant.php';
 require_once __DIR__ . '/image-studio.php';
 require_once __DIR__ . '/health-overlays.php';

@@ -13,6 +13,7 @@ if (preg_match('/^mysql:host=127\.0\.0\.1;port=([1-9][0-9]{3,4});charset=utf8mb4
 }
 require_once __DIR__ . '/../api/v1/domains.php';
 require_once __DIR__ . '/../api/v1/online.php';
+require_once __DIR__ . '/../api/v1/map-scale-defaults.php';
 
 final class CapturedDomainSnapshot extends RuntimeException
 {
@@ -110,6 +111,35 @@ try {
         catch (RuntimeException $error) { $refused = $error->getMessage() === 'future_domain_schema'; }
         domainSchemaCheck($refused && persistedDomainRows($db) === $before, "A future $field is refused before any write.");
     }
+    $db->exec('UPDATE application_domain_clock SET state_schema_version = ' . XAR_SESSION_SCHEMA_VERSION
+        . ', domain_schema_version = ' . XAR_DOMAIN_SCHEMA_VERSION);
+    $db->exec('ALTER TABLE application_domains ADD updated_by_account_id VARCHAR(128) NULL');
+    $db->exec('CREATE TABLE application_domain_history (history_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        domain_key VARCHAR(200), domain_revision BIGINT, global_revision BIGINT, operation VARCHAR(10),
+        payload JSON, changed_by_account_id VARCHAR(128) NULL) ENGINE=InnoDB');
+    $db->exec('CREATE TABLE schema_migrations (version INT PRIMARY KEY, name VARCHAR(120), checksum VARCHAR(64)) ENGINE=InnoDB');
+    $layer = ['gridSize' => 28, 'unitScalePreset' => 'custom', 'gridOffsetX' => 4, 'naturalWidth' => 1000,
+        'naturalHeight' => 600, 'background' => null];
+    $map = [...$layer, 'activeLayerId' => 'upper', 'layers' => ['ground' => $layer, 'upper' => $layer]];
+    $maps = ['lobby-fixture' => 'Lobby', 'route-fixture' => 'Village de Deuilroute', 'ordinary-fixture' => 'Scène fictive'];
+    upsertApplicationDomain($db, 'scene-index', ['order' => array_keys($maps)], 1, null);
+    foreach ($maps as $id => $name) {
+        upsertApplicationDomain($db, 'scene:' . $id, ['metadata' => ['id' => $id, 'name' => $name]], 1, null);
+        upsertApplicationDomain($db, 'map:' . $id, $map, 1, null);
+    }
+    migrateApplicationDefaultMapScales($db);
+    $converted = applicationDomainRecords($db, ['map:lobby-fixture', 'map:route-fixture', 'map:ordinary-fixture']);
+    domainSchemaCheck($converted['map:lobby-fixture']['revision'] === 1
+        && $converted['map:lobby-fixture']['payload'] == $map, 'The real data migration preserves the entire Lobby.');
+    domainSchemaCheck($converted['map:route-fixture']['payload']['unitScalePreset'] === 'indoor'
+        && $converted['map:route-fixture']['payload']['gridSize'] == 75
+        && $converted['map:route-fixture']['payload']['layers']['ground']['unitScalePreset'] === 'outdoor'
+        && $converted['map:ordinary-fixture']['payload']['gridSize'] == 50,
+        'The real migration updates the active mirror and each configured level.');
+    domainSchemaCheck((int) $db->query('SELECT COUNT(*) FROM application_domain_history')->fetchColumn() === 2
+        && (int) $db->query('SELECT COUNT(*) FROM application_domain_changes WHERE global_revision = 74')->fetchColumn() === 2
+        && (int) $db->query('SELECT COUNT(*) FROM schema_migrations WHERE version = 25')->fetchColumn() === 1,
+        'Both historical backups, synchronization receipts and the migration are committed together.');
     echo "Local MySQL domain schema integration passed.\n";
 } finally {
     if (preg_match('/^regie_domain_schema_[a-f0-9]{16}$/D', $schema) !== 1) throw new RuntimeException('Unsafe fixture cleanup target.');

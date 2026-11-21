@@ -508,7 +508,8 @@ if (is_array($deduplicatedAttack)) {
     }
     $defensePossible = ($abilityForAttack['noDefensePossible'] ?? false) !== true
         && ($execution['noDefensePossible'] ?? false) !== true;
-    $opposed = $defensePossible && $primaryAffects && ($defenseApproval!==null?in_array($target['id'],$defenseApproval['defenseTokenIds'],true):($authorizedOpposed??(($arguments['opposed']??false)===true))) && (float) ($target['hp'] ?? 0) > 0;
+    $opposed = $defensePossible && $primaryAffects && !applicationIsNonCombatant($target)
+        && ($defenseApproval!==null?in_array($target['id'],$defenseApproval['defenseTokenIds'],true):($authorizedOpposed??(($arguments['opposed']??false)===true))) && (float) ($target['hp'] ?? 0) > 0;
     $oppositionRequired = $opposed && $projectileGate['percent'] > 0
         && ($hitOutcome['success'] ?? false) === true
         && ($hitOutcome['breaksOpposition'] ?? false) !== true;
@@ -753,7 +754,8 @@ if (is_array($deduplicatedAttack)) {
             $concealed=$isWallCast&&!$isGm&&!isset($visibleWallTargets[$areaId]);
             if($concealed){$areaAttack['visibility']='gm';$areaAttack['accountId']='mechanics-authority';$areaAttack['concealedAreaTarget']=true;}
             $areaIdentity=$concealed?['id'=>'mechanics-authority','display_name'=>'Régie','effective_mode'=>'gm','permanent_role'=>'gm']:$identity;
-            $areaAttack['opposed'] = $defensePossible && ($defenseApproval!==null?in_array($areaTarget['id'],$defenseApproval['defenseTokenIds'],true):($arguments['opposed']??false)===true) && (float) ($areaTarget['hp'] ?? 0) > 0;
+            $areaAttack['opposed'] = $defensePossible && !applicationIsNonCombatant($areaTarget)
+                && ($defenseApproval!==null?in_array($areaTarget['id'],$defenseApproval['defenseTokenIds'],true):($arguments['opposed']??false)===true) && (float) ($areaTarget['hp'] ?? 0) > 0;
             if(!($targetOutcome['success']??false)||$targetGate['percent']===0){
                 $areaAttack['status']=!empty($targetOutcome['requiresGmValidation'])||$targetGate['pending']?'pending':'missed';
                 if($areaAttack['status']==='pending'){$areaAttack['validationKind']='outcome';$areaAttack['provisionalStatus']='missed';}

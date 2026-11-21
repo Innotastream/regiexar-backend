@@ -143,6 +143,9 @@ jobs:
           php tests/stream-combat-details.php
           php tests/map-time-weather.php
           php tests/gm-defense-selection.php
+          php tests/pending-attack-lifecycle.php
+          php tests/pending-attack-removal.php
+          php tests/map-scale-defaults.php
           php tests/weapon-turn-authority.php
           php tests/device-defense-gates.php
           php tests/web-structures.php
@@ -165,6 +168,7 @@ jobs:
         run: |
           php tests/ability-assistant-contract.php
           php tests/assistant-object-plan.php
+          php tests/ability-assistant-combat.php
       - name: Authoritative tactical rolls and audio loops
         run: php tests/tactical-rolls-audio-contract.php
       - name: Image Studio conversation idempotence
@@ -261,6 +265,8 @@ jobs:
           grep -Fq 'Local MySQL Esprit migration integration passed.' mysql-spirit-migration.log
           php tests/mysql-assistant-object-plan.php | tee mysql-assistant-object-plan.log
           grep -Fq 'Local MySQL assistant object plan integration passed.' mysql-assistant-object-plan.log
+          php tests/mysql-ability-assistant-combat.php | tee mysql-ability-assistant-combat.log
+          grep -Fq 'Local MySQL assistant combat integration passed.' mysql-ability-assistant-combat.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

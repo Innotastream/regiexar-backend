@@ -26,6 +26,7 @@ require_once __DIR__ . '/ability-movement-leases.php';
 require_once __DIR__ . '/vision-zones.php';
 require_once __DIR__ . '/mist-vision.php';
 require_once __DIR__ . '/token-map-scale.php';
+require_once __DIR__ . '/pending-attack-removal.php';
 
 const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
@@ -2077,6 +2078,29 @@ function validApplicationPendingAbilityCasts(mixed $entries): bool
     return true;
 }
 
+function applicationAttackIsFinalized(mixed $attack): bool
+{
+    return is_array($attack)
+        && in_array($attack['status'] ?? '', ['applied', 'blocked', 'missed', 'defended', 'rejected', 'cancelled'], true);
+}
+
+function applicationWithoutFinalizedPendingAttacks(array $activity): array
+{
+    if (!is_array($activity['pendingAttacks'] ?? null) || $activity['pendingAttacks'] === []) return $activity;
+    $finalized = [];
+    foreach (is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [] as $receipt) {
+        $attack = $receipt['attack'] ?? null;
+        if (applicationAttackIsFinalized($attack) && is_string($attack['id'] ?? null)) {
+            $finalized[$attack['id']] = true;
+        }
+    }
+    $activity['pendingAttacks'] = array_values(array_filter($activity['pendingAttacks'], static function (mixed $attack) use ($finalized): bool {
+        if (applicationAttackIsFinalized($attack)) return false;
+        return !is_string($attack['id'] ?? null) || !isset($finalized[$attack['id']]);
+    }));
+    return $activity;
+}
+
 function preserveApplicationPendingAbilityValidation(array $payload, array $previous): array
 {
     // A normal client snapshot has no authority to create, resolve or discard
@@ -2092,6 +2116,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
     $payload['restEvents'] = is_array($previous['restEvents'] ?? null)
         ? array_values(array_filter($previous['restEvents'],
             static fn (mixed $event): bool => is_array($event) && (int) ($event['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000))) : [];
+    $previous = applicationWithoutFinalizedPendingAttacks($previous);
     $attacks = [];
     foreach ($previous['attackReceipts'] ?? [] as $receipt) {
         if (is_array($receipt['attack'] ?? null)) $attacks[$receipt['attack']['id'] ?? ''] = $receipt['attack'];
@@ -2102,7 +2127,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if (!is_array($attack)) return $attack;
         if (isset($attack['id']) && !is_string($attack['id'])) sendError(400, 'Identifiant d’attaque invalide.', 'invalid_activity_domain');
         $old = $attacks[$attack['id'] ?? ''] ?? [];
-        if ($protected($old)) return $old;
+        if ($protected($old) || applicationAttackIsFinalized($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
         foreach(['areaGate','areaGateParentId','targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
@@ -2121,7 +2146,9 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         }
     }
     foreach ($previous['attackReceipts'] ?? [] as $receipt) {
-        if ($protected($receipt['attack']??null)) $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        if ($protected($receipt['attack'] ?? null) || applicationAttackIsFinalized($receipt['attack'] ?? null)) {
+            $receipts[$receipt['requestId'] ?? ''] = $receipt;
+        }
     }
     if (array_key_exists('attackReceipts', $payload) || $receipts !== []) $payload['attackReceipts'] = array_values($receipts);
     // Erasing an entire pending attack must not bypass the protection above.
@@ -2132,7 +2159,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
             $payload['pendingAttacks'][] = $attack;
         }
     }
-    return $payload;
+    return applicationWithoutFinalizedPendingAttacks($payload);
 }
 
 function validApplicationAbilityCueEvents(mixed $events): bool
@@ -2438,6 +2465,7 @@ function applicationCharacterTokenDomainRecords(PDO $connection, string $charact
 function applicationDomainPayload(array $records, string $key, array $fallback = []): array
 {
     $payload = $records[$key]['payload'] ?? null;
+    if ($key === 'activity' && is_array($payload)) $payload = applicationWithoutFinalizedPendingAttacks($payload);
     return is_array($payload) ? applicationDomainFatiguePayload($key, $payload) : $fallback;
 }
 
@@ -3020,6 +3048,7 @@ function applicationConsistentDomainRead(PDO $connection, callable $read): mixed
 
 function projectApplicationGmPendingAreaGates(array $payload): array
 {
+    $payload = applicationWithoutFinalizedPendingAttacks($payload);
     foreach ($payload['pendingAttacks'] ?? [] as $index => $attack) {
         if (($attack['status'] ?? null) !== 'pending' || ($attack['validationKind'] ?? null) !== 'area-gate'
             || !is_array($attack['areaGate'] ?? null)) {
@@ -3555,6 +3584,7 @@ function patchApplicationDomains(PDO $connection): never
         applyApplicationDamageOverTimeOnTurn($connection, $records, $pendingByKey, $identity);
         $pending = array_values($pendingByKey);
         $pending = onlineAdvanceDevicesOnChanges($connection, $records, $pending, $identity);
+        $pending = applicationCancelAttacksForDeletedTokens($connection, $pending);
         if ($pending === []) {
             $connection->commit();
             sendJson(200, ['ok' => true, 'revision' => $clock['globalRevision'], 'domains' => []]);

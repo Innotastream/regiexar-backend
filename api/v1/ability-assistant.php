@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/assistant-object-plan.php';
+require_once __DIR__ . '/ability-assistant-combat.php';
 
 const XAR_ABILITY_ASSISTANT_MAXIMUM_TURNS = 12;
 const XAR_ABILITY_ASSISTANT_MAXIMUM_PROMPT_BYTES = 6000;
@@ -269,9 +270,14 @@ function listAbilityAssistantMessages(PDO $connection, string $conversationId, b
 function createAbilityAssistantMessage(PDO $connection, string $conversationId): never
 {
     $identity = requireAbilityAssistantIdentity($connection);
-    requireOwnedAbilityAssistantConversation($connection, $identity, $conversationId);
+    $conversation = requireOwnedAbilityAssistantConversation($connection, $identity, $conversationId);
     $payload = readJsonBody(16384);
     $prompt = cleanAbilityAssistantText($payload['prompt'] ?? '', XAR_ABILITY_ASSISTANT_MAXIMUM_PROMPT_BYTES, 'Description');
+    $context = json_decode((string) ($conversation['context_json'] ?? '{}'), true);
+    $combatCommand = ($context['mode'] ?? '') === 'help' ? abilityAssistantCombatCommand($prompt) : null;
+    if ($combatCommand !== null && !abilityAssistantCanOperateCombat($identity, $conversation)) {
+        sendError(403, 'Le diagnostic et la correction des validations de combat sont réservés au MJ.', 'assistant_combat_forbidden');
+    }
     $clientRequestId = trim((string) ($payload['clientRequestId'] ?? ''));
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $clientRequestId) !== 1) {
         sendError(400, 'Référence de demande invalide.', 'invalid_client_request');
@@ -302,6 +308,9 @@ function createAbilityAssistantMessage(PDO $connection, string $conversationId):
             $requestMismatch = (string) $existing['conversation_id'] !== $conversationId
                 || !hash_equals((string) $existing['prompt'], $prompt);
             if (!$requestMismatch) $duplicateMessage = $existing;
+        } elseif ($combatCommand !== null) {
+            assertAbilityAssistantTurnAvailable($connection, $conversationId);
+            $id = completeAbilityAssistantCombatCommand($connection, $identity, $conversationId, $prompt, $clientRequestId, $combatCommand);
         } else {
             $accessLock = $connection->query("SELECT GET_LOCK('xar-regie-codex-access', 12)");
             if ($accessLock === false || (int) $accessLock->fetchColumn() !== 1) {
@@ -310,11 +319,7 @@ function createAbilityAssistantMessage(PDO $connection, string $conversationId):
             $regieAccessLockHeld = true;
             $service = imageStudioRegieServiceRecord($connection);
             if ((bool) $service['paused']) sendError(423, 'Le Compte de la Régie est actuellement en pause.', 'regie_codex_paused');
-            $turns = $connection->prepare('SELECT COUNT(*) FROM ability_assistant_messages WHERE conversation_id = :conversation_id');
-            $turns->execute([':conversation_id' => $conversationId]);
-            if ((int) $turns->fetchColumn() >= XAR_ABILITY_ASSISTANT_MAXIMUM_TURNS) {
-                sendError(429, 'Cette conversation a atteint douze demandes. Appliquez la proposition ou ouvrez une nouvelle assistance.', 'assistant_turn_limit');
-            }
+            assertAbilityAssistantTurnAvailable($connection, $conversationId);
             $active = $connection->prepare(
                 "SELECT (SELECT COUNT(*) FROM ability_assistant_messages WHERE author_account_id = :assistant_account_id "
                 . "AND status IN ('queued', 'generating')) + (SELECT COUNT(*) FROM image_studio_messages "
@@ -334,8 +339,7 @@ function createAbilityAssistantMessage(PDO $connection, string $conversationId):
                 ':id' => $id, ':conversation_id' => $conversationId, ':author_account_id' => $accountId,
                 ':prompt' => $prompt, ':client_request_id' => $clientRequestId,
             ]);
-            $touch = $connection->prepare('UPDATE ability_assistant_conversations SET updated_at = UTC_TIMESTAMP(3) WHERE id = :id');
-            $touch->execute([':id' => $conversationId]);
+            touchAbilityAssistantConversation($connection, $conversationId);
         }
     } finally {
         if ($regieAccessLockHeld) {
@@ -357,6 +361,21 @@ function createAbilityAssistantMessage(PDO $connection, string $conversationId):
         sendJson(200, ['ok' => true, 'deduplicated' => true, 'message' => abilityAssistantMessagePayload($duplicateMessage)]);
     }
     sendJson(202, ['ok' => true, 'deduplicated' => false, 'message' => abilityAssistantMessagePayload(abilityAssistantMessageRecord($connection, $id))]);
+}
+
+function assertAbilityAssistantTurnAvailable(PDO $connection, string $conversationId): void
+{
+    $turns = $connection->prepare('SELECT COUNT(*) FROM ability_assistant_messages WHERE conversation_id = :conversation_id');
+    $turns->execute([':conversation_id' => $conversationId]);
+    if ((int) $turns->fetchColumn() >= XAR_ABILITY_ASSISTANT_MAXIMUM_TURNS) {
+        sendError(429, 'Cette conversation a atteint douze demandes. Appliquez la proposition ou ouvrez une nouvelle assistance.', 'assistant_turn_limit');
+    }
+}
+
+function touchAbilityAssistantConversation(PDO $connection, string $conversationId): void
+{
+    $touch = $connection->prepare('UPDATE ability_assistant_conversations SET updated_at = UTC_TIMESTAMP(3) WHERE id = :id');
+    $touch->execute([':id'=>$conversationId]);
 }
 
 function normalizeAbilityAssistantDraft(array $conversation, mixed $value): ?array
@@ -645,7 +664,10 @@ function abilityAssistantWorkerJobPayload(PDO $connection, array $message): arra
         ];
     }
     $context = json_decode((string) $conversation['context_json'], true);
-    if (is_array($context)) unset($context['_objectSnapshots']);
+    if (is_array($context)) {
+        unset($context['_objectSnapshots']);
+        if (($context['mode'] ?? '') === 'help') $context['verifiedHelp'] = abilityAssistantHelpGuidance((string) ($context['role'] ?? ''));
+    }
     return [
         'jobType' => 'ability-assistant', 'id' => (string) $message['id'],
         'conversationId' => (string) $message['conversation_id'], 'prompt' => (string) $message['prompt'],

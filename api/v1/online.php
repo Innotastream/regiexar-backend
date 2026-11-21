@@ -6700,6 +6700,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
             array_splice($pendingAttacks, $pendingIndex, 1);
             $activity['pendingAttacks'] = $pendingAttacks;
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             if ($decision === 'approve') {
                 $parties = onlinePendingAttackParties($connection, $records, $attack);
                 if(!empty($attack['oppositionAbility']['ability']['opposition']['consumeOnAttempt'])||($attack['oppositionAbility']['ability']['opposition']['successTrigger']??'')==='roll'){$previousStatus=$attack['status'];$attack['status']=$attack['provisionalStatus']??'applied';onlineApplyOppositionAbility($connection,$records,$pending,$attack,$identity);$attack['status']=$previousStatus;}
@@ -6729,6 +6730,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 if(($attack['projectileGate']['pending']??false)&&$attack['projectileGate']['percent']>0&&($attack['opposed']??false)&&!($attack['hit']['outcome']['breaksOpposition']??false)) {
                     $attack['status']='awaiting-opposition';unset($attack['validationKind'],$attack['provisionalStatus']);$activity['pendingAttacks'][]=$attack;
+                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 } elseif (in_array($attack['validationKind'] ?? '', ['outcome', 'reaction'], true)) {
                     $provisionalStatus = in_array($attack['provisionalStatus'] ?? '', ['applied', 'blocked', 'missed', 'defended'], true)
                         ? (string) $attack['provisionalStatus']
@@ -7617,7 +7619,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         $revision = $pending === []
             ? (int) $clock['globalRevision']
-            : persistDomainChangesInTransaction($connection, $identity, $clock, array_values($pending));
+            : persistDomainChangesInTransaction($connection, $identity, $clock,
+                applicationCancelAttacksForDeletedTokens($connection, array_values($pending)));
         $connection->commit();
         cleanupApplicationDomainHistory($connection);
         if ($command === 'token.move' && !$isGm) {
