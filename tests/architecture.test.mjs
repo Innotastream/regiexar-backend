@@ -101,8 +101,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.19'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-1-combat-recovery-map-scale-20261121-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.20'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-2-terrain-combat-20261121-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -139,8 +139,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
   assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.19");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.1");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.20");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.2");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 25);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -354,9 +354,9 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.3.1");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.1"]);
-  assert.equal(manifest.minimumApplicationVersion, "4.3.1");
+  assert.equal(manifest.announcedApplicationVersion, "4.3.2");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.2"]);
+  assert.equal(manifest.minimumApplicationVersion, "4.3.2");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
