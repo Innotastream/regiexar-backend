@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/diagnostic-collection.php';
+
 function diagnosticSafeText(mixed $value, int $limit = 2000): string {
     if (!is_scalar($value) && $value !== null) return '';
     $text = substr((string) $value, 0, min(12000, max(1000, $limit * 2)));
@@ -113,6 +115,21 @@ function diagnosticReaderClientRows(PDO $connection, int $since, int $limit, ?st
     ], $statement->fetchAll());
 }
 
+function diagnosticReaderCollectionOwners(PDO $connection, string $account): array {
+    $statement = $connection->prepare(
+        'SELECT id FROM accounts'
+        . ' WHERE CAST(LOWER(username) AS BINARY) = CAST(LOWER(:username) AS BINARY)'
+        . ' OR CAST(LOWER(display_name) AS BINARY) = CAST(LOWER(:display_name) AS BINARY)'
+    );
+    $statement->execute([':username' => $account, ':display_name' => $account]);
+    $owners = [];
+    foreach ($statement->fetchAll(PDO::FETCH_COLUMN) as $accountId) {
+        $owners[] = diagnosticCollectionOwner((string) $accountId, 'gm');
+        $owners[] = diagnosticCollectionOwner((string) $accountId, 'player');
+    }
+    return $owners;
+}
+
 function serveDiagnosticReader(?array $configuration, string $method, array $query, array $headers, callable $connect): never {
     $settings = $configuration['diagnostics'] ?? null;
     $expected = is_array($settings) ? ($settings['reader_token_sha256'] ?? null) : null;
@@ -147,9 +164,15 @@ function serveDiagnosticReader(?array $configuration, string $method, array $que
     $since = time() - $hours * 3600;
     $clientJournalAvailable = false;
     $errors = [];
+    $collectionOwners = $account === null ? null : [];
     try {
-        $errors = diagnosticReaderClientRows($connect(), $since, $limit, $account);
+        $connection = $connect();
+        $errors = diagnosticReaderClientRows($connection, $since, $limit, $account);
         $clientJournalAvailable = true;
+        $collectionPath = diagnosticCollectionPath();
+        if ($account !== null && $collectionPath !== null && is_file($collectionPath)) {
+            $collectionOwners = diagnosticReaderCollectionOwners($connection, $account);
+        }
     } catch (Throwable $error) {
         error_log('[xar-regie-diagnostic] reader database unavailable: ' . get_class($error));
     }
@@ -158,6 +181,7 @@ function serveDiagnosticReader(?array $configuration, string $method, array $que
         'clientJournalAvailable' => $clientJournalAvailable,
         'errors' => $errors,
         'serverErrors' => array_map('diagnosticReaderEvent', backendDiagnosticRows($limit, $since)),
+        'networkSamples' => diagnosticCollectionReports($collectionOwners, $since, $limit),
     ];
     // Existing diagnostic truncation is byte based. Normalize a possible incomplete UTF-8 suffix for JSON.
     sendJson(200, json_decode(json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR));
@@ -169,10 +193,49 @@ function handlePublicDiagnosticShare(PDO $connection, string $route, string $met
     $statement = $connection->prepare('SELECT id FROM diagnostic_shares WHERE token_hash = :hash AND expires_at > UTC_TIMESTAMP(3) LIMIT 1');
     $statement->execute([':hash' => hash('sha256', $match[1])]);
     if (!$statement->fetch()) sendError(404, 'Ce lien de diagnostic a expiré ou a été révoqué.', 'diagnostic_share_missing');
-    sendJson(200, ['ok' => true, 'generatedAt' => gmdate('c'), 'backendVersion' => XAR_BACKEND_VERSION, 'errors' => applicationDiagnosticRows($connection), 'serverErrors' => function_exists('backendDiagnosticRows') ? backendDiagnosticRows() : []], $headOnly);
+    sendJson(200, [
+        'ok' => true, 'generatedAt' => gmdate('c'), 'backendVersion' => XAR_BACKEND_VERSION,
+        'errors' => applicationDiagnosticRows($connection), 'serverErrors' => function_exists('backendDiagnosticRows') ? backendDiagnosticRows() : [],
+        'networkSamples' => diagnosticCollectionReports(),
+    ], $headOnly);
+}
+
+function handleDiagnosticCollectionRoute(PDO $connection, string $route, string $method): void {
+    $upload = $route === '/api/v1/diagnostics/collect/sample';
+    requireMethod($method, $upload ? ['POST'] : ['GET', 'POST']);
+    $identity = requireIdentity($connection);
+    if (!$upload) requireDiagnosticGm($identity);
+    try {
+        if ($upload) {
+            $deduplicated = storeDiagnosticCollectionSample(
+                $identity, (string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? ''), readJsonBody(XAR_DIAGNOSTIC_COLLECTION_UPLOAD_BYTES),
+            );
+            sendJson(200, ['ok' => true, 'deduplicated' => $deduplicated]);
+        }
+        $collection = $method === 'GET'
+            ? diagnosticCollectionSummary(diagnosticCollectionRead(diagnosticCollectionPath(), diagnosticCollectionNow()))
+            : startDiagnosticCollection($identity, static fn(): array => liveOnlinePresence($connection));
+        sendJson(200, ['ok' => true, 'collection' => $collection]);
+    } catch (RuntimeException $error) {
+        $message = match ($error->getMessage()) {
+            'diagnostic_collection_sample_invalid' => 'Bilan de diagnostic invalide.',
+            'diagnostic_collection_not_expected' => 'Ce poste ne fait pas partie de cette collecte.',
+            'diagnostic_collection_missing' => 'Cette collecte n’est plus disponible.',
+            'diagnostic_collection_expired' => 'La collecte est terminée.',
+            'diagnostic_collection_cooldown' => 'Patientez avant de relancer une collecte.',
+            'diagnostic_collection_busy' => 'Une collecte est en cours de traitement. Réessayez.',
+            'diagnostic_collection_unavailable' => 'Le stockage des diagnostics est indisponible.',
+            default => null,
+        };
+        if ($message === null) throw $error;
+        sendError($error->getCode(), $message, $error->getMessage());
+    }
 }
 
 function handleDiagnosticRoute(PDO $connection, string $route, string $method, bool $headOnly): bool {
+    if ($route === '/api/v1/diagnostics/collect' || $route === '/api/v1/diagnostics/collect/sample') {
+        handleDiagnosticCollectionRoute($connection, $route, $method);
+    }
     if (!in_array($route, ['/api/v1/diagnostics/errors', '/api/v1/diagnostics/share'], true)) return false;
     $identity = requireIdentity($connection);
     if ($route === '/api/v1/diagnostics/share') {
@@ -184,7 +247,11 @@ function handleDiagnosticRoute(PDO $connection, string $route, string $method, b
     }
     if ($method === 'GET' || $method === 'HEAD') {
         requireDiagnosticGm($identity);
-        sendJson(200, ['ok' => true, 'errors' => applicationDiagnosticRows($connection, (int) ($_GET['after'] ?? 0)), 'serverErrors' => function_exists('backendDiagnosticRows') ? backendDiagnosticRows() : []], $headOnly);
+        sendJson(200, [
+            'ok' => true, 'errors' => applicationDiagnosticRows($connection, (int) ($_GET['after'] ?? 0)),
+            'serverErrors' => function_exists('backendDiagnosticRows') ? backendDiagnosticRows() : [],
+            'networkSamples' => diagnosticCollectionReports(),
+        ], $headOnly);
     }
     requireMethod($method, ['POST']);
     $body = readJsonBody(); $events = $body['events'] ?? null;

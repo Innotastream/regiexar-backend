@@ -1,3 +1,9 @@
+## Backend 0.19.18 — client 4.3.1 — 21 novembre 2026
+
+Le build `client-4-3-1-validation-vision-diagnostics-20261121-1` ajoute au journal MJ un regroupement ponctuel des mesures locales de connexion. L’annulation d’une action reste disponible après la libération de sa recharge et préserve les utilisations ultérieures. Les schémas SQL, session, domaines et fiches restent 24/22/1/10.
+
+La politique de connexion accepte exclusivement le client 4.3.1. Le basculement du backend suit la disponibilité du paquet Windows 4.3.1.
+
 ## Backend 0.19.17 — client 4.3.0 — 21 novembre 2026
 
 Les lectures MJ signalent les zones dont les défenses restent à choisir. La validation automatique des dégâts du client 4.3.0 ignore ces zones. Le tableau conserve le choix de chaque défense et les préparations existantes restent utilisables.

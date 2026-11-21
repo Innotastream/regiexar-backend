@@ -90,6 +90,7 @@ jobs:
           php tests/body-charge.php
           php tests/body-charge-undo.php
           php tests/combat-undo.php
+          php tests/combat-undo-cooldowns.php
           php tests/ability-movement-lock.php
           php tests/friendly-fire.php
           php tests/elemental-breath.php
@@ -169,6 +170,8 @@ jobs:
         run: php tests/image-studio-idempotence-contract.php
       - name: Authenticated diagnostic logs and expiring shares
         run: php tests/diagnostics-contract.php
+      - name: Bounded diagnostic collection and parallel reports
+        run: php tests/diagnostic-collection-contract.php
       - name: Private PHP warning and failure journal
         run: php tests/runtime-diagnostics-contract.php
       - name: Check short SSE upstream leases

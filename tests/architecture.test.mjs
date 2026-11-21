@@ -23,6 +23,7 @@ function phpBlocks(source) {
 }
 
 PHP_SOURCES.push("api/v1/diagnostics.php", "api/v1/runtime-diagnostics.php", "tests/diagnostics-contract.php", "tests/runtime-diagnostics-contract.php");
+PHP_SOURCES.push("api/v1/diagnostic-collection.php", "tests/diagnostic-collection-contract.php");
 PHP_SOURCES.push("api/v1/complex-movement.php", "tests/celestial-serpent-cases.php", "api/v1/damage-guard.php", "tests/native-abilities-contract.php");
 PHP_SOURCES.push("tests/mysql-history-retention.php", "tests/mysql-character-lore.php");
 PHP_SOURCES.push('api/v1/unit-authority.php','api/v1/device-items.php','api/v1/map-passages.php','api/v1/token-spacing.php','tests/unit-inventory-contract.php','tests/map-passages-contract.php');
@@ -100,8 +101,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.17'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-0-validation-zone-20261121-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.18'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-1-validation-vision-diagnostics-20261121-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -138,8 +139,8 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
   assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.17");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.0");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.18");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.1");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -350,8 +351,9 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.3.0");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.0"]);
+  assert.equal(manifest.announcedApplicationVersion, "4.3.1");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.1"]);
+  assert.equal(manifest.minimumApplicationVersion, "4.3.1");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);

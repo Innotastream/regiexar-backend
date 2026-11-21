@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.17';
-const XAR_BACKEND_BUILD = 'client-4-3-0-validation-zone-20261121-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.0';
+const XAR_BACKEND_VERSION = '0.19.18';
+const XAR_BACKEND_BUILD = 'client-4-3-1-validation-vision-diagnostics-20261121-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.1';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.0'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.1'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 24;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
@@ -19,6 +19,13 @@ const XAR_LOGIN_LOCK_SECONDS = 60;
 const XAR_LOGIN_TAKEOVER_WAIT_MICROSECONDS = 10000000;
 
 date_default_timezone_set('UTC');
+
+function networkResponseTimingMode(?string $mode = null): string
+{
+    static $timing = '';
+    if ($mode !== null) $timing = $mode;
+    return $timing;
+}
 
 function sendJson(int $status, array $payload, bool $headOnly = false, array $extraHeaders = []): never
 {
@@ -37,7 +44,13 @@ function sendJson(int $status, array $payload, bool $headOnly = false, array $ex
         header((string) $name . ': ' . (string) $value, true);
     }
     if (!$headOnly) {
-        echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (networkResponseTimingMode() === 'ready') {
+            $now = microtime(true);
+            $started = (float) ($_SERVER['REQUEST_TIME_FLOAT'] ?? $now);
+            header('Server-Timing: xar;dur=' . number_format(max(0, ($now - $started) * 1000), 2, '.', ''), false);
+        }
+        echo $json;
     }
     exit;
 }
@@ -1553,6 +1566,7 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
         $update->execute();
     }
     unset($identity['renewal_due']);
+    if (networkResponseTimingMode() === 'session') networkResponseTimingMode('ready');
     return $identity;
 }
 
@@ -2151,6 +2165,12 @@ if (requestHost() !== XAR_API_HOST) {
 }
 
 $route = requestRoute();
+networkResponseTimingMode(match ($method . ' ' . $route) {
+    'GET /api/v1/state', 'GET /api/v1/state/domains', 'PATCH /api/v1/state/domains',
+    'POST /api/v1/state/command', 'GET /api/v1/auth/me', 'GET /api/v1/events' => 'session',
+    'POST /api/v1/auth/login' => 'ready',
+    default => '',
+});
 if ($route === '/api/v1') {
     requireMethod($method, ['GET', 'HEAD']);
     sendJson(200, [

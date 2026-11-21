@@ -17,6 +17,7 @@ require_once __DIR__.'/contact-effect-zones-online.php';
 require_once __DIR__ . '/luck-reset.php';
 require_once __DIR__ . '/special-success.php';
 require_once __DIR__ . '/light-glow.php';
+require_once __DIR__ . '/diagnostic-collection.php';
 require_once __DIR__ . '/simple-weapon-ability.php';
 require_once __DIR__ . '/timed-attack-penalty.php';
 require_once __DIR__ . '/movement-effect-projection.php';
@@ -5391,7 +5392,7 @@ function tryPostOnlineDiscordText(PDO $connection, array $configuration, string 
         $response = curl_exec($request);
         $status = (int) curl_getinfo($request, CURLINFO_RESPONSE_CODE);
         $failed = $response === false;
-        curl_close($request);
+        unset($request);
         if ($failed || $status < 200 || $status >= 300) {
             return ['posted' => false, 'error' => 'Discord a refusé ou interrompu l’envoi.'];
         }
@@ -7835,7 +7836,11 @@ function streamOnlineEvents(PDO $connection): never
     if ($currentRevision !== $knownRevision) {
         writeOnlineEvent('revision', ['revision' => $currentRevision], $currentRevision);
     }
-    writeOnlineEvent('presence', ['presence' => $presence]);
+    $diagnosticCollection = diagnosticCollectionSignal($identity);
+    writeOnlineEvent('presence', [
+        'presence' => $presence,
+        ...($diagnosticCollection === null ? [] : ['diagnosticCollection' => $diagnosticCollection]),
+    ]);
     $takeoverAt = dateTimestamp($identity['takeover_requested_at'] ?? null);
     if (backendSessionNeedsHandoff($identity)) {
         writeOnlineEvent('session-takeover', ['reason' => 'backend-update']);
@@ -8836,7 +8841,7 @@ function postOnlineDiscord(PDO $connection, array $configuration): never
     $response = curl_exec($request);
     $status = (int) curl_getinfo($request, CURLINFO_RESPONSE_CODE);
     $failed = $response === false;
-    curl_close($request);
+    unset($request);
     if ($deleteAttachment && is_string($temporary)) {
         @unlink($temporary);
     }
