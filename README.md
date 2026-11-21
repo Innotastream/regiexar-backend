@@ -1,3 +1,7 @@
+## Backend 0.19.15 — reprise de connexion MJ — 21 novembre 2026
+
+Le build `client-4-2-10-reprise-connexion-20261121-1` répare les identifiants partagés par d’anciennes copies de scènes lors de la première lecture complète par un MJ. Les documents modifiés sont historisés dans la transaction. Le client 4.2.10 et le schéma SQL courant suffisent.
+
 ## Backend 0.19.15 — client 4.2.10 — 20 novembre 2026
 
 Le build `client-4-2-10-supra-miroir-20261120-1` prolonge la diffusion du Supra-miroir à 7,6 secondes, avec sa marge de livraison habituelle. Le passage à la **4.2.10** conserve le drainage de 30 secondes des connexions précédentes. Les schémas SQL, session, domaines et fiches restent **24/22/1/10**.

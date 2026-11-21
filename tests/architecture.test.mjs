@@ -101,7 +101,7 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.15'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-10-supra-miroir-20261120-1'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-10-reprise-connexion-20261121-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
