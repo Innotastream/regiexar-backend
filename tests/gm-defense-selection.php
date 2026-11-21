@@ -30,6 +30,41 @@ specialCheck(array_column($db->payload('activity')['pendingAttacks'],'id')===
     array_values(array_filter(array_column($activity['pendingAttacks'],'id'),static fn(string $id):bool=>$id!==$orphanId)),'Other pending attacks are retained');
 specialCheck($db->payload('character:character-player')===$committed,'Clearing the orphan does not change resources');
 
+// Two independent MJ accounts can prepare and approve in a non-broadcast scene.
+// Old tokens without a layerId inherit the authoritatively selected upper floor.
+$floorDb = specialFixture();
+$floorDb->put('table', [...$floorDb->payload('table'), 'activeSceneId' => 'scene-two']);
+$floorDb->put('scene-index', ['order' => ['scene-one', 'scene-two']]);
+$floorDb->put('scene:scene-one', ['metadata' => ['id' => 'scene-one', 'name' => 'Démo technique']]);
+$floorDb->put('map:scene-one', [...$map, 'activeLayerId' => 'upper']);
+$floorCharacter = $floorDb->payload('character:character-player');
+$floorCharacter['abilities'] = [$before['abilities'][0]];
+$floorDb->put('character:character-player', $floorCharacter);
+foreach (['token-player' => 20, 'token-monster' => 25, 'token-monster-two' => 27, 'token-independent' => 90] as $tokenId => $x) {
+    $key = 'token:scene-one:' . $tokenId;
+    $token = [...$floorDb->payload($key), 'x' => $x, 'y' => $x === 90 ? 90 : 50];
+    unset($token['layerId']);
+    $floorDb->put($key, $token);
+}
+$floorArgs = [...$args, 'layerId' => 'upper', 'requestId' => 'floor-defense-' . randomToken(16)];
+$floorPrepared = runCommand($floorDb, 'token.attack', $floorArgs, true, 'account-gm-one');
+specialCheck($floorPrepared->status === 200 && !empty($floorPrepared->body['pendingAreaGate']),
+    'The first MJ prepares the zone in the upper floor: ' . json_encode($floorPrepared->body));
+$floorAttack = $floorPrepared->body['attack'];
+specialCheck($floorAttack['layerId'] === 'upper' && $floorAttack['areaGate']['sourceParty']['layerId'] === 'upper',
+    'The prepared footprint uses the actual floor for a legacy token');
+$floorDecision = ['requestId' => 'floor-approve-' . randomToken(16), 'attackId' => $floorAttack['id'],
+    'confirmed' => true, 'decision' => 'approve', 'defenseTokenIds' => ['token-monster']];
+$floorTarget = $floorDb->payload('token:scene-one:token-monster');
+$floorDb->put('token:scene-one:token-monster', [...$floorTarget, 'layerId' => 'ground']);
+$staleFloor = runCommand($floorDb, 'token.attack.area.resolve', $floorDecision, true, 'account-gm-two');
+specialCheck($staleFloor->status === 409 && $staleFloor->body['code'] === 'area_gate_refused'
+    && str_contains($staleFloor->body['error'], 'Une cible a changé'),
+    'An actual target floor change is still rejected');
+$floorDb->put('token:scene-one:token-monster', $floorTarget);
+$floorResult = runCommand($floorDb, 'token.attack.area.resolve', $floorDecision, true, 'account-gm-two');
+specialCheck($floorResult->status === 200, 'The second MJ can approve on the prepared floor from another published scene: ' . json_encode($floorResult->body));
+
 // A real stat roll is prepared once and its exact outcome drives the table.
 $c=$db->payload('character:character-player');$c['abilities'][0]['castingStatId']='character-stat-force';$db->put('character:character-player',$c);$rollArgs=[...$args,'requestId'=>'native-prepared-roll-'.randomToken(16)];$before=$db->payload('character:character-player');$rolled=runCommand($db,'token.attack',$rollArgs);specialCheck($rolled->status===200,'Stat area preparation accepted');$parent=array_values(array_filter($db->payload('activity')['pendingAttacks'],static fn($a)=>$a['id']===$rolled->body['attack']['id']))[0];$raw=$parent['hit']['raw'];specialCheck(is_int($raw)&&$raw>=1&&$raw<=100,'One real d100 stored before the table');specialCheck($db->payload('character:character-player')===$before,'Prepared hit spends nothing');$expected=[];foreach($parent['areaGate']['targetTokenIds']as$id){$outcome=$parent['areaGate']['preparedHit']['outcomes'][$id];if(!empty($outcome['success'])&&empty($outcome['breaksOpposition']))$expected[]=$id;}specialCheck($expected===$parent['areaGate']['defenseEligibleTokenIds'],'Eligibility follows the real hit outcome, including remarkable results');$approved=runCommand($db,'token.attack.area.resolve',['requestId'=>'native-real-roll-'.randomToken(16),'attackId'=>$parent['id'],'confirmed'=>true,'decision'=>'approve','defenseTokenIds'=>$expected],true);specialCheck($approved->status===200,'Prepared hit can be approved');$issued=$approved->body['areaAttacks'];$expectedReceiptCount=!empty($parent['hit']['outcome']['success'])?count($parent['areaGate']['targetTokenIds'])+1:1;specialCheck(count($issued)===$expectedReceiptCount,'Approval keeps its anchor and exactly the target receipts allowed by the prepared outcome');specialCheck(array_filter($issued,static fn($child)=>($child['hit']['raw']??null)!==$raw)===[],'Every approval receipt reuses the exact prepared d100');
 

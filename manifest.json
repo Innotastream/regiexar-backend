@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.19.16",
+  "backendVersion": "0.19.17",
   "announcedApplicationVersion": "4.3.0",
   "allowedApplicationVersions": [
     "4.3.0"

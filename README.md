@@ -1,3 +1,7 @@
+## Backend 0.19.17 — client 4.3.0 — 21 novembre 2026
+
+Les lectures MJ signalent les zones dont les défenses restent à choisir. La validation automatique des dégâts du client 4.3.0 ignore ces zones. Le tableau conserve le choix de chaque défense et les préparations existantes restent utilisables.
+
 ## Backend 0.19.16 — client 4.3.0 — 21 novembre 2026
 
 Le build client-4-3-0-coherence-fluidite-20261121-1 corrige la cohérence des scènes, des passages, de l’initiative et des actions de combat. Il maintient la réparation transactionnelle des identifiants hérités des anciennes copies de scènes et rattache la suppression des scènes à celle de leurs documents associés. La synchronisation des sessions et la rétention des données réduisent les écritures et le volume traité. Les schémas SQL, session, domaines et fiches restent 24/22/1/10.

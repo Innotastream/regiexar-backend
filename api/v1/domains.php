@@ -2990,6 +2990,19 @@ function applicationConsistentDomainRead(PDO $connection, callable $read): mixed
     }
 }
 
+function projectApplicationGmPendingAreaGates(array $payload): array
+{
+    foreach ($payload['pendingAttacks'] ?? [] as $index => $attack) {
+        if (($attack['status'] ?? null) !== 'pending' || ($attack['validationKind'] ?? null) !== 'area-gate'
+            || !is_array($attack['areaGate'] ?? null)) {
+            continue;
+        }
+        // Client 4.3.0 uses this flag to exclude the zone from automatic damage approval.
+        $payload['pendingAttacks'][$index]['areaGate']['pending'] = true;
+    }
+    return $payload;
+}
+
 function domainApplicationStateRecord(PDO $connection): array
 {
     ensureDomainStoreInitialized($connection);
@@ -3000,7 +3013,7 @@ function domainApplicationStateRecord(PDO $connection): array
     return [
         'schemaVersion' => XAR_SESSION_SCHEMA_VERSION,
         'revision' => $clock['globalRevision'],
-        'state' => $state,
+        'state' => projectApplicationGmPendingAreaGates($state),
     ];
 }
 
@@ -3200,11 +3213,12 @@ function applicationDomainReadResponse(PDO $connection, int $since, string $pref
         if (!isset($records[$key])) {
             continue;
         }
+        $payload = applicationDomainFatiguePayload($key, $records[$key]['payload']);
         $entries[] = [
             'key' => $key,
             'schemaVersion' => $records[$key]['schemaVersion'],
             'revision' => $records[$key]['revision'],
-            'payload' => applicationDomainFatiguePayload($key, $records[$key]['payload']),
+            'payload' => $key === 'activity' ? projectApplicationGmPendingAreaGates($payload) : $payload,
         ];
     }
     return [

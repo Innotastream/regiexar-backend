@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.16';
-const XAR_BACKEND_BUILD = 'client-4-3-0-coherence-fluidite-20261121-1';
+const XAR_BACKEND_VERSION = '0.19.17';
+const XAR_BACKEND_BUILD = 'client-4-3-0-validation-zone-20261121-1';
 const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.0';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
 const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.0'];

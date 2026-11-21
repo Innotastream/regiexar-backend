@@ -53,7 +53,11 @@ function onlineQueueDeferredDefenseGate(PDO $connection,array &$records,array &$
     return ['attack'=>$isGm?$attack:publicOnlineAttackResult($attack,true,false),'pendingAreaGate'=>true,'execution'=>null,'rolls'=>[],'deduplicated'=>false,'discordContent'=>''];
 }
 function onlineAssertDeferredDefenseParties(PDO $connection,array &$records,array $pending,array $attack,array $allowed):array{
-    $gate=$attack['areaGate'];$sceneId=$attack['sceneId'];$map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);$tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$map['tokens']=$tokens;
+    $gate=$attack['areaGate'];$sceneId=$attack['sceneId'];$mapKey='map:'.$sceneId;
+    if (!isset($pending[$mapKey]) && !isset($records[$mapKey])) {
+        $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
+    }
+    $map=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);$tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$map['tokens']=$tokens;
     $source=null;foreach($tokens as$token)if($token['id']===$attack['sourceTokenId'])$source=$token;
     if(!$source||canonicalApplicationDomainValue(onlineDefenseParty($connection,$records,$source,$map))!==canonicalApplicationDomainValue($gate['sourceParty'])||(float)($source['hp']??0)<=0)throw new RuntimeException('Le lanceur a changé depuis l’aperçu. Refusez cette demande et préparez à nouveau l’action.',409);
     $targets=[];$eligible=[];foreach($gate['targetTokenIds']as$id){$target=null;foreach($tokens as$token)if($token['id']===$id)$target=$token;

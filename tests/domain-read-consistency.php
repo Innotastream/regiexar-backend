@@ -82,4 +82,27 @@ $db=new SnapshotReadConnection(fixture(),'none');$db->failDomainRead=true;
 try { playerApplicationStateRecord($db);throw new RuntimeException('Read failure was swallowed'); }
 catch(RuntimeException $error){snapshotCheck($error->getMessage()==='fixture_read_failure','Original read failure is preserved');}
 snapshotCheck($db->rollbacks===1&&!$db->inTransaction(),'Owned read transaction is cleaned up on failure');
+
+$db = new SnapshotReadConnection(fixture(), 'none');
+$activity = $db->live->payload('activity');
+$prepared = [
+    'id' => 'attack-prepared-zone', 'status' => 'pending', 'validationKind' => 'area-gate',
+    'areaGate' => ['version' => 1, 'targetTokenIds' => ['token-monster']],
+];
+$normal = ['id' => 'attack-normal-damage', 'status' => 'pending', 'validationKind' => 'damage'];
+$activity['pendingAttacks'] = [$prepared, $normal];
+$activity['attackReceipts'] = [['attack' => $prepared]];
+$db->live->put('activity', $activity, 2);
+$db->changes[] = ['global_revision'=>10,'domain_key'=>'activity','domain_revision'=>2,'operation'=>'upsert'];
+foreach ([0, 9] as $since) {
+    $result = readSnapshotDomains($db, $since);
+    $projected = array_column($result['domains'], 'payload', 'key')['activity'];
+    snapshotCheck($projected['pendingAttacks'][0]['areaGate']['pending'] === true, 'A prepared zone is excluded from the 4.3.0 automatic validation in both reset and delta');
+    snapshotCheck($projected['pendingAttacks'][1] === $normal, 'An ordinary damage approval remains available');
+    snapshotCheck($projected['attackReceipts'] === $activity['attackReceipts'], 'The decision receipt remains authoritative and unchanged');
+}
+$full = domainApplicationStateRecord($db);
+snapshotCheck($full['state']['pendingAttacks'][0]['areaGate']['pending'] === true, 'The full MJ state carries the same pending marker');
+snapshotCheck(!isset(playerApplicationStateRecord($db)['state']['pendingAttacks'][0]['areaGate']['pending']), 'The player read does not acquire the MJ marker');
+snapshotCheck($db->live->payload('activity') === $activity && $db->live->revision === 10, 'Reads do not change stored combat state or revision');
 echo json_encode(['ok'=>true,'checks'=>$GLOBALS['snapshotChecks'],'productionAccess'=>false],JSON_THROW_ON_ERROR)."\n";
