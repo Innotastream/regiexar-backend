@@ -101,7 +101,7 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
   assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.17'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-0-validation-zone-20261121-1'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-0-validation-zone-20261121-2'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -213,6 +213,7 @@ test("un jet de capacité journalise le même calcul pour le MJ et le joueur san
 
 test("les attaques ciblées et opposées restent autoritaires sans divulguer l’armure", async () => {
   const [online, domains, effects] = await Promise.all([read("api/v1/online.php"), read("api/v1/domains.php"), read("api/v1/ability-effects.php")]);
+  const retention = await read("api/v1/attack-receipt-retention.php");
   assert.ok(online.includes("require_once __DIR__.'/targeted-attack-authority.php'"));
   assert.match(online,/\$result=onlinePerformTargetAttack\(/);
   const attack = await read("api/v1/targeted-attack-authority.php") + online.slice(online.indexOf("} elseif ($command === 'token.attack')"), online.indexOf("} elseif ($command === 'ping')"));
@@ -257,7 +258,9 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /opposition_forbidden/);
   assert.match(attack, /opposition_receipt_forbidden/);
   assert.match(attack, /opposition_target_no_longer_adverse/);
-  assert.match(attack, /\$pendingReceiptAttackIds[\s\S]*?XAR_ATTACK_RECEIPT_TTL_MILLISECONDS/);
+  assert.match(attack, /\$receipts = onlineRetainedAttackReceipts\(\$activity, \$now\)/);
+  assert.match(retention, /\$receipt\['expiresAt'\][\s\S]*?> \$now/);
+  assert.match(retention, /\$activity\['pendingAttacks'\][\s\S]*?\$register\(\$pending, true\)/);
   assert.match(online, /\$attack\['status'\] \?\? ''\) !== 'awaiting-opposition'[\s\S]*?\$attack\['sceneId'\][\s\S]*?ownedByYou/);
   assert.match(oppose, /Cette cible est déjà morte\.[\s\S]*?target_already_defeated[\s\S]*?\$stats =/);
   assert.match(oppose, /\$target === \[\] && \$decision !== 'cancel'/);

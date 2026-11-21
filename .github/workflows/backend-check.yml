@@ -90,6 +90,8 @@ jobs:
           php tests/body-charge.php
           php tests/body-charge-undo.php
           php tests/combat-undo.php
+          php tests/combat-undo-cooldowns.php
+          php tests/combat-undo-optional.php
           php tests/ability-movement-lock.php
           php tests/friendly-fire.php
           php tests/elemental-breath.php
@@ -211,6 +213,7 @@ jobs:
           php tests/contact-zone-undo.php
           php tests/combat-undo-created-conditions.php
           php tests/celestial-path-strike.php
+          php tests/activity-shape-budget.php
           php tests/moon-beam-footprint.php
           php tests/environmental-damage-privacy.php
           php tests/trass-beam-authority.php

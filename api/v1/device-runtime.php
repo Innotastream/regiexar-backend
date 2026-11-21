@@ -193,6 +193,7 @@ function onlineDeviceAutomaticAttack(PDO $db,array &$records,array &$pending,arr
     else $attack['status']='pending';
     }
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+    $activity['attackReceipts']=onlineRetainedAttackReceipts($activity,$attack['createdAt']);
     if(count($activity['attackReceipts']??[])>=XAR_ATTACK_RECEIPT_MAXIMUM)dsError('Le journal de sécurité des attaques est plein.',429);
     if(in_array($attack['status'],['pending','awaiting-opposition'],true)){if(count($activity['pendingAttacks']??[])>=100)dsError('La file des attaques en attente est pleine.',429);$activity['pendingAttacks'][]=$attack;}
     $activity['attackReceipts'][]=['requestId'=>$attack['requestId'],'accountId'=>$identity['id'],'requestSignature'=>'device-damage','expiresAt'=>$attack['createdAt']+XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,'attack'=>$attack];

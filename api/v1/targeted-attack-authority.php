@@ -45,19 +45,7 @@ if (($arguments['attackKind'] ?? '') === 'ability') {
     $abilityReceipt = onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $abilityReceiptSignature, $isGm);
 }
 $now = (int) floor(microtime(true) * 1000);
-$pendingReceiptAttackIds = [];
-foreach (is_array($activity['pendingAttacks'] ?? null) ? $activity['pendingAttacks'] : [] as $pendingAttack) {
-    if (is_array($pendingAttack) && trim((string) ($pendingAttack['id'] ?? '')) !== '') {
-        $pendingReceiptAttackIds[(string) $pendingAttack['id']] = true;
-    }
-}
-$receipts = array_values(array_filter(
-    is_array($activity['attackReceipts'] ?? null) ? $activity['attackReceipts'] : [],
-    static fn (mixed $entry): bool => is_array($entry) && (
-        (int) ($entry['expiresAt'] ?? 0) > $now
-        || isset($pendingReceiptAttackIds[(string) ($entry['attack']['id'] ?? '')])
-    )
-));
+$receipts = onlineRetainedAttackReceipts($activity, $now);
 $deduplicatedAttack = null;
 foreach ($receipts as $receipt) {
     if ((string) ($receipt['requestId'] ?? '') === $requestId
