@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/weapon-turn-limits.php';
+require_once __DIR__.'/attack-receipt-retention.php';
 
 function onlineDefenseIdsEqual(array $left,array $right):bool{sort($left,SORT_STRING);sort($right,SORT_STRING);return $left===$right;}
 function onlineDefenseParty(PDO $connection,array $records,array $token,array $map):array{
@@ -42,10 +43,12 @@ function onlineQueueDeferredDefenseGate(PDO $connection,array &$records,array &$
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$ids=array_column($targets,'id');$eligible=[];
     foreach($targets as $target)if(($definition['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0&&($preparedHit===null||(!empty($preparedHit['outcomes'][$target['id']]['success'])&&empty($preparedHit['outcomes'][$target['id']]['breaksOpposition']))))$eligible[]=$target['id'];
     if($ids===[]&&($definition['terrainBarrier']['shape']??'')!=='thorn-wall')throw new RuntimeException('Cette action ne touche plus aucune unité admissible.',409);
+    $now=(int)floor(microtime(true)*1000);
+    $activity['attackReceipts']=onlineRetainedAttackReceipts($activity,$now);
     if(count($ids)>100||count($activity['pendingAttacks']??[])>=XAR_PENDING_ATTACK_MAXIMUM||count($activity['attackReceipts']??[])>=XAR_ATTACK_RECEIPT_MAXIMUM)throw new RuntimeException('La file des décisions de combat est pleine.',429);
     foreach($activity['pendingAttacks']??[]as$existing)if(!empty($existing['areaGate']['deferred'])&&$existing['sourceTokenId']===$source['id']&&$existing['attackId']===($arguments['attackId']??$arguments['abilityId']))throw new RuntimeException('Cette action attend déjà la décision du MJ.',409);
     $parties=[];foreach($targets as$target)$parties[$target['id']]=onlineDefenseParty($connection,$records,$target,$map);
-    $now=(int)floor(microtime(true)*1000);$attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map),'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Cibles sélectionnées','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!($context['visible']??true)?'gm':'public','attackId'=>$arguments['attackId']??$arguments['abilityId'],'attackName'=>$definition['name']??'Action de groupe','attackKind'=>$arguments['attackKind']??'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'damage'=>[],'finalDamage'=>0,'opposed'=>false,'createdAt'=>$now,
+    $attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map),'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Cibles sélectionnées','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!($context['visible']??true)?'gm':'public','attackId'=>$arguments['attackId']??$arguments['abilityId'],'attackName'=>$definition['name']??'Action de groupe','attackKind'=>$arguments['attackKind']??'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'damage'=>[],'finalDamage'=>0,'opposed'=>false,'createdAt'=>$now,
         ...($preparedHit!==null?['hit'=>$preparedHit['hit']]:[]),'areaGate'=>['version'=>1,'kind'=>$kind,'deferred'=>true,...($preparedHit!==null?['preparedHit'=>$preparedHit]:[]),...(isset($context['pathStrikeFingerprint'])?['pathStrikeFingerprint'=>$context['pathStrikeFingerprint']]:[]),'defenseStatId'=>'','targetTokenIds'=>$ids,'defenseEligibleTokenIds'=>$eligible,'requestBody'=>$arguments,'definition'=>$definition,'sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$context['targetPoint']??null,'sourceParty'=>onlineDefenseParty($connection,$records,$source,$map),'targetParties'=>$parties]];
     $activity['pendingAttacks'][]=$attack;$activity['attackReceipts'][]=['requestId'=>$arguments['requestId'],'accountId'=>$identity['id'],'requestSignature'=>$context['requestSignature'],'expiresAt'=>$now+XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,'attack'=>$attack];
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
@@ -85,6 +88,15 @@ function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array 
     foreach($activity['attackReceipts']as&$receipt)if(in_array($receipt['attack']['id']??'',$childIds,true)){$child=&$receipt['attack'];$child['areaGateParentId']=$attack['id'];$child['areaGateParties']=['sourceUnitId'=>$gate['sourceParty']['unitId'],'targetUnitId'=>$gate['targetParties'][$child['targetTokenId']]['unitId']??''];$children[]=$child;unset($child);}unset($receipt);
     foreach($activity['pendingAttacks']??[]as&$child)if(in_array($child['id'],$childIds,true)){$child['areaGateParentId']=$attack['id'];$child['areaGateParties']=['sourceUnitId'=>$gate['sourceParty']['unitId'],'targetUnitId'=>$gate['targetParties'][$child['targetTokenId']]['unitId']??''];}unset($child);
     $gate['resolutionSignature']=$signature;$gate['defenseTokenIds']=$allowed;if(!empty($released['execution']['id']))$gate['executionId']=$released['execution']['id'];unset($gate['resolving']);$attack['areaGate']=$gate;$attack['status']=$arguments['decision']==='approve'?'resolved':'rejected';$attack['resolvedAt']=(int)floor(microtime(true)*1000);
-    $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>$entry['id']!==$attack['id']));foreach($activity['attackReceipts']as&$receipt)if(($receipt['attack']['id']??'')===$attack['id']){$receipt['attack']=$attack;$receipt['areaAttackIds']=$childIds;}unset($receipt);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>$entry['id']!==$attack['id']));
+    foreach ($activity['attackReceipts'] as &$receipt) {
+        if (($receipt['attack']['id'] ?? '') !== $attack['id']) continue;
+        $receipt['attack'] = $attack;
+        $receipt['areaAttackIds'] = $childIds;
+        $receipt['expiresAt'] = $attack['resolvedAt'] + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
+        break;
+    }
+    unset($receipt);
+    queueOnlineDomainUpsert($pending,$records,'activity',$activity);
     return ['attack'=>$attack,'areaAttacks'=>$children,...(!empty($released['execution'])?['execution'=>$released['execution'],'initialSelectionApplied'=>true]:[]),...(!empty($released['pendingValidation'])?['pendingValidation'=>true]:[]),'deduplicated'=>false,'discordContent'=>$released['discordContent']??''];
 }

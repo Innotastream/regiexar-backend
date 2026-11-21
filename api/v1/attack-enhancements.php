@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/ability-overdrive.php';
 require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__.'/item-use-enhancements.php';
+require_once __DIR__.'/attack-receipt-retention.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/unit-authority.php';
 
@@ -339,8 +340,10 @@ function onlineFailedChainEchoes(PDO $connection, array &$records, array &$pendi
         $target = $pending[$targetKey]['payload'] ?? applicationDomainPayload($records, $targetKey);
         if ($target === [] || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '')) continue;
         $activity = $pending['activity']['payload'] ?? $activity;
+        $now = (int) floor(microtime(true)*1000);
+        $activity['attackReceipts'] = onlineRetainedAttackReceipts($activity, $now);
         if (count($activity['attackReceipts'] ?? []) >= XAR_ATTACK_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal des attaques est plein.', 'attack_receipt_capacity');
-        $now = (int) floor(microtime(true)*1000); $defer = ($gate['outcomeDetails']['requiresGmValidation'] ?? false) === true;
+        $defer = ($gate['outcomeDetails']['requiresGmValidation'] ?? false) === true;
         $attack = ['id'=>'attack-'.randomToken(18),'requestId'=>'chain-miss-'.randomToken(18),'sceneId'=>$next['sceneId'],'layerId'=>$next['layerId'],
             'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$target['id'],'targetName'=>$target['name'],
             'accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur',

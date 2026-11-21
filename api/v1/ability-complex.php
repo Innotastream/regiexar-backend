@@ -228,9 +228,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         rejectOnlineCommand($connection, 409, 'Cette cible est morte ou ne possède pas de points de vie.', 'complex_ability_effect_target_dead');
     }
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
-    $pendingIds = array_column($activity['pendingAttacks'] ?? [], 'id');
-    $receipts = array_values(array_filter($activity['attackReceipts'] ?? [], static fn(array $receipt): bool =>
-        (int) ($receipt['expiresAt'] ?? 0) > $now || in_array($receipt['attack']['id'] ?? '', $pendingIds, true)));
+    $receipts = onlineRetainedAttackReceipts($activity, $now);
     if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des attaques est plein.', 'attack_receipt_capacity');
     $attack['opposed'] = $attack['opposed'] && (float) ($target['hp'] ?? 0) > 0;
     if ($attack['opposed']) $attack['status'] = 'awaiting-opposition';

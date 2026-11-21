@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/attack-receipt-retention.php';
 function onlineDeviceDefenseOrigin(array $device):array{return array_intersect_key($device,array_flip(['id','abilityId','creatorCharacterId','controllerAccountId','sceneId','layerId','x','y','definition','mark']));}
 function onlineDeviceDefenseHealth(PDO $db,array &$records,array $pending,array $token):array{
  if(unitUsesCharacterSheet($token)){$key='character:'.$token['characterId'];$records=array_replace($records,applicationDomainRecords($db,[$key]));$token=synchronizeOnlineCharacterToken($token,$pending[$key]['payload']??applicationDomainPayload($records,$key));}
@@ -10,11 +11,13 @@ function onlineQueueDeviceDefenseGate(PDO $db,array &$records,array &$pending,ar
  $eventId='device-gate-'.hash('sha256',json_encode([$requestId,$device['id'],$effectType],JSON_THROW_ON_ERROR));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
  foreach($activity['attackReceipts']??[]as$receipt)if(($receipt['requestId']??'')===$eventId)return $receipt['attack'];
  $rows=[];foreach($targets as$row){if($row['damagePercent']<=0)continue;$token=null;foreach($map['tokens']as$entry)if($entry['id']===$row['tokenId'])$token=$entry;if($token===null)continue;$health=onlineDeviceDefenseHealth($db,$records,$pending,$token);if($health['maxHp']<=0||$health['dead'])continue;$rows[]=[...$row,'token'=>$token,'health'=>$health];}
+ $now=(int)floor(microtime(true)*1000);
+ $activity=onlinePruneExpiredAttackReceipts($records,$pending,$activity,$now);
  if(count($rows)>100||count($activity['pendingAttacks']??[])>=XAR_PENDING_ATTACK_MAXIMUM||count($activity['attackReceipts']??[])>=XAR_ATTACK_RECEIPT_MAXIMUM)throw new RuntimeException('La file des décisions de combat est pleine.',429);
  $rolled=$effectType==='beam'?['total'=>$device['mana']]:onlineRollFormula($device['definition']['damageFormula']);
  if($effectType==='explosion'){$damageRoll=onlineRollEntry(['id'=>'mechanics-authority','display_name'=>$device['name'],'effective_mode'=>'gm','permanent_role'=>'gm'],$rolled,$device['name'].' · Explosion',$device['name']);$damageRoll['visibility']='gm';$damageRoll['revealed']=false;onlineAppendAbilityEffectRoll($records,$pending,$damageRoll);}
  if(!$rows&&!($effectType==='beam'&&function_exists('applicationIsTrassBeam')&&applicationIsTrassBeam($device)))return [];
- $now=(int)floor(microtime(true)*1000);$ids=array_column(array_column($rows,'token'),'id');$eligible=[];$parties=[];$damageTargets=[];
+ $ids=array_column(array_column($rows,'token'),'id');$eligible=[];$parties=[];$damageTargets=[];
  foreach($rows as$row){$token=$row['token'];if($row['health']['hp']>0&&($device['definition']['noDefensePossible']??false)!==true)$eligible[]=$token['id'];$parties[$token['id']]=onlineDefenseParty($db,onlineDeviceOverlayRecords($records,$pending),$token,$map);$damageTargets[]=['tokenId'=>$token['id'],'damagePercent'=>$row['damagePercent'],'amount'=>(int)round($rolled['total']*$row['damagePercent']/100)];}
  $attack=['id'=>'attack-'.randomToken(16),'requestId'=>$eventId,'sceneId'=>$device['sceneId'],'layerId'=>$device['layerId'],'sourceTokenId'=>$device['id'],'deviceOrigin'=>$device['id'],'sourceName'=>$device['name'],'targetTokenId'=>$device['id'],'targetName'=>'Cibles du dispositif','accountId'=>$identity['id'],'attackerRole'=>'gm','playerName'=>$device['name'],'visibility'=>'gm','attackId'=>$device['abilityId'],'attackName'=>$device['name'],'attackKind'=>'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'damage'=>[],'finalDamage'=>0,'opposed'=>false,'createdAt'=>$now,
   'areaGate'=>['version'=>1,'kind'=>'device-damage','deferred'=>true,'defenseStatId'=>'','targetTokenIds'=>$ids,'defenseEligibleTokenIds'=>$eligible,'sourcePoint'=>['x'=>$device['x'],'y'=>$device['y'],'size'=>$device['size']??1],'sourceParty'=>['unitId'=>unitIdForToken($device)],'targetParties'=>$parties,'deviceDamage'=>['effectType'=>$effectType,'device'=>$device,'origin'=>onlineDeviceDefenseOrigin($device),'rolled'=>$rolled,'targets'=>$damageTargets]]];

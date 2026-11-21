@@ -2,6 +2,8 @@
 
 Le build `client-4-3-1-validation-vision-diagnostics-20261121-1` ajoute au journal MJ un regroupement ponctuel des mesures locales de connexion. L’annulation d’une action reste disponible après la libération de sa recharge et préserve les utilisations ultérieures. Les schémas SQL, session, domaines et fiches restent 24/22/1/10.
 
+Le journal d’activité partagé conserve ses contrôles par entrée, sans plafond cumulé sur sa structure. Le serveur purge les anciens reçus d’attaque une fois leurs dépendances closes. Le détail d’annulation peut être compacté lorsque sa conservation dépasse la capacité de stockage. La résolution de l’action utilise ses reçus propres.
+
 La politique de connexion accepte exclusivement le client 4.3.1. Le basculement du backend suit la disponibilité du paquet Windows 4.3.1.
 
 ## Backend 0.19.17 — client 4.3.0 — 21 novembre 2026

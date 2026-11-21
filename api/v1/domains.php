@@ -31,6 +31,7 @@ const XAR_DOMAIN_SCHEMA_VERSION = 1;
 const XAR_PENDING_ABILITY_CAST_MAXIMUM = 30;
 const XAR_SESSION_SCHEMA_VERSION = 22;
 const XAR_DOMAIN_MAXIMUM_BYTES = 8 * 1024 * 1024;
+const XAR_DOMAIN_MAXIMUM_NODES = 50_000;
 const XAR_DOMAIN_MAXIMUM_CHANGES = 4096;
 const XAR_DOMAIN_MAINTENANCE_BATCH_SIZE = 500;
 const XAR_FOG_MASK_VERSION = 1;
@@ -1748,10 +1749,9 @@ function validApplicationRollList(mixed $value, int $maximumCount): bool
     return true;
 }
 
-function applicationDomainNodeShapeIsValid(mixed $value, int $depth, int &$nodes): bool
+function applicationDomainNodeShapeIsValid(mixed $value, int $depth, int &$nodes, ?int $maximumNodes): bool
 {
-    $nodes++;
-    if ($nodes > 50000 || $depth > 24) {
+    if ($depth > 24 || ($maximumNodes !== null && ++$nodes > $maximumNodes)) {
         return false;
     }
     if (is_string($value)) {
@@ -1764,17 +1764,17 @@ function applicationDomainNodeShapeIsValid(mixed $value, int $depth, int &$nodes
         return false;
     }
     foreach ($value as $child) {
-        if (!applicationDomainNodeShapeIsValid($child, $depth + 1, $nodes)) {
+        if (!applicationDomainNodeShapeIsValid($child, $depth + 1, $nodes, $maximumNodes)) {
             return false;
         }
     }
     return true;
 }
 
-function validApplicationDomainShape(mixed $value): bool
+function validApplicationDomainShape(mixed $value, ?int $maximumNodes = XAR_DOMAIN_MAXIMUM_NODES): bool
 {
     $nodes = 0;
-    return applicationDomainNodeShapeIsValid($value, 0, $nodes);
+    return applicationDomainNodeShapeIsValid($value, 0, $nodes, $maximumNodes);
 }
 
 function validApplicationConditions(mixed $value): bool
@@ -2155,6 +2155,17 @@ function validApplicationAbilityCueEvents(mixed $events): bool
     return true;
 }
 
+function compactOptionalApplicationUndoHistory(array $payload): ?array
+{
+    $history = $payload['combatActions'] ?? [];
+    if ($history === [] || !validApplicationDomainObjectList($history, 120) || !function_exists('combatUndoCompactHistory')) {
+        return null;
+    }
+    $compact = combatUndoCompactHistory($history);
+    if ($compact === $history) return null;
+    return [...$payload, 'combatActions' => $compact];
+}
+
 function validatedDomainPayload(string $key, mixed $payload, ?callable $reject = null): array
 {
     $reject ??= 'sendError';
@@ -2167,7 +2178,17 @@ function validatedDomainPayload(string $key, mixed $payload, ?callable $reject =
     if (domainPayloadContainsInlineImage($payload)) {
         $reject(400, 'Les images intégrées ne sont plus acceptées. Téléversez le média séparément.', 'inline_media_forbidden');
     }
-    if (!validApplicationDomainShape($payload)) {
+    // Activity combines rule-checked collections across all scenes. Check
+    // each entry's structure and its collection's contract independently.
+    $shapeIsValid = $key === 'activity' ? validApplicationDomainShape($payload, null) : validApplicationDomainShape($payload);
+    if (!$shapeIsValid && $key === 'activity') {
+        $compact = compactOptionalApplicationUndoHistory($payload);
+        if ($compact !== null && validApplicationDomainShape($compact, null)) {
+            $payload = $compact;
+            $shapeIsValid = true;
+        }
+    }
+    if (!$shapeIsValid) {
         $reject(400, 'Le domaine contient une structure hors limites.', 'invalid_domain_shape');
     }
     $payload = applicationDomainFatiguePayload($key, sanitizeStateImageReferences($payload));
@@ -2291,6 +2312,13 @@ function validatedDomainPayload(string $key, mixed $payload, ?callable $reject =
         $reject(400, 'Instantané de présentation incohérent.', 'invalid_presentation_domain');
     }
     $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    if ($key === 'activity' && strlen($encoded) > XAR_DOMAIN_MAXIMUM_BYTES) {
+        $compact = compactOptionalApplicationUndoHistory($payload);
+        if ($compact !== null) {
+            $payload = $compact;
+            $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        }
+    }
     if (strlen($encoded) > XAR_DOMAIN_MAXIMUM_BYTES) {
         $reject(413, 'Ce domaine dépasse 8 Mo.', 'domain_too_large');
     }

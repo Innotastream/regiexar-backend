@@ -54,8 +54,8 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     if(!$isGm)throw new RuntimeException('Seul le MJ choisit les esquives de la zone.',403);
     if(($arguments['confirmed']??false)!==true||!in_array($arguments['decision']??'',['approve','reject'],true))throw new RuntimeException('Confirmez la décision de la zone.',400);
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));
-    $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$receiptIndex=null;$attack=null;
-    foreach($activity['attackReceipts']??[] as $i=>$receipt)if(($receipt['attack']['id']??'')===($arguments['attackId']??'')){$receiptIndex=$i;$attack=$receipt['attack'];break;}
+    $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$attack=null;
+    foreach($activity['attackReceipts']??[] as $receipt)if(($receipt['attack']['id']??'')===($arguments['attackId']??'')){$attack=$receipt['attack'];break;}
     if ($attack === null && $arguments['decision'] === 'reject') {
         foreach ($activity['pendingAttacks'] ?? [] as $entry) {
             if (($entry['id'] ?? null) !== ($arguments['attackId'] ?? null) || !is_array($entry['areaGate'] ?? null)) continue;
@@ -66,6 +66,9 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
         }
     }
     if(!is_array($attack['areaGate']??null))throw new RuntimeException('Cette zone n’attend pas de décision.',404);
+    if (!isset($attack['areaGate']['resolutionSignature'])) {
+        $activity = onlinePruneExpiredAttackReceipts($records, $pending, $activity, (int) floor(microtime(true)*1000), $attack['id']);
+    }
     if(($attack['areaGate']['kind']??'')==='device-damage')return onlineResolveDeviceDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     if(!empty($attack['areaGate']['deferred']))return onlineResolveDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     $allowed=applicationApprovedAreaDefenseIds([...$attack['areaGate'],'targetTokenIds'=>$attack['areaGate']['defenseEligibleTokenIds']??$attack['areaGate']['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=json_encode([$arguments['decision'],$allowed],JSON_THROW_ON_ERROR);
@@ -104,7 +107,14 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
         $attack['areaGate']['visualCueEventId']=appendApplicationAbilityCueEvent($activity,$cue,$sceneId,$attack['layerId'],$source['id'],$attack['visibility']);
     }
     $attack['areaGate']['resolutionSignature']=$signature;$attack['areaGate']['defenseTokenIds']=$allowed;$attack['status']=$canFire?'resolved':($arguments['decision']==='reject'?'rejected':'missed');$attack['resolvedAt']=(int)floor(microtime(true)*1000);
-    $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>($entry['id']??'')!==$attack['id']));$activity['attackReceipts'][$receiptIndex]['attack']=$attack;
+    $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>($entry['id']??'')!==$attack['id']));
+    foreach ($activity['attackReceipts'] as &$receipt) {
+        if (($receipt['attack']['id'] ?? '') !== $attack['id']) continue;
+        $receipt['attack'] = $attack;
+        $receipt['expiresAt'] = $attack['resolvedAt'] + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
+        break;
+    }
+    unset($receipt);
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
     onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$attack['sourceName'],'summary'=>$attack['sourceName'].' · '.$attack['attackName'],'detail'=>$canFire?'Cône confirmé · esquive individuelle selon le tableau MJ':'Souffle annulé · coûts conservés']);
     foreach($children as $child)if($child['status']==='applied')onlineAppendAppliedDamageAction($connection,$records,$pending,$identity,$child);
