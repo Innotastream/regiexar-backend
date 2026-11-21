@@ -24,7 +24,18 @@ function legacySceneTokenOccurrences(PDO $connection): array
 function legacySceneIdentityRepairs(PDO $connection, array $groups): array
 {
     $keys = array_merge(...array_values($groups));
-    $records = applicationDomainRecords($connection, [...$keys, 'table', 'activity', 'devices', 'items']);
+    $sceneIds = array_values(array_unique(array_map(static fn(string $key): string => explode(':', $key)[1], $keys)));
+    $indexKeys = array_map(static fn(string $id): string => 'token-index:' . $id, $sceneIds);
+    $sceneKeys = array_map(static fn(string $id): string => 'scene:' . $id, $sceneIds);
+    $records = applicationDomainRecords($connection, [...$keys, ...$indexKeys, ...$sceneKeys, 'scene-index', 'table', 'activity', 'devices', 'items']);
+    $listedScenes = array_fill_keys(applicationDomainPayload($records, 'scene-index')['order'] ?? [], true);
+    $listedTokens = [];
+    foreach ($sceneIds as $sceneId) {
+        $metadata = applicationDomainPayload($records, 'scene:' . $sceneId)['metadata'] ?? [];
+        if (isset($listedScenes[$sceneId]) && ($metadata['id'] ?? null) === $sceneId) {
+            $listedTokens[$sceneId] = array_fill_keys(applicationDomainPayload($records, 'token-index:' . $sceneId)['order'] ?? [], true);
+        }
+    }
     $table = applicationDomainPayload($records, 'table');
     $activity = applicationDomainPayload($records, 'activity');
     $devices = applicationDomainPayload($records, 'devices');
@@ -47,7 +58,9 @@ function legacySceneIdentityRepairs(PDO $connection, array $groups): array
 
     $byScene = [];
     foreach ($groups as $oldId => $occurrences) {
-        $autonomous = array_values(array_filter($occurrences, static function (string $key) use ($records): bool {
+        $autonomous = array_values(array_filter($occurrences, static function (string $key) use ($records, $listedTokens): bool {
+            [, $sceneId, $id] = explode(':', $key);
+            if (!isset($listedTokens[$sceneId][$id])) return false;
             $token = applicationDomainPayload($records, $key);
             return $token !== [] && !unitUsesCharacterSheet($token);
         }));

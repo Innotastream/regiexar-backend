@@ -79,19 +79,27 @@ try {
     };
     require_once __DIR__.'/../api/v1/legacy-scene-identities.php';
     $guard = ['id'=>'legacy-guard','name'=>'Guard','layerId'=>'ground','followCharacter'=>false,'x'=>10,'y'=>20,'size'=>40,'hp'=>30,'maxHp'=>40];
+    $put('scene-index', ['order'=>['scene-one','scene-copy','scene-pending','scene-invalid']]);
+    $put('token-index:scene-one', ['order'=>['token-player','token-monster','legacy-guard']]);
     foreach ([
+        'scene:scene-copy' => ['metadata'=>['id'=>'scene-copy','name'=>'Copie']],
+        'scene:scene-pending' => ['metadata'=>['id'=>'scene-pending','name'=>'Action en cours']],
+        'scene:scene-invalid' => ['metadata'=>['id'=>'scene-invalid','name'=>'Ancien pion invalide']],
         'token:scene-one:legacy-guard' => $guard,
         'token:scene-copy:legacy-guard' => [...$guard,'hp'=>5],
         'token:scene-copy:rider' => [...$guard,'id'=>'rider','targetTokenId'=>'legacy-guard'],
         'token-index:scene-copy' => ['order'=>['legacy-guard','rider']],
         'map:scene-copy' => ['activeLayerId'=>'ground','naturalWidth'=>1600,'naturalHeight'=>900],
         'initiative:scene-copy' => ['active'=>true,'order'=>['legacy-guard','rider'],'round'=>1,'currentIndex'=>0],
+        'token-index:scene-pending' => ['order'=>['legacy-guard']],
         'token:scene-pending:legacy-guard' => $guard,
+        'token:scene-orphan:legacy-guard' => [...$guard,'hp'=>1],
         'token:scene-invalid:legacy-guard' => [...$guard,'sizeCategory'=>'broken-old-preset'],
         'token-index:scene-invalid' => ['order'=>['legacy-guard']],
         'map:scene-invalid' => ['activeLayerId'=>'ground','naturalWidth'=>1600,'naturalHeight'=>900],
     ] as $key=>$payload) $insert->execute([$key,json_encode($payload, JSON_THROW_ON_ERROR)]);
     $writer->exec("UPDATE application_domains SET created_at='2026-11-01 00:00:00' WHERE domain_key='token:scene-one:legacy-guard'");
+    $writer->exec("UPDATE application_domains SET created_at='2026-10-01 00:00:00' WHERE domain_key='token:scene-orphan:legacy-guard'");
     $put('activity', ['pendingAttacks'=>[['sceneId'=>'scene-pending']]]);
     $beforeRepair = domainClockRecord($writer)['globalRevision'];
     sqlSnapshotCheck(sqlSnapshotResponse($writer,0)['revision'] === $beforeRepair + 1, 'Initial authorized MJ read commits the idle copy repair');
@@ -101,6 +109,8 @@ try {
         && applicationDomainPayload($afterRepair, 'token:scene-copy:'.$copy)['hp'] === 5
         && applicationDomainPayload($afterRepair, 'token:scene-one:legacy-guard') === $guard
         && applicationDomainPayload($afterRepair, 'token:scene-pending:legacy-guard') === $guard, 'HP is retained and the original and running action remain intact');
+    sqlSnapshotCheck(applicationDomainPayload($afterRepair, 'token:scene-orphan:legacy-guard')['hp'] === 1,
+        'An unlisted historical token cannot steal the identity of a token in a current scene');
     sqlSnapshotCheck(applicationDomainPayload($afterRepair, 'token:scene-copy:rider')['targetTokenId'] === $copy
         && applicationDomainPayload($afterRepair, 'initiative:scene-copy')['order'][0] === $copy
         && applicationDomainPayload($afterRepair, 'token:scene-copy:legacy-guard') === [], 'Copy, tactical references and deletion are committed together');
