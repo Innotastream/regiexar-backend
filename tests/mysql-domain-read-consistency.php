@@ -51,9 +51,10 @@ try {
     $reader->writer=$writer;
     $reader->exec('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
     $writer->exec('CREATE TABLE application_domain_clock(singleton_id INT PRIMARY KEY,global_revision BIGINT,state_schema_version INT,domain_schema_version INT,legacy_revision BIGINT NULL,initialized_at DATETIME(3)) ENGINE=InnoDB');
-    $writer->exec('CREATE TABLE application_domains(domain_key VARCHAR(200) PRIMARY KEY,schema_version INT,revision BIGINT,payload JSON,updated_at DATETIME(3)) ENGINE=InnoDB');
+    $writer->exec('CREATE TABLE application_domains(domain_key VARCHAR(200) PRIMARY KEY,schema_version INT,revision BIGINT,payload JSON,updated_at DATETIME(3),created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),updated_by_account_id VARCHAR(128) NULL) ENGINE=InnoDB');
     $writer->exec('CREATE TABLE application_domain_changes(global_revision BIGINT,domain_key VARCHAR(200),domain_revision BIGINT,operation VARCHAR(10),PRIMARY KEY(global_revision,domain_key)) ENGINE=InnoDB');
-    $insert=$writer->prepare('INSERT INTO application_domains VALUES(?,1,1,?,UTC_TIMESTAMP(3))');
+    $writer->exec('CREATE TABLE application_domain_history(domain_key VARCHAR(200),domain_revision BIGINT,global_revision BIGINT,operation VARCHAR(10),payload JSON,changed_by_account_id VARCHAR(128) NULL) ENGINE=InnoDB');
+    $insert=$writer->prepare('INSERT INTO application_domains(domain_key,schema_version,revision,payload,updated_at) VALUES(?,1,1,?,UTC_TIMESTAMP(3))');
     foreach(fixture()->domains as $key=>$row)$insert->execute([$key,json_encode($row['payload'],JSON_THROW_ON_ERROR)]);
     $writer->exec('INSERT INTO application_domain_clock VALUES(1,10,'.XAR_SESSION_SCHEMA_VERSION.','.XAR_DOMAIN_SCHEMA_VERSION.",NULL,'2026-11-07 00:00:00')");
     foreach(['private','player','reset','delta'] as $mode){
@@ -72,6 +73,42 @@ try {
     }
     $reader->beginTransaction();domainApplicationStateRecord($reader);
     sqlSnapshotCheck($reader->inTransaction(),'Caller-owned transaction is preserved');$reader->rollBack();
+    $replace = $writer->prepare('UPDATE application_domains SET payload=? WHERE domain_key=?');
+    $put = static function(string $key, array $payload) use ($replace): void {
+        $replace->execute([json_encode($payload, JSON_THROW_ON_ERROR), $key]);
+    };
+    require_once __DIR__.'/../api/v1/legacy-scene-identities.php';
+    $guard = ['id'=>'legacy-guard','name'=>'Guard','layerId'=>'ground','followCharacter'=>false,'x'=>10,'y'=>20,'size'=>40,'hp'=>30,'maxHp'=>40];
+    foreach ([
+        'token:scene-one:legacy-guard' => $guard,
+        'token:scene-copy:legacy-guard' => [...$guard,'hp'=>5],
+        'token:scene-copy:rider' => [...$guard,'id'=>'rider','targetTokenId'=>'legacy-guard'],
+        'token-index:scene-copy' => ['order'=>['legacy-guard','rider']],
+        'map:scene-copy' => ['activeLayerId'=>'ground','naturalWidth'=>1600,'naturalHeight'=>900],
+        'initiative:scene-copy' => ['active'=>true,'order'=>['legacy-guard','rider'],'round'=>1,'currentIndex'=>0],
+        'token:scene-pending:legacy-guard' => $guard,
+        'token:scene-invalid:legacy-guard' => [...$guard,'sizeCategory'=>'broken-old-preset'],
+        'token-index:scene-invalid' => ['order'=>['legacy-guard']],
+        'map:scene-invalid' => ['activeLayerId'=>'ground','naturalWidth'=>1600,'naturalHeight'=>900],
+    ] as $key=>$payload) $insert->execute([$key,json_encode($payload, JSON_THROW_ON_ERROR)]);
+    $writer->exec("UPDATE application_domains SET created_at='2026-11-01 00:00:00' WHERE domain_key='token:scene-one:legacy-guard'");
+    $put('activity', ['pendingAttacks'=>[['sceneId'=>'scene-pending']]]);
+    $beforeRepair = domainClockRecord($writer)['globalRevision'];
+    sqlSnapshotCheck(sqlSnapshotResponse($writer,0)['revision'] === $beforeRepair + 1, 'Initial authorized MJ read commits the idle copy repair');
+    $afterRepair = applicationDomainRecords($writer);
+    $copy = applicationDomainPayload($afterRepair,'token-index:scene-copy')['order'][0];
+    sqlSnapshotCheck(str_starts_with($copy, 'token-recovered-')
+        && applicationDomainPayload($afterRepair, 'token:scene-copy:'.$copy)['hp'] === 5
+        && applicationDomainPayload($afterRepair, 'token:scene-one:legacy-guard') === $guard
+        && applicationDomainPayload($afterRepair, 'token:scene-pending:legacy-guard') === $guard, 'HP is retained and the original and running action remain intact');
+    sqlSnapshotCheck(applicationDomainPayload($afterRepair, 'token:scene-copy:rider')['targetTokenId'] === $copy
+        && applicationDomainPayload($afterRepair, 'initiative:scene-copy')['order'][0] === $copy
+        && applicationDomainPayload($afterRepair, 'token:scene-copy:legacy-guard') === [], 'Copy, tactical references and deletion are committed together');
+    sqlSnapshotCheck(applicationDomainPayload($afterRepair, 'token:scene-invalid:legacy-guard')['sizeCategory'] === 'broken-old-preset'
+        && applicationDomainPayload($afterRepair,'token-index:scene-invalid')['order'] === ['legacy-guard'],
+        'An incompatible legacy document is preserved and cannot block repairs in other scenes');
+    sqlSnapshotCheck(repairLegacySceneIdentities($writer,[]) === 0 && domainClockRecord($writer)['globalRevision'] === $beforeRepair+1,
+        'Reopening the same table does not change its identity again');
     echo json_encode(['ok'=>true,'checks'=>$GLOBALS['sqlSnapshotChecks'],'productionAccess'=>false],JSON_THROW_ON_ERROR)."\n";
     echo "Local MySQL consistent domain read integration passed.\n";
 }finally{

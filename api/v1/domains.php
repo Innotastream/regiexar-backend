@@ -1997,8 +1997,9 @@ function applicationAbilitySoundReferences(string $key, array $payload): array
     return $references;
 }
 
-function assertApplicationAbilitySoundAssets(PDO $connection, array $pending): void
+function assertApplicationAbilitySoundAssets(PDO $connection, array $pending, ?callable $reject = null): void
 {
+    $reject ??= 'sendError';
     $references = [];
     foreach ($pending as $change) {
         if (($change['operation'] ?? '') !== 'upsert' || !is_array($change['payload'] ?? null)) continue;
@@ -2020,12 +2021,12 @@ function assertApplicationAbilitySoundAssets(PDO $connection, array $pending): v
     foreach ($references as $reference) {
         $asset = $assets[$reference['id']] ?? null;
         if (!is_array($asset) || $asset['pending_delete_at'] !== null) {
-            sendError(409, 'Le son de fin n’existe plus ou n’a pas été validé par la Régie.', 'ability_sound_missing');
+            $reject(409, 'Le son de fin n’existe plus ou n’a pas été validé par la Régie.', 'ability_sound_missing');
         }
         if ((string) $asset['content_type'] !== $reference['contentType']
             || (int) $asset['byte_size'] !== $reference['byteSize']
             || (int) $asset['duration_ms'] !== $reference['durationMs']) {
-            sendError(409, 'Les caractéristiques du son de fin ne correspondent pas au fichier validé.', 'ability_sound_metadata_mismatch');
+            $reject(409, 'Les caractéristiques du son de fin ne correspondent pas au fichier validé.', 'ability_sound_metadata_mismatch');
         }
     }
 }
@@ -2154,38 +2155,39 @@ function validApplicationAbilityCueEvents(mixed $events): bool
     return true;
 }
 
-function validatedDomainPayload(string $key, mixed $payload): array
+function validatedDomainPayload(string $key, mixed $payload, ?callable $reject = null): array
 {
+    $reject ??= 'sendError';
     if (!validApplicationDomainKey($key) || !is_array($payload)) {
-        sendError(400, 'Document de domaine invalide.', 'invalid_domain');
+        $reject(400, 'Document de domaine invalide.', 'invalid_domain');
     }
     if (stateContainsForbiddenSecret($payload)) {
-        sendError(400, 'Le domaine contient une donnée secrète interdite.', 'secret_in_domain');
+        $reject(400, 'Le domaine contient une donnée secrète interdite.', 'secret_in_domain');
     }
     if (domainPayloadContainsInlineImage($payload)) {
-        sendError(400, 'Les images intégrées ne sont plus acceptées. Téléversez le média séparément.', 'inline_media_forbidden');
+        $reject(400, 'Les images intégrées ne sont plus acceptées. Téléversez le média séparément.', 'inline_media_forbidden');
     }
     if (!validApplicationDomainShape($payload)) {
-        sendError(400, 'Le domaine contient une structure hors limites.', 'invalid_domain_shape');
+        $reject(400, 'Le domaine contient une structure hors limites.', 'invalid_domain_shape');
     }
     $payload = applicationDomainFatiguePayload($key, sanitizeStateImageReferences($payload));
     if ($key === 'items') {
         try { $payload = normalizeItemStore($payload); }
-        catch (RuntimeException $error) { sendError(400, $error->getMessage(), 'invalid_items_domain'); }
+        catch (RuntimeException $error) { $reject(400, $error->getMessage(), 'invalid_items_domain'); }
     }
     if($key==='devices'){
-        try{$payload=dsStore($payload);}catch(RuntimeException $error){sendError(400,$error->getMessage(),'invalid_devices_domain');}
+        try{$payload=dsStore($payload);}catch(RuntimeException $error){$reject(400,$error->getMessage(),'invalid_devices_domain');}
     }
     if ($key === 'table') {
         $activeSceneId = $payload['activeSceneId'] ?? null;
         if ($activeSceneId !== null
             && (!is_string($activeSceneId) || preg_match('/^[A-Za-z0-9_-]{1,80}$/D', $activeSceneId) !== 1)) {
-            sendError(400, 'Document de table incohérent.', 'invalid_table_domain');
+            $reject(400, 'Document de table incohérent.', 'invalid_table_domain');
         }
     }
     if ($key === 'scene-index'
         && !validApplicationDomainIdentifierList($payload['order'] ?? null, 256)) {
-        sendError(400, 'Index de scènes incohérent.', 'invalid_scene_index_domain');
+        $reject(400, 'Index de scènes incohérent.', 'invalid_scene_index_domain');
     }
     if ($key === 'roster'
         && (!validApplicationDomainObjectList($payload['players'] ?? null, 1000)
@@ -2193,10 +2195,10 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainMap($payload['playerPreferences'] ?? [], 1000)
             || !validApplicationDomainObjectList($payload['playerTombstones'] ?? [], 2000)
             || !validApplicationDomainObjectList($payload['characterTombstones'] ?? [], 2000))) {
-        sendError(400, 'Registre des participants incohérent.', 'invalid_roster_domain');
+        $reject(400, 'Registre des participants incohérent.', 'invalid_roster_domain');
     }
     if ($key === 'luck' && !validApplicationLuckDomain($payload)) {
-        sendError(400, 'Calculateur de chance incohérent.', 'invalid_luck_domain');
+        $reject(400, 'Calculateur de chance incohérent.', 'invalid_luck_domain');
     }
     if ($key === 'activity'
         && (!validApplicationDomainObjectList($payload['actionTimers'] ?? null, 300)
@@ -2222,7 +2224,7 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainObjectList($payload['combatActions'] ?? [], 120)
             || !validApplicationDomainObjectList($payload['shortcuts'] ?? null, 500)
             || !validApplicationRollList($payload['rolls'] ?? null, 100))) {
-        sendError(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
+        $reject(400, 'Journal d’activité incohérent.', 'invalid_activity_domain');
     }
     if ($key === 'library'
         && (!validApplicationTokenList($payload['tokenLibrary'] ?? null, 200)
@@ -2231,23 +2233,23 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationCollectionGroups($payload['sceneGroups'] ?? [])
             || !validApplicationCollectionGroups($payload['tokenLibraryGroups'] ?? [])
             || !validApplicationMapEffectPresets($payload['mapEffectPresets'] ?? []))) {
-        sendError(400, 'Bestiaire incohérent.', 'invalid_library_domain');
+        $reject(400, 'Bestiaire incohérent.', 'invalid_library_domain');
     }
     if ($key === 'audio'
         && (!validApplicationAudioTracks($payload['tracks'] ?? null, $payload['folders'] ?? [])
             || !validApplicationAudioPlayback(array_key_exists('playback', $payload) ? $payload['playback'] : []))) {
-        sendError(400, 'Playlist incohérente.', 'invalid_audio_domain');
+        $reject(400, 'Playlist incohérente.', 'invalid_audio_domain');
     }
     if (str_starts_with($key, 'scene:')) {
         $expected = substr($key, strlen('scene:'));
         if ((string) ($payload['metadata']['id'] ?? '') !== $expected) {
-            sendError(400, 'Document de scène incohérent.', 'invalid_scene_domain');
+            $reject(400, 'Document de scène incohérent.', 'invalid_scene_domain');
         }
     }
     if (str_starts_with($key, 'character:')) {
         $expected = substr($key, strlen('character:'));
         if ((string) ($payload['id'] ?? '') !== $expected || !validApplicationCharacterDomain($payload)) {
-            sendError(400, 'Document de personnage incohérent.', 'invalid_character_domain');
+            $reject(400, 'Document de personnage incohérent.', 'invalid_character_domain');
         }
         $payload['visionDistance'] = normalizeApplicationVisionDistance($payload['visionDistance'] ?? null);
         $payload['darkVision'] = normalizeApplicationDarkVision($payload['darkVision'] ?? null);
@@ -2257,24 +2259,24 @@ function validatedDomainPayload(string $key, mixed $payload): array
         if (count($segments) !== 3
             || (string) ($payload['id'] ?? '') !== $segments[2]
             || !validApplicationTokenDomain($payload)) {
-            sendError(400, 'Document de token incohérent.', 'invalid_token_domain');
+            $reject(400, 'Document de token incohérent.', 'invalid_token_domain');
         }
     }
     if (str_starts_with($key, 'token-index:')) {
         $order = $payload['order'] ?? null;
         if (!validApplicationDomainIdentifierList($order, 2000)) {
-            sendError(400, 'Index de tokens incohérent.', 'invalid_token_index_domain');
+            $reject(400, 'Index de tokens incohérent.', 'invalid_token_index_domain');
         }
     }
     if(str_starts_with($key,'map:'))$payload=applicationNormalizeMapTimeWeatherFields($payload);
     if (str_starts_with($key, 'map:') && !validApplicationMapFogState($payload)) {
-        sendError(400, 'Brouillard de carte incohérent.', 'invalid_map_fog');
+        $reject(400, 'Brouillard de carte incohérent.', 'invalid_map_fog');
     }
     if (str_starts_with($key, 'initiative:')
         && (!validApplicationDomainIdentifierList($payload['order'] ?? [], 2000)
             || (array_key_exists('movementOverrides', $payload)
                 && !validApplicationMovementOverrides($payload['movementOverrides'])))) {
-        sendError(400, 'Initiative incohérente.', 'invalid_initiative_domain');
+        $reject(400, 'Initiative incohérente.', 'invalid_initiative_domain');
     }
     if (str_starts_with($key, 'presentation:')
         && (!is_array($payload['map'] ?? null)
@@ -2284,11 +2286,11 @@ function validatedDomainPayload(string $key, mixed $payload): array
             || !validApplicationDomainIdentifierList($payload['initiative']['order'] ?? [], 2000)
             || (array_key_exists('movementOverrides', $payload['initiative'])
                 && !validApplicationMovementOverrides($payload['initiative']['movementOverrides'])))) {
-        sendError(400, 'Instantané de présentation incohérent.', 'invalid_presentation_domain');
+        $reject(400, 'Instantané de présentation incohérent.', 'invalid_presentation_domain');
     }
     $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     if (strlen($encoded) > XAR_DOMAIN_MAXIMUM_BYTES) {
-        sendError(413, 'Ce domaine dépasse 8 Mo.', 'domain_too_large');
+        $reject(413, 'Ce domaine dépasse 8 Mo.', 'domain_too_large');
     }
     return $payload;
 }
@@ -2503,7 +2505,8 @@ function prepareApplicationDomainUpsert(
     string $key,
     mixed $payload,
     ?array $current,
-    bool $protectAgainstStaleEntityWrite = false
+    bool $protectAgainstStaleEntityWrite = false,
+    ?callable $reject = null
 ): ?array
 {
     if($key==='devices'&&$protectAgainstStaleEntityWrite&&is_array($payload)){
@@ -2534,7 +2537,7 @@ function prepareApplicationDomainUpsert(
         foreach($payload['playerActions']??[]as$i=>$entry){foreach(['combatActionId','combatUndone']as$field){unset($payload['playerActions'][$i][$field]);if(array_key_exists($field,$authoritativeActions[$entry['id']??'']??[]))$payload['playerActions'][$i][$field]=$authoritativeActions[$entry['id']][$field];}}
     }
     $inlineMapPaths=[];if(str_starts_with($key,'map:')&&is_array($payload))$payload=applicationMapUnchangedInlineForValidation($payload,$current['payload']??[],$inlineMapPaths);
-    $payload = validatedDomainPayload($key, $payload);
+    $payload = validatedDomainPayload($key, $payload, $reject);
     if($inlineMapPaths!==[])$payload=applicationRestoreMapUnchangedInline($payload,$inlineMapPaths);
     if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     if ($protectAgainstStaleEntityWrite) {
@@ -3070,14 +3073,14 @@ function playerApplicationDomainRecords(PDO $connection): array
     return [$clock, $records];
 }
 
-function persistDomainChangesInTransaction(PDO $connection, array $identity, array $clock, array $pending): int
+function persistDomainChangesInTransaction(PDO $connection, array $identity, array $clock, array $pending, ?callable $reject = null): int
 {
     // Les migrations historiques appellent cette fonction sans identité avant
     // la création des actifs 3.3.5. Les écritures produit, elles, doivent
     // toujours rattacher la référence à un son réellement contrôlé.
     applicationDeferNewFatigue($connection,$pending);
     applicationSettleOverdriveDebts($connection,$pending);
-    if ($identity !== []) assertApplicationAbilitySoundAssets($connection, $pending);
+    if ($identity !== []) assertApplicationAbilitySoundAssets($connection, $pending, $reject);
     $globalRevision = (int) $clock['globalRevision'] + 1;
     $accountId = (string) ($identity['id'] ?? '');
     foreach ($pending as $change) {
@@ -3122,13 +3125,22 @@ function persistDomainChangesInTransaction(PDO $connection, array $identity, arr
 
 function readApplicationDomains(PDO $connection, bool $headOnly = false): never
 {
-    requireGmIdentity($connection);
+    $identity = requireGmIdentity($connection);
     ensureDomainStoreInitialized($connection);
     $since = max(0, (int) ($_GET['since'] ?? 0));
     $prefix = trim((string) ($_GET['prefix'] ?? ''));
     $includePresence = (string) ($_GET['presence'] ?? '1') !== '0';
     if ($prefix !== '' && (!validApplicationDomainPrefix($prefix) || $since !== 0)) {
         sendError(400, 'Sélection de domaines invalide.', 'invalid_domain_selection');
+    }
+    if (!$headOnly && $since === 0 && $prefix === '') {
+        require_once __DIR__ . '/legacy-scene-identities.php';
+        try {
+            $repaired = repairLegacySceneIdentities($connection, $identity);
+            if ($repaired > 0) error_log('[xar-regie-api] scene identities repaired: ' . $repaired);
+        } catch (Throwable $error) {
+            error_log('[xar-regie-api] scene identity repair rolled back: ' . get_class($error));
+        }
     }
     $response = applicationConsistentDomainRead($connection, static fn(): array => applicationDomainReadResponse($connection, $since, $prefix));
     if ($includePresence) $response['presence'] = liveOnlinePresence($connection);
