@@ -63,6 +63,106 @@ function applicationDiagnosticRows(PDO $connection, int $after = 0): array {
     }, $statement->fetchAll());
 }
 
+function diagnosticReaderEvent(mixed $payload): array {
+    if (!is_array($payload)) return [];
+    $details = array_intersect_key($payload, array_flip([
+        'at', 'lastAt', 'source', 'code', 'errorName', 'method', 'role', 'clientVersion', 'operation',
+        'file', 'route', 'status', 'line', 'column', 'revision', 'occurrences', 'dropped', 'online', 'preAuth',
+    ]));
+    $clean = sanitizeApplicationDiagnostic($details);
+    if (is_string($payload['request']['command'] ?? null)) {
+        $clean['request'] = ['command' => diagnosticSafeText($payload['request']['command'], 100)];
+    }
+    return $clean;
+}
+
+function diagnosticReaderNumber(array $query, string $key, int $default, int $maximum): int {
+    if (!array_key_exists($key, $query)) return $default;
+    $value = $query[$key];
+    if (!is_string($value) || preg_match('/\A[1-9][0-9]{0,2}\z/', $value) !== 1 || (int) $value > $maximum) {
+        sendError(400, 'Fenêtre de diagnostic invalide.', 'diagnostic_reader_query_invalid');
+    }
+    return (int) $value;
+}
+
+function diagnosticReaderClientRows(PDO $connection, int $since, int $limit, ?string $account): array {
+    // Look at a bounded tail of the existing journal even when no rows fall within the requested window.
+    $join = $account === null ? '' : ' JOIN accounts AS a ON a.id = e.account_id';
+    $filter = $account === null ? ''
+        : ' AND (CAST(LOWER(a.username) AS BINARY) = CAST(LOWER(:username) AS BINARY)'
+        . ' OR CAST(LOWER(a.display_name) AS BINARY) = CAST(LOWER(:display_name) AS BINARY))';
+    $statement = $connection->prepare(
+        'SELECT e.effective_mode, e.client_version, e.payload_json, e.created_at'
+        . ' FROM (SELECT sequence_id, created_at FROM client_error_events ORDER BY sequence_id DESC LIMIT 500) AS recent'
+        . ' JOIN client_error_events AS e ON e.sequence_id = recent.sequence_id' . $join
+        . ' WHERE recent.created_at >= :since' . $filter
+        . ' ORDER BY recent.sequence_id DESC LIMIT :limit'
+    );
+    $statement->bindValue(':since', gmdate('Y-m-d H:i:s', $since));
+    $statement->bindValue(':limit', $limit, PDO::PARAM_INT);
+    if ($account !== null) {
+        $statement->bindValue(':username', $account);
+        $statement->bindValue(':display_name', $account);
+    }
+    $statement->execute();
+    return array_map(static fn(array $row): array => [
+        'effective_mode' => in_array($row['effective_mode'], ['gm', 'player'], true) ? $row['effective_mode'] : '',
+        'client_version' => diagnosticSafeText($row['client_version'], 40),
+        'created_at' => $row['created_at'],
+        'details' => diagnosticReaderEvent(json_decode((string) $row['payload_json'], true)),
+    ], $statement->fetchAll());
+}
+
+function serveDiagnosticReader(?array $configuration, string $method, array $query, array $headers, callable $connect): never {
+    $settings = $configuration['diagnostics'] ?? null;
+    $expected = is_array($settings) ? ($settings['reader_token_sha256'] ?? null) : null;
+    if (!is_string($expected) || preg_match('/\A[0-9a-f]{64}\z/i', $expected) !== 1) {
+        sendError(404, 'Route inconnue.', 'not_found');
+    }
+    requireMethod($method, ['GET']);
+    $authorization = trim((string) ($headers['HTTP_AUTHORIZATION'] ?? $headers['REDIRECT_HTTP_AUTHORIZATION'] ?? ''));
+    $token = preg_match('/\A(?i:Bearer)[ \t]+([A-Za-z0-9_-]{43})\z/', $authorization, $match) === 1 ? $match[1] : '';
+    $bytes = base64_decode(strtr($token, '-_', '+/') . '=', true);
+    if ($bytes === false || strlen($bytes) !== 32 || rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=') !== $token
+        || !hash_equals(strtolower($expected), hash('sha256', $token))) {
+        header('WWW-Authenticate: Bearer');
+        sendError(401, 'Accès au diagnostic refusé.', 'diagnostic_reader_unauthorized');
+    }
+    if (array_diff(array_keys($query), ['hours', 'limit']) !== []) {
+        sendError(400, 'Fenêtre de diagnostic invalide.', 'diagnostic_reader_query_invalid');
+    }
+    $hours = diagnosticReaderNumber($query, 'hours', 24, 168);
+    $limit = diagnosticReaderNumber($query, 'limit', 100, 200);
+    $encodedAccount = $headers['HTTP_X_XAR_DIAGNOSTIC_ACCOUNT'] ?? null;
+    $account = null;
+    if ($encodedAccount !== null) {
+        if (!is_string($encodedAccount) || strlen($encodedAccount) > 1152
+            || preg_match('/\A(?:[A-Za-z0-9._~-]|%[0-9a-f]{2})+\z/i', $encodedAccount) !== 1
+            || preg_match('/\A[^\p{Cc}]{1,96}\z/u', rawurldecode($encodedAccount)) !== 1) {
+            sendError(400, 'Filtre de compte invalide.', 'diagnostic_reader_account_invalid');
+        }
+        $account = rawurldecode($encodedAccount);
+    }
+
+    $since = time() - $hours * 3600;
+    $clientJournalAvailable = false;
+    $errors = [];
+    try {
+        $errors = diagnosticReaderClientRows($connect(), $since, $limit, $account);
+        $clientJournalAvailable = true;
+    } catch (Throwable $error) {
+        error_log('[xar-regie-diagnostic] reader database unavailable: ' . get_class($error));
+    }
+    $payload = [
+        'ok' => true, 'generatedAt' => gmdate('c'), 'backendVersion' => XAR_BACKEND_VERSION,
+        'clientJournalAvailable' => $clientJournalAvailable,
+        'errors' => $errors,
+        'serverErrors' => array_map('diagnosticReaderEvent', backendDiagnosticRows($limit, $since)),
+    ];
+    // Existing diagnostic truncation is byte based. Normalize a possible incomplete UTF-8 suffix for JSON.
+    sendJson(200, json_decode(json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR));
+}
+
 function handlePublicDiagnosticShare(PDO $connection, string $route, string $method, bool $headOnly): bool {
     if (!preg_match('#^/api/v1/diagnostics/shared/([A-Za-z0-9_-]{43})$#D', $route, $match)) return false;
     requireMethod($method, ['GET', 'HEAD']);

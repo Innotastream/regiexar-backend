@@ -30,6 +30,10 @@ try {
     restore_error_handler();
     $rows = backendDiagnosticRows();
     checkRuntimeDiagnostic(count($rows) === 2 && $rows[0]['source'] === 'php-warning', 'Handled PHP warnings enter the private journal.');
+    file_put_contents($file, json_encode(['at' => gmdate('c', time() - 7200), 'code' => 'old']) . "\n", FILE_APPEND);
+    file_put_contents($file, json_encode(['code' => 'missing-time']) . "\n", FILE_APPEND);
+    $windowed = backendDiagnosticRows(1, time() - 3600);
+    checkRuntimeDiagnostic(count($windowed) === 1 && $windowed[0]['source'] === 'php-warning', 'Reader filtering skips older or untimed entries before applying the limit.');
     checkRuntimeDiagnostic(!str_contains(file_get_contents($file), 'CANARY'), 'No raw PHP warning or request content is stored.');
     $GLOBALS['diagnosticTestConfigPath'] = __DIR__ . '/../config.php';
     checkRuntimeDiagnostic(backendDiagnosticDirectory() === null, 'A private path inside the public backend is rejected.');

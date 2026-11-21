@@ -2162,6 +2162,10 @@ if ($route === '/api/v1') {
 }
 
 $configuration = privateConfig();
+if ($route === '/api/v1/diagnostics/reader') {
+    // The capability is confined to this endpoint and never starts an application session or runs migrations.
+    serveDiagnosticReader($configuration, $method, $_GET, $_SERVER, static fn(): PDO => databaseConnection($configuration));
+}
 if ($configuration === null) {
     sendJson(503, [
         'ok' => false,

@@ -47,11 +47,15 @@ function recordBackendDiagnostic(array $event): void {
     finally { $busy = false; }
 }
 
-function backendDiagnosticRows(): array {
+function backendDiagnosticRows(int $limit = 500, ?int $since = null): array {
     $directory = backendDiagnosticDirectory(); if ($directory === null) return [];
     $rows = [];
-    for ($day = 0; $day < 7 && count($rows) < 500; $day++) {
-        $file = $directory . DIRECTORY_SEPARATOR . 'server-' . gmdate('Y-m-d', time() - $day * 86400) . '.ndjson';
+    $now = time();
+    $firstDay = $since === null ? null : gmdate('Y-m-d', $since);
+    for ($day = 0; $day < 7 && count($rows) < $limit; $day++) {
+        $date = gmdate('Y-m-d', $now - $day * 86400);
+        if ($firstDay !== null && $date < $firstDay) break;
+        $file = $directory . DIRECTORY_SEPARATOR . 'server-' . $date . '.ndjson';
         if (!is_file($file) || is_link($file)) continue;
         $stream = @fopen($file, 'rb'); if ($stream === false) continue;
         try {
@@ -59,8 +63,9 @@ function backendDiagnosticRows(): array {
             if ($offset) { fseek($stream, $offset); fgets($stream); }
             $content = stream_get_contents($stream, 256 * 1024);
             foreach (array_reverse(explode("\n", (string) $content)) as $line) {
-                if (count($rows) >= 500) break;
+                if (count($rows) >= $limit) break;
                 $event = json_decode($line, true); if (!is_array($event)) continue;
+                if ($since !== null && (!is_string($event['at'] ?? null) || strtotime($event['at']) < $since)) continue;
                 $rows[] = sanitizeApplicationDiagnostic($event);
             }
         } finally { fclose($stream); }
