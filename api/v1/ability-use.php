@@ -108,7 +108,17 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     }
     if ($continuation === null && !$returning && applicationAbilitySourceDefeated($rules)) rejectOnlineCommand($connection, 409, 'Un pion KO ou mort ne peut lancer une compétence.', 'ability_source_defeated');
     if ($continuation === null && !$returning) onlineAssertAbilityValidationAvailable($connection, $activity, $ability, $rules);
-    $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $ability, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    $infusion = $continuation['plan']['healingInfusion'] ?? null;
+    if ($continuation === null) {
+        $definition = !$returning && ($ability['effect'] ?? '') === 'healing'
+            ? applicationCombatInfusion(applicationSpellInfusion($ability), $character !== [] ? $character : $rules) : null;
+        try { $infusedMana = applicationInfusionAmount($definition, $arguments['infusionMana'] ?? 0); }
+        catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, $error->getMessage(), 'infusion_rejected'); }
+        if ($infusedMana) $infusion = ['mana'=>$infusedMana, 'bonus'=>$infusedMana * $definition['ratio'], 'refundOnMiss'=>$definition['refundOnMiss']];
+    }
+    $costedAbility = $infusion !== null ? [...$ability, 'manaCost' => ($ability['manaCost'] ?? 0) + $infusion['mana']] : $ability;
+    $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $costedAbility, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    if ($infusion !== null) $plan['healingInfusion'] = $infusion;
     if($continuation===null&&$plan!==null&&empty(applicationSpellVisualBindings()[$ability['id']??'']['onResolvedDamage'])){
         $visualContext=[];
         if(!empty(applicationSpellVisualBindings()[$ability['id']??'']['weaponFromTarget'])){
@@ -133,6 +143,13 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
     if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
         return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.use', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, $target);
+    }
+    if ($infusion !== null && $infusion['refundOnMiss'] && !$cast['success']) {
+        if ($continuation !== null) onlineRefundAbilityValidation($connection, $records, $pending, [
+            'sceneId'=>$sceneId, 'sourceTokenId'=>$source['id'], 'characterId'=>$plan['characterId'],
+            'cast'=>['manaSpent'=>$infusion['mana']], '_private'=>['plan'=>$plan],
+        ], $identity);
+        $plan['manaCost'] -= $infusion['mana'];
     }
     // Pay at the attempted cast before effects: a self-heal must be capped
     // against HP after payment, and a transformation must debit its base form.
@@ -211,7 +228,8 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         applyOnlineAttackConditions($connection, $records, $pending, [
             'status' => 'applied', 'sceneId' => $sceneId, 'targetTokenId' => $target['id'], 'onHitConditions' => $ability['onHitConditions'] ?? []]);
     } elseif ($cast['success']) {
-        $rolled = onlineRollFormulaWithMode($ability['healingFormula'], 'normal');
+        $healingFormula = $infusion !== null ? '(' . $ability['healingFormula'] . ')+' . $infusion['bonus'] : $ability['healingFormula'];
+        $rolled = onlineRollFormulaWithMode($healingFormula, 'normal');
         onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $owner['characterId'] !== '' ? $owner['characterId'] : ($source['characterId'] ?? ''), $rolled);
         if ($rolled['total'] <= 0) rejectOnlineCommand($connection, 400, 'Le soin doit rendre au moins un PV.', 'invalid_healing_total');
         $effectRoll = onlineAbilityRollVisibility(

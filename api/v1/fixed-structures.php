@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/fixed-structure-size.php';
+require_once __DIR__.'/silk-web.php';
 function applicationIsNonCombatant(array $t):bool{return ($t['nonCombatant']??false)===true||!empty($t['terrainBarrier'])||!empty($t['fixedStructure']);}
 function applicationFilterNonCombatantInitiative(array $clock,array $tokens):array {
  $order=$clock['order']??[];$current=$order[$clock['currentIndex']??0]??null;$byId=array_column($tokens,null,'id');
@@ -28,9 +29,23 @@ function applicationFixedStructureDefinition(array $v):array {
 }
 function applicationStructureVariant(array $definition,string $id=''):array {foreach($definition['variants'] as $v)if($v['id']===($id?:$definition['variants'][0]['id']))return $v;throw new RuntimeException('Choisissez une taille de l’élément fixe.',400);}
 function applicationCreateFixedStructureToken(array $d,string $id,?int $now=null):array {
- $v=applicationQuoteStructureSize($d['definition'],['variantId'=>$d['variantId']??$d['definition']['variants'][0]['id'],...(isset($d['structureSize'])?['structureSize'=>$d['structureSize']]:[])]);return ['id'=>$id,'name'=>$d['name'],'image'=>$d['image']?:null,'color'=>'#c0bdd1','frameVariant'=>'creature','x'=>$d['x'],'y'=>$d['y'],'layerId'=>$d['layerId']??'ground','size'=>$v['size'],'hp'=>$v['hp'],'maxHp'=>$v['hp'],'mana'=>0,'maxMana'=>0,
- 'fixedStructure'=>['version'=>1,'createdAt'=>$now??(int)floor(microtime(true)*1000),'deviceId'=>$d['id'],'abilityId'=>$d['abilityId'],'creatorTokenId'=>$d['sourceTokenId'],'definition'=>$d['definition']],'nonCombatant'=>true,'immovable'=>true,'followCharacter'=>false,'characterId'=>null,'controllerPlayerId'=>null,
+ $v=applicationQuoteStructureSize($d['definition'],[...(isset($d['variantId'])?['variantId'=>$d['variantId']]:[]),...(array_key_exists('structureSize',$d)?['structureSize'=>$d['structureSize']]:[])]);
+ $fixed=['version'=>1,'createdAt'=>$now??(int)floor(microtime(true)*1000),'deviceId'=>$d['id'],'abilityId'=>$d['abilityId'],'creatorTokenId'=>$d['sourceTokenId'],'definition'=>$d['definition']];
+ $web=applicationIsSilkWeb(['fixedStructure'=>$fixed]);$custom=$web&&applicationHasCustomSilkWebArtwork($d,$d);
+ return ['id'=>$id,'name'=>$d['name'],'image'=>!$web||$custom?(($d['image']??'')?:null):null,...($custom?['artworkOnly'=>true]:[]),'color'=>'#c0bdd1','frameVariant'=>'creature','x'=>$d['x'],'y'=>$d['y'],'layerId'=>$d['layerId']??'ground','size'=>$v['size'],'hp'=>$v['hp'],'maxHp'=>$v['hp'],'mana'=>0,'maxMana'=>0,
+ 'fixedStructure'=>$fixed,'nonCombatant'=>true,'immovable'=>true,'followCharacter'=>false,'characterId'=>null,'controllerPlayerId'=>null,
  'armorCategory'=>'none','armor'=>0,'magicArmorCategory'=>'none','magicArmor'=>0,'mountable'=>false,'mountControllable'=>false,'hidden'=>false,'revealDetailsToPlayers'=>true,'abilities'=>[],'weaponAttacks'=>[],'stats'=>[],'conditions'=>[],'condition'=>'','_updatedAt'=>(int)floor(microtime(true)*1000)];
+}
+function applicationPlaceSilkWeb(array &$state,array $point,string $id,?int $now=null):array {
+ $names=array_fill_keys(array_column($state['map']['tokens'],'name'),true);$number=1;
+ while(isset($names['Toile de soie '.$number]))$number++;
+ $definition=applicationFixedStructureDefinition(['kind'=>'structure','artworkPreset'=>'silk-web',
+     'variants'=>applicationSilkWebSizeVariants(),'sizeAdjustment'=>applicationSilkWebSizeAdjustment()]);
+ $web=applicationCreateFixedStructureToken(['name'=>'Toile de soie '.$number,'id'=>null,'abilityId'=>'','sourceTokenId'=>'',
+     'definition'=>$definition,...(array_key_exists('structureSize',$point)?['structureSize'=>$point['structureSize']]:[]),
+     'x'=>$point['x'],'y'=>$point['y'],'layerId'=>$point['layerId']],$id,$now);
+ $state['map']['tokens'][]=$web;
+ return $web;
 }
 function applicationProtectFixedStructure(array $before,array $next):array {
  if(empty($before['fixedStructure']))return $next;foreach(['x','y','layerId'] as $k)if(($next[$k]??null)!==($before[$k]??null))throw new RuntimeException('Cet élément fixe reste à son emplacement.',409);

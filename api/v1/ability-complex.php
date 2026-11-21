@@ -405,7 +405,7 @@ function onlineUseComplexAbility(
         if (($cast['success'] ?? false) === true) {
             try {
                 $execution = createApplicationComplexAbilityExecution([
-                    'id' => 'execution-' . randomToken(12), 'requestId' => $requestId,
+                    'id' => 'execution-' . ($defenseApproval !== null ? $requestId : randomToken(12)), 'requestId' => $requestId,
                     'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($source, $map),
                     'sourcePosition' => applicationAbilityMovementSource($source,[...$map,'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)],($ability['workflow']['steps'][0]['mountedMovement']??$ability['mountedMovement']??false)===true), 'sourceTokenId' => $source['id'] ?? '', 'sourceName' => $source['name'] ?? 'Personnage',
                     'characterId' => $owner['characterId'] ?? '',

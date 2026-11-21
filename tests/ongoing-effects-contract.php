@@ -72,4 +72,23 @@ requireTactical(runCommand($db, 'roll.reveal', ['rollId' => $private['id']], tru
 $activity = $db->payload('activity'); $activity['rolls'][] = [...$private, 'id' => 'private-scene-roll', 'sourceSceneId' => 'scene-two', 'mapEvent' => [...($private['mapEvent'] ?? []), 'sceneId' => 'scene-two']]; $activity['rolls'][] = [...$private, 'id' => 'unapplied-damage-roll', 'rollKind' => 'damage']; $db->put('activity', $activity);
 requireTactical(runCommand($db, 'roll.reveal', ['rollId' => 'private-scene-roll'], true, 'account-gm')->status === 409, 'An undistributed scene remains private');
 requireTactical(runCommand($db, 'roll.reveal', ['rollId' => 'unapplied-damage-roll'], true, 'account-gm')->status === 409, 'Unapplied damage remains private');
+
+$db = fixture();
+$before = $db->payload('initiative:scene-one');
+$periodic = ['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'token-monster','direction'=>-1,
+    'label'=>'Plaie de recette','formula'=>'1d2+3','turns'=>2,'requestId'=>'manual-hp-php-proof-0001'];
+requireTactical(runCommand($db,'combat.effect.periodic-hp',$periodic)->status===403,'Only the GM creates recurring HP effects');
+$created = runCommand($db,'combat.effect.periodic-hp',$periodic,true,'account-gm');
+requireTactical($created->status===200 && $created->body['effect']['remainingTurns']===2, 'Manual effect is created for exactly two turns: '.json_encode($created->body));
+requireTactical(runCommand($db,'combat.effect.periodic-hp',$periodic,true,'account-gm')->body['deduplicated']===true,'The same request creates one effect');
+requireTactical((int)$db->payload('token:scene-one:token-monster')['hp']===40,'Creating the effect leaves HP until the target turn');
+$records = applicationDomainRecords($db); $pending = [];
+queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$before,'active'=>true,'turnsStarted'=>true,
+    'order'=>['token-player','token-monster'],'currentIndex'=>1,'turnSerial'=>(int)($before['turnSerial']??0)+1]);
+applyApplicationDamageOverTimeOnTurn($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm']);
+foreach($pending as $id=>$change)$db->put($id,$change['payload']);
+requireTactical(in_array((int)$db->payload('token:scene-one:token-monster')['hp'],[35,36],true),'The target loses the rolled HP on its next turn');
+requireTactical($db->payload('activity')['damageOverTime'][0]['remainingTurns']===1,'One turn was consumed');
+$removed=runCommand($db,'combat.effect.remove',['kind'=>'dot','effectId'=>$created->body['effect']['id'],'requestId'=>'manual-hp-remove-php-0001'],true,'account-gm');
+requireTactical($removed->status===200 && $db->payload('activity')['damageOverTime']===[],'The GM can remove the remaining periodic effect');
 echo "Ongoing effects, residual damage and roll revelation contracts passed.\n";

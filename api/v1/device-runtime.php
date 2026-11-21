@@ -136,14 +136,13 @@ function onlineRecordTimedDeviceEffect(PDO $db,array &$records,array &$pending,a
     if(combatUndoRecord($before,$after,'mechanics.command',['sceneId'=>$device['sceneId'],'sourceTokenId'=>$device['id'],'requestId'=>$requestId],['attack'=>$parents[0],'attacks'=>$attacks])!==null)queueOnlineDomainUpsert($pending,$records,'activity',$after['activity']);
 }
 function onlineAdvanceDevicesOnChanges(PDO $db,array $records,array $changes,array $identity): array {
-    $stored=applicationDomainRecords($db,['devices']);
-    if(!array_filter($changes,static fn($c)=>str_starts_with($c['key'],'initiative:')))return $changes;
+    $clockChanges = array_filter($changes, static fn($change)=>str_starts_with($change['key'],'initiative:')&&($change['operation']??'upsert')!=='delete');
+    if ($clockChanges === []) return $changes;
     $pending=[];foreach($changes as $change)$pending[$change['key']]=$change;
     $records=array_replace(applicationDomainRecords($db),$records);
-    foreach($changes as $change){
-        if(!str_starts_with($change['key'],'initiative:')||($change['operation']??'upsert')==='delete')continue;
+    foreach($clockChanges as $change){
         $sceneId=substr($change['key'],11);$previous=applicationDomainPayload($records,$change['key']);
-        $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$sceneId);
+        $state=onlineDeviceSelectScene(domainsToApplicationState(onlineDeviceOverlayRecords($records,$pending),0),$sceneId);
         $advanced=applicationAdvanceDevices($state,$previous,onlineDeviceContext($db,$records,$pending,[...$identity,'mechanicsAutomatic'=>true]));onlineDeviceFlush($advanced['state'],$records,$pending);
         for($effectIndex=0;$effectIndex<count($advanced['effects']);$effectIndex++){
             $effect=$advanced['effects'][$effectIndex];if(!in_array($effect['type'],['beam','explosion'],true)){onlineDeviceEffects($db,$records,$pending,$identity,[$effect]);continue;}
@@ -155,7 +154,8 @@ function onlineAdvanceDevicesOnChanges(PDO $db,array $records,array $changes,arr
             $requestId='device-clock-'.hash('sha256',json_encode([$sceneId,$change['payload']['combatId']??'',$change['payload']['turnSerial']??0,$device['id'],$effect['type']],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR));
             $attacks=onlineDeviceEffects($db,$records,$pending,$identity,$group,$requestId);onlineRecordTimedDeviceEffect($db,$records,$pending,$identity,$before,$attacks,$device,$requestId);
         }
-        onlineAdvanceContactZoneClock($db,$records,$pending,$identity,$sceneId,$previous,$change['payload']);
+        [$from,$to]=applicationInitiativeEffectClocks($previous,$change['payload']);
+        onlineAdvanceContactZoneClock($db,$records,$pending,$identity,$sceneId,$from,$to);
     }
     return array_values($pending);
 }
@@ -217,7 +217,7 @@ function onlineDeviceEffects(PDO $db,array &$records,array &$pending,array $iden
                 if (($token['characterId'] ?? '') === $effect['characterId'] && applicationMorphLinked($token)) queueOnlineDomainUpsert($pending, $records, $key, synchronizeOnlineCharacterToken($token, $character));
             }
         } elseif($effect['type']==='structure.created'){
-            $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$effect['sceneId']);$i=dsIndex($state['map']['tokens'],$effect['tokenId']);if($i<0)continue;$web=$state['map']['tokens'][$i];$d=$web['fixedStructure']['definition'];
+            $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$effect['sceneId'],$effect['layerId']??null);$i=dsIndex($state['map']['tokens'],$effect['tokenId']);if($i<0)continue;$web=$state['map']['tokens'][$i];$d=$web['fixedStructure']['definition'];
             foreach($state['map']['tokens'] as $target)if(!applicationIsNonCombatant($target)&&($target['hp']??0)>0&&($target['layerId']??'ground')===($web['layerId']??'ground')&&(($d['affectCreator']??false)||$target['id']!==$web['fixedStructure']['creatorTokenId'])&&dsDistance($web,$target,$state['map'],false,true)<=$d['contactRadiusCells'])onlineStructureContactTarget($db,$records,$pending,$state,$web,$target);
             onlineDeviceFlush($state,$records,$pending);
         }elseif(in_array($effect['type'],['explosion','beam'],true)) {
@@ -284,10 +284,13 @@ function onlineDeviceTimedCondition(array &$state,array $effect): void {
         'remainingTurns'=>$remainingTurns,...(!$resisted&&!empty($rider['attackPenalty'])?['attackPenalty'=>$rider['attackPenalty'],'sourceTokenId'=>$effect['sourceTokenId']??'']:[]),...(!empty($rider['escape'])&&!$resisted?['escape'=>$rider['escape'],'initialTurns'=>$rider['turns']]:[]),'blocksMovement'=>$resisted?$rider['fallbackBlocksMovement']:$rider['blocksMovement'],'blocksActions'=>$resisted?($rider['fallbackBlocksActions']??false):($rider['blocksActions']??false),'clockCombatId'=>$state['initiative']['combatId']??'','lastTurnSerial'=>(int)($state['initiative']['turnSerial']??0),'introduced'=>$introduced];
 }
 function onlineDeviceInfusion(PDO $db,array &$records,array &$pending,array $identity,array $definition,array $args,array $source,int $fixedCost): ?array {
-    $state=onlineDeviceState($db,$records,$pending);$infusion=applicationPassiveInfusion(dsInfusion($definition['infusion']??null),$source,$state);$value=$args['infusionMana']??0;
-    if(!$infusion){if($value!==0)dsError('Cette attaque ne permet pas d’infusion.',400);return null;}
-    dsAmount($value,$infusion['minimumMana']);if($value>1000000)dsError('L’infusion dépasse sa limite.',400);
-    $state=onlineDeviceState($db,$records,$pending);$state=onlineDeviceSelectScene($state,$args['sceneId']??$state['activeSceneId'],$source['layerId']??'ground');$actor=['id'=>$identity['id'],'role'=>onlineIdentityIsGm($identity)?'gm':'player'];
+    $base = dsInfusion($definition['infusion']??null);
+    if (($args['infusionMana'] ?? 0) === 0 && ($base['minimumMana'] ?? 0) === 0) return null;
+    $state = onlineDeviceState($db, $records, $pending);
+    $infusion = applicationCombatInfusion($base, $source, $state);
+    $value = applicationInfusionAmount($infusion, $args['infusionMana'] ?? 0);
+    if ($value === 0) return null;
+    $state=onlineDeviceSelectScene($state,$args['sceneId']??$state['activeSceneId'],$source['layerId']??'ground');$actor=['id'=>$identity['id'],'role'=>onlineIdentityIsGm($identity)?'gm':'player'];
     $ownerId=applicationAbilityCastingOwner($source)['characterId'];$context=onlineDeviceContext($db,$records,$pending,$identity);
     $oi=$ownerId!==''?dsOwner($state,$actor,$ownerId):dsIndex($state['map']['tokens'],$source['id']);if($oi<0)dsError('Le porteur de cette réserve de mana n’existe plus.');
     $trial=$state;if($ownerId!=='')$trialOwner=&$trial['characters'][$oi];else $trialOwner=&$trial['map']['tokens'][$oi];dsPayMana($trial,$trial['devices'],$trialOwner,$source,$value+$fixedCost,$context);

@@ -178,6 +178,7 @@ if (is_array($deduplicatedAttack)) {
     if($hadWeaponDefinitions)$source['damageDice']=$source['weaponAttacks'][0]['formula']??'';
     $complexExecutionId = trim((string) ($arguments['complexExecutionId'] ?? ''));
     $damagePercent = 100;
+    $attackSeries = null;
     $chainGate = null; $chainDefinition = null; $chargeStrike = null; $authorizedRangeCells=0; $strikeSourcePosition=null;
     if ($complexExecutionId !== '') {
         if (preg_match('/^execution-[A-Za-z0-9_-]{12,120}$/D', $complexExecutionId) !== 1
@@ -227,6 +228,8 @@ if (is_array($deduplicatedAttack)) {
             $damagePercent = (int) $step['damagePercent'];
             $attackPlan = $execution['stepStates'][$step['sourceStepId']]['attackPlan'] ?? [];
             $done = array_sum(array_map(static fn(array $entry): int => count($entry['attacks'] ?? []), $stepState['targets'] ?? []));
+            $count = array_sum(array_column($stepState['targets'] ?? [], 'attackCount'));
+            $attackSeries = ['name' => $execution['abilityName'], 'index' => $done + 1, 'count' => $count];
             $planned = $attackPlan[$done] ?? null;
             $movement=null;foreach($execution['workflow']['steps'] as $s)if($s['id']===$step['sourceStepId']&&$s['type']==='movement'&&!empty($s['charge']))$movement=$s;
             if($movement){
@@ -257,6 +260,10 @@ if (is_array($deduplicatedAttack)) {
                 || ($arguments['opposed'] ?? false) !== applicationChainAttackOpposed($step,$stepState))
                 rejectOnlineCommand($connection, 409, 'Respectez la cible, l’arme et l’opposition prévues pour cette série.', 'complex_attack_plan_mismatch');
         }
+        if ($step['type'] === 'attack-chain') $attackSeries = [
+            'name' => $execution['abilityName'], 'index' => count($stepState['attacks'] ?? []) + 1,
+            'count' => ($step['resolutionMode'] ?? '') === 'batch' ? ($stepState['queuedAttackCount'] ?? 0) : $step['count'],
+        ];
         if ($step['type'] === 'attack-chain' && ($step['resolutionMode'] ?? '') === 'batch') {
             $chainDefinition = $step;
             $chainGate = applicationChainAttackGate($step, $stepState);
@@ -427,7 +434,7 @@ if (is_array($deduplicatedAttack)) {
         if ($selectedStatId === '') rejectOnlineCommand($connection, 400, 'Choisissez une statistique d’attaque.', 'attack_stat_required');
         $abilityForAttack['castingStatId'] = $selectedStatId;
     }
-    $approachContext=!empty($mechanicsDefinition['attackApproach'])?['sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'attackApproach'=>$mechanicsDefinition['attackApproach'],'mountedMovement'=>($mechanicsDefinition['mountedMovement']??false)===true,'approachPoint'=>$arguments['approachPoint']??null,'targetRangeCells'=>applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')),...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[])]:null;
+    $approachContext=!empty($mechanicsDefinition['attackApproach'])?['sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'abilityId'=>$mechanicsDefinition['id'],'attackApproach'=>$mechanicsDefinition['attackApproach'],'mountedMovement'=>($mechanicsDefinition['mountedMovement']??false)===true,'approachPoint'=>$arguments['approachPoint']??null,'targetRangeCells'=>applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),(string)($arguments['weaponAttackId']??'')),...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[])]:null;
     if($approachContext!==null)onlineAttackApproachPlan($connection,$records,$pending,$approachContext,$accountId,$isGm);
     $castingPlan = $abilityForAttack !== null ? onlinePrepareAbilityCasting($connection, $abilityForAttack, $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, $selectedStatId, onlineDeviceState($connection,$records,$pending), $singleAreaTarget?0.5:1) : null;
     if($castingPlan!==null&&!empty($abilityForAttack['persistentArea']))$castingPlan['persistentTargetPoint']=$aimedPoint??['x'=>$target['x'],'y'=>$target['y']];
@@ -444,13 +451,16 @@ if (is_array($deduplicatedAttack)) {
     }else{
     if(!$prepareDefenseOnly&&$defenseApproval!==null&&!empty($defenseApproval['gate']['preparedHit'])){$previewRecords=$records;$previewPending=$pending;$rechecked=onlinePerformTargetAttack($connection,$previewRecords,$previewPending,$table,$identity,$arguments,$isGm,[...$context,'prepareDefenseOnly'=>true]);if(canonicalApplicationDomainValue($rechecked['outcomes'])!==canonicalApplicationDomainValue($defenseApproval['gate']['preparedHit']['outcomes']))rejectOnlineCommand($connection,409,'Les conditions du jet ont changé depuis sa préparation.','defense_roll_changed');}
 
-    try { $infusion=onlineDeviceInfusion($connection,$records,$pending,$identity,$mechanicsDefinition,$arguments,$source,(int)($mechanicsDefinition['manaCost']??0)); }
+    $spellCanInfuse = $abilityForAttack !== null && $mechanicsAbility === null;
+    $infusionDefinition = $spellCanInfuse ? ['infusion'=>applicationSpellInfusion($abilityForAttack)] : $mechanicsDefinition;
+    try { $infusion=onlineDeviceInfusion($connection,$records,$pending,$identity,$infusionDefinition,$arguments,$source,(int)($castingPlan['manaCost']??0)); }
     catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'infusion_rejected');}
-    if(($infusion['damage']??0)>0){
-        if($damageComponents===[])$damageComponents=[['type'=>$damageType,'formula'=>$damageFormula]];
-        $index=-1;foreach($damageComponents as $i=>$part)if($part['type']==='ignore')$index=$i;
-        if($index>=0)$damageComponents[$index]['formula'].='+'.$infusion['damage'];else $damageComponents[]=['type'=>'ignore','formula'=>(string)$infusion['damage']];
-        $damageFormula=applicationCombinedDamageFormula($damageComponents);
+    if (($infusion['damage'] ?? 0) > 0) {
+        try { $infused = applicationInfusedDamageComponents($damageComponents, $damageFormula, $damageType, $infusion['damage']); }
+        catch (RuntimeException $error) { rejectOnlineCommand($connection, 400, $error->getMessage(), 'infusion_rejected'); }
+        if ($spellCanInfuse && empty($abilityForAttack['infusion']['enabled']) && ($isolatedFields['damageRepetitions'] ?? 1) > 1)
+            $infusion['bonusOnFirstStrike'] = $infusion['damage'];
+        else { $damageComponents = $infused; $damageFormula = applicationCombinedDamageFormula($damageComponents); }
     }
     if($infusion!==null&&$sourceCharacter!==[]){$sourceCharacter=$pending['character:'.$characterId]['payload']??$sourceCharacter;$source=synchronizeOnlineCharacterToken($source,$sourceCharacter);}
     if($quotaWeapon!==null){$quotaState=onlineWeaponTurnState($records,$pending,$sceneId,$map);try{consumeWeaponAttackUse($quotaState,$source,$quotaWeapon,['sceneId'=>$sceneId,'requestId'=>$requestId,'ownerPlayerId'=>$sourceController]);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'weapon_turn_limit');}$activity=$pending['activity']['payload']??$activity;$activity['actionTimers']=$quotaState['actionTimers'];queueOnlineDomainUpsert($pending,$records,'activity',$activity);}
@@ -539,7 +549,8 @@ if (is_array($deduplicatedAttack)) {
     if(!empty($isolatedFields['conditionRider'])||!empty($chargeStrike['conditionRider'])||!empty($mechanicsDefinition['conditionRider']))$damageSpecification['conditionRider']=$isolatedFields['conditionRider']??$chargeStrike['conditionRider']??$mechanicsDefinition['conditionRider'];
     if(!empty($mechanicsDefinition['knockback']))$damageSpecification['knockback']=$mechanicsDefinition['knockback'];
     if($projectileGate['checks']!==[])$damageSpecification['projectileGate']=$projectileGate;
-    if($infusion!==null)$damageSpecification['infusion']=['mana'=>$infusion['mana'],'damage'=>$infusion['damage'],'refunded'=>$infusionMissed&&$infusion['refundOnMiss']];
+    if($infusion!==null)$damageSpecification['infusion']=['mana'=>$infusion['mana'],'damage'=>$infusion['damage'],'refunded'=>$infusionMissed&&$infusion['refundOnMiss'],
+        ...(!empty($infusion['bonusOnFirstStrike']) ? ['bonusOnFirstStrike'=>$infusion['bonusOnFirstStrike']] : [])];
     $damageRoll = null;
     $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
     if (($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0 && !$oppositionRequired && $primaryAffects) {
@@ -575,6 +586,7 @@ if (is_array($deduplicatedAttack)) {
         ...(!empty($mechanicsDefinition['terrainBarrier'])&&$aimedPoint?['terrainBarrier'=>$mechanicsDefinition['terrainBarrier'],'terrainBarrierPlayerSide'=>($source['allied']??false)===true||$sourceController!=='']:[]),
         ...($primaryAffects&&!validApplicationDamageTargeting($damageTargeting)&&applicationThornWallPunishesAttack($target,($source['allied']??false)===true||$sourceController!=='')?['thornWallRetaliates'=>true]:[]),
         ...($complexExecutionId !== '' ? ['complexExecutionId' => $complexExecutionId] : []),
+        ...(($attackSeries['count'] ?? 0) > 1 ? ['attackSeries' => $attackSeries] : []),
         'attackId' => $attackId,
         'echoAttackContext' => ['equipmentItemIds'=>($selectedWeapon?:$mechanicsDefinition)['equipmentItemIds']??[],'naturalWeapon'=>($selectedWeapon?:$mechanicsDefinition)['naturalWeapon']??false,'torchLightId'=>($selectedWeapon?:$mechanicsDefinition)['torchLightId']??'', 'weaponId'=>$attackKind==='weapon'?$attackId:($selectedWeapon['id']??''),'weaponBased' => $attackKind === 'weapon' || ($mechanicsDefinition['useWeaponDamage'] ?? false) === true,
             'projectile' => ($mechanicsDefinition['projectile'] ?? false) === true || ($selectedWeapon['projectile'] ?? false) === true, 'reach'=>applicationWeaponReach($selectedWeapon?:$mechanicsDefinition)],

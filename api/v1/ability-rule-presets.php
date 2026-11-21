@@ -3,13 +3,18 @@ declare(strict_types=1);
 require_once __DIR__.'/fixed-structure-size.php';
 require_once __DIR__.'/ability-description-presets.php';
 require_once __DIR__.'/path-strike-presets.php';
+function applicationSimpleAbilityPresets(): array
+{
+    static $presets = null;
+    return $presets ??= json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
+}
 function applicationConfiguredOppositionAbility(array $source): array {
     static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-rule-presets.json'),true,512,JSON_THROW_ON_ERROR);
     $preset=$presets[$source['id']??'']??null;
     return $preset!==null&&($source['effect']??'')==='movement'&&(!isset($source['opposition'])||($source['opposition']['statId']??'')==='character-stat-dexterity')?[...$source,...$preset,'onHitConditions'=>[]]:$source;
 }
 function applicationConfiguredAbilityRules(array $source): array {
-    static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
+    $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
     if($preset===null)foreach($presets as $candidate){$match=$candidate['match']??null;if(is_array($match)&&($source['effect']??null)===($match['effect']??null)&&($source['tacticalEffect']['version']??null)===($match['tacticalEffect']['version']??null)&&($source['tacticalEffect']['kind']??null)===($match['tacticalEffect']['kind']??null)){$preset=$candidate;break;}}
     if(($preset['retired']??false)===true)return $configured;
@@ -60,13 +65,12 @@ function applicationAbilityRulePreset(mixed $value): ?array {
 }
 
 function applicationConfiguredAttackEnhancement(string $abilityId,array $enhancement):array {
-    static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);$preset=$presets[$abilityId]??null;
+    $preset = applicationSimpleAbilityPresets()[$abilityId] ?? null;
     if(!isset($preset['attackEnhancementTrigger'])||($enhancement['mode']??'')!=='on-attack-dot')return $enhancement;
     $patch=[];if(!array_key_exists('trigger',$enhancement))$patch['trigger']=$preset['attackEnhancementTrigger'];if(!array_key_exists('weaponIds',$enhancement)&&isset($preset['attackEnhancementWeaponIds']))$patch['weaponIds']=$preset['attackEnhancementWeaponIds'];
     return $patch!==[]?[...$enhancement,...$patch]:$enhancement;
 }
 
 function applicationIsRetiredAbility(mixed $id): bool {
-    static $presets=null;$presets??=json_decode((string)file_get_contents(__DIR__.'/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR);
-    return is_string($id)&&($presets[$id]['retired']??false)===true;
+    return is_string($id)&&(applicationSimpleAbilityPresets()[$id]['retired']??false)===true;
 }

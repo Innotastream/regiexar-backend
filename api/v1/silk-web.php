@@ -5,6 +5,15 @@ function applicationIsSilkWeb(array $token):bool {
  $fixed=$token['fixedStructure']??null;
  return is_array($fixed)&&(($fixed['definition']['artworkPreset']??'')==='silk-web'||($fixed['abilityId']??'')==='ability-c5b5d747-8018-4ace-b05d-d9c59508935b');
 }
+function applicationSilkWebMediaReference(mixed $value):string {
+ return is_string($value)?preg_replace('#^https://regie-xar-tsaroth\.fr(?=/media/)#i','',trim($value)):'';
+}
+function applicationHasCustomSilkWebArtwork(array $token,array $device):bool {
+ $image=applicationSilkWebMediaReference($token['image']??null);
+ if($image===''||$image==='/assets/device-vfx/silk-web-v1.png')return false;
+ if(($token['artworkOnly']??false)===true||($device['imageCustomized']??false)===true&&$image===applicationSilkWebMediaReference($device['image']??null))return true;
+ return isset($device['ability'])&&$image!==applicationSilkWebMediaReference($device['ability']['image']??null);
+}
 function applicationSilkWebConditionVisual(array $map,string $sourceId,?int $now=null):array {
  foreach($map['tokens']??[] as $source)if(($source['id']??'')===$sourceId&&applicationIsSilkWeb($source))return ['visualPreset'=>'silk-web','structureTokenId'=>$sourceId,'visualCreatedAt'=>$now??(int)floor(microtime(true)*1000)];
  return [];
@@ -15,8 +24,8 @@ function applicationSilkWebVisuals(array $store,array $map,array $context):array
  $tokens=[];foreach($map['tokens']??[] as $token)if(empty($token['hidden'])&&empty($token['dimSilhouette'])&&($token['layerId']??'ground')===$layerId&&($shown===null||isset($shown[$token['id']])))$tokens[$token['id']]=$token;
  $devices=array_column($store['devices']??[],null,'id');
  foreach($tokens as $token){
-  if(!applicationIsSilkWeb($token))continue;$fixed=$token['fixedStructure'];$device=$devices[$fixed['deviceId']??'']??[];$image=$token['image']??'';
-  $row=['id'=>$token['id'],'sceneId'=>$sceneId,'layerId'=>$layerId,'x'=>$token['x'],'y'=>$token['y'],'size'=>$token['size'],'createdAt'=>is_int($fixed['createdAt']??null)&&$fixed['createdAt']>0?$fixed['createdAt']:0,'alive'=>($token['hp']??0)>0,'customImage'=>$image!==''&&$image!==null&&$image!==($device['ability']['image']??null)];
+  if(!applicationIsSilkWeb($token))continue;$fixed=$token['fixedStructure'];$device=$devices[$fixed['deviceId']??'']??[];
+  $row=['id'=>$token['id'],'sceneId'=>$sceneId,'layerId'=>$layerId,'x'=>$token['x'],'y'=>$token['y'],'size'=>$token['size'],'createdAt'=>is_int($fixed['createdAt']??null)&&$fixed['createdAt']>0?$fixed['createdAt']:0,'alive'=>($token['hp']??0)>0,'customImage'=>applicationHasCustomSilkWebArtwork($token,$device)];
   if(isset($tokens[$fixed['creatorTokenId']??'']))$row['sourceTokenId']=$fixed['creatorTokenId'];$result['webs'][]=$row;
  }
  $webIds=array_fill_keys(array_column($result['webs'],'id'),true);

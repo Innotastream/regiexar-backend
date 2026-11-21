@@ -189,3 +189,41 @@ foreach (json_decode(file_get_contents(__DIR__ . '/token-group-geometry.json'), 
     $geometry=array_map(static fn($p)=>array_intersect_key($p,array_flip(['id','x','y','layerId','relocated'])),$result);
     requireTactical(json_encode($geometry) === json_encode($case['expected']), 'PHP/JS group geometry parity: ' . $case['name']);
 }
+
+// The editor may never have seen a token document that dropped out of a scene index.
+$db = fixture();
+$db->put('token-index:scene-two', ['order'=>['token-copy']]);
+$db->put('token:scene-two:token-independent', $db->payload('token:scene-one:token-independent'));
+$db->put('initiative:scene-two', ['order'=>['token-copy']]);
+$db->put('presentation:scene-two', ['map'=>[], 'initiative'=>[]]);
+$db->put('items', ['version'=>1, 'templates'=>[], 'instances'=>[],
+    'inventoryCatalog'=>['token-independent'=>['legacy-model-id']]]);
+$preserved = array_map(static fn(string $key): array => $db->payload($key),
+    ['token:scene-one:token-independent','character:character-player','items','table','activity']);
+$removeScene = static function (array $changes) use ($db): TestResponse {
+    $GLOBALS['testIdentity'] = ['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
+    $GLOBALS['testBody'] = ['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,'changes'=>$changes];
+    try { patchApplicationDomains($db); } catch (TestResponse $response) { return $response; }
+    throw new RuntimeException('No domain response');
+};
+$delete = static fn(string $key): array => ['key'=>$key,'operation'=>'delete','expectedRevision'=>1];
+$request = [
+    ['key'=>'scene-index','operation'=>'upsert','expectedRevision'=>1,'payload'=>['order'=>['scene-one']]],
+    $delete('scene:scene-two'),
+];
+$blocked = $removeScene($request);
+requireTactical($blocked->status===409 && isset($db->domains['scene:scene-two'], $db->domains['token:scene-two:token-independent']),
+    'A stale or incomplete request cannot delete a scene whose indexed tokens were not confirmed.');
+$removed = $removeScene([...$request, $delete('token-index:scene-two'), $delete('token:scene-two:token-copy')]);
+requireTactical($removed->status===200, 'The scene removal commits: ' . json_encode($removed->body));
+foreach (['scene:scene-two','map:scene-two','initiative:scene-two','presentation:scene-two','token-index:scene-two',
+    'token:scene-two:token-copy','token:scene-two:token-independent'] as $key) {
+    requireTactical(!isset($db->domains[$key]), 'Scene removal also deletes '.$key);
+}
+requireTactical(array_map(static fn(string $key): array => $db->payload($key),
+    ['token:scene-one:token-independent','character:character-player','items','table','activity'])===$preserved,
+    'Other scenes, inventories, characters, the broadcast table and the activity journal are preserved.');
+$stale = $removeScene([['key'=>'token:scene-two:token-independent','operation'=>'upsert','expectedRevision'=>0,
+    'payload'=>$db->payload('token:scene-one:token-independent')]]);
+requireTactical($stale->status===409 && !isset($db->domains['token:scene-two:token-independent']),
+    'A stale editor cannot recreate an orphan token after removal.');

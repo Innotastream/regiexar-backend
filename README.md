@@ -1,3 +1,9 @@
+## Backend 0.19.16 — client 4.3.0 — 21 novembre 2026
+
+Le build client-4-3-0-coherence-fluidite-20261121-1 corrige la cohérence des scènes, des passages, de l’initiative et des actions de combat. Il maintient la réparation transactionnelle des identifiants hérités des anciennes copies de scènes et rattache la suppression des scènes à celle de leurs documents associés. La synchronisation des sessions et la rétention des données réduisent les écritures et le volume traité. Les schémas SQL, session, domaines et fiches restent 24/22/1/10.
+
+La politique finale accepte exclusivement le client 4.3.0. Appliquer cette politique après disponibilité publique du paquet Windows pour conserver l’accès des participants pendant la transition.
+
 ## Backend 0.19.15 — reprise de connexion MJ — 21 novembre 2026
 
 Le build `client-4-2-10-reprise-connexion-20261121-1` répare les identifiants partagés par d’anciennes copies de scènes lors de la première lecture complète par un MJ. Les documents modifiés sont historisés dans la transaction. Le client 4.2.10 et le schéma SQL courant suffisent.

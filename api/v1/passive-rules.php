@@ -24,6 +24,9 @@ function applicationPassiveInfusion(?array $definition,array $source=[],array $s
  if(empty($definition['enabled']))return $definition;
  $ratio=$definition['ratio']??1;foreach(applicationEnabledPassives($source,$state,'infusion-efficiency') as $p)$ratio=max($ratio,$p['ratio']);return [...$definition,'ratio'=>$ratio];
 }
+function applicationCombatInfusion(?array $definition, array $source = [], array $state = []): ?array {
+ return applicationEnabledPassives($source,$state,'infusion-forbidden')!==[] ? null : applicationPassiveInfusion($definition,$source,$state);
+}
 function applicationPassiveRangedAttackPenalty(array $target,array $attack=[],array $state=[]):int {
  if(($attack['reach']??'')!=='ranged'&&($attack['projectile']??false)!==true)return 0;
  $penalty=0;foreach(applicationEnabledPassives($target,$state,'ranged-target-evasion') as $p)$penalty=max($penalty,$p['thresholdPenalty']);return $penalty;

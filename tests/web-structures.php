@@ -59,4 +59,15 @@ specialCheck(specialMechanics($sizeDb,'device.deploy',$sizeArgs)->status===200,'
 specialCheck(specialMechanics($sizeDb,'device.deploy',[...$sizeArgs,'structureSize'=>86])->status===409,'Changing size under the same receipt is refused');
 $beforeSizeFatigue=$sizeDb->payload('character:character-player')['fatigue'];specialCheck(specialMechanics($sizeDb,'device.deploy',[...$args,'structureSize'=>121,'variantId'=>'huge'])->status===400,'Player hard cap is enforced before payment');specialCheck(specialMechanics($sizeDb,'device.deploy',[...$args,'structureSize'=>120,'variantId'=>'medium'])->status===400,'A cheap bracket cannot buy a larger web');specialCheck($sizeDb->payload('character:character-player')['fatigue']===$beforeSizeFatigue&&$sizeDb->payload('activity')['actionTimers'][0]['restUseCount']===2,'Rejected requests preserve resources');
 
+$manualDb=webFixture();$manualClock=$manualDb->payload('initiative:scene-one');
+$manualMap=$manualDb->payload('map:scene-one');$manualMap['background']='/media/abcdefghijklmnopqrstuvwx';$manualDb->put('map:scene-one',$manualMap);
+$manualArgs=['requestId'=>'native-manual-web-place-0001','layerId'=>'ground','x'=>99,'y'=>99,'structureSize'=>109,'hp'=>1];
+specialCheck(specialMechanics($manualDb,'structure.web.place',$manualArgs,false)->status===403,'The player cannot place a map obstacle');
+$result=specialMechanics($manualDb,'structure.web.place',$manualArgs);
+specialCheck($result->status===200,'Manual web can be placed by the MJ: '.json_encode($result->body));
+$manualId=$result->body['tokenId'];$manualWeb=$manualDb->payload('token:scene-one:'.$manualId);
+specialCheck($manualWeb['size']===109&&$manualWeb['hp']===90&&applicationIsSilkWeb($manualWeb),'Manual artwork and hit points match the skill');
+specialCheck(empty($manualDb->payload('devices')['devices'])&&$manualDb->payload('initiative:scene-one')===$manualClock,'No device or turn advance on placement');
+specialCheck(!empty(specialMechanics($manualDb,'structure.web.place',$manualArgs)->body['deduplicated']),'Replay preserves the original obstacle');
+specialCheck(specialMechanics($manualDb,'structure.web.place',[...$manualArgs,'structureSize'=>110])->status===409,'Different size under the same receipt is rejected');
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

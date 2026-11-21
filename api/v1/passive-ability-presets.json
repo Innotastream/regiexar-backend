@@ -1,4 +1,15 @@
 {
+  "character-gohachu": [
+    {
+      "version": 1,
+      "id": "gohachu-infusion-forbidden",
+      "kind": "infusion-forbidden",
+      "name": "Infusion interdite",
+      "description": "Gohachu ne peut pas infuser de mana dans ses compétences ou attaques.",
+      "polarity": "negative",
+      "existingCloneDefault": true
+    }
+  ],
   "character-amxWfdDZFvFZjLzT": [
     {
       "version": 1,

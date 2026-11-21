@@ -73,10 +73,51 @@ try {
     }
     $reader->beginTransaction();domainApplicationStateRecord($reader);
     sqlSnapshotCheck($reader->inTransaction(),'Caller-owned transaction is preserved');$reader->rollBack();
+    $departure = ['id' => 'departure', 'revision' => 1, 'kind' => 'walk', 'name' => 'Vers le col',
+        'layerId' => 'ground', 'x' => 25, 'y' => 50, 'destination' => ['sceneId' => 'scene-two', 'passageId' => 'arrival']];
+    $arrival = ['id' => 'arrival', 'revision' => 1, 'kind' => 'walk', 'name' => 'Le col',
+        'layerId' => 'upper', 'x' => 75, 'y' => 50, 'destination' => ['sceneId' => 'scene-one', 'passageId' => 'departure']];
+    $sourceMap = ['activeLayerId' => 'ground', 'naturalWidth' => 1600, 'naturalHeight' => 900, 'passages' => [$departure]];
+    $targetMap = ['activeLayerId' => 'ground', 'background' => '/private-arrival-bitmap',
+        'passages' => [$arrival, [...$arrival, 'id' => 'another-private-entrance', 'name' => 'Private marker sentinel']]];
     $replace = $writer->prepare('UPDATE application_domains SET payload=? WHERE domain_key=?');
     $put = static function(string $key, array $payload) use ($replace): void {
         $replace->execute([json_encode($payload, JSON_THROW_ON_ERROR), $key]);
     };
+    $project = static fn(array $state, bool $stream = false): array => publicPlayerState($state, ['id' => 'account-player'], [], $stream);
+    $put('map:scene-one', $sourceMap);
+    $put('map:scene-two', $targetMap);
+    $detachedMap = ['activeLayerId'=>'ground','naturalWidth'=>1600,'naturalHeight'=>900,'background'=>'/detached-only'];
+    $insert->execute(['detached-combat',json_encode(['map'=>$detachedMap,'initiative'=>[]],JSON_THROW_ON_ERROR)]);
+    [, $scoped] = applicationConsistentDomainRead($reader, static fn(): array => playerApplicationDomainRecords($reader));
+    sqlSnapshotCheck(!isset($scoped['detached-combat']), 'A published scene avoids loading the retained detached map document');
+    $put('table', ['activeSceneId'=>'missing-scene']);
+    sqlSnapshotCheck(playerApplicationStateRecord($reader)['state']['map']['background']==='/detached-only',
+        'Missing publication still falls back to a previously saved detached map');
+    $put('table', ['activeSceneId'=>'scene-one','tacticalSync'=>['paused'=>false]]);
+    $visible = playerApplicationStateRecord($reader)['state'];
+    foreach ([false, true] as $stream) {
+        $projection = $project($visible, $stream);
+        $exit = $projection['map']['passages'][0] ?? [];
+        sqlSnapshotCheck($exit['destinationLabel'] === 'Scène préparée · Étage · Le col'
+            && $exit['destinationLayerId'] === 'upper', 'Cross-scene passage resolves in the scoped player and Stream reads');
+        sqlSnapshotCheck(!str_contains(json_encode($projection, JSON_THROW_ON_ERROR), 'private-arrival-bitmap')
+            && !str_contains(json_encode($projection, JSON_THROW_ON_ERROR), 'Private marker sentinel'), 'The projection contains only the linked arrival descriptor');
+    }
+    $linkedMap = passageMap($visible, 'scene-two');
+    sqlSnapshotCheck(!isset($linkedMap['background']) && $linkedMap['tokens'] === []
+        && array_column($linkedMap['passages'], 'id') === ['arrival'], 'No full arrival map or unrelated endpoint is loaded into the projection');
+    $put('map:scene-two', ['passages' => []]);
+    sqlSnapshotCheck($project(playerApplicationStateRecord($reader)['state'])['map']['passages'][0]['destinationLabel']
+        === 'Liaison indisponible', 'An actually deleted endpoint still displays as unavailable');
+    $put('scene:scene-two', ['metadata' => ['id' => 'scene-two', 'name' => 'Col ancien'], 'combat' => ['map' => $targetMap]]);
+    sqlSnapshotCheck($project(playerApplicationStateRecord($reader)['state'])['map']['passages'][0]['destinationLabel']
+        === 'Col ancien · Étage · Le col', 'Legacy embedded scenes resolve without a map-domain endpoint');
+    $put('table', ['activeSceneId' => 'scene-one', 'tacticalSync' => ['paused' => true]]);
+    $insert->execute(['presentation:scene-one', json_encode(['map' => $sourceMap], JSON_THROW_ON_ERROR)]);
+    $put('map:scene-one', ['activeLayerId' => 'upper', 'passages' => []]);
+    sqlSnapshotCheck($project(playerApplicationStateRecord($reader)['state'])['map']['passages'][0]['destinationLabel']
+        === 'Col ancien · Étage · Le col', 'Secret preparation resolves the departure from the published map');
     require_once __DIR__.'/../api/v1/legacy-scene-identities.php';
     $guard = ['id'=>'legacy-guard','name'=>'Guard','layerId'=>'ground','followCharacter'=>false,'x'=>10,'y'=>20,'size'=>40,'hp'=>30,'maxHp'=>40];
     $put('scene-index', ['order'=>['scene-one','scene-copy','scene-pending','scene-invalid']]);
@@ -119,6 +160,24 @@ try {
         'An incompatible legacy document is preserved and cannot block repairs in other scenes');
     sqlSnapshotCheck(repairLegacySceneIdentities($writer,[]) === 0 && domainClockRecord($writer)['globalRevision'] === $beforeRepair+1,
         'Reopening the same table does not change its identity again');
+    $writer->beginTransaction();
+    $clock = domainClockRecord($writer,true);
+    $scoped = applicationDomainRecords($writer,['scene:scene-copy','scene-index','token-index:scene-copy']);
+    $changes = [
+        prepareApplicationDomainDelete('scene:scene-copy',$scoped['scene:scene-copy']),
+        prepareApplicationDomainDelete('token-index:scene-copy',$scoped['token-index:scene-copy']),
+        prepareApplicationDomainUpsert('scene-index',['order'=>['scene-one','scene-pending','scene-invalid']],$scoped['scene-index']),
+    ];
+    $removed = reconcileApplicationSceneDomains($writer,$scoped,$changes);
+    persistDomainChangesInTransaction($writer,[],$clock,$removed);
+    $writer->commit();
+    [, $freshRecords] = applicationConsistentDomainRead($reader, static fn(): array => [
+        domainClockRecord($reader), applicationDomainRecords($reader),
+    ]);
+    sqlSnapshotCheck(!isset($freshRecords['map:scene-copy'],$freshRecords['initiative:scene-copy'],
+        $freshRecords['token:scene-copy:'.$copy],$freshRecords['token:scene-copy:rider'])
+        && isset($freshRecords['token:scene-one:legacy-guard'],$freshRecords['token:scene-pending:legacy-guard']),
+        'Real SQL cascade deletes even unsubmitted token documents while preserving other scenes');
     echo json_encode(['ok'=>true,'checks'=>$GLOBALS['sqlSnapshotChecks'],'productionAccess'=>false],JSON_THROW_ON_ERROR)."\n";
     echo "Local MySQL consistent domain read integration passed.\n";
 }finally{

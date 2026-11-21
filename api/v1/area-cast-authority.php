@@ -10,9 +10,16 @@ function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending
     if(($ability['damageTargeting']['shape']??'')!=='cone'||applicationRequestsSpecialSuccess($arguments))throw new RuntimeException('Ce cône exige son véritable jet de Chance.',400);
     if(count($activity['pendingAttacks']??[])>=XAR_PENDING_ATTACK_MAXIMUM||count($receipts)>=XAR_ATTACK_RECEIPT_MAXIMUM)throw new RuntimeException('La file des attaques est pleine.',409);
     $castingPlan['deferCue']=true;
+    $infusion = onlineDeviceInfusion($connection, $records, $pending, $identity, ['infusion'=>applicationSpellInfusion($ability)],
+        $arguments, $source, (int) $castingPlan['manaCost']);
+    if (($infusion['damage'] ?? 0) > 0) {
+        $damageComponents = applicationInfusedDamageComponents($damageComponents, $damageFormula, $damageType, $infusion['damage']);
+        $damageFormula = applicationCombinedDamageFormula($damageComponents);
+    }
     // Commit the attempt and its rest quota before Chance. Neither a critical
     // failure nor a later refusal restores a component or resource.
     $cast=onlineCommitAbilityCasting($connection,$records,$pending,$castingPlan,['success'=>true,'statId'=>'','statLabel'=>'','roll'=>null,'outcome'=>null],$source,$identity,false);
+    if ($infusion !== null) $cast['manaSpent'] += $infusion['mana'];
     $luckId=(string)($castingPlan['characterId']?:unitIdForToken($source));
     $threshold=onlineCharacterLuckThreshold($connection,$records,$pending,$luckId);
     $rolled=$rollChance!==null?$rollChance():onlineRollFormulaWithMode('1d100',normalizeOnlineRollMode($arguments['rollMode']??'normal'),$threshold,0,true);
@@ -49,6 +56,15 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$receiptIndex=null;$attack=null;
     foreach($activity['attackReceipts']??[] as $i=>$receipt)if(($receipt['attack']['id']??'')===($arguments['attackId']??'')){$receiptIndex=$i;$attack=$receipt['attack'];break;}
+    if ($attack === null && $arguments['decision'] === 'reject') {
+        foreach ($activity['pendingAttacks'] ?? [] as $entry) {
+            if (($entry['id'] ?? null) !== ($arguments['attackId'] ?? null) || !is_array($entry['areaGate'] ?? null)) continue;
+            $activity['pendingAttacks'] = array_values(array_filter($activity['pendingAttacks'], static fn(array $pendingAttack): bool => $pendingAttack['id'] !== $entry['id']));
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+            return ['attack' => [...$entry, 'status'=>'rejected', 'resolvedAt'=>(int) floor(microtime(true)*1000)],
+                'areaAttacks'=>[], 'deduplicated'=>false, 'discordContent'=>''];
+        }
+    }
     if(!is_array($attack['areaGate']??null))throw new RuntimeException('Cette zone n’attend pas de décision.',404);
     if(($attack['areaGate']['kind']??'')==='device-damage')return onlineResolveDeviceDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     if(!empty($attack['areaGate']['deferred']))return onlineResolveDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);

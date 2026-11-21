@@ -8,6 +8,7 @@ function applicationPassiveKinds():array {return [
  'effect-resistance'=>['name'=>'Résistance aux effets reçus','description'=>'Réduit les dégâts et la durée des familles d’effets ou des consommables configurés.'],
  'ranged-target-evasion'=>['name'=>'Malus des attaques à distance reçues','description'=>'Réduit le seuil des attaques à distance dirigées contre cette unité.'],
  'infusion-efficiency'=>['name'=>'Efficacité des infusions','description'=>'Améliore le ratio des infusions déjà autorisées par les attaques et compétences.'],
+ 'infusion-forbidden'=>['name'=>'Infusion interdite','description'=>'Cette unité ne peut pas infuser de mana dans ses compétences ou attaques.'],
  'opportunity-attack'=>['name'=>'Attaque d’opportunité','description'=>'En combat, avertit après qu’un ennemi quitte la portée d’une arme de mêlée. Le MJ choisit de résoudre ou de refuser la réaction ; aucune attaque automatique.'],
  'mental-control-resistance'=>['name'=>'Boss : résistance au contrôle mental','description'=>'Un contrôle mental réussi devient une simple influence de même durée. Le contrôleur du pion ne change pas.'],
  'ability-fatigue-surcharge'=>['name'=>'Fatigue supplémentaire des compétences','description'=>'L’activation d’une compétence coûte une fatigue supplémentaire. Les coûts indiqués comme déjà majorés ne sont pas augmentés une seconde fois.']];}

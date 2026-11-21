@@ -3,15 +3,16 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.15';
-const XAR_BACKEND_BUILD = 'client-4-2-10-reprise-connexion-20261121-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.2.10';
+const XAR_BACKEND_VERSION = '0.19.16';
+const XAR_BACKEND_BUILD = 'client-4-3-0-coherence-fluidite-20261121-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.0';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.2.10'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.0'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
 const XAR_DATABASE_SCHEMA_VERSION = 24;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
+const XAR_SESSION_TOUCH_INTERVAL_SECONDS = 30;
 const XAR_LOGIN_MAX_ATTEMPTS = 8;
 const XAR_LOGIN_WINDOW_SECONDS = 900;
 const XAR_LOGIN_LOCK_SECONDS = 60;
@@ -1518,10 +1519,12 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
     if ($token === '') {
         return null;
     }
+    $renewalDue = 'last_seen_at <= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ' . XAR_SESSION_TOUCH_INTERVAL_SECONDS . ' SECOND)';
     $statement = $connection->prepare(
         'SELECT a.id, a.username, a.display_name, a.permanent_role, a.can_administrate, a.auth_revision, a.revoked_at, '
         . 'a.takeover_requested_at, a.takeover_request_id, '
-        . 's.effective_mode, s.auth_revision AS session_auth_revision, s.backend_version AS session_backend_version '
+        . 's.effective_mode, s.auth_revision AS session_auth_revision, s.backend_version AS session_backend_version'
+        . ($touch ? ', s.' . $renewalDue . ' AS renewal_due ' : ' ')
         . 'FROM auth_sessions s JOIN accounts a ON a.id = s.account_id '
         . 'WHERE s.token_hash = :token_hash AND s.expires_at > UTC_TIMESTAMP(3) LIMIT 1'
     );
@@ -1538,15 +1541,18 @@ function resolveSession(PDO $connection, string $token, bool $touch = true): ?ar
         deleteSession($connection, $token);
         return null;
     }
-    if ($touch) {
+    // Keep validating every request, but avoid contending on the session row
+    // on each polling GET. A parallel renewal must also recheck the deadline.
+    if ($touch && !empty($identity['renewal_due'])) {
         $update = $connection->prepare(
             'UPDATE auth_sessions SET last_seen_at = UTC_TIMESTAMP(3), expires_at = :expires_at '
-            . 'WHERE token_hash = :token_hash'
+            . 'WHERE token_hash = :token_hash AND ' . $renewalDue
         );
         $update->bindValue(':expires_at', utcAfter(XAR_SESSION_SECONDS));
         $update->bindValue(':token_hash', tokenHash($token), PDO::PARAM_LOB);
         $update->execute();
     }
+    unset($identity['renewal_due']);
     return $identity;
 }
 

@@ -14,7 +14,27 @@ requireTactical(runCommand($db,'passage.visibility',$visibility,true)->status===
 $published=publicPlayerState(domainsToApplicationState(applicationDomainRecords($db),0),['id'=>'account-player'],[]);requireTactical($published['map']['passages']===[],'Hidden passage markers are absent from the player projection');
 requireTactical(runCommand($db,'passage.use',['requestId'=>'passage-hidden-use-00001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>2,'tokenId'=>'token-player','expectedX'=>32.5,'expectedY'=>20])->status===403,'Guessing a hidden passage identity cannot traverse it');
 requireTactical(runCommand($db,'passage.visibility',[...$visibility,'requestId'=>'passage-visibility-00002','hidden'=>false,'expectedPassages'=>[['id'=>'entrance','revision'=>2]]],true)->status===200,'The MJ can reveal the same linked endpoints again');
-$args=['requestId'=>'passage-travel-00000001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>3,'tokenId'=>'token-player','expectedX'=>32.5,'expectedY'=>20];
+$moveExit=['requestId'=>'passage-move-exit-00001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>3,
+    'patch'=>['name'=>'Départ ajusté'],'arrival'=>['sceneId'=>'scene-two','passageId'=>'exit','expectedRevision'=>1,'x'=>51,'y'=>61]];
+requireTactical(runCommand($db,'passage.edit',$moveExit)->status===403,'Moving the exit requires MJ permissions');
+$db->put('scene:unrelated',['metadata'=>['id'=>'unrelated','name'=>'Carte hors passage']]);
+$db->put('map:unrelated',['passages'=>[]]);
+$db->put('scene-index',['order'=>['scene-one','scene-two','unrelated']]);
+$managementRecords=applicationDomainRecords($db,['table']);$managementChanges=[];
+onlinePassageCommand($db,$managementRecords,$managementChanges,['id'=>'account-gm','effective_mode'=>'gm','permanent_role'=>'gm'],'passage.edit',$moveExit);
+requireTactical(isset($managementRecords['map:scene-one'],$managementRecords['map:scene-two'],$managementChanges['map:scene-one'],$managementChanges['map:scene-two'])
+    && !isset($managementRecords['map:unrelated'],$managementRecords['token:scene-one:token-player'],$managementRecords['character:character-player']),
+    'Editing a linked exit reads the two required maps without reading any scene tokens, characters or unrelated map.');
+$departureBefore=$db->payload('map:scene-one');$arrivalBefore=$db->payload('map:scene-two');
+$wrongExit=[...$moveExit['arrival'],'expectedRevision'=>9];
+requireTactical(runCommand($db,'passage.edit',[...$moveExit,'requestId'=>'passage-stale-exit-00001','arrival'=>$wrongExit],true)->status===409
+    &&$db->payload('map:scene-one')===$departureBefore&&$db->payload('map:scene-two')===$arrivalBefore,'A stale exit rejects the entire edit');
+requireTactical(runCommand($db,'passage.edit',$moveExit,true)->status===200,'The MJ moves the linked arrival in another scene from the departure');
+$exit=$db->payload('map:scene-two')['passages'][0];
+requireTactical([$exit['x'],$exit['y'],$exit['revision'],$exit['layerId'],$exit['destination']]===
+    [51,61,2,'upper',['sceneId'=>'scene-one','passageId'=>'entrance']],'Arrival coordinates and backlink are persisted together');
+requireTactical((runCommand($db,'passage.edit',$moveExit,true)->body['deduplicated']??false)===true,'A repeated exit edit retains its original result');
+$args=['requestId'=>'passage-travel-00000001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>4,'tokenId'=>'token-player','expectedX'=>32.5,'expectedY'=>20];
 $foreign=runCommand($db,'passage.use',$args,false,'foreign');requireTactical($foreign->status===403,'Foreign traversal is refused');
 $tooFar=$token;$tooFar['x']=32.501;$db->put('token:scene-one:token-player',$tooFar);
 requireTactical(runCommand($db,'passage.use',[...$args,'requestId'=>'passage-too-far-000001','expectedX'=>32.501])->status===409,'The native dispatcher refuses traversal beyond 2.5 cells');
@@ -23,6 +43,13 @@ $activity=$db->payload('activity');$buff=['id'=>'travelling-buff','abilityId'=>'
     'mode'=>'replace','formula'=>'1d70+12','damageType'=>'magical','turns'=>5,'remainingTurns'=>3,'combatId'=>'source-combat','lastTurnSerial'=>900];
 $activity['attackEnhancements']=[$buff,[...$buff,'id'=>'independent-buff','holder'=>'token:independent-clone']];$db->put('activity',$activity);
 $arrivalInitiative=['active'=>true,'combatId'=>'arrival-combat','turnSerial'=>2,'order'=>['token-player'],'currentIndex'=>0];$db->put('initiative:scene-two',$arrivalInitiative);
+$db->put('scene:other',['metadata'=>['id'=>'other','name'=>'Carte hors trajet']]);
+$db->put('map:other',['passages'=>[]]);
+$db->put('scene-index',['order'=>['scene-one','scene-two','other']]);
+$travelRecords=applicationDomainRecords($db,['table']);$travelChanges=[];
+$scoped=onlinePassageCommand($db,$travelRecords,$travelChanges,['id'=>'account-player','effective_mode'=>'player','permanent_role'=>'player'],'passage.use',$args);
+requireTactical($scoped['sceneId']==='scene-two'&&!isset($travelRecords['map:other'])&&!isset($travelChanges['table']),
+    'A traversal loads the two required maps and leaves the published table in place');
 $travel=runCommand($db,'passage.use',$args);requireTactical($travel->status===200,'Native traversal from 2.5 cells: '.json_encode($travel->body));
 $effects=$db->payload('activity')['attackEnhancements'];
 requireTactical($effects[0]['sceneId']==='scene-two'&&$effects[0]['remainingTurns']===3&&$effects[0]['combatId']==='arrival-combat'&&$effects[0]['lastTurnSerial']===2,'Native traversal persists the buff and rebases its clock without spending a turn');
@@ -32,9 +59,9 @@ requireTactical(count($effects)===1&&$effects[0]['id']==='travelling-buff','Endi
 $effects=applicationAdvanceAttackEnhancements($effects,'scene-two',$arrivalInitiative,[...$arrivalInitiative,'turnSerial'=>3]);
 requireTactical($effects[0]['remainingTurns']===2,'The next destination turn consumes exactly one remaining turn');
 requireTactical($db->payload('table')['activeSceneId']==='scene-one'&&$db->payload('map:scene-one')['activeLayerId']==='ground','Traversal never changes the scene broadcast by the GM');
-$arrived=$db->payload('token:scene-two:token-player');requireTactical(($arrived['layerId']??'')==='upper'&&$arrived['x']>65&&$arrived['x']<80&&$db->payload('token:scene-one:token-player')===[],'Only the unit moves near the linked endpoint');
+$arrived=$db->payload('token:scene-two:token-player');requireTactical(($arrived['layerId']??'')==='upper'&&$arrived['x']>51&&$arrived['x']<61&&$arrived['y']==61&&$db->payload('token:scene-one:token-player')===[],'Only the unit moves near the repositioned endpoint');
 $replay=runCommand($db,'passage.use',$args);requireTactical($replay->status===200&&($replay->body['deduplicated']??false),'Traversal remains idempotent after transfer to another scene');
-$removed=runCommand($db,'passage.remove',['requestId'=>'passage-remove-00000001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>3],true);
+$removed=runCommand($db,'passage.remove',['requestId'=>'passage-remove-00000001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>4],true);
 requireTactical($removed->status===200&&$db->payload('map:scene-two')['passages'][0]['destination']===null,'Removing an endpoint removes its backlink atomically');
 $valid=$command['endpoints'][0];$valid['revision']=1;$valid['destination']=null;
 foreach(['12',NAN,INF] as $invalid){try{normalizePassages([[...$valid,'x'=>$invalid]]);throw new LogicException('Invalid coordinate accepted');}catch(RuntimeException $error){requireTactical($error->getCode()===400,'Passage coordinates require finite JSON numbers');}}

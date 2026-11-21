@@ -21,12 +21,15 @@ function applicationPlanAttackApproach(array $context,array $map,array $executio
     foreach($group as $t)if(!empty($t['immovable'])||!empty($t['terrainBarrier'])||!empty($t['fixedStructure'])||applicationAbilityMovementLock($executions,$context['sceneId'],$t['id'],$tokens,$now,$leases)!==null)applicationAttackApproachFailure('Le pion est immobilisé ou un déplacement de compétence est déjà en cours.');
     $layer=$body['layerId']??'ground';if(($source['layerId']??$layer)!==$layer||($target['layerId']??'ground')!==$layer)applicationAttackApproachFailure('La cible a changé de niveau.');
     $level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'activeLayerId'=>$layer];$physicalTarget=applicationTokenSpatialFootprint($target,$level);$destination=[...$body,'x'=>$chosen['x'],'y'=>$chosen['y']];$d=applicationComplexMovementDimensions($level);$radius=(($body['size']??40)+($physicalTarget['size']??40))/2;
+    $abilityId=$context['abilityId']??(($context['attackKind']??'')==='ability'?($context['attackId']??null):null);
+    $crossedBodyId=$abilityId==='ability-541dcf8a-3492-4196-afc1-2a7815eb02f4'?($target['mountedOnTokenId']??$target['id']):null;
     $distance=hypot(($chosen['x']-$physicalTarget['x'])*$d['width']/100,($chosen['y']-$physicalTarget['y'])*$d['height']/100);
     if(applicationMapDistanceInCells($body,$destination,$level,true,false)>applicationChargeRangeCells()+1e-7)applicationAttackApproachFailure('La destination dépasse la portée À distance de la charge.');
     if($distance<$radius-1e-6||applicationMapDistanceInCells($destination,$physicalTarget,$level,($map['grid']??false)===true,true)>1+1e-7)applicationAttackApproachFailure('Choisissez une case libre dans la première couronne au contact de la cible.');
     if(!applicationChargeTravelAllowed($body,$body,$destination,$level))applicationAttackApproachFailure('Le trajet vers cette case traverse un obstacle ou une zone non visible.');
     $ax=$body['x']*$d['width']/100;$ay=$body['y']*$d['height']/100;$dx=($chosen['x']-$body['x'])*$d['width']/100;$dy=($chosen['y']-$body['y'])*$d['height']/100;
     foreach($tokens as $other){if(isset($ids[$other['id']])||!empty($other['mountedOnTokenId'])||($other['layerId']??'ground')!==$layer||!is_numeric($other['x']??null)||!is_numeric($other['y']??null))continue;
+        if($other['id']===$crossedBodyId&&empty($other['terrainBarrier'])&&empty($other['fixedStructure']))continue;
         $ox=$other['x']*$d['width']/100-$ax;$oy=$other['y']*$d['height']/100-$ay;$t=max(0,min(1,($ox*$dx+$oy*$dy)/(($dx*$dx+$dy*$dy)?:1)));$needed=(($body['size']??40)+($other['size']??40))/2;$start=hypot($ox,$oy);$closest=hypot($ox-$t*$dx,$oy-$t*$dy);$end=hypot($ox-$dx,$oy-$dy);
         if($end<$needed-1e-6||$closest<min($needed,$start)-1e-6)applicationAttackApproachFailure('Cette case ou son trajet n’est pas libre.');
     }

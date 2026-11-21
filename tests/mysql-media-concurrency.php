@@ -202,6 +202,28 @@ try {
         && (int) $db->query('SELECT COUNT(*) FROM application_domains')->fetchColumn() === 0,
         'An attachment waiting behind permanent deletion must fail without a dangling domain reference.');
 
+    // A fixed "oldest five" scan is starved by this page of referenced media.
+    @unlink($directory . '/.media-retention-cursors-v1.json');
+    $orphan = str_repeat('y',24);
+    $file = mysqlTestReset($db,$orphan);
+    $db->exec("UPDATE media_objects SET created_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 DAY)");
+    $insertOlder = $db->prepare("INSERT INTO media_objects (id,stored_name,created_at) VALUES (?,?,DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 5 DAY))");
+    $live = [];
+    for ($i=0; $i<XAR_MEDIA_MAINTENANCE_CANDIDATES; $i++) {
+        $media = str_pad((string)$i,24,'a');
+        $live[] = '/media/' . $media;
+        $insertOlder->execute([$media,$media.'.png']);
+    }
+    $db->prepare("INSERT INTO application_domains (domain_key,schema_version,revision,payload) VALUES ('library',1,1,?)")
+        ->execute([json_encode(['media'=>$live],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)]);
+    cleanupExpiredMediaRetention($db);
+    mysqlTestCheck(mediaRecord($db,$orphan)['pending_delete_at'] === null, 'One sweep observes the per-pass candidate limit.');
+    cleanupExpiredMediaRetention($db);
+    mysqlTestCheck(mediaRecord($db,$orphan)['pending_delete_at'] !== null && is_file($file),
+        'Next sweep advances past referenced rows and schedules the orphan without physically deleting it early.');
+    mysqlTestCheck((int)$db->query('SELECT COUNT(*) FROM media_objects WHERE pending_delete_at IS NULL')->fetchColumn()===XAR_MEDIA_MAINTENANCE_CANDIDATES,
+        'A rotating sweep keeps all referenced media active.');
+
     $db->exec('SET timestamp=1800000000');
     $raw = str_repeat('c', 16); $hash = str_repeat('h', 32);
     $db->prepare('INSERT INTO live_connections VALUES (?, ?, UTC_TIMESTAMP(3), ?)')->execute([$raw, $hash, utcAfter(XAR_CONNECTION_SECONDS)]);
@@ -218,6 +240,7 @@ try {
     }
     $admin->exec('DROP DATABASE IF EXISTS `' . $schema . '`');
     foreach (glob($directory . '/media/*') ?: [] as $path) if (is_file($path)) unlink($path);
+    if (is_file($directory . '/.media-retention-cursors-v1.json')) unlink($directory . '/.media-retention-cursors-v1.json');
     if (is_dir($directory . '/media')) rmdir($directory . '/media');
     rmdir($directory);
 }

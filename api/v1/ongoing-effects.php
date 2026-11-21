@@ -37,11 +37,77 @@ function onlineOngoingEffectTarget(PDO $connection, array &$records, array $pend
     return $target;
 }
 
+function onlineCreateManualHpEffect(PDO $connection, array &$records, array &$pending, array $identity, array $arguments): array {
+    if (($identity['effective_mode'] ?? '') !== 'gm' || ($identity['permanent_role'] ?? '') !== 'gm')
+        rejectOnlineCommand($connection, 403, 'Cette action est réservée au MJ.', 'gm_required');
+    $label = is_string($arguments['label'] ?? null) ? trim($arguments['label']) : '';
+    $formula = normalizeEffectFormula($arguments['formula'] ?? '');
+    $turns = $arguments['turns'] ?? null;
+    $direction = $arguments['direction'] ?? null;
+    $requestId = (string) ($arguments['requestId'] ?? '');
+    if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1 || preg_match('/^.{1,120}$/usD', $label) !== 1
+        || !is_int($turns) || $turns < 1 || $turns > 20 || !in_array($direction, [-1, 1], true) || !validEffectFormula($formula))
+        rejectOnlineCommand($connection, 400, 'Renseignez un nom, une durée de 1 à 20 tours et une formule de dés valide.', 'periodic_hp_invalid');
+    $sceneId = (string) ($arguments['sceneId'] ?? '');
+    $tokenId = (string) ($arguments['tokenId'] ?? '');
+    $layerId = (string) ($arguments['layerId'] ?? '');
+    $kind = 'manual-hp-effect';
+    $signature = hash('sha256', json_encode([$sceneId, $tokenId, $layerId, $label, $formula, $turns, $direction], JSON_THROW_ON_ERROR));
+    $context = onlinePersistentCommandReceipt($connection, $records, $kind, $requestId, $identity['id'], $signature, 'periodic_hp');
+    if ($context['receipt'] !== null) return [...$context['receipt']['result'], 'deduplicated' => true];
+    $target = onlineOngoingEffectTarget($connection, $records, $pending, $sceneId, $tokenId);
+    if ($target === [] || onlineTokenLayerId($target) !== $layerId)
+        rejectOnlineCommand($connection, 404, 'Ce pion a quitté la scène ou le niveau.', 'periodic_hp_target_missing');
+    if (($target['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== ''))
+        rejectOnlineCommand($connection, 409, 'Ce pion doit être vivant et disposer de PV.', 'periodic_hp_target_unavailable');
+    $activity = $context['activity'];
+    if (count($activity['damageOverTime'] ?? []) >= 100)
+        rejectOnlineCommand($connection, 429, 'La table contient déjà trop d’effets périodiques.', 'periodic_hp_capacity');
+    $clockKey = 'initiative:' . $sceneId;
+    $records = array_replace($records, applicationDomainRecords($connection, [$clockKey, 'devices']));
+    $clock = $pending[$clockKey]['payload'] ?? applicationDomainPayload($records, $clockKey);
+    $devices = $pending['devices']['payload'] ?? applicationDomainPayload($records, 'devices');
+    $effect = ['id' => 'manual-hp-' . $requestId, 'sceneId' => $sceneId, 'targetTokenId' => $tokenId,
+        'targetIdentity' => onlineDotTargetIdentity($target), 'manualHp' => true, 'family' => 'manual-hp',
+        'direction' => $direction, 'label' => $label, 'formula' => $formula, 'remainingTurns' => $turns,
+        'combatId' => (string) ($clock['combatId'] ?? ''), 'lastTurnSerial' => (int) ($clock['turnSerial'] ?? 0),
+        'lastManualTurn' => (int) ($devices['manualTurns'][$sceneId] ?? 0)];
+    $activity['damageOverTime'][] = $effect;
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
+        'kind' => 'effect', 'characterName' => $target['name'] ?? 'Pion',
+        'summary' => 'Applique ' . $label . ' · ' . ($direction > 0 ? 'soins' : 'perte de PV'),
+        'detail' => $formula . ' par tour · ' . $turns . ' tour(s)',
+    ]);
+    $result = ['effect' => $effect];
+    onlineStorePersistentCommandReceipt($records, $pending, $context, $kind, $requestId, $identity['id'], $action['id'], $tokenId, $signature, $result);
+    return [...$result, 'deduplicated' => false];
+}
+
+function onlineTickManualHpEffect(PDO $connection, array &$records, array &$pending, array $identity, array $dot, array $target): ?array {
+    if (($target['maxHp'] ?? 0) <= 0 || onlineDotTargetIdentity($target) !== ($dot['targetIdentity'] ?? '')
+        || !in_array($dot['direction'] ?? null, [-1, 1], true)) return null;
+    $rolled = onlineRollFormulaWithMode($dot['formula'], 'normal');
+    $amount = max(0, min(1000000000, (int) $rolled['total']));
+    $sceneId = $dot['sceneId'];
+    $delta = $amount > 0 ? applyOnlineTokenResourceAdjustment(
+        $connection, $records, $pending, $sceneId, $target['id'], 'hp', $amount * $dot['direction'],
+        (string) ($identity['id'] ?? ''), true, null, true
+    )['appliedDelta'] : 0;
+    $label = $dot['label'] . ' · ' . abs($delta) . ' PV ' . ($dot['direction'] > 0 ? 'rendus' : 'retirés');
+    $roll = onlineRollEntry($identity, $rolled, $label, (string) $target['name']);
+    $roll['rollerRole'] = 'gm';
+    if (!empty($target['hidden'])) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
+    $roll['mapEvent'] = ['kind' => 'roll', 'label' => $dot['label'], 'value' => $rolled['total'], 'tokenId' => $target['id'],
+        'targetTokenId' => $target['id'], 'targetName' => $target['name'], 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
+    return $roll;
+}
+
 function onlineCaptureEndedDots(PDO $connection, array &$records, array &$pending, array &$activity, array $endedScenes): void {
     $queue = $activity['pendingDotResolutions'] ?? [];
     $known = array_column($queue, null, 'id');
     foreach ($activity['damageOverTime'] ?? [] as $dot) {
-        if (!isset($endedScenes[(string) ($dot['sceneId'] ?? '')]) || (int) ($dot['remainingTurns'] ?? 0) <= 0 || isset($known[$dot['id'] ?? ''])) continue;
+        if (($dot['manualHp'] ?? false) === true || !isset($endedScenes[(string) ($dot['sceneId'] ?? '')]) || (int) ($dot['remainingTurns'] ?? 0) <= 0 || isset($known[$dot['id'] ?? ''])) continue;
         $target = onlineOngoingEffectTarget($connection, $records, $pending, (string) $dot['sceneId'], (string) $dot['targetTokenId']);
         if ($target === [] || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '')) continue;
         if (count($queue) >= XAR_PENDING_DOT_RESOLUTION_MAXIMUM) rejectOnlineCommand($connection, 409, 'Résolvez les dégâts de fin de combat déjà en attente avant de terminer un autre combat.', 'dot_resolution_capacity');

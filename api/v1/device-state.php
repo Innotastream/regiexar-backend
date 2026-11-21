@@ -256,8 +256,18 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(($state['tacticalSync']['paused']??false) && $actor['role']!=='gm') dsError('La table est verrouillée.',423);
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
-    if($command!=='device.mana.set')ensureDeviceItems($state,$id);
-    if($command==='appearance.change'){
+    $maintainsDeviceItems=!in_array($command,['device.mana.set','structure.web.place'],true);
+    if($maintainsDeviceItems)ensureDeviceItems($state,$id);
+    if($command==='structure.web.place'){
+        if($actor['role']!=='gm')dsError('Seul le MJ peut poser une toile depuis les obstacles.',403);
+        $map=$state['map'];$layerId=$map['activeLayerId']??'ground';$layer=$map['layers'][$layerId]??$map;
+        if(($args['sceneId']??null)!==$sceneId||($args['layerId']??null)!==$layerId||empty($layer['background']))dsError('Ouvrez une carte sur ce niveau pour poser la toile.',409);
+        foreach(['x','y'] as $axis)if(!dsNumber($args[$axis]??null)||$args[$axis]<0||$args[$axis]>100)dsError('Choisissez une position valide sur la carte.',400);
+        if(count($map['tokens'])>=2000)dsError('La limite de pions de cette scène est atteinte.',429);
+        $web=applicationPlaceSilkWeb($state,$args,$id('structure-web'),(int)round(strtotime($now)*1000));
+        $result=['tokenId'=>$web['id']];
+        $effects[]=['type'=>'structure.created','tokenId'=>$web['id'],'sceneId'=>$sceneId,'layerId'=>$layerId];
+    } elseif($command==='appearance.change'){
         $ti=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
         $owner=ownedUnit($state,$actor,unitIdForToken($token));
         if(($token['layerId']??'ground')!==($args['layerId']??$state['map']['activeLayerId']??'ground')||$actor['role']!=='gm'&&(!empty($token['hidden'])||!empty($token['dimSilhouette'])))dsError('Ce pion n’est pas disponible sur ce niveau.',403);
@@ -549,14 +559,20 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         else dsError('Ce résultat n’est pas reconnu.');$result['resolved']=true;
         }
     } else dsError('Commande de dispositif inconnue.',400);
-    if($command!=='device.mana.set')ensureDeviceItems($state,$id);
-    if($command!=='device.mana.set'&&isset($state['items'])) $state['items']=normalizeItemStore($state['items']);
+    if($maintainsDeviceItems)ensureDeviceItems($state,$id);
+    if($maintainsDeviceItems&&isset($state['items'])) $state['items']=normalizeItemStore($state['items']);
     dsAssertItemLimits($state);
     $store['receipts'][]=['requestId'=>$args['requestId'],'actorId'=>$actor['id'],'role'=>$actor['role'],'signature'=>$signature,'result'=>$result,'at'=>$now];
     return ['state'=>$state,'effects'=>$effects,'result'=>$result];
 }
 
 function applicationAdvanceDevices(array $state,array $previous,array $context): array {
+    [$from,$clock]=applicationInitiativeEffectClocks($previous,$state['initiative']);
+    $advanced=applicationAdvanceDevicesForClock([...$state,'initiative'=>$clock],$from,$context);
+    $advanced['state']['initiative']=$state['initiative'];
+    return $advanced;
+}
+function applicationAdvanceDevicesForClock(array $state,array $previous,array $context): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
     applicationAdvanceSpellFields($state,$previous,$context,$effects);
     $effects=[...$effects,...applicationAdvanceMetamorphoses($state,$previous,($context['manual']??false)===true)];
@@ -601,6 +617,7 @@ function applicationAdvanceDevices(array $state,array $previous,array $context):
         }
         if(in_array($device['definition']['kind'],['explosive','beam'],true)){
             if($device['definition']['kind']==='beam'&&$device['waitingForConsent'])continue;
+            if(!$manual&&($current['currentIndex']??0)<0)continue;
             $cycle=max(1,count($current['order']??[]));$device['elapsedTicks']=($device['elapsedTicks']??0)+($manual?$cycle:1);
             if($device['elapsedTicks']<$cycle)continue;$device['elapsedTicks']-=$cycle;$device['elapsedTurns']=($device['elapsedTurns']??0)+1;
         }else continue;

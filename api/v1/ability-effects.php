@@ -186,6 +186,7 @@ function applicationAbilityEffectFields(array $entry): array {
     if(isset($entry['singleEnemy']))$conditions['singleEnemy']=['damageRepetitions'=>$entry['singleEnemy']['damageRepetitions'],...(isset($entry['singleEnemy']['conditionRider'])?['conditionRider'=>dsRider($entry['singleEnemy']['conditionRider'])]:[])];
     if(dsCastingChoices($entry['castingChoices']??null)) $conditions['castingChoices']=dsCastingChoices($entry['castingChoices']);
     if(dsInfusion($entry['infusion']??null)) $conditions['infusion']=dsInfusion($entry['infusion']);
+    elseif (($entry['infusion']['enabled'] ?? null) === false) $conditions['infusion'] = ['version' => 1, 'enabled' => false];
     if(applicationTacticalEffect($entry['tacticalEffect']??null))$conditions['tacticalEffect']=applicationTacticalEffect($entry['tacticalEffect']);
     foreach(['mainWeaponOnly','equippedWeaponOnly','maximumWeaponDamage','useWeaponTargetCount'] as $k)if(($entry[$k]??false)===true)$conditions[$k]=true;
     if(applicationTerrainBarrier($entry['terrainBarrier']??null))$conditions['terrainBarrier']=applicationTerrainBarrier($entry['terrainBarrier']);
@@ -233,10 +234,46 @@ function applicationCustomAttack(mixed $value): array {
     if ($customStat && (!is_numeric($threshold) || (float) $threshold != (int) $threshold || $threshold < 0 || $threshold > 100 || $label === '' || strlen($label) > 120)) throw new InvalidArgumentException('Statistique personnalisée invalide.');
     return ['name' => $name, 'damageComponents' => $parts, 'customStat' => $customStat, 'threshold' => (int) $threshold, 'statLabel' => $label];
 }
+function applicationSpellInfusion(array $ability): ?array {
+    if ($ability === [] || ($ability['infusion']['enabled'] ?? null) === false) return null;
+    $explicit = dsInfusion($ability['infusion'] ?? null);
+    if ($explicit !== null) return $explicit;
+    $default = ['version'=>1, 'enabled'=>true, 'ratio'=>1, 'minimumMana'=>0, 'refundOnMiss'=>empty($ability['castGate'])];
+    if (($ability['effect'] ?? '') === 'healing') return $default;
+    if (($ability['effect'] ?? 'damage') !== 'damage' || !empty($ability['manualAction'])) return null;
+    if (!empty($ability['useWeaponDamage'])) return $default;
+    $formulas = !empty($ability['damageComponents']) ? array_column($ability['damageComponents'], 'formula') : [$ability['formula'] ?? ''];
+    foreach ($formulas as $formula) if (validEffectFormula($formula) && parseEffectFormula($formula)['max'] > 0) return $default;
+    return null;
+}
+
+function applicationInfusionAmount(?array $definition, mixed $value): int {
+    $value ??= 0;
+    if (!is_int($value) || $value < ($definition['minimumMana'] ?? 0) || $value > 1000000)
+        throw new RuntimeException('Renseignez une quantité entière de mana autorisée pour cette infusion.', 400);
+    if ($value && $definition === null) throw new RuntimeException('L’infusion est interdite pour ce lanceur ou cette compétence.', 400);
+    return $value;
+}
+
+function applicationInfusedDamageComponents(array $parts, string $formula, string $type, int $bonus): array {
+    if ($parts === []) $parts[] = ['type' => $type, 'formula' => $formula];
+    $pure = array_search('ignore', array_column($parts, 'type'), true);
+    if ($pure !== false) $parts[$pure]['formula'] .= '+' . $bonus;
+    else $parts[] = ['type'=>'ignore', 'formula'=>(string) $bonus];
+    if (!validEffectFormula(applicationCombinedDamageFormula($parts))) throw new RuntimeException('La formule de dégâts avec infusion est hors limites.', 400);
+    return $parts;
+}
+
 function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null,array $state=[]): array {
     if($state!==[])$target=applicationEnhancedResistanceTarget($target,$state,(string)($attack['sceneId']??$state['activeSceneId']??''));
     $count=max(1,min(10,(int)($attack['damageRepetitions']??1)));if($count===1)return onlineRollSingleAttackDamage($attack,$target,$rollFormula);
-    $strikes=[];for($i=0;$i<$count;$i++)$strikes[]=onlineRollSingleAttackDamage($attack,$target,$rollFormula);
+    $once = $attack['infusion']['bonusOnFirstStrike'] ?? 0;
+    $strikes = [];
+    for ($i=0; $i<$count; $i++) {
+        $strike = $i === 0 && $once ? [...$attack, 'damageComponents'=>applicationInfusedDamageComponents(
+            $attack['damageComponents'] ?? [], $attack['damageFormula'], $attack['damageType'], $once)] : $attack;
+        $strikes[] = onlineRollSingleAttackDamage($strike, $target, $rollFormula);
+    }
     $raw=array_sum(array_column(array_column($strikes,'damage'),'rawDamage'));$final=array_sum(array_column(array_column($strikes,'damage'),'finalDamage'));
     return ['rolled'=>[...$strikes[0]['rolled'],'total'=>$raw,'strikes'=>array_column($strikes,'rolled'),'breakdown'=>implode(' ; ',array_map(static fn($strike,$index)=>'Frappe '.($index+1).' : '.$strike['rolled']['breakdown'],$strikes,array_keys($strikes)))],
         'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final)/$raw):0,'strikes'=>array_column($strikes,'damage'),'components'=>array_merge(...array_map(static fn($strike)=>$strike['damage']['components']??[],$strikes))]];

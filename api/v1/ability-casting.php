@@ -117,7 +117,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
         ...(array_key_exists('variantId',$arguments)?[['variantId'=>$arguments['variantId']]]:[]),
         ...(array_key_exists('areaVariantId',$arguments)?[['areaVariantId'=>$arguments['areaVariantId']]]:[]),
-        ...($attack && (array_key_exists('infusionMana',$arguments) || array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...(array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
+        ...(($attack || $route === 'ability.use') && (array_key_exists('infusionMana',$arguments) || $attack && array_key_exists('weaponAttackId',$arguments)) ? [[...(array_key_exists('infusionMana',$arguments)?['infusionMana'=>$arguments['infusionMana']]:[]),...($attack && array_key_exists('weaponAttackId',$arguments)?['weaponAttackId'=>$arguments['weaponAttackId']]:[])]] : []),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 }
 
@@ -625,7 +625,7 @@ function onlineSimpleAbilityRoll(PDO $connection, array &$records, array &$pendi
     if ($index < 0) rejectOnlineCommand($connection, 404, 'Cette compétence n’existe plus.', 'token_ability_missing');
     $ability = $abilities[$index];
     if (($ability['effect'] ?? 'damage') !== 'damage') rejectOnlineCommand($connection, 400, 'Utilisez cette capacité comme soin ou métamorphose depuis un pion placé.', 'ability_effect_required');
-    if($continuation===null && (!empty($ability['castGate'])||!empty($ability['damageVariants'])||!empty($ability['attackEnhancement'])||!empty($ability['infusion'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
+    if($continuation===null && (!empty($ability['castGate'])||!empty($ability['damageVariants'])||!empty($ability['attackEnhancement'])||!empty($ability['infusion']['enabled'])||!empty($ability['useWeaponDamage'])||!empty($ability['conditionRider'])||!empty($ability['projectile'])||!empty($ability['castingChoices'])))rejectOnlineCommand($connection,400,'Cette compétence se lance comme une attaque avec cible, arme et réglages de mana.','mechanics_attack_required');
     $extended = ($ability['activationHpMaxPercent'] ?? 0)>0 || ($ability['hpCost'] ?? 0) > 0 || ($ability['fatigueCost'] ?? 0) > 0 || ($ability['difficultyIncrement'] ?? 0) > 0 || in_array($ability['restRecharge'] ?? '', ['short', 'long'], true) || array_key_exists('castingStatId', $ability) || ($ability['manaCost'] ?? 0) > 0 || ($ability['cooldownRounds'] ?? 0) > 0;
     $hasCastingCheck = trim((string) ($ability['castingStatId'] ?? '')) !== '';
     $signature = applicationAbilityRequestSignature('token.roll', $sceneId, $arguments, $hasCastingCheck);

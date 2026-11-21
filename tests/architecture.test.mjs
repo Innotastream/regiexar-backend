@@ -5,7 +5,7 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
 
-const expectedSharedGmCommands = "timer.delete luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount door.interact rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.defenses.select item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
+const expectedSharedGmCommands = "timer.delete luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount door.interact rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.defenses.select item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.effect.periodic-hp combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
 function assertSharedGmCommands(source) {
   const guard = source.match(/if \(\$isGm && !in_array\(\$command, \['strategy-break','table-tokens','map.time-weather'\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
   assert.ok(guard, "la liste commune doit rester sous le contrôle du mode MJ");
@@ -100,8 +100,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.15'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-2-10-reprise-connexion-20261121-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.16'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-0-coherence-fluidite-20261121-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -136,9 +136,10 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /XAR_SESSION_SCHEMA_VERSION = 22/);
   assert.match(domains, /legacyStateToDomains/);
   assert.match(domains, /readonly_luck_domain/);
-  assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio', 'detached-combat'\]/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.15");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.2.10");
+  assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
+  assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.16");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.0");
   assert.equal(JSON.parse(manifest).databaseSchemaVersion, 24);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
@@ -339,7 +340,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(online, /'controllable' => [^\n]*\(empty\(\$token\['mountedOnTokenId'\]\)\|\|\$mountedMovementAllowed\) && \$movementOwned && !\$paused[\s\S]*?\$temporaryMovementAllowed/);
   assert.match(online, /\$mountedMovementStep=!empty\(\$token\['mountedOnTokenId'\]\)\?applicationActiveAbilityMovementStep\(/);
   assert.match(online, /\$mountedMovementAllowed=empty\(\$body\['immovable'\]\)&&applicationAbilityMovementLock\(/);
-  assert.match(online, /unset\(\$initiative\['movementOverrides'\]\)/);
+  assert.match(online, /unset\(\$initiative\['movementOverrides'\],\$initiative\['roundBaseOrder'\],\$initiative\['delayedTurnIds'\],\$initiative\['previousRoundOrder'\]\)/);
   assert.match(domains, /function validApplicationMovementOverrides/);
   assert.match(domains, /\$allowed !== true/);
 });
@@ -349,8 +350,8 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.2.10");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.2.10"]);
+  assert.equal(manifest.announcedApplicationVersion, "4.3.0");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.0"]);
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -417,7 +418,7 @@ test("les maintenances opportunistes sont non bloquantes et bornées", async () 
   ]);
   const authentication = index.slice(index.indexOf("function cleanupAuthentication"), index.indexOf("function bootstrapFirstAccount"));
   const history = domains.slice(domains.indexOf("function cleanupApplicationDomainHistory"), domains.indexOf("function listApplicationDomainHistory"));
-  const media = online.slice(online.indexOf("function cleanupExpiredMediaRetention"), online.indexOf("function streamOnlineMedia"));
+  const media = online.slice(online.indexOf("function onlineMediaRetentionPage"), online.indexOf("function streamOnlineMedia"));
   assert.match(index, /SELECT GET_LOCK\(:lock_name, 0\)/);
   assert.match(authentication, /acquireMaintenanceLock/);
   assert.match(authentication, /LIMIT ' \. XAR_MAINTENANCE_BATCH_SIZE/g);
@@ -426,7 +427,9 @@ test("les maintenances opportunistes sont non bloquantes et bornées", async () 
   assert.match(history, /LIMIT ' \. XAR_DOMAIN_MAINTENANCE_BATCH_SIZE/g);
   assert.equal((history.match(/LIMIT ' \. XAR_DOMAIN_MAINTENANCE_BATCH_SIZE/g) ?? []).length, 2);
   assert.match(media, /LIMIT ' \. XAR_MEDIA_MAINTENANCE_CANDIDATES/g);
-  assert.equal((media.match(/XAR_MEDIA_MAINTENANCE_CANDIDATES/g) ?? []).length, 2);
+  assert.match(media, /onlineMediaRetentionPage\(\$connection, false, \$cursors\['unused'\]/);
+  assert.match(media, /onlineMediaRetentionPage\(\$connection, true, \$cursors\['expired'\]/);
+  assert.match(media, /mediaDomainReferenceCount\(\$connection, \$id, true\)/);
 });
 
 test("le SSE adapte sa cadence, reprend par identifiant et désynchronise les reconnexions", async () => {

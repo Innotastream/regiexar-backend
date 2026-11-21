@@ -76,6 +76,57 @@ function publicPassages(array $state,array $map,string $layerId,callable $visibl
         $result[]=[...$entry,'destinationLabel'=>passageDestinationLabel($state,$entry),'destinationLayerId'=>$destinationLayer];
     }return $result;
 }
+
+// Project only the linked endpoints into the public read. Modern scene
+// records keep the arrival descriptors separate from their heavy map data.
+function applicationPassageDestinationRecords(PDO $db, array $map, string $sceneId): array
+{
+    $layerId = $map['activeLayerId'] ?? 'ground';
+    $destinations = [];
+    foreach ($map['passages'] ?? [] as $entry) {
+        $targetScene = $entry['destination']['sceneId'] ?? null;
+        $targetPassage = $entry['destination']['passageId'] ?? null;
+        if (($entry['layerId'] ?? '') !== $layerId || !empty($entry['hidden'])
+            || !passageId($targetScene) || $targetScene === $sceneId || !passageId($targetPassage)) continue;
+        $destinations[$targetScene][$targetPassage] = true;
+    }
+    if (!$destinations) return [];
+
+    $sceneKeys = array_map(static fn($id) => 'scene:' . $id, array_keys($destinations));
+    $scenes = applicationDomainRecords($db, ['scene-index', ...$sceneKeys]);
+    $listed = array_fill_keys(applicationDomainPayload($scenes, 'scene-index')['order'] ?? [], true);
+    $maps = [];
+    $modernKeys = [];
+    foreach ($destinations as $id => $_) {
+        $scene = applicationDomainPayload($scenes, 'scene:' . $id);
+        if (!isset($listed[$id]) || ($scene['metadata']['id'] ?? null) !== (string) $id) continue;
+        if (is_array($scene['combat'] ?? null)) $maps[$id] = $scene['combat']['map']['passages'] ?? [];
+        else $modernKeys[] = 'map:' . $id;
+    }
+    if ($modernKeys) {
+        $slots = implode(', ', array_fill(0, count($modernKeys), '?'));
+        $statement = $db->prepare("SELECT domain_key, JSON_EXTRACT(payload, '$.passages') AS passages FROM application_domains WHERE domain_key IN ($slots)");
+        $statement->execute($modernKeys);
+        foreach ($statement->fetchAll() as $row) $maps[substr($row['domain_key'], 4)] = jsonColumn($row['passages']);
+    }
+
+    $records = [];
+    foreach ($maps as $id => $passages) {
+        if (!is_array($passages)) continue;
+        $endpoints = [];
+        foreach ($passages as $entry) {
+            if (is_array($entry) && isset($destinations[$id][$entry['id'] ?? '']) && is_string($entry['name'] ?? null)
+                && in_array($entry['layerId'] ?? null, ['basement', 'ground', 'upper'], true)) {
+                $endpoints[] = array_intersect_key($entry, array_flip(['id', 'name', 'layerId']));
+            }
+        }
+        if (!$endpoints) continue;
+        $metadata = applicationDomainPayload($scenes, 'scene:' . $id)['metadata'];
+        $records['scene:' . $id] = ['payload' => ['metadata' => array_intersect_key($metadata, array_flip(['id', 'name']))]];
+        $records['map:' . $id] = ['payload' => ['passages' => $endpoints]];
+    }
+    return $records;
+}
 function applicationApplyPassageCommand(array $state,array $identity,string $command,array $args,array $context=[]):array {
     $isGm=($identity['role']??'')==='gm';
     if($command!=='passage.use'&&!$isGm)passageFailure('La gestion des passages est réservée au MJ.',403);
@@ -102,7 +153,19 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         return ['state'=>$state,'result'=>['passageId'=>$first['id'],'destinationPassageId'=>$second['id']]];
     }
     $sceneId=(string)($args['sceneId']??'');$entry=&passageEntry($state,['sceneId'=>$sceneId,'passageId'=>$args['passageId']??'']);freshPassage($entry,$args);$map=&passageMap($state,$sceneId);
-    if($command==='passage.edit'){$entry=normalizePassages([[...$entry,...($args['patch']??[]),'id'=>$entry['id'],'destination'=>$entry['destination'],'revision'=>$entry['revision']+1]])[0];}
+    if($command==='passage.edit'){
+        $next=normalizePassages([[...$entry,...($args['patch']??[]),'id'=>$entry['id'],'destination'=>$entry['destination'],'revision'=>$entry['revision']+1]])[0];
+        if(array_key_exists('arrival',$args)){
+            $arrival=$args['arrival'];
+            if(!is_array($arrival)||!passageId($arrival['sceneId']??null)||!passageId($arrival['passageId']??null))passageFailure('L’arrivée du passage est invalide.',400);
+            if(($entry['destination']['sceneId']??'')!==$arrival['sceneId']||($entry['destination']['passageId']??'')!==$arrival['passageId'])passageFailure('La liaison a changé. Rouvrez le passage.');
+            $target=&passageEntry($state,$arrival);freshPassage($target,$arrival);
+            if(($arrival['sceneId']===$sceneId&&$target['id']===$entry['id'])||($target['destination']['sceneId']??'')!==$sceneId||($target['destination']['passageId']??'')!==$entry['id'])passageFailure('La liaison a changé. Rouvrez le passage.');
+            $target=normalizePassages([[...$target,'x'=>$arrival['x']??null,'y'=>$arrival['y']??null,'revision'=>$target['revision']+1]])[0];
+            unset($target);
+        }
+        $entry=$next;
+    }
     elseif($command==='passage.link'){
         $target=&passageEntry($state,$args['target']??[]);freshPassage($target,$args['target']);
         if($sceneId===$args['target']['sceneId']&&$entry['id']===$target['id'])passageFailure('Choisissez une autre extrémité.');
@@ -182,18 +245,142 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
     return ['state'=>$state,'result'=>['passageId'=>$entry['id']]];
 }
 
+// Only the two crossing maps need combat data while the command holds the
+// write lock. Keep the broadcast scene's metadata if the MJ works elsewhere.
+function onlinePassageTravelState(PDO $db, array &$records, array $pending, array $args): array
+{
+    $sourceId = is_string($args['sceneId'] ?? null) ? $args['sceneId'] : '';
+    $publishedId = (string) (applicationDomainPayload($records, 'table')['activeSceneId'] ?? '');
+    $sourceKey = 'scene:' . $sourceId;
+    $records += applicationDomainRecords($db, ['scene-index', 'roster', 'activity', 'devices', $sourceKey, 'map:' . $sourceId]);
+    $scope = onlineDeviceOverlayRecords($records, $pending);
+    $sceneOrder = applicationDomainPayload($scope, 'scene-index')['order'] ?? [];
+    $listed = array_fill_keys($sceneOrder, true);
+    if (!isset($listed[$publishedId])) {
+        $records += applicationDomainRecords($db, ['detached-combat']);
+        $scope = onlineDeviceOverlayRecords($records, $pending);
+    }
+    $source = applicationDomainPayload($scope, $sourceKey);
+    $sourceMap = $sourceId === ''
+        ? (applicationDomainPayload($scope, 'detached-combat')['map'] ?? [])
+        : (is_array($source['combat'] ?? null) ? ($source['combat']['map'] ?? []) : applicationDomainPayload($scope, 'map:' . $sourceId));
+    $targetId = '';
+    foreach ($sourceMap['passages'] ?? [] as $entry) {
+        if ($entry['id'] === ($args['passageId'] ?? null)) {
+            $targetId = (string) ($entry['destination']['sceneId'] ?? '');
+            break;
+        }
+    }
+
+    $travelScenes = array_values(array_intersect($sceneOrder, [$sourceId, $targetId]));
+    $mapKeys = ['scene:' . $publishedId];
+    foreach ($travelScenes as $id) {
+        array_push($mapKeys, 'scene:' . $id, 'map:' . $id, 'token-index:' . $id, 'initiative:' . $id);
+    }
+    $records += applicationDomainRecords($db, array_values(array_diff($mapKeys, array_keys($records))));
+    $scope = onlineDeviceOverlayRecords($records, $pending);
+    $documentKeys = [];
+    foreach ($travelScenes as $id) {
+        foreach (applicationDomainPayload($scope, 'token-index:' . $id)['order'] ?? [] as $tokenId) {
+            $documentKeys[] = 'token:' . $id . ':' . $tokenId;
+        }
+    }
+    foreach (applicationDomainPayload($scope, 'roster')['characterOrder'] ?? [] as $id) {
+        $documentKeys[] = 'character:' . $id;
+    }
+    $records += applicationDomainRecords($db, $documentKeys);
+    $scope = onlineDeviceOverlayRecords($records, $pending);
+    $scope['scene-index']['payload']['order'] = array_values(array_intersect($sceneOrder, [...$travelScenes, $publishedId]));
+    return domainsToApplicationState($scope, 0);
+}
+
+function onlinePassageManagementState(PDO $db, array &$records, array $pending, string $command, array $args): ?array
+{
+    $source = ['sceneId'=>$args['sceneId'] ?? null, 'passageId'=>$args['passageId'] ?? null];
+    $references = match ($command) {
+        'passage.create' => is_array($args['endpoints'] ?? null) && count($args['endpoints']) === 2 ? $args['endpoints'] : [],
+        'passage.link' => [$source, $args['target'] ?? []],
+        'passage.edit' => [$source, ...(isset($args['arrival']) ? [$args['arrival']] : [])],
+        default => [$source],
+    };
+    // A detached legacy map uses the old embedded combat document.
+    foreach ($references as $reference) if (($reference['sceneId'] ?? null) === '') return null;
+    $records += applicationDomainRecords($db, array_values(array_diff(['scene-index'], array_keys($records))));
+    $scope = onlineDeviceOverlayRecords($records, $pending);
+    $sceneOrder = applicationDomainPayload($scope, 'scene-index')['order'] ?? [];
+    $sceneIds = array_column($references, 'sceneId');
+    $loadMaps = static function (array $ids) use ($db, &$records, $pending, $sceneOrder): array {
+        $keys = [];
+        foreach (array_intersect($sceneOrder, array_filter($ids, 'passageId')) as $id) {
+            array_push($keys, 'scene:' . $id, 'map:' . $id);
+        }
+        $records += applicationDomainRecords($db, array_values(array_diff($keys, array_keys($records))));
+        return onlineDeviceOverlayRecords($records, $pending);
+    };
+    $scope = $loadMaps($sceneIds);
+    if ($command === 'passage.link' || $command === 'passage.remove') {
+        // Detaching an endpoint can also update the previous link on another map.
+        foreach ($references as $reference) {
+            $id = $reference['sceneId'] ?? '';
+            if (!passageId($id)) continue;
+            if (is_array(applicationDomainPayload($scope, 'scene:' . $id)['combat'] ?? null)) return null;
+            foreach (applicationDomainPayload($scope, 'map:' . $id)['passages'] ?? [] as $entry) {
+                if (($entry['id'] ?? null) === ($reference['passageId'] ?? null) && isset($entry['destination']['sceneId'])) {
+                    $sceneIds[] = $entry['destination']['sceneId'];
+                    break;
+                }
+            }
+        }
+        $scope = $loadMaps($sceneIds);
+    }
+    $scope['scene-index']['payload']['order'] = array_values(array_intersect($sceneOrder, array_filter($sceneIds, 'passageId')));
+    foreach ($scope['scene-index']['payload']['order'] as $id) {
+        if (is_array(applicationDomainPayload($scope, 'scene:' . $id)['combat'] ?? null)) return null;
+    }
+    return domainsToApplicationState($scope, 0);
+}
+
 function onlinePassageCommand(PDO $db,array &$records,array &$pending,array $identity,string $command,array $args):array {
     $requestId=$args['requestId']??'';if(!is_string($requestId)||preg_match('/^[A-Za-z0-9_-]{16,80}$/D',$requestId)!==1)rejectOnlineCommand($db,400,'Référence de passage invalide.','invalid_passage_request');
     $signature=hash('sha256',json_encode(canonicalApplicationDomainValue(['command'=>$command,'arguments'=>$args]),JSON_THROW_ON_ERROR));
     $receipt=onlinePersistentCommandReceipt($db,$records,'passage-command',$requestId,$identity['id'],$signature,'passage');
     if(is_array($receipt['receipt']??null))return [...$receipt['receipt']['result'],'deduplicated'=>true];
-    $records=array_replace(applicationDomainRecords($db),$records);$before=domainsToApplicationState(onlineDeviceOverlayRecords($records,$pending),0);
-    $visible=publicPlayerState($before,$identity,[])['map']['passages']??[];
-    try{$applied=applicationApplyPassageCommand($before,['id'=>$identity['id'],'role'=>onlineIdentityIsGm($identity)?'gm':'player'],$command,$args,['visible'=>static fn($entry)=>in_array($entry['id'],array_column($visible,'id'),true),'controller'=>static fn($token)=>onlineTokenControllerIdFromRecords($db,$records,$token)]);}
+    $isGm = onlineIdentityIsGm($identity);
+    $management = false;
+    if ($command === 'passage.use') {
+        $before = onlinePassageTravelState($db, $records, $pending, $args);
+    } else {
+        if (!$isGm) rejectOnlineCommand($db,403,'La gestion des passages est réservée au MJ.','passage_command_refused');
+        $before = onlinePassageManagementState($db, $records, $pending, $command, $args);
+        $management = $before !== null;
+        if (!$management) {
+            $records = array_replace(applicationDomainRecords($db), $records);
+            $before = domainsToApplicationState(onlineDeviceOverlayRecords($records, $pending), 0);
+        }
+    }
+    try {
+        $applied = applicationApplyPassageCommand($before, ['id' => $identity['id'], 'role' => $isGm ? 'gm' : 'player'], $command, $args, [
+            // Called only for a player's valid departure. An MJ needs no player projection.
+            'visible' => static fn($entry) => in_array($entry['id'], array_column(publicPlayerState($before, $identity, [])['map']['passages'] ?? [], 'id'), true),
+            'controller' => static fn($token) => onlineTokenControllerIdFromRecords($db, $records, $token),
+        ]);
+    }
     catch(RuntimeException $error){rejectOnlineCommand($db,in_array($error->getCode(),[400,403,404,409,423,429],true)?$error->getCode():409,$error->getMessage(),'passage_command_refused');}
-    $old=legacyStateToDomains($before);$new=legacyStateToDomains($applied['state']);
-    foreach($new as $key=>$payload)if((str_starts_with($key,'map:')||str_starts_with($key,'token:')||str_starts_with($key,'token-index:')||in_array($key,['devices','activity'],true))&&dsCanonical($old[$key]??null)!==dsCanonical($payload))queueOnlineDomainUpsert($pending,$records,$key,$payload);
-    foreach($old as $key=>$payload)if(str_starts_with($key,'token:')&&!isset($new[$key]))queueOnlineDomainDelete($pending,$records,$key);
+    if ($management) {
+        foreach ($before['scenes'] as $scene) {
+            $id = $scene['id'];
+            $oldPassages = passageMap($before, $id)['passages'] ?? [];
+            $newPassages = passageMap($applied['state'], $id)['passages'] ?? [];
+            if ($oldPassages === $newPassages) continue;
+            $key = 'map:' . $id;
+            $payload = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+            queueOnlineDomainUpsert($pending, $records, $key, [...$payload, 'passages'=>$newPassages]);
+        }
+    } else {
+        $old=legacyStateToDomains($before);$new=legacyStateToDomains($applied['state']);
+        foreach($new as $key=>$payload)if((str_starts_with($key,'map:')||str_starts_with($key,'token:')||str_starts_with($key,'token-index:')||in_array($key,['devices','activity'],true))&&dsCanonical($old[$key]??null)!==dsCanonical($payload))queueOnlineDomainUpsert($pending,$records,$key,$payload);
+        foreach($old as $key=>$payload)if(str_starts_with($key,'token:')&&!isset($new[$key]))queueOnlineDomainDelete($pending,$records,$key);
+    }
     onlineStorePersistentCommandReceipt($records,$pending,$receipt,'passage-command',$requestId,$identity['id'],'passage-'.$requestId,$args['sceneId']??'passages',$signature,$applied['result']);
     return $applied['result'];
 }

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-const APPLICATION_TERRAIN_KINDS=['fire','poison','ice','acid','lightning','darkness','roots','water'];
+const APPLICATION_TERRAIN_KINDS=['fire','poison','ice','acid','lightning','darkness','roots','water','scorch'];
 function normalizeApplicationTerrainHue(mixed $value): int
 {
     if(!is_int($value)||$value<0||$value>360)throw new RuntimeException('Choisissez une teinte de 0 à 360 degrés.');
@@ -28,8 +28,10 @@ function normalizeApplicationTerrainEffects(mixed $value): array
         if(!is_array($effect)||!is_string($effect['id']??null)||preg_match('/\A[A-Za-z0-9_-]{1,120}\z/D',$effect['id'])!==1||isset($ids[$effect['id']])||!in_array($effect['kind']??null,APPLICATION_TERRAIN_KINDS,true)||!in_array($effect['layerId']??null,['ground','upper','basement'],true))throw new RuntimeException('Cette zone de terrain est invalide.');
         $bytes=applicationTerrainMaskBytes($effect);if($bytes===null||$effect['mask']==='')throw new RuntimeException('Le dessin de cette zone de terrain est invalide.');
         $mask=applicationEncodeTerrainMask($bytes,$effect['width'],$effect['height']);if($mask==='')throw new RuntimeException('Une zone de terrain doit comporter un dessin.');
-        $hue=array_key_exists('hue',$effect)?normalizeApplicationTerrainHue($effect['hue']):0;
-        $ids[$effect['id']]=true;$result[]=['id'=>$effect['id'],'kind'=>$effect['kind'],'layerId'=>$effect['layerId'],'width'=>$effect['width'],'height'=>$effect['height'],'mask'=>$mask,...($hue?['hue'=>$hue]:[])];
+        $hue=$effect['kind']!=='scorch'&&array_key_exists('hue',$effect)?normalizeApplicationTerrainHue($effect['hue']):0;
+        $opacity=array_key_exists('opacity',$effect)?$effect['opacity']:100;
+        if(!is_int($opacity)||$opacity<0||$opacity>100)throw new RuntimeException('Choisissez une opacité de 0 à 100 %.');
+        $ids[$effect['id']]=true;$result[]=['id'=>$effect['id'],'kind'=>$effect['kind'],'layerId'=>$effect['layerId'],'width'=>$effect['width'],'height'=>$effect['height'],'mask'=>$mask,...($hue?['hue'=>$hue]:[]),...($opacity!==100?['opacity'=>$opacity]:[])];
     }
     return $result;
 }
@@ -47,10 +49,14 @@ function applicationPublicTerrainEffects(array $map,string $layerId,callable $vi
     if(!isset($cache[$key])){
         $composites=[];
         foreach(APPLICATION_TERRAIN_KINDS as $kind){
-            $kindRows=array_values(array_filter($effects,static fn($effect)=>$effect['kind']===$kind));
-            $hues=array_values(array_unique(array_map(static fn($effect)=>$effect['hue']??0,$kindRows)));sort($hues,SORT_NUMERIC);
-            foreach($hues as $hue){
-            $rows=array_values(array_filter($kindRows,static fn($effect)=>($effect['hue']??0)===$hue));
+            $groups=[];
+            foreach($effects as $effect){
+                $opacity=$effect['opacity']??100;
+                if($effect['kind']===$kind&&$opacity!==0)$groups[($effect['hue']??0)*101+$opacity][]=$effect;
+            }
+            ksort($groups,SORT_NUMERIC);
+            foreach($groups as $groupKey=>$rows){
+            $hue=intdiv($groupKey,101);$opacity=$groupKey%101;
             $bytes=str_repeat("\0",(int)ceil($width*$height/8));
             foreach($rows as $row){$input=applicationTerrainMaskBytes($row);
                 if($row['width']===$width&&$row['height']===$height){$bytes=$bytes|$input;continue;}
@@ -59,7 +65,7 @@ function applicationPublicTerrainEffects(array $map,string $layerId,callable $vi
                     if(ord($input[$index>>3])&(1<<($index&7))){$i=$y*$width+$x;$bytes[$i>>3]=chr(ord($bytes[$i>>3])|(1<<($i&7)));}
                 }
             }
-            $composites[]=['kind'=>$kind,'hue'=>$hue,'bytes'=>$bytes];
+            $composites[]=['kind'=>$kind,'hue'=>$hue,'opacity'=>$opacity,'bytes'=>$bytes];
             }
         }
         $cache[$key]=$composites;if(count($cache)>8)array_shift($cache);
@@ -68,8 +74,8 @@ function applicationPublicTerrainEffects(array $map,string $layerId,callable $vi
     for($y=0;$y<$height;$y++)for($x=0;$x<$width;$x++){
         $i=$y*$width+$x;if((ord($visibility[$i>>3])&(1<<($i&7)))&&!$visible(($x+.5)*100/$width,($y+.5)*100/$height))$visibility[$i>>3]=chr(ord($visibility[$i>>3])&~(1<<($i&7)));
     }
-    foreach($cache[$key] as $row){$kind=$row['kind'];$hue=$row['hue'];$bytes=$row['bytes']&$visibility;
-        $mask=applicationEncodeTerrainMask($bytes,$width,$height);if($mask!=='')$result[]=['id'=>'terrain-'.$kind.($hue?'-hue-'.$hue:'').'-'.$layerId,'kind'=>$kind,'layerId'=>$layerId,...$dimensions,'mask'=>$mask,...($hue?['hue'=>$hue]:[])];
+    foreach($cache[$key] as $row){$kind=$row['kind'];$hue=$row['hue'];$opacity=$row['opacity'];$bytes=$row['bytes']&$visibility;
+        $mask=applicationEncodeTerrainMask($bytes,$width,$height);if($mask!=='')$result[]=['id'=>'terrain-'.$kind.($hue?'-hue-'.$hue:'').($opacity!==100?'-opacity-'.$opacity:'').'-'.$layerId,'kind'=>$kind,'layerId'=>$layerId,...$dimensions,'mask'=>$mask,...($hue?['hue'=>$hue]:[]),...($opacity!==100?['opacity'=>$opacity]:[])];
     }
     return $result;
 }

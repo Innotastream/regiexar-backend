@@ -1274,6 +1274,10 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             continue;
         }
         $event = is_array($roll['mapEvent'] ?? null) ? $roll['mapEvent'] : [];
+        if (isset($event['duel']) && (!isset($clearlyVisibleIds[$event['sourceTokenId'] ?? '']) || !isset($clearlyVisibleIds[$event['targetTokenId'] ?? '']))) {
+            unset($roll['mapEvent']['duel']);
+            $rolls[$rollIndex] = $roll;
+        }
         $rollerTokenId = (string) ($event['tokenId'] ?? $event['sourceTokenId'] ?? $roll['sourceTokenId'] ?? '');
         $attackId = trim((string) ($event['attackId'] ?? ''));
         if ($attackId === '' && ($rollerTokenId === '' || ($roll['rollerRole'] ?? '') !== 'gm'
@@ -1314,7 +1318,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     $map['visionMask'] = $visionMask;
     $map['lightGlow'] = applicationLightGlow($occlusion, $visionMask, $map['gridSize'] ?? 50);
     $map['lightingMode'] = $occlusion['lightingMode'];
-    unset($initiative['movementOverrides']);
+    unset($initiative['movementOverrides'],$initiative['roundBaseOrder'],$initiative['delayedTurnIds'],$initiative['previousRoundOrder']);
     $map['tokens'] = $tokens;
     $initiative['order'] = $visibleOrder;
     $initiative['currentTokenId'] = in_array($activeTokenId, $visibleOrder, true) ? $activeTokenId : null;
@@ -1463,7 +1467,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             || !in_array($dot['targetTokenId'] ?? '', $visibleAttackTokenIds, true)) continue;
         $visibleDamageOverTime[] = publicOnlineAttackProjectionFields($dot,
             isset($ownedVisibleIds[$dot['targetTokenId']]) || ($visibleTokenDetails[$dot['targetTokenId']] ?? false)
-                ? ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns', 'formula', 'damageType']
+                ? ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns', 'formula', 'damageType', 'manualHp', 'direction']
                 : ['id', 'sceneId', 'targetTokenId', 'label', 'remainingTurns']);
     }
     foreach (is_array($fullState['pendingAttacks'] ?? null) ? $fullState['pendingAttacks'] : [] as $attack) {
@@ -3245,9 +3249,9 @@ function onlineRecordTokenInitiative(PDO $connection, array &$records, array &$p
     $order = is_array($initiative['order'] ?? null) ? $initiative['order'] : [];
     $current = ($initiative['active'] ?? false) === true ? ($order[(int) ($initiative['currentIndex'] ?? 0)] ?? null) : null;
     if (!in_array($token['id'], $order, true)) $order[] = $token['id'];
-    $order = sortedOnlineInitiativeOrder($order, $forSort, $sceneId);
+    $prepared = sortedOnlineInitiativeOrder($order, $forSort, $sceneId);
     $initiative['order'] = $order;
-    $initiative['currentIndex'] = $current !== null && in_array($current, $order, true) ? (int) array_search($current, $order, true) : 0;
+    $initiative = applicationSetPreparedInitiativeOrder($initiative, $prepared, $current);
     $initiative['_updatedAt'] = $token['_updatedAt'];
     queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
     queueOnlineDomainUpsert($pending, $records, $initiativeKey, $initiative);
@@ -4012,6 +4016,17 @@ function publicOnlineAttackProjectionFields(array $source, array $fields): array
     return array_intersect_key($source, array_fill_keys($fields, true));
 }
 
+function onlineNormalizeAttackDuel(mixed $value): ?array
+{
+    if (!is_array($value) || !in_array($value['result'] ?? '', ['hit', 'defended'], true)
+        || !is_int($value['resolvedAt'] ?? null) || $value['resolvedAt'] <= 0) return null;
+    foreach (['attackFace', 'defenseFace'] as $key) {
+        $face = $value[$key] ?? null;
+        if ($face !== 'Joker' && !($key === 'attackFace' && $face === 'Auto') && !(is_int($face) && $face >= 1 && $face <= 100)) return null;
+    }
+    return publicOnlineAttackProjectionFields($value, ['attackFace', 'defenseFace', 'result', 'resolvedAt']);
+}
+
 function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, string $phase = 'hit', bool $armorVisible = false): array
 {
     $source = is_array($value) ? $value : [];
@@ -4029,6 +4044,15 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
     if ($detailsVisible) {
         $public += publicOnlineAttackProjectionFields($source, ['statId', 'statLabel']);
     }
+    if (is_array($source['attackSeries'] ?? null)) {
+        $series = $source['attackSeries'];
+        $public['attackSeries'] = publicOnlineAttackProjectionFields($series,
+            $detailsVisible ? ['index', 'count', 'phase', 'name', 'weapon', 'target'] : ['index', 'count', 'phase']);
+        if (isset($source['mapEvent']['targetName'])) $public['attackSeries']['target'] = $source['mapEvent']['targetName'];
+    }
+    if ($phase === 'damage' && ($detailsVisible || $armorVisible) && is_array($source['damageStrikes'] ?? null))
+        $public['damageStrikes'] = array_map(static fn(array $strike): array => publicOnlineAttackProjectionFields($strike, ['formula', 'total', 'breakdown']),
+            array_values(array_filter(array_slice($source['damageStrikes'], 0, 10), 'is_array')));
     if (is_array($source['attempts'] ?? null)) {
         $public['attempts'] = [];
         foreach (array_slice($source['attempts'], 0, 2) as $attempt) {
@@ -4054,6 +4078,8 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
             'kind', 'value', 'label', 'tokenId', 'anchorTokenId', 'sourceTokenId', 'targetTokenId',
             'attackId', 'sceneId', 'layerId', 'tone', 'applied', 'targetName',
         ]);
+        $duel = onlineNormalizeAttackDuel($source['mapEvent']['duel'] ?? null);
+        if ($duel !== null) $public['mapEvent']['duel'] = $duel;
         if ($phase === 'roll' && !$detailsVisible) $public['mapEvent']['label'] = $resourceLabel ?? 'Jet';
         if (is_array($source['mapEvent']['diceAppearance'] ?? null)) {
             $public['mapEvent']['diceAppearance'] = publicOnlineDiceAppearance($source['mapEvent']['diceAppearance']);
@@ -4811,6 +4837,26 @@ function onlineAttackRollBundle(array $attack): array
     $hitRoll = onlineStoredAttackRoll($attack, 'hit');
     $oppositionRoll = onlineStoredAttackRoll($attack, 'opposition');
     $damageRoll = onlineStoredAttackRoll($attack, 'damage');
+    if (in_array($attack['status'] ?? '', ['applied', 'blocked', 'defended'], true) && empty($attack['opposition']['skipped'])) {
+        $face = static fn(array $roll) => ($roll['outcome']['joker'] ?? false) === true ? 'Joker' : ($roll['outcome']['raw'] ?? $roll['raw'] ?? null);
+        $duel = onlineNormalizeAttackDuel([
+            'attackFace' => ($attack['hit']['outcome']['automatic'] ?? false) === true ? 'Auto' : $face($attack['hit'] ?? []),
+            'defenseFace' => $face($attack['opposition'] ?? []),
+            'result' => $attack['status'] === 'defended' ? 'defended' : 'hit',
+            'resolvedAt' => $attack['resolvedAt'] ?? null,
+        ]);
+        if ($duel !== null) {
+            if (($attack['status'] ?? '') === 'applied' && is_array($damageRoll['mapEvent'] ?? null)) $damageRoll['mapEvent']['duel'] = $duel;
+            elseif (is_array($oppositionRoll['mapEvent'] ?? null)) $oppositionRoll['mapEvent']['duel'] = $duel;
+        }
+    }
+    if (is_array($attack['attackSeries'] ?? null)) {
+        $series = [...$attack['attackSeries'], 'target' => $attack['targetName'] ?? '',
+            'weapon' => ($attack['attackKind'] ?? '') === 'weapon' ? ($attack['attackName'] ?? '') : ''];
+        if ($hitRoll !== null) $hitRoll['attackSeries'] = [...$series, 'phase' => 'hit'];
+        if ($oppositionRoll !== null) $oppositionRoll['attackSeries'] = [...$series, 'phase' => 'opposition'];
+        if ($damageRoll !== null) $damageRoll['attackSeries'] = [...$series, 'phase' => 'damage'];
+    }
     $effectRoll = ($attack['attackKind'] ?? '') === 'ability' ? $damageRoll : null;
     $echoRolls = [];
     foreach ($attack['echoAttacks'] ?? [] as $echo) $echoRolls = [...$echoRolls, ...onlineAttackRollBundle($echo)['rolls']];
@@ -5274,6 +5320,9 @@ function onlineRollEntry(array $identity, array $rolled, string $label, string $
     if ($outcome !== null) {
         $entry['outcome'] = $outcome;
     }
+    if (count($rolled['strikes'] ?? []) > 1) $entry['damageStrikes'] = array_map(
+        static fn(array $strike): array => array_intersect_key($strike, array_flip(['formula', 'total', 'breakdown'])),
+        array_slice($rolled['strikes'], 0, 10));
     return applicationCopyNaturalRoll($rolled,$entry);
 }
 
@@ -5399,7 +5448,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
 
         if ($isGm && !in_array($command, ['strategy-break','table-tokens','map.time-weather'], true) && !in_array(
             $command,
-            ['timer.delete', 'luck.reset', 'unit.friendly-fire', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'door.interact', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.vessel.request','item.vessel.resolve','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.effect.stack', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'token.attack.area.resolve', 'ping'],
+            ['timer.delete', 'luck.reset', 'unit.friendly-fire', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'door.interact', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.vessel.request','item.vessel.resolve','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.effect.stack', 'combat.effect.periodic-hp', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.resolve', 'token.attack.area.resolve', 'ping'],
             true
         )) {
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
@@ -5427,6 +5476,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $commandActionAlreadyLogged = true;
         } elseif ($command === 'roll.reveal') {
             $result = onlineGmRevealRoll($connection, $records, $pending, $table, $identity, $arguments);
+        } elseif ($command === 'combat.effect.periodic-hp') {
+            $result = onlineCreateManualHpEffect($connection, $records, $pending, $identity, $arguments);
+            $commandActionAlreadyLogged = true;
         } elseif($command==='combat.effect.stack'){
             $result=onlineStackableEffectCommand($connection,$records,$pending,$identity,$arguments);
         } elseif (in_array($command, ['combat.effect.remove', 'combat.dot.resolve'], true)) {
@@ -7131,10 +7183,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                         if (!in_array($controlledToken['id'], $order, true)) {
                             $order[] = $controlledToken['id'];
                         }
-                        $order = sortedOnlineInitiativeOrder($order, $recordsForSort, $sceneId);
+                        $prepared = sortedOnlineInitiativeOrder($order, $recordsForSort, $sceneId);
                         $initiative['order'] = $order;
-                        $initiative['currentIndex'] = $currentTokenId !== null && in_array($currentTokenId, $order, true)
-                            ? (int) array_search($currentTokenId, $order, true) : 0;
+                        $initiative = applicationSetPreparedInitiativeOrder($initiative, $prepared, $currentTokenId);
                         $initiative['_updatedAt'] = (int) floor(microtime(true) * 1000);
                         queueOnlineDomainUpsert($pending, $records, $controlledTokenKey, $controlledToken);
                         queueOnlineDomainUpsert($pending, $records, $initiativeKey, $initiative);
@@ -8334,24 +8385,51 @@ function mediaDomainReferenceCount(PDO $connection, string $id, bool $includeHis
     return $count + (int) $history->fetchColumn();
 }
 
+function onlineMediaRetentionPage(PDO $connection, bool $expired, mixed $cursor): array
+{
+    $column = $expired ? 'pending_delete_at' : 'created_at';
+    $eligible = $expired ? 'pending_delete_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY)'
+        : 'pending_delete_at IS NULL AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY)';
+    $order = ' ORDER BY ' . $column . ', id LIMIT ' . XAR_MEDIA_MAINTENANCE_CANDIDATES;
+    $select = 'SELECT id, stored_name, ' . $column . ' AS sweep_at FROM media_objects WHERE public_slug IS NULL AND ' . $eligible;
+    if (is_array($cursor) && is_string($cursor['at'] ?? null) && is_string($cursor['id'] ?? null)
+        && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D',$cursor['at']) === 1
+        && preg_match('/^[A-Za-z0-9_-]{24}$/D',$cursor['id']) === 1) {
+        $after = $connection->prepare($select . ' AND (' . $column . ' > ? OR (' . $column . ' = ? AND id > ?))' . $order);
+        $after->execute([$cursor['at'], $cursor['at'], $cursor['id']]);
+        $rows = $after->fetchAll();
+        if ($rows !== []) return $rows;
+    }
+    return $connection->query($select . $order)->fetchAll();
+}
+
 function cleanupExpiredMediaRetention(PDO $connection): void
 {
-    $orphanCandidates = $connection->query(
-        'SELECT id FROM media_objects WHERE pending_delete_at IS NULL AND public_slug IS NULL '
-        . 'AND created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 DAY) ORDER BY created_at LIMIT '
-        . XAR_MEDIA_MAINTENANCE_CANDIDATES
-    );
-    foreach ($orphanCandidates === false ? [] : $orphanCandidates->fetchAll() as $candidate) {
+    // The maintenance lock surrounds this routine. A private bounded cursor
+    // makes each bounded sweep progress past old media still in use.
+    $configurationPath = privateConfigPath();
+    $cursorPath = is_string($configurationPath) && $configurationPath !== ''
+        ? dirname($configurationPath) . DIRECTORY_SEPARATOR . '.media-retention-cursors-v1.json' : '';
+    $raw = $cursorPath !== '' && !is_link($cursorPath) && is_file($cursorPath)
+        ? @file_get_contents($cursorPath, false, null, 0, 1024) : false;
+    $cursors = is_string($raw) ? json_decode($raw, true) : [];
+    $orphanCandidates = onlineMediaRetentionPage($connection, false, $cursors['unused'] ?? null);
+    $expiredCandidates = onlineMediaRetentionPage($connection, true, $cursors['expired'] ?? null);
+    if ($cursorPath !== '' && !is_link($cursorPath)) {
+        $last = static fn(array $rows): ?array => $rows === [] ? null
+            : ['id'=>$rows[array_key_last($rows)]['id'],'at'=>$rows[array_key_last($rows)]['sweep_at']];
+        $next = json_encode(['unused'=>$last($orphanCandidates),'expired'=>$last($expiredCandidates)], JSON_THROW_ON_ERROR);
+        $temporary = @tempnam(dirname($cursorPath), '.media-retention-');
+        if (is_string($temporary)) {
+            if (@file_put_contents($temporary,$next) !== strlen($next) || !@rename($temporary,$cursorPath)) @unlink($temporary);
+        }
+    }
+    foreach ($orphanCandidates as $candidate) {
         $candidateId = (string) ($candidate['id'] ?? '');
         if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $candidateId) !== 1) continue;
         scheduleUnusedOnlineMediaDeletion($connection, $candidateId);
     }
-    $statement = $connection->query(
-        'SELECT id, stored_name FROM media_objects WHERE pending_delete_at IS NOT NULL '
-        . 'AND pending_delete_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
-        . 'ORDER BY pending_delete_at LIMIT ' . XAR_MEDIA_MAINTENANCE_CANDIDATES
-    );
-    foreach ($statement === false ? [] : $statement->fetchAll() as $record) {
+    foreach ($expiredCandidates as $record) {
         $id = (string) ($record['id'] ?? '');
         if (preg_match('/^[A-Za-z0-9_-]{24}$/D', $id) !== 1) continue;
         $deleted = false;
