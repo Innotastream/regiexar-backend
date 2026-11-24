@@ -1094,11 +1094,16 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     $mistVision=applicationCreateMistVision($map['visionZones']??[],[...$map,'lightingMode'=>$occlusion['lightingMode']??'normal','customLighting'=>$occlusion['customLighting']??[]],$mistObservers,['sceneId'=>$mistSceneId,'layerId'=>$visibleLayerId]);
     $visionMask=applicationApplyMistVisionMask($baseVisionMask,$mistVision);
     $doorPeek=$includeDoorPeek&&!$streamPov&&!$paused?applicationProjectDoorKeyhole($map,$accountId,$characterOwners,$charactersById,$occlusion,$fog,$mistVision):null;
-    $baseStrictPointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
-        || applicationVisionCoversPoint($baseVisionMask, $x, $y);
+    $fogCoversPoint = applicationMaskPointTester($fog);
+    $strictMask = [...$baseVisionMask, 'version' => XAR_FOG_MASK_VERSION];
+    $strictVisionCoversPoint = applicationMaskPointTester($strictMask);
+    $tokenVisionCoversPoint = is_string($baseVisionMask['tokenMask'] ?? null)
+        ? applicationMaskPointTester([...$strictMask, 'mask' => $baseVisionMask['tokenMask']]) : $strictVisionCoversPoint;
+    $baseStrictPointIsHidden = static fn (mixed $x, mixed $y): bool => $fogCoversPoint($x, $y)
+        || $strictVisionCoversPoint($x, $y);
     $strictPointIsHidden = static fn (mixed $x,mixed $y): bool => $baseStrictPointIsHidden($x,$y)||applicationMistShadowAtPoint($mistVision,(float)$x,(float)$y);
-    $pointIsHidden = static fn (mixed $x, mixed $y): bool => applicationFogCoversPoint($fog, $x, $y)
-        || applicationVisionTokenCoversPoint($baseVisionMask, $x, $y);
+    $pointIsHidden = static fn (mixed $x, mixed $y): bool => $fogCoversPoint($x, $y)
+        || $tokenVisionCoversPoint($x, $y);
     $visibleLights = array_values(array_filter($occlusion['lights'], static fn (array $light): bool =>
         !applicationLightCenterBlocked($occlusion, $light)
         && !$strictPointIsHidden($light['x'], $light['y'])));
@@ -1115,12 +1120,13 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
         $movementTokenId = (string) ($pilot['id'] ?? $token['id'] ?? '');
         $mountedMovementStep=!empty($token['mountedOnTokenId'])?applicationActiveAbilityMovementStep($fullState['abilityExecutions']??[],$mistSceneId,(string)$token['id']):null;$mountedMovementAllowed=false;
         if($mountedMovementStep!==null){$body=applicationAbilityMovementSource($token,$map,($mountedMovementStep['mountedMovement']??false)===true);$bodyController=onlineEffectiveTokenControllerId($body,$characterOwners);$bodyPilot=$bodyController===''?onlineMountPilot($map['tokens']??[],$body):null;$movementController=($mountedMovementStep['mountedMovement']??false)===true?($bodyController!==''?$bodyController:($bodyPilot!==null?onlineEffectiveTokenControllerId($bodyPilot,$characterOwners):'')):$effectiveControllerId;$movementOwned=$movementController!==''&&$movementController===$accountId;$movementTokenId=(string)$token['id'];$mountedMovementAllowed=empty($body['immovable'])&&applicationAbilityMovementLock($fullState['abilityExecutions']??[],$mistSceneId,(string)$token['id'],$map['tokens']??[],null,$fullState['abilityMovementLeases']??[])===null;}
-        if (!$owned && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y))) {
+        $tokenInView = applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y));
+        if (!$owned && !$tokenInView) {
             continue;
         }
         $mistVisibility=applicationMistTokenVisibility($mistVision,$token);if($mistVisibility==='hidden')continue;
         // The faded perimeter detects a presence without revealing its sheet.
-        if ($mistVisibility==='silhouette'||applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$pointIsHidden($x,$y)) && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$baseStrictPointIsHidden($x,$y))) {
+        if ($mistVisibility==='silhouette'||$tokenInView && !applicationTerrainBarrierPointVisible($token,$map,static fn($x,$y)=>!$baseStrictPointIsHidden($x,$y))) {
             $tokens[] = [
                 'id' => $token['id'] ?? null,
                 'layerId' => onlineTokenLayerId($token, $map),

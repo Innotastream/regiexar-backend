@@ -11,29 +11,32 @@ function onlineVisiblePathPointTester(?array $fog, array $vision): Closure
         if (($mask['enabled'] ?? false) !== true) continue;
         $bytes = applicationFogMaskBytes(['version' => XAR_FOG_MASK_VERSION, 'enabled' => true, 'width' => $mask['width'] ?? null, 'height' => $mask['height'] ?? null, 'mask' => $mask['mask'] ?? null]);
         if ($bytes === null) return static fn (float $x, float $y): bool => false;
-        $rows = [];
-        for ($cellIndex = 0, $length = $mask['width'] * $mask['height']; $cellIndex < $length; $cellIndex++) {
-            if (applicationMaskBit($bytes, $cellIndex)) $rows[intdiv($cellIndex, $mask['width'])][] = $cellIndex % $mask['width'];
-        }
-        $masks[] = [$mask, $rows, $maskIndex === 1];
+        if (trim($bytes, "\0") === '') continue;
+        $masks[] = [$mask['width'], $mask['height'], applicationExpandMaskCells($bytes), $maskIndex === 1];
     }
     // Solid walls and painted fog retain their full footprint. Only a slight
     // vision fringe on a portrait wider than its lit tile gets an allowance.
     return static function (float $x, float $y, float $radius = 0.0, float $naturalWidth = 1600.0, float $naturalHeight = 900.0) use ($masks): bool {
         if (!is_finite($x) || !is_finite($y) || $x < 0 || $x > 100 || $y < 0 || $y > 100) return false;
-        foreach ($masks as [$mask, $rows, $visionEdge]) {
+        foreach ($masks as [$width, $height, $cells, $visionEdge]) {
             $checkedRadius = $visionEdge && $radius > 0.0 ? max(0.0, $radius - min(6.0, $radius * 0.2)) : $radius;
-            $cx = $x / 100 * ($mask['width'] - 1); $cy = $y / 100 * ($mask['height'] - 1);
-            $rx = $checkedRadius / $naturalWidth * ($mask['width'] - 1); $ry = $checkedRadius / $naturalHeight * ($mask['height'] - 1);
-            for ($row = max(0, (int) floor($cy - $ry - 0.5)), $end = min($mask['height'] - 1, (int) ceil($cy + $ry + 0.5)); $row <= $end; $row++) {
-                if (!isset($rows[$row])) continue;
+            $cx = $x / 100 * ($width - 1); $cy = $y / 100 * ($height - 1);
+            $rx = max(1e-12, $checkedRadius / $naturalWidth * ($width - 1));
+            $ry = $checkedRadius / $naturalHeight * ($height - 1);
+            // Search only this footprint. Open runs are skipped in native
+            // string code instead of indexing every hidden cell in PHP.
+            $left = max(0, (int) floor($cx - $rx - 0.5));
+            $right = min($width - 1, (int) ceil($cx + $rx + 0.5));
+            for ($row = max(0, (int) floor($cy - $ry - 0.5)), $end = min($height - 1, (int) ceil($cy + $ry + 0.5)); $row <= $end; $row++) {
                 $ny = max(0.0, abs($row - $cy) - 0.5) / max($ry, 1e-12);
                 if ($ny > 1.0) continue;
-                $columns = $rows[$row]; $lo = 0; $hi = count($columns);
-                while ($lo < $hi) { $mid = ($lo + $hi) >> 1; if ($columns[$mid] < $cx) $lo = $mid + 1; else $hi = $mid; }
-                $distance = min(isset($columns[$lo]) ? abs($columns[$lo] - $cx) : INF, $lo > 0 ? abs($columns[$lo - 1] - $cx) : INF);
-                $nx = max(0.0, $distance - 0.5) / max($rx, 1e-12);
-                if ($nx * $nx + $ny * $ny <= 1.0) return false;
+                $offset = $row * $width;
+                for ($index = $offset + $left, $last = $offset + $right; $index <= $last; $index++) {
+                    $index += strspn($cells, "\0", $index, $last - $index + 1);
+                    if ($index > $last) break;
+                    $nx = max(0.0, abs($index - $offset - $cx) - 0.5) / $rx;
+                    if ($nx * $nx + $ny * $ny <= 1.0) return false;
+                }
             }
         }
         return true;

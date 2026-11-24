@@ -38,6 +38,21 @@ for ($row=0;$row<32;++$row) if ($row!==13) applicationSetMaskBit($wallBytes,$row
 $base['walls']['mask'] = rtrim(strtr(base64_encode($wallBytes),'+/','-_'),'=');
 $initial = renderEqual($base,$origins,50);
 visionEqual($base,$origins,50);
+$strictCoverage = applicationMaskPointTester($initial);
+$tokenCoverage = applicationMaskPointTester([...$initial,'mask'=>$initial['tokenMask']]);
+$validFog = [...$base['fog'],'enabled'=>true,'mask'=>$base['walls']['mask']];
+foreach ([$validFog,[...$validFog,'version'=>2],[...$validFog,'mask'=>'bad'],[...$validFog,'mask'=>''],null] as $fog) {
+    $fogCoverage = applicationMaskPointTester($fog);
+    foreach ([[0,0],[15.5,70],[25/47*100,6/31*100],[25/47*100,13/31*100],[100,100],[null,'50']] as [$x,$y]) {
+        visionRequire($fogCoverage($x,$y) === applicationFogCoversPoint($fog,$x,$y), 'Decoded fog raster preserves exact point coverage');
+    }
+}
+for ($x = 0; $x <= 100; $x += 5) {
+    for ($y = 0; $y <= 100; $y += 5) {
+        visionRequire($strictCoverage($x,$y) === applicationVisionCoversPoint($initial,$x,$y), 'Decoded strict raster preserves point coverage');
+        visionRequire($tokenCoverage($x,$y) === applicationVisionTokenCoversPoint($initial,$x,$y), 'Decoded token raster preserves silhouette coverage');
+    }
+}
 $variations = [];
 $next=$base;$next['walls']['mask']='';$variations[]=$next;
 $next=$base;$next['walls']['width']=32;$next['walls']['mask']='';$variations[]=$next;

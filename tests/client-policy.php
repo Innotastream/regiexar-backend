@@ -29,7 +29,7 @@ function checkPolicy(bool $condition, string $message): void
     $GLOBALS['checks'] = ($GLOBALS['checks'] ?? 0) + 1;
 }
 
-$currentVersion = '4.4.0';
+$currentVersion = '4.4.1';
 $policy = clientPolicy(['client' => ['enforce' => false, 'minimumVersion' => '1.0.0', 'latestVersion' => '99.0.0']]);
 checkPolicy($policy['enforce'] === true && $policy['exactVersion'] === true, 'La connexion impose la version courante exacte.');
 checkPolicy($policy['allowedVersions'] === [$currentVersion], 'Seule la version courante est admise.');
@@ -55,9 +55,11 @@ foreach (['gm', 'player'] as $mode) {
         requireSupportedClient($connection, []);
         checkPolicy(true, "$mode $version atteint la vérification des identifiants.");
     }
-    $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = '4.3.4';
-    try { requireSupportedClient($connection, []); throw new RuntimeException('La 4.3.4 atteint encore la vérification des identifiants.'); }
-    catch (PolicyResponse $response) { checkPolicy($response->status === 426, 'La version précédente doit être refusée.'); }
+    foreach (['4.3.4', '4.4.0', '4.4.2'] as $version) {
+        $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
+        try { requireSupportedClient($connection, []); throw new RuntimeException("Version admise à tort : $version"); }
+        catch (PolicyResponse $response) { checkPolicy($response->status === 426, "$mode $version doit être refusé."); }
+    }
     foreach (['', '3.1.13', '3.2.9', '3.2.10', '3.2.11', '3.2.12', '3.2.13', '3.2.14', '3.2.15', '3.2.16', '3.2.17', '3.2.18', '3.2.19', '3.3.0', '3.3.1', '3.3.2', '3.3.3', '3.3.4', '3.3.5', '3.3.6', '3.3.7', '3.3.8', '3.3.9', '3.3.10', '3.3.11', '3.3.12', '3.4.0', '3.4.1', '3.4.2', '3.4.3', '3.4.4', '3.4.5', '3.4.6', '3.4.7', '3.4.8', '3.4.9', '3.4.10', '3.4.11', '3.4.12', '3.4.13', '3.4.14', '3.4.18', '3.4.19', '3.4.20', '3.4.21', '3.4.22', '3.5.0', '3.5.1', '3.5.2', '3.5.3', '3.5.4', '3.5.5', '3.5.6', '3.5.7', '3.5.8', '3.5.9', '3.5.10', '3.5.11', '3.5.12', '3.6.0', '3.6.1', '3.6.2', '3.6.4', '3.7.0', '3.7.1', '3.7.2', '3.7.3', '3.7.4', '3.7.5', '3.7.6', '3.7.7', '3.7.8', '3.7.9', '3.7.10', '3.7.11', '4.0.0', '4.0.1', '4.0.2', '4.0.3', '4.0.4', '4.1.0', '4.1.1', '4.2.0', '4.2.1', '4.2.2', '4.2.3', '4.2.4', '4.2.5', '4.2.6', '4.2.7', '4.2.8', '4.2.9', '4.2.10', '4.2.11', '4.3.0', '4.3.1', '4.3.2', '4.3.3', '4.3.5', '4.2.10-beta', '4.3.0-beta', '4.3.1-beta', '4.3.2-beta', '4.3.3-beta', '4.3.4-beta', '4.1.0-beta', '99.0.0', '3.4.0-beta', '3.4.0+local', '03.4.0', '3.3.11,3.4.0'] as $version) {
         $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
         try { requireSupportedClient($connection, []); throw new RuntimeException("Version admise à tort : $version"); }

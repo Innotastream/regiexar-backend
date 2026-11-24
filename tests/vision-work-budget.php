@@ -24,12 +24,19 @@ if (($argv[1] ?? '') === 'worker') {
     if ($scenario === 'visible-light') {
         $state['lights'] = [['id'=>'synthetic-nearby','name'=>'Synthetic light','x'=>11.0,'y'=>50.0,
             'visionDistance'=>6,'enabled'=>true,'visibleFromAfar'=>true]];
-    } elseif ($scenario !== 'no-lights') {
+    } elseif ($scenario !== 'no-lights' && $scenario !== 'equivalent-range') {
         throw new RuntimeException('Unknown workload fixture');
     }
     $origins = [['x'=>10.0,'y'=>50.0,'visionDistance'=>4,'darkVision'=>'none','source'=>'token']];
     $resolve = $resolver === 'current' ? 'applicationResolveVisionRelays' : 'referenceVisionRelays';
-    $result = $resolve($state, $origins, 50);
+    if ($scenario === 'equivalent-range') {
+        $result = applicationComputeBaseVisionMask($state, $origins, 50, 4);
+        $second = applicationComputeBaseVisionMask($state, [[...$origins[0],'visionDistance'=>8]], 50.0);
+        if ($result !== $second) throw new RuntimeException('Equivalent ranges must produce the same geometry');
+        $result = ['mask'=>$result,'activatedLightIds'=>[]];
+    } else {
+        $result = $resolve($state, $origins, 50);
+    }
     $directory = applicationVisionCacheDirectory();
     if (!is_string($directory)) throw new RuntimeException('A real private cache is required by this test');
     $entries = glob($directory.'/base-*.json');
@@ -82,7 +89,10 @@ try {
         if ($reference['geometryResults'] <= $budget) throw new RuntimeException('Positive control no longer detects the old unnecessary work: '.$scenario);
         $cases[] = ['scenario'=>$scenario,'budget'=>$budget,'current'=>$current['geometryResults'],'old'=>$reference['geometryResults']];
     }
-    echo json_encode(['ok'=>true,'budgetChecks'=>8,'cases'=>$cases,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;
+    $equivalentRange = budgetRun($root,'current','equivalent-range');
+    if ($equivalentRange['geometryResults'] !== 1) throw new RuntimeException('Equal radius and grid must share cold geometry');
+    $cases[] = ['scenario'=>'equivalent-range','budget'=>1,'current'=>$equivalentRange['geometryResults']];
+    echo json_encode(['ok'=>true,'budgetChecks'=>9,'cases'=>$cases,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;
 } finally {
     budgetCleanup($root,$root);
 }

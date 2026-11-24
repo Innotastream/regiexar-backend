@@ -474,6 +474,24 @@ function applicationFogCoversPoint(mixed $value, mixed $xPercent, mixed $yPercen
     return (ord($bytes[intdiv($index, 8)]) & (1 << ($index % 8))) !== 0;
 }
 
+// Projection reads several points from the same enabled raster. Decode it
+// once and keep the same point coverage and invalid-mask behavior.
+function applicationMaskPointTester(mixed $value): Closure
+{
+    if (!is_array($value) || ($value['enabled'] ?? false) !== true) return static fn (): bool => false;
+    $bytes = applicationFogMaskBytes($value);
+    if ($bytes === null || $value['mask'] === '') return static fn (): bool => false;
+    $width = $value['width'];
+    $height = $value['height'];
+    return static function (mixed $xPercent, mixed $yPercent) use ($bytes, $width, $height): bool {
+        $x = max(0.0, min(100.0, is_numeric($xPercent) ? (float) $xPercent : 0.0));
+        $y = max(0.0, min(100.0, is_numeric($yPercent) ? (float) $yPercent : 0.0));
+        $column = (int) round(($x / 100) * ($width - 1));
+        $row = (int) round(($y / 100) * ($height - 1));
+        return applicationMaskBit($bytes, $row * $width + $column);
+    };
+}
+
 function applicationWallMaskBytes(mixed $value): ?string
 {
     if (!is_array($value)
@@ -709,6 +727,19 @@ function applicationMaskBit(string $bytes, int $index): bool
     return isset($bytes[$byteIndex]) && (ord($bytes[$byteIndex]) & (1 << ($index % 8))) !== 0;
 }
 
+function applicationExpandMaskCells(string $bytes): string
+{
+    static $bits = [];
+    if ($bits === []) {
+        for ($byte = 0; $byte < 256; ++$byte) {
+            $cells = '';
+            for ($bit = 0; $bit < 8; ++$bit) $cells .= ($byte & (1 << $bit)) !== 0 ? "\xff" : "\0";
+            $bits[chr($byte)] = $cells;
+        }
+    }
+    return strtr($bytes, $bits);
+}
+
 function applicationSetMaskBit(string &$bytes, int $index, bool $value): void
 {
     $byteIndex = intdiv($index, 8);
@@ -902,6 +933,7 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
     if (!$vision['enabled'] || $origins === []) {
         return applicationCalculateBaseVisionMask($occlusion, $origins, $gridSize, $distanceExtension);
     }
+    $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
     $combined = null;
     $metadata = null;
     foreach (array_slice($origins, 0, 40) as $origin) {
@@ -912,12 +944,11 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
             'naturalHeight' => $occlusion['naturalHeight'] ?? 900,
             'x' => max(0.0, min(100.0, (float) $origin['x'])),
             'y' => max(0.0, min(100.0, (float) $origin['y'])),
-            'distance' => applicationOriginVisionDistance($origin, $vision),
-            'extension' => $distanceExtension,
-            'grid' => $gridSize,
+            'range' => applicationOriginVisionDistance($origin, $vision) + $distanceExtension,
+            'grid' => $grid,
         ];
         $part = applicationMemoizedVisionMask('base', $geometry,
-            static fn (): array => applicationCalculateBaseVisionMask($occlusion, [$origin], $gridSize, $distanceExtension));
+            static fn (): array => applicationCalculateBaseVisionMask($occlusion, [$origin], $grid, $distanceExtension));
         $bytes = applicationWallMaskBytes($part);
         if ($bytes === null) return applicationCalculateBaseVisionMask($occlusion, $origins, $gridSize, $distanceExtension);
         $metadata ??= $part;
@@ -941,21 +972,17 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
     // Work on byte-addressable cells during the ray sweep. Packing and
     // unpacking happen in native string operations, preserving every bit and
     // the original ray samples without millions of PHP bit manipulations.
-    static $expandBits = [], $packBits = [], $wallIndexCache = [];
-    if ($expandBits === []) {
-        for ($byte = 0; $byte < 256; ++$byte) {
-            $cells = '';
-            for ($bit = 0; $bit < 8; ++$bit) $cells .= ($byte & (1 << $bit)) !== 0 ? "\xff" : "\0";
-            $expandBits[chr($byte)] = $cells;
-            $packBits[$cells] = chr($byte);
-        }
+    static $packBits = [], $wallIndexCache = [];
+    if ($packBits === []) {
+        $alphabet = array_map('chr', range(0, 255));
+        $packBits = array_combine(str_split(applicationExpandMaskCells(implode('', $alphabet)), 8), $alphabet);
     }
     $wallKey = $width . ':' . $height . ':' . hash('sha256', $wallBytes);
     if (isset($wallIndexCache[$wallKey])) {
         [$wallCellIndexes, $wallCells] = $wallIndexCache[$wallKey];
     } else {
         $wallCellIndexes = [];
-        $wallCells = strtr($wallBytes, $expandBits);
+        $wallCells = applicationExpandMaskCells($wallBytes);
         if (($walls['mask'] ?? '') !== '') {
             $offset = 0;
             while (($index = strpos($wallCells, "\xff", $offset)) !== false && $index < $width * $height) {
@@ -1055,6 +1082,10 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         }
         $maximumRadius = min(max($radiusX, $radiusY), sqrt($width * $width + $height * $height));
         $rayCount = max(96, min(2048, (int) ceil(M_PI * 2 * $maximumRadius * 1.8)));
+        // Before this normalized radius, rounding the coordinates to a cell
+        // cannot push the sample outside the ellipse. Keep checking the edge
+        // with the original expression, including tangencies.
+        $safeProgress = max(0.0, 1.0 - hypot(0.500000001 / $radiusX, 0.500000001 / $radiusY) - 1.0e-12);
         for ($ray = 0; $ray < $rayCount; $ray += 1) {
             $angle = $ray / $rayCount * M_PI * 2;
             $cosine = cos($angle);
@@ -1076,6 +1107,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
             $deltaX = $fullDeltaX * $visibleProgress;
             $deltaY = $fullDeltaY * $visibleProgress;
             $raySteps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
+            $safeSteps = $visibleProgress <= $safeProgress ? $raySteps : (int) floor($raySteps * $safeProgress / $visibleProgress);
             $previousIndex = -1;
             $wallEncountered = false;
             for ($step = 0; $step <= $raySteps; $step += 1) {
@@ -1090,7 +1122,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
                     continue;
                 }
                 $previousIndex = $cellIndex;
-                if ($ellipseXSquares[$column] + $ellipseYSquares[$row] > 1.0 + 1.0e-12) {
+                if ($step > $safeSteps && $ellipseXSquares[$column] + $ellipseYSquares[$row] > 1.0 + 1.0e-12) {
                     break;
                 }
                 $cellIsWall = $wallCells[$cellIndex] !== "\0";
@@ -1332,16 +1364,8 @@ function applicationCalculateVisionRenderMask(array $occlusion, array $origins, 
     $strictBytes = applicationWallMaskBytes($strict);
     if ($strictBytes === null) return $strict;
     $tokenBytes = $strictBytes;
-    static $expandBits = [];
-    if ($expandBits === []) {
-        for ($byte = 0; $byte < 256; ++$byte) {
-            $cells = '';
-            for ($bit = 0; $bit < 8; ++$bit) $cells .= ($byte & (1 << $bit)) !== 0 ? "\xff" : "\0";
-            $expandBits[chr($byte)] = $cells;
-        }
-    }
     $cellCount = $width * $height;
-    $opacity = substr(strtr($strictBytes, $expandBits), 0, $cellCount);
+    $opacity = substr(applicationExpandMaskCells($strictBytes), 0, $cellCount);
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $grid = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
@@ -1365,7 +1389,7 @@ function applicationCalculateVisionRenderMask(array $occlusion, array $origins, 
         for ($row = 0; $row < $height; ++$row) $rowDistances[$row] = ($row - $centerY) / $lastRow * $naturalHeight;
         // Only the ring hidden by strict vision and reached by this extension
         // can gain opacity. Skip whole hidden/strictly visible regions in C.
-        $fadeCells = strtr($strictBytes & ~$extendedBytes, $expandBits);
+        $fadeCells = applicationExpandMaskCells($strictBytes & ~$extendedBytes);
         $fadeRadius = $fadeDistance * $grid;
         $offset = 0;
         while (($index = strpos($fadeCells, "\xff", $offset)) !== false && $index < $cellCount) {

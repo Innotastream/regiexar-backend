@@ -34,4 +34,19 @@ if ($allowed['blocked']) throw new RuntimeException('A shallow vision fringe rej
 $paintedEdge = onlineVisiblePathPointTester($edge, ['enabled' => false]);
 $blocked = findApplicationVisibleTokenPath($openWalls, $start, $goal, 60, 1600, 900, $paintedEdge);
 if (!$blocked['blocked']) throw new RuntimeException('The vision fringe allowance leaked into painted fog.');
+
+// The row stride may cross byte boundaries. A hidden cell at the beginning
+// of the next row must not be picked up by the right edge of the current row.
+$rowBytes = str_repeat("\0", (int) ceil(33 * 35 / 8));
+applicationSetMaskBit($rowBytes, 17 * 33, true);
+$rowFog = ['version'=>1,'enabled'=>true,'width'=>33,'height'=>35,
+    'mask'=>rtrim(strtr(base64_encode($rowBytes), '+/', '-_'), '=')];
+$edgeCoverage = onlineVisiblePathPointTester($rowFog, ['enabled'=>false]);
+if (!$edgeCoverage(100, 16 / 34 * 100) || $edgeCoverage(0, 17 / 34 * 100)) {
+    throw new RuntimeException('Visibility search crossed a non-byte-aligned raster row.');
+}
+$touchesBoth = onlineVisiblePathPointTester($rowFog, ['enabled'=>false]);
+if ($touchesBoth(0, 16.5 / 34 * 100)) {
+    throw new RuntimeException('A centre at two cell boundaries must still detect painted fog.');
+}
 echo "Full destinations are enforced; inherited contacts may recede without crossing walls or fog.\n";
