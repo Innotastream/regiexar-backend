@@ -215,7 +215,7 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
         ...(!empty($execution['echoParentId']) && !empty($execution['echoAreaRadiusCells']) ? ['areaRadiusCells' => $execution['echoAreaRadiusCells']] : []),
         'opposed' => ($use['opposed'] ?? false) === true,
         'defenderAccountId' => $target !== [] ? onlineTokenControllerIdFromRecords($connection, $records, $target) : '',
-        'damageFormula' => $use['effect']['formula'], 'damageType' => $use['effect']['damageType'], 'damageRollMode' => 'normal', 'damagePercent' => 100,
+        'damageFormula' => $use['effect']['formula'], 'damageType' => $use['effect']['damageType'], ...applicationOptionalDamageElement($use['effect']), 'damageRollMode' => 'normal', 'damagePercent' => 100,
         'hit' => ['raw' => null, 'total' => null, 'formula' => '', 'statId' => '', 'statLabel' => 'Sans jet', 'breakdown' => 'Lancement sans jet',
             'diceAppearance' => onlineDiceAppearance($source, ($source['controllerPlayerId'] ?? '') !== ''),
             'outcome' => ['automatic' => true, 'success' => true, 'code' => 'success', 'label' => 'SANS JET', 'raw' => null, 'threshold' => null]],
@@ -270,6 +270,9 @@ function onlineCounterDamageAttack(PDO $connection, array &$records, array &$pen
     if(applicationAttackVisualWaitsForDamage($activity,$attack)&&in_array($attack['status'],['applied','blocked'],true)){
         $visualState=onlineEquipmentState($connection,$records,$pending,$sceneId);$visualMap=[...$visualState['map'],'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
         $activity=$pending['activity']['payload']??$activity;appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$visualState['items']);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    } else {
+        $activity = $pending['activity']['payload'] ?? $activity;
+        onlineAppendConcludedEnemyAttackVisual($connection, $records, $pending, $activity, $attack, $source, $target);
     }
     return $attack;
 }

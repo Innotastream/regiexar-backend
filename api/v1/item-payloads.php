@@ -1,25 +1,57 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/token-map-scale.php';
+require_once __DIR__.'/impact-bleeding.php';
 function applicationItemPayload(array &$state,array $template,array &$unit,array $token,array $a,int $index,array $context,array &$result):void {
  $scene=$state['activeSceneId'];$clock=$state['initiative']??[];$id=$context['id'];
+ $family=applicationEffectFamily($a)?:applicationEffectFamily($template);
+ $legacyElement=applicationDamageElement($family);
  if(($a['timing']??'')==='on-hit'){
-  if($a['kind']==='damage')foreach($a['components'] as $n=>$part)applicationActivateAttackEnhancement($state,['id'=>'item-'.$template['id'].'-'.$index.'-'.$n,'name'=>$template['name'],'image'=>$template['image']??'','attackEnhancement'=>['mode'=>'echo','formula'=>$part['formula'],'allyFormula'=>$part['formula'],'damageType'=>$part['type'],'turns'=>$a['buffTurns'],'trigger'=>$a['trigger'],'requiresHit'=>true]],$token,$scene,$clock,$id('item-buff'),$token);
+  if($a['kind']==='damage')foreach($a['components'] as $n=>$part){
+   $element=applicationDamageElement($part['element']??$part['type'])??(count($a['components'])===1?$legacyElement:null);
+   applicationActivateAttackEnhancement($state,['id'=>'item-'.$template['id'].'-'.$index.'-'.$n,'name'=>$template['name'],'image'=>$template['image']??'','attackEnhancement'=>['mode'=>'echo','formula'=>$part['formula'],'allyFormula'=>$part['formula'],'damageType'=>$part['type'],...($element!==null?['damageElement'=>$element]:[]),'turns'=>$a['buffTurns'],'trigger'=>$a['trigger'],'requiresHit'=>true]],$token,$scene,$clock,$id('item-buff'),$token);
+  }
   else applicationActivateAttackEnhancement($state,['id'=>'item-'.$template['id'].'-'.$index,'name'=>$template['name'],'image'=>$template['image']??'','attackEnhancement'=>['mode'=>'on-hit-effects','turns'=>$a['buffTurns'],'trigger'=>$a['trigger'],'payload'=>$a]],$token,$scene,$clock,$id('item-buff'),$token);return;
  }
- $family=applicationEffectFamily($a);if($family!==''&&applicationHasEffectImmunity($token,$state,$scene,$family))return;
+ if($a['kind']!=='damage'&&($effectFamily=applicationEffectFamily($a))!==''&&applicationHasEffectImmunity($token,$state,$scene,$effectFamily))return;
  if($a['kind']==='damage'){
-  $rules=[...$token,...$unit['resources']];foreach(['armor','armorCategory','magicArmor','magicArmorCategory'] as $key)if(isset($unit[$key]))$rules[$key]=$unit[$key];
-  $rolled=onlineRollAttackDamage(['damageComponents'=>$a['components']],$rules,static fn($formula)=>($context['rollFormula'])($formula,$template['name'],$unit['name']),$state);$damage=$rolled['damage'];
+  $components=$a['components'];
+  foreach ($components as &$part) {
+   if ($legacyElement!==null && applicationDamageElement($part['element']??$part['type'])===null
+       && ($part['type']!=='ignore'||count($components)===1)) $part['element']=$legacyElement;
+  }
+  unset($part);
+  $rules=[...$token,...$unit['resources']];foreach(['armor','armorCategory','magicArmor','magicArmorCategory','elementalResistances'] as $key)if(isset($unit[$key]))$rules[$key]=$unit[$key];
+  $rolled=onlineRollAttackDamage(['damageComponents'=>$components],$rules,static fn($formula)=>($context['rollFormula'])($formula,$template['name'],$unit['name']),$state);$damage=$rolled['damage'];
   $guards=[];$indices=[];$first=null;foreach($state['nextAttackGuards']??[] as $i=>$g)if($g['sceneId']===$scene&&$g['targetTokenId']===$token['id']&&(($g['lifecycle']??'')==='status'||!empty($clock['active'])&&($g['combatId']??'')===($clock['combatId']??''))&&applicationGuardCoversDamage($g,$damage)){if($first===null)$first=$g;if($g===$first||!empty($first['stackGroup'])&&($g['stackGroup']??'')===$first['stackGroup']){$guards[]=$g;$indices[]=$i;}}
-  $guarded=applicationMitigateGuardedDamage($damage['finalDamage'],$guards,$damage);$passive=applicationPassiveDamageReduction($unit,$guarded['damage'],['family'=>applicationEffectFamily($a)?:applicationEffectFamily($template),'sourceItemKind'=>$template['kind']??''],$state);$reduced=['damage'=>$passive['damage']];$state['nextAttackGuards']=applicationConsumeGuardIndices($state['nextAttackGuards']??[],$indices);
-  $before=$unit['resources']['hp'];$unit['resources']['hp']=max(-1000000000,min($unit['resources']['maxHp'],$before-$reduced['damage']));persistUnitResources($state,$unit);$applied=$before-$unit['resources']['hp'];
+  $guarded=applicationMitigateGuardedDamage($damage['finalDamage'],$guards,$damage);$passive=applicationPassiveDamageReduction($unit,$guarded['damage'],['family'=>$family,'sourceItemKind'=>$template['kind']??''],$state);$reduced=['damage'=>$passive['damage']];$state['nextAttackGuards']=applicationConsumeGuardIndices($state['nextAttackGuards']??[],$indices);
+  $before=$unit['resources']['hp'];$next=max(-1000000000,min($unit['resources']['maxHp'],$before-$reduced['damage']));
+  if($next!==$before){$unit['resources']['hp']=$next;persistUnitResources($state,$unit);}
+  $applied=$before-$next;
+  if (unitUsesCharacterSheet($token)) {
+   $rules['elementalResistances']=$unit['elementalResistances']??[];
+   $rules['conditionImmunities']=$unit['conditionImmunities']??[];
+   $rules['healthOverride']=onlineManualDeath($unit)?'dead':null;
+  }
+  if (applicationQualifiesForImpactBleeding($rules,$before,$next,$unit['resources']['maxHp'],applicationUnitControllerId($token,$state)!=='')) {
+   $impactPulseId=$id('resource');
+   if (applicationApplyImpactBleeding($state,$rules,$scene,$clock,(int)($state['devices']['manualTurns'][$scene]??0),$impactPulseId)) {
+    foreach ($state['map']['tokens'] as $targetIndex => $mapToken) {
+     if (($mapToken['id']??'') !== $token['id']) continue;
+     $state['map']['tokens'][$targetIndex]['resourcePulse']=[
+      'id'=>$impactPulseId,'resource'=>'hp','delta'=>-$applied,'at'=>(int)floor(microtime(true)*1000),'impactBleed'=>true,
+     ];
+     break;
+    }
+   }
+  }
   $roll=isset($context['rollRecord'])?($context['rollRecord'])($rolled['rolled'],$template['name'],$unit['name']):[...$rolled['rolled'],'id'=>$id('roll'),'label'=>$template['name'],'characterName'=>$unit['name']];
-  $roll['damageMitigation']=[...$damage,'finalDamage'=>$reduced['damage'],'passivePercent'=>$passive['percent'],'passivePreventedDamage'=>$passive['prevented']];$roll['mapEvent']=['kind'=>'damage','applied'=>true,'value'=>$applied,'label'=>$template['name'],'attackId'=>$id('item-damage'),'sceneId'=>$scene,'layerId'=>$token['layerId']??'ground','tokenId'=>$token['id'],'targetTokenId'=>$token['id'],'sourceTokenId'=>($context['sourceTokenId']??'')?:$token['id'],'anchorTokenId'=>$token['id']];$result['rolls'][]=$roll;$result['damage']=($result['damage']??0)+$applied;
+  $roll['damageMitigation']=[...$damage,'finalDamage'=>$reduced['damage'],'passivePercent'=>$passive['percent'],'passivePreventedDamage'=>$passive['prevented']];$roll['mapEvent']=['kind'=>'damage','applied'=>$applied>0,'value'=>$applied,'label'=>$template['name'],'attackId'=>$id('item-damage'),'sceneId'=>$scene,'layerId'=>$token['layerId']??'ground','tokenId'=>$token['id'],'targetTokenId'=>$token['id'],'sourceTokenId'=>($context['sourceTokenId']??'')?:$token['id'],'anchorTokenId'=>$token['id']];$result['rolls'][]=$roll;$result['damage']=($result['damage']??0)+$applied;
  }elseif($a['kind']==='dot'){
+  if (applicationElementalPeriodicDamageSuppressed($unit, $a)) return;
   $turns=applicationPassiveEffectTurns($unit,$a['turns'],['family'=>applicationEffectFamily($a),'sourceItemKind'=>$template['kind']??'','harmful'=>true],$state);if($turns<=0)return;
-  if(count($state['damageOverTime']??[])>=100)itemFailure('La liste des dégâts périodiques est pleine.',409);
-  $state['damageOverTime'][]=['id'=>$id('dot'),'sceneId'=>$scene,'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$template['name'],'targetTokenId'=>$token['id'],'label'=>$a['label'],'formula'=>$a['formula'],'damageType'=>$a['damageType'],...(!empty($a['family'])?['family'=>$a['family']]:[]),'remainingTurns'=>$turns,...(($template['kind']??'')==='potion'?['sourceItemKind'=>'potion']:[]),'lastTurnSerial'=>(int)($clock['turnSerial']??0),'lastManualTurn'=>(int)($state['devices']['manualTurns'][$scene]??0)];
+  $type = $a['damageType']==='ignore' && applicationPeriodicDamageElement($a)==='poison' ? 'poison' : $a['damageType'];
+  $state['damageOverTime'][]=['id'=>$id('dot'),'sceneId'=>$scene,'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$template['name'],'targetTokenId'=>$token['id'],'label'=>$a['label'],'formula'=>$a['formula'],'damageType'=>$type,...applicationOptionalDamageElement($a),...(!empty($a['family'])?['family'=>$a['family']]:[]),'remainingTurns'=>$turns,...(($template['kind']??'')==='potion'?['sourceItemKind'=>'potion']:[]),'lastTurnSerial'=>(int)($clock['turnSerial']??0),'lastManualTurn'=>(int)($state['devices']['manualTurns'][$scene]??0)];
  }elseif($a['kind']==='condition')onlineDeviceTimedCondition($state,['sceneId'=>$scene,'targetTokenId'=>$token['id'],'sourceTokenId'=>$context['sourceTokenId']??'','rider'=>$a['rider'],'resisted'=>false,'sourceItemKind'=>$template['kind']??'']);
 }
 function validateItemSummonPlacement(array $state,array $actions,array $point):void {

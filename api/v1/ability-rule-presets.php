@@ -49,6 +49,24 @@ function applicationConfiguredActiveAbilityWorkflow(array $execution, array $wor
 function applicationConfiguredAbilityRules(array $source): array {
     $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
+    if (($preset['presetId'] ?? '') === 'rotatable-thorn-wall' && ($configured['effect'] ?? 'damage') === 'damage') {
+        $applied=applicationAbilityRulePreset($source['rulePreset']??null);
+        $alreadyRotatable=($applied['id']??'')===$preset['presetId'];
+        if($alreadyRotatable&&$applied['revision']>=$preset['revision'])return $configured;
+        $parts=is_array($configured['damageComponents']??null)&&$configured['damageComponents']!==[]
+            ?$configured['damageComponents']:$preset['values']['damageComponents'];
+        foreach($parts as $index=>$part){
+            if(!is_array($part)||!empty($part['element'])||!empty($part['damageElement']))continue;
+            if($index===0&&($part['type']??'')==='magical')$parts[$index]['type']='physical';
+            if($index===1&&($part['type']??'')==='ignore')$parts[$index]['type']='poison';
+        }
+        $dot=($alreadyRotatable?($configured['damageOverTime']??null):null)??$preset['values']['damageOverTime'];
+        if(($dot['damageType']??'')==='ignore'&&empty($dot['damageElement']))$dot['damageType']='poison';
+        $description=$alreadyRotatable&&is_string($configured['description']??null)&&$configured['description']!==''
+            ?str_replace('1d30+10 dégâts magiques','1d30+10 dégâts physiques',$configured['description']):$preset['values']['description'];
+        return [...$configured,...($alreadyRotatable?[]:$preset['values']),'damageType'=>'physical','damageComponents'=>$parts,
+            'damageOverTime'=>$dot,'description'=>$description,'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
+    }
     if($preset===null)foreach($presets as $candidate){$match=$candidate['match']??null;if(is_array($match)&&($source['effect']??null)===($match['effect']??null)&&($source['tacticalEffect']['version']??null)===($match['tacticalEffect']['version']??null)&&($source['tacticalEffect']['kind']??null)===($match['tacticalEffect']['kind']??null)){$preset=$candidate;break;}}
     if(($preset['retired']??false)===true)return $configured;
     if(isset($preset['enhancementAuraUpgrade'])&&($source['effect']??null)===($preset['effect']??null)&&($configured['attackEnhancement']['mode']??null)===($preset['enhancementMode']??null)&&is_array($configured['attackEnhancement']['aura']??null)){

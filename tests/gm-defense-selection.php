@@ -102,7 +102,10 @@ specialCheck($floorAttack['layerId'] === 'upper' && $floorAttack['areaGate']['so
     'The prepared footprint uses the actual floor for a legacy token');
 $floorDecision = ['requestId' => 'floor-approve-' . randomToken(16), 'attackId' => $floorAttack['id'],
     'confirmed' => true, 'decision' => 'approve', 'defenseTokenIds' => ['token-monster']];
-$floorTarget = $floorDb->payload('token:scene-one:token-monster');
+$floorTarget = [...$floorDb->payload('token:scene-one:token-monster'),
+    'stats' => [['id' => 'character-stat-agility', 'label' => 'Agilité', 'value' => '65']],
+    'specialSuccessStock' => 1,
+];
 $floorDb->put('token:scene-one:token-monster', [...$floorTarget, 'layerId' => 'ground']);
 $staleFloor = runCommand($floorDb, 'token.attack.area.resolve', $floorDecision, true, 'account-gm-two');
 specialCheck($staleFloor->status === 409 && $staleFloor->body['code'] === 'area_gate_refused'
@@ -111,6 +114,63 @@ specialCheck($staleFloor->status === 409 && $staleFloor->body['code'] === 'area_
 $floorDb->put('token:scene-one:token-monster', $floorTarget);
 $floorResult = runCommand($floorDb, 'token.attack.area.resolve', $floorDecision, true, 'account-gm-two');
 specialCheck($floorResult->status === 200, 'The second MJ can approve on the prepared floor from another published scene: ' . json_encode($floorResult->body));
+$floorChild = array_values(array_filter($floorResult->body['areaAttacks'] ?? [], static fn (array $child): bool =>
+    ($child['targetTokenId'] ?? '') === 'token-monster'))[0];
+specialCheck($floorChild['status'] === 'awaiting-opposition', 'The selected creature can defend in the unbroadcast scene');
+$floorActivity = $floorDb->payload('activity');
+$overdrive = json_decode(file_get_contents(__DIR__ . '/../api/v1/active-ability-defaults.json'), true, 512, JSON_THROW_ON_ERROR);
+$floorActivity['attackEnhancements'][] = [
+    ...$overdrive['character-inho']['abilities'][0]['attackEnhancement'],
+    'id' => 'floor-defense-overdrive', 'holder' => 'token:token-monster',
+    'sceneId' => 'scene-one', 'targetTokenId' => 'token-monster', 'remainingTurns' => 1,
+];
+$floorDb->put('activity', $floorActivity);
+$activeToken = [...$floorTarget, 'name' => 'Créature de la scène diffusée', 'specialSuccessStock' => 4];
+$floorDb->put('token:scene-two:token-monster', $activeToken);
+$defenseArgs = [
+    'attackId' => $floorChild['id'], 'decision' => 'roll', 'statId' => 'character-stat-agility',
+    'rollMode' => 'normal', 'requestId' => 'floor-opposition-' . randomToken(16),
+];
+$ordinaryDb = new MemoryConnection([]);
+$ordinaryDb->domains = $floorDb->domains;
+$ordinaryDb->revision = $floorDb->revision;
+$ordinaryDefense = runCommand($ordinaryDb, 'token.attack.oppose', $defenseArgs, true, 'account-gm-two');
+specialCheck($ordinaryDefense->status === 200 && ($ordinaryDefense->body['attack']['opposition']['rollMode'] ?? '') === 'advantage'
+    && count($ordinaryDefense->body['attack']['opposition']['attempts'] ?? []) === 2,
+    'A defense uses the enhancement from its own unpublished scene');
+$jokerDefense = runCommand($floorDb, 'token.attack.oppose', [...$defenseArgs, 'useJoker' => true], true, 'account-gm-two');
+specialCheck($jokerDefense->status === 200 && ($jokerDefense->body['attack']['opposition']['outcome']['joker'] ?? false) === true,
+    'A GM can use the defender’s special success in the unpublished scene');
+specialCheck($floorDb->payload('token:scene-one:token-monster')['specialSuccessStock'] === 0
+    && $floorDb->payload('token:scene-two:token-monster')['specialSuccessStock'] === 4
+    && $floorDb->payload('table')['activeSceneId'] === 'scene-two',
+    'A successful defense debits only the actual defender, independently of the published scene');
+
+$conditionDb = specialFixture();
+$conditionDb->put('table', [...$conditionDb->payload('table'), 'activeSceneId' => 'scene-two']);
+$conditionDb->put('scene-index', ['order' => ['scene-one', 'scene-two']]);
+$conditionDb->put('initiative:scene-one', [...$conditionDb->payload('initiative:scene-one'), 'currentIndex' => 1]);
+$conditionDb->put('initiative:scene-two', ['active' => false, 'combatId' => 'unrelated-clock', 'turnSerial' => 99]);
+$stun = ['id' => 'private-scene-stun', 'name' => 'Étourdissement de recette', 'effect' => 'damage',
+    'castingStatId' => '', 'formula' => '1', 'damageType' => 'ignore', 'rangeCells' => 8,
+    'conditionRider' => ['version' => 1, 'label' => 'Étourdi', 'turns' => 2, 'resistance' => false, 'blocksActions' => true]];
+$privateAttacker = 'token:scene-one:token-monster';
+$privateDefender = 'token:scene-one:token-monster-two';
+$publishedDefender = 'token:scene-two:token-monster-two';
+$conditionDb->put($privateAttacker, [...$conditionDb->payload($privateAttacker), 'abilities' => [$stun]]);
+$conditionDb->put($privateDefender, [...$conditionDb->payload($privateDefender), 'x' => 52, 'y' => 50, 'layerId' => 'ground']);
+$conditionDb->put($publishedDefender, $conditionDb->payload($privateDefender));
+$conditionDb->put('token-index:scene-two', ['order' => ['token-monster-two']]);
+$stunned = runCommand($conditionDb, 'token.attack', ['requestId' => 'private-scene-stun-001', 'sceneId' => 'scene-one',
+    'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-monster-two', 'attackKind' => 'ability',
+    'attackId' => $stun['id'], 'opposed' => false], true, 'account-gm-two');
+specialCheck($stunned->status === 200 && ($stunned->body['attack']['status'] ?? '') === 'applied',
+    'The GM can hit a creature in the unpublished scene: '.json_encode($stunned->body));
+$condition = $conditionDb->payload('devices')['timedConditions'][0] ?? [];
+specialCheck(in_array('Étourdi', $conditionDb->payload($privateDefender)['conditions'] ?? [], true)
+    && !in_array('Étourdi', $conditionDb->payload($publishedDefender)['conditions'] ?? [], true)
+    && ($condition['sceneId'] ?? '') === 'scene-one' && ($condition['clockCombatId'] ?? '') === 'special-test',
+    'A timed condition affects only the actual target and uses the clock of the attack scene');
 
 // A real stat roll is prepared once and its exact outcome drives the table.
 $c=$db->payload('character:character-player');$c['abilities'][0]['castingStatId']='character-stat-force';$db->put('character:character-player',$c);$rollArgs=[...$args,'requestId'=>'native-prepared-roll-'.randomToken(16)];$before=$db->payload('character:character-player');$rolled=runCommand($db,'token.attack',$rollArgs);specialCheck($rolled->status===200,'Stat area preparation accepted');$parent=array_values(array_filter($db->payload('activity')['pendingAttacks'],static fn($a)=>$a['id']===$rolled->body['attack']['id']))[0];$raw=$parent['hit']['raw'];specialCheck(is_int($raw)&&$raw>=1&&$raw<=100,'One real d100 stored before the table');specialCheck($db->payload('character:character-player')===$before,'Prepared hit spends nothing');$expected=[];foreach($parent['areaGate']['targetTokenIds']as$id){$outcome=$parent['areaGate']['preparedHit']['outcomes'][$id];if(!empty($outcome['success'])&&empty($outcome['breaksOpposition']))$expected[]=$id;}specialCheck($expected===$parent['areaGate']['defenseEligibleTokenIds'],'Eligibility follows the real hit outcome, including remarkable results');$approved=runCommand($db,'token.attack.area.resolve',['requestId'=>'native-real-roll-'.randomToken(16),'attackId'=>$parent['id'],'confirmed'=>true,'decision'=>'approve','defenseTokenIds'=>$expected],true);specialCheck($approved->status===200,'Prepared hit can be approved');$issued=$approved->body['areaAttacks'];$expectedReceiptCount=!empty($parent['hit']['outcome']['success'])?count($parent['areaGate']['targetTokenIds'])+1:1;specialCheck(count($issued)===$expectedReceiptCount,'Approval keeps its anchor and exactly the target receipts allowed by the prepared outcome');specialCheck(array_filter($issued,static fn($child)=>($child['hit']['raw']??null)!==$raw)===[],'Every approval receipt reuses the exact prepared d100');

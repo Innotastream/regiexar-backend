@@ -20,7 +20,117 @@ $r=specialUse($db,'perfide','token-player');specialCheck($r->status===200,'Nativ
 $hit=static fn()=>runCommand($db,'token.attack',['requestId'=>'hit-'.randomToken(20),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>'weapon','attackId'=>'main','statId'=>'character-stat-force','opposed'=>false,'useJoker'=>true]);
 specialCheck($hit()->status===200,'First hit');specialCheck($hit()->status===200,'Second hit');specialCheck(count($db->payload('activity')['damageOverTime'])===1,'One charge per target per turn');$clock=$db->payload('initiative:scene-one');$clock['turnSerial']++;$db->put('initiative:scene-one',$clock);$hit();specialCheck(count($db->payload('activity')['damageOverTime'])===2,'Next turn adds independent charge');
 itemSeed($db,'antidote',itemActive([['kind'=>'cleanse','families'=>['poison']],['kind'=>'immunity','family'=>'poison','turns'=>5]]),'unit_token-monster');$r=itemCommandTest($db,'item.consume',['itemId'=>'antidote','characterId'=>'unit_token-monster','tokenId'=>'token-monster','expectedItemRevision'=>1]);specialCheck($r->status===200,'Native monster antidote: '.json_encode($r->body));specialCheck($db->payload('activity')['damageOverTime']===[],'All poison charges removed');$clock['turnSerial']++;$db->put('initiative:scene-one',$clock);$hit();specialCheck($db->payload('activity')['damageOverTime']===[],'Native immunity prevents later poison');
-$activity=$db->payload('activity');$monster=$db->payload('token:scene-one:token-monster');$before=count($activity['attackEnhancements']);applicationActivateAttackEnhancement($activity,['id'=>'late-poison','name'=>'Autre poison','attackEnhancement'=>['mode'=>'on-attack-dot','turns'=>5,'dot'=>['formula'=>'1d20','turns'=>5,'label'=>'Poison']]],$monster,'scene-one',$clock,'late');specialCheck(count($activity['attackEnhancements'])===$before,'Late poison buff blocked by immunity');
+$activity=$db->payload('activity');$monster=$db->payload('token:scene-one:token-monster');$before=count($activity['attackEnhancements']);applicationActivateAttackEnhancement($activity,['id'=>'late-poison','name'=>'Autre poison','attackEnhancement'=>['mode'=>'on-attack-dot','turns'=>5,'dot'=>['formula'=>'1d20','turns'=>5,'label'=>'Poison']]],$monster,'scene-one',$clock,'late');specialCheck(count($activity['attackEnhancements'])===$before+1,'Offensive poison remains available to an immune bearer');
 $rows=applicationEnhancedStatRows(['id'=>'token-player','characterId'=>'character-player','stats'=>[['id'=>'character-stat-mentalResistance','value'=>'1']]],['attackEnhancements'=>[['id'=>'bor','holder'=>'character:character-player','sceneId'=>'old-scene','mode'=>'stats','turns'=>1,'remainingTurns'=>1,'expiry'=>'rests','remainingShortRests'=>2,'bonuses'=>['mentalResistance'=>70]]]],'new-scene',['stats'=>[],'resources'=>['mentalResistance'=>10],'fatigue'=>['current'=>60]]);specialCheck(array_column($rows,'value','id')['character-stat-mentalResistance']==='70','Rest-based mental boost follows the unit across scenes with fatigue');
 $c=$db->payload('character:character-player');$c['sheetKind']='notes';$c['publicNotes']='Bloc-notes fictif';specialCheck(validApplicationCharacterDomain($c),'Native notebook schema accepted');$state=domainsToApplicationState($db->domains,0);$state['characterGroups']=[['id'=>'inactive','name'=>'Inactifs','entryIds'=>['character-player']]];$state['characterDirectoryOrder']=['character-player'];$domains=legacyStateToDomains($state);specialCheck($domains['library']['characterGroups'][0]['name']==='Inactifs'&&$domains['library']['characterDirectoryOrder']===['character-player'],'Character categories stored independently of roster and preferences');
+$db = specialFixture();
+$varskaId = 'character-X4kmpvnbF9rQgNGc';
+$sourceKey = 'token:scene-one:token-player';
+$targetKey = 'token:scene-one:token-monster';
+$paw = ['id'=>'weapon-2', 'name'=>'Pattes acérées empoisonnées', 'formula'=>'1d2+8', 'damageType'=>'physical',
+    'naturalWeapon'=>true, 'onHitConditions'=>['Paralysé','Désarmé']];
+$varska = [...$db->payload('character:character-player'), 'id'=>$varskaId, 'specialSuccessStock'=>10,
+    'weaponText'=>$paw['name'].' / '.$paw['formula'], 'weaponAttacks'=>[$paw], 'abilities'=>[
+        ['id'=>'perfidious-test', 'name'=>'Empoisonneuse perfide', 'effect'=>'enhancement', 'formula'=>'0', 'castingStatId'=>'',
+            'attackEnhancement'=>['mode'=>'on-attack-dot', 'turns'=>5, 'trigger'=>'melee-weapon', 'weaponIds'=>['weapon-2'],
+                'dot'=>['label'=>'Poison mortel','formula'=>'1d20','damageType'=>'poison','turns'=>5]]],
+    ]];
+$db->put('character:'.$varskaId, $varska);
+$db->put($sourceKey, synchronizeOnlineCharacterToken([...$db->payload($sourceKey), 'characterId'=>$varskaId], $varska));
+$db->put('initiative:scene-one', [...$db->payload('initiative:scene-one'), 'active'=>false]);
+$db->put($targetKey, [...$db->payload($targetKey), 'conditions'=>['Paralysé'], 'elementalResistances'=>['poison'=>100]]);
+specialCheck(specialUse($db, 'perfidious-test', 'token-player')->status === 200, 'Varska’s offensive poison activates.');
+$pawStrike = static function() use ($db): TestResponse {
+    $hit = runCommand($db, 'token.attack', ['requestId'=>'paw-hit-'.randomToken(20), 'sceneId'=>'scene-one',
+        'sourceTokenId'=>'token-player', 'targetTokenId'=>'token-monster', 'attackKind'=>'weapon', 'attackId'=>'weapon-2',
+        'statId'=>'character-stat-force', 'opposed'=>false, 'useJoker'=>true], true, 'account-gm');
+    if (($hit->body['attack']['status'] ?? '') !== 'pending') return $hit;
+    return runCommand($db, 'token.attack.resolve', ['attackId'=>$hit->body['attack']['id'], 'decision'=>'approve',
+        'confirmed'=>true], true, 'account-gm');
+};
+$immuneStrike = $pawStrike();
+$immuneTarget = $db->payload($targetKey);
+specialCheck($immuneStrike->status === 200 && $immuneTarget['hp'] < 500
+    && $immuneTarget['conditions'] === ['Paralysé','Désarmé'] && empty($db->payload('activity')['damageOverTime']),
+    'At 100% poison the physical hit and unrelated states still apply, with no venom status or DOT.');
+$immuneTarget['elementalResistances']['poison'] = 99;
+$db->put($targetKey, $immuneTarget);
+specialCheck($pawStrike()->status === 200 && in_array(XAR_VENOM_PARALYSIS_LABEL, $db->payload($targetKey)['conditions'], true)
+    && $db->payload('activity')['damageOverTime'][0]['damageType'] === 'poison', 'At 99% the paw hit applies its distinct venom status and poison DOT.');
+itemSeed($db, 'venom-antidote', itemActive([['kind'=>'cleanse','families'=>['poison']],['kind'=>'immunity','family'=>'poison','turns'=>5]]),
+    'unit_token-monster');
+specialCheck(itemCommandTest($db, 'item.consume', ['itemId'=>'venom-antidote', 'characterId'=>'unit_token-monster',
+    'tokenId'=>'token-monster', 'expectedItemRevision'=>1])->status === 200, 'The antidote can cleanse the venom affliction.');
+specialCheck($pawStrike()->status === 200 && $db->payload($targetKey)['conditions'] === ['Paralysé','Désarmé']
+    && $db->payload('activity')['damageOverTime'] === []
+    && in_array('on-attack-dot', array_column($db->payload('activity')['attackEnhancements'], 'mode'), true),
+    'The antidote cleanses and blocks venom while preserving other paralysis and Varska’s buff.');
+specialCheck(applicationWeaponPoisonConditions($paw, ['id'=>'different-unit']) === ['Paralysé','Désarmé'],
+    'Unrelated weapon-2 attacks do not gain a venom status.');
+
+$db = specialFixture();
+$halberd = ['id'=>'weapon-1','name'=>'Hallebarde','formula'=>'1d2+3','damageType'=>'physical','reach'=>'reach'];
+$varska['weaponAttacks'] = [$halberd, $paw];
+$varska['weaponText'] = $halberd['name'].' / '.$halberd['formula']."\n".$paw['name'].' / '.$paw['formula'];
+$varska['abilities'][0]['restRecharge'] = 'long';
+$varska['abilities'][0]['usesPerRest'] = 1;
+$db->put('character:'.$varskaId, $varska);
+$db->put($sourceKey, synchronizeOnlineCharacterToken([...$db->payload($sourceKey), 'characterId'=>$varskaId], $varska));
+specialCheck(specialUse($db, 'perfidious-test', 'token-player')->status === 200, 'Varska activates in battle.');
+
+$strike = static function(string $weaponId) use ($db): void {
+    $hit = runCommand($db, 'token.attack', ['requestId'=>'venom-rounds-'.randomToken(20),'sceneId'=>'scene-one',
+        'sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>'weapon','attackId'=>$weaponId,
+        'statId'=>'character-stat-force','opposed'=>false,'useJoker'=>true], true, 'account-gm');
+    if (($hit->body['attack']['status'] ?? '') === 'pending') {
+        $hit = runCommand($db, 'token.attack.resolve', ['attackId'=>$hit->body['attack']['id'],'decision'=>'approve',
+            'confirmed'=>true], true, 'account-gm');
+    }
+    specialCheck($hit->status === 200 && ($hit->body['attack']['appliedDamage'] ?? 0) > 0,
+        'Venom test resolves a real hit. '.json_encode([$hit->status,$hit->body['code']??null,$hit->body['error']??null,$hit->body['attack']['status']??null]));
+};
+$dots = static fn(): array => $db->payload('activity')['damageOverTime'] ?? [];
+$turns = static function() use ($dots): array {
+    $values = array_column($dots(), 'remainingTurns');
+    sort($values);
+    return $values;
+};
+$buff = static fn(): array => $db->payload('activity')['attackEnhancements'][0] ?? [];
+$changeClock = static function(array $change) use ($db): void {
+    $records = applicationDomainRecords($db);
+    $pending = [];
+    $identity = ['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
+    queueOnlineDomainUpsert($pending, $records, 'initiative:scene-one', [...$db->payload('initiative:scene-one'), ...$change]);
+    applyApplicationDamageOverTimeOnTurn($db, $records, $pending, $identity);
+    foreach (onlineAdvanceDevicesOnChanges($db, $records, array_values($pending), $identity) as $entry) {
+        $db->put($entry['key'], $entry['payload']);
+    }
+};
+
+$strike('weapon-1');
+specialCheck($dots() === [], 'Halberd never transfers the buff.');
+$strike('weapon-2');
+specialCheck($turns() === [5], 'The paw hit produces one charge in combat.');
+$firstDotId = $dots()[0]['id'];
+$buffId = $buff()['id'];
+
+$changeClock(['active'=>false,'turnsStarted'=>false,'combatId'=>'','order'=>[]]);
+specialCheck($turns() === [5] && $dots()[0]['id'] === $firstDotId && $buff()['id'] === $buffId
+    && $buff()['remainingTurns'] === 5, 'Ending combat preserves remaining charges and the buff.');
+$strike('weapon-2');
+$strike('weapon-2');
+specialCheck($turns() === [5,5], 'Free play admits only one new charge in the interval.');
+$health = $db->payload($targetKey)['hp'];
+specialCheck(specialMechanics($db, 'scene.advance', [])->status === 200, 'Advance in free play.');
+specialCheck($turns() === [4,4] && $buff()['remainingTurns'] === 4 && $db->payload($targetKey)['hp'] < $health, 'Free turns tick each charge and the buff.');
+$strike('weapon-2');
+specialCheck($turns() === [4,4,5], 'The next interval accepts a new charge without resetting existing ones.');
+
+$changeClock(['active'=>true,'turnsStarted'=>true,'combatId'=>'special-venom-next','order'=>['token-player','token-monster'],'currentIndex'=>0,'turnSerial'=>11]);
+specialCheck($turns() === [4,4,5] && $buff()['remainingTurns'] === 4, 'Starting a new combat does not tick the poison.');
+$strike('weapon-2');
+specialCheck($turns() === [4,4,5,5], 'A paw strike applies a new charge in the restarted combat.');
+$changeClock(['currentIndex'=>1,'turnSerial'=>12]);
+specialCheck($turns() === [3,3,4,4], 'Each charge ticks on the victim’s next combat turn.');
+
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

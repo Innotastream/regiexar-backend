@@ -8,6 +8,18 @@ function breathAbility():array{return ['id'=>'ability-mania-elemental-breath','n
 function breathFixture(bool $hyperactive=true):MemoryConnection{$db=fixture();$c=$db->payload('character:character-player');$c['passiveAbilities']=$hyperactive?[['version'=>1,'id'=>'fixture-hyperactive','kind'=>'ability-fatigue-surcharge','amount'=>1]]:[];$c['abilities']=[breathAbility()];$c['resources']=['hp'=>1000,'maxHp'=>1000,'mana'=>100,'maxMana'=>100];$c['fatigue']=['current'=>0,'max'=>150];$db->put('character:character-player',$c);$db->put('initiative:scene-one',['active'=>false,'round'=>1]);$db->put('items',['version'=>1,'templates'=>[['id'=>'potion-infused','kind'=>'object','name'=>'Infusion','description'=>'Composant','image'=>'']],'instances'=>[['id'=>'infusion-one','templateId'=>'potion-infused','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']],['id'=>'infusion-two','templateId'=>'potion-infused','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']]]]);return $db;}
 breathCheck(validApplicationAbilityEffects(breathAbility()),'The configurable gate schema must survive PHP validation');
 $fields=applicationAbilityEffectFields(breathAbility());breathCheck(isset($fields['castGate'],$fields['itemRequirement'],$fields['damageVariants'])&&$fields['damageTargeting']['shape']==='cone','Normalization must retain reusable fields');
+$legacy=breathAbility();
+$legacy['damageVariants'][]=['id'=>'ice','label'=>'Glace','damageType'=>'magical'];
+$legacy['damageVariants'][]=['id'=>'lightning','label'=>'Foudre','damageType'=>'magical'];
+$normalized=normalizeOnlineAbilities([$legacy])[0];
+breathCheck($normalized['damageVariants']===[
+ ['id'=>'fire','label'=>'Feu','damageType'=>'magical','damageElement'=>'fire'],
+ ['id'=>'acid','label'=>'Acide','damageType'=>'physical'],
+ ['id'=>'ice','label'=>'Glace','damageType'=>'magical','damageElement'=>'ice'],
+ ['id'=>'lightning','label'=>'Foudre','damageType'=>'magical'],
+], 'Stored Mania variants declare fire and ice without changing armor or other variants');
+breathCheck(normalizeOnlineAbilities([$normalized])[0]['damageVariants']===$normalized['damageVariants'],
+    'An already normalized breath retains the four types on a second save');
 $map=['gridSize'=>50,'naturalWidth'=>1000,'naturalHeight'=>1000,'activeLayerId'=>'ground'];$source=['id'=>'source','x'=>10,'y'=>50,'size'=>50,'layerId'=>'ground'];$target=['id'=>'large','x'=>36,'y'=>50,'size'=>100,'layerId'=>'ground'];
 breathCheck(count(applicationConeAreaTargets([$target],$source,['x'=>90,'y'=>50],$map,4))===1,'Large footprint must intersect the last cone row');
 breathCheck(applicationConeAreaTargets([['id'=>'behind','x'=>5,'y'=>50,'size'=>20]],$source,['x'=>90,'y'=>50],$map,4)===[],'Cone must not extend behind the source');

@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/complex-movement.php';
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/effect-formula.php';
+require_once __DIR__.'/elemental-resistances.php';
 
 // Persistent contacts are authority-owned effects. Painted terrain remains
 // presentation data and never becomes damage merely because it looks like fire.
@@ -17,10 +18,10 @@ function applicationContactZoneDefinition(mixed $v):?array {
     if(!is_array($v)||($v['version']??1)!==1||($v['geometry']??'')!=='path'||!(is_int($v['radiusCells']??null)||is_float($v['radiusCells']??null))||!is_finite((float)$v['radiusCells'])||$v['radiusCells']<0||$v['radiusCells']>20
         ||($v['trigger']??'')!=='contact-during-target-turn'||($v['maximumPerTargetTurn']??null)!==1||($v['expiry']??'')!=='source-next-turn-start')throw new RuntimeException('La zone de contact est invalide.',400);
     $formula=normalizeEffectFormula($v['damage']['formula']??null);try{parseEffectFormula($formula);}catch(Throwable){throw new RuntimeException('Les dégâts de la zone sont invalides.',400);}
-    if(!in_array($v['damage']['damageType']??'', ['physical','magical','ignore'],true))throw new RuntimeException('Le type de dégâts de la zone est invalide.',400);
+    if(($type=applicationDamageType($v['damage']['damageType']??null))===null||!validApplicationOptionalDamageElement($v['damage']))throw new RuntimeException('Le type de dégâts de la zone est invalide.',400);
     foreach(['affectCaster','affectAllies','affectEnemies']as$k)if(array_key_exists($k,$v)&&!is_bool($v[$k]))throw new RuntimeException('Les cibles de la zone sont invalides.',400);
     if(array_key_exists('style',$v)&&!in_array($v['style'],['silver-filament','none'],true))throw new RuntimeException('Le dessin de cette zone est invalide.',400);
-    return ['version'=>1,'geometry'=>'path','radiusCells'=>$v['radiusCells'],'damage'=>['formula'=>$formula,'damageType'=>$v['damage']['damageType']],
+    return ['version'=>1,'geometry'=>'path','radiusCells'=>$v['radiusCells'],'damage'=>['formula'=>$formula,'damageType'=>$type,...applicationOptionalDamageElement($v['damage'])],
         'affectCaster'=>($v['affectCaster']??false)===true,'affectAllies'=>($v['affectAllies']??false)===true,'affectEnemies'=>($v['affectEnemies']??true)===true,
         'trigger'=>'contact-during-target-turn','maximumPerTargetTurn'=>1,'expiry'=>'source-next-turn-start',...(array_key_exists('style',$v)?['style'=>$v['style']]:[])];
 }

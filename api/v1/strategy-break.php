@@ -23,7 +23,8 @@ function onlineStrategyBreakCommand(PDO $connection,array &$records,array &$pend
     $signature=json_encode([$action,(string)($arguments['id']??'')],JSON_THROW_ON_ERROR);$now=(int)floor(microtime(true)*1000);
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $receipts=array_values(array_filter($activity['resourceReceipts']??[],static fn($entry)=>is_array($entry)&&($entry['expiresAt']??0)>$now));
-    foreach($receipts as $receipt)if(($receipt['requestId']??'')===$requestId){
+    $receipt=applicationFindResourceReceipt($connection,$receipts,$requestId,$now);
+    if($receipt!==null){
         if(($receipt['accountId']??'')!==$identity['id'])rejectOnlineCommand($connection,403,'Ce reçu appartient à un autre compte.','receipt_forbidden');
         if(($receipt['kind']??'')!=='strategy-break'||($receipt['requestSignature']??'')!==$signature)rejectOnlineCommand($connection,409,'Cette référence correspond à une autre action.','request_mismatch');
         return [...$receipt['result'],'deduplicated'=>true,'serverNow'=>$now];

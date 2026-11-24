@@ -52,12 +52,17 @@ $completed = [...pendingRemovalAttack('historical', 'applied'), 'appliedDamage' 
 $zone = [...pendingRemovalAttack('area-decision', 'pending', 'token-player'),
     'areaGate' => ['version' => 1, 'targetTokenIds' => ['token-monster', 'token-monster-two']],
     'validationKind' => 'area-gate'];
+$struckDot = ['id'=>'dot-delete-defender','sceneId'=>'scene-one','targetTokenId'=>'token-monster','label'=>'Plaie','formula'=>'5','remainingTurns'=>3];
+$neighborDot = [...$struckDot, 'id'=>'dot-delete-neighbor', 'targetTokenId'=>'token-monster-two'];
+$otherSceneDot = [...$struckDot, 'id'=>'dot-delete-homonym', 'sceneId'=>'scene-two'];
 $before = [
     ...$db->payload('activity'),
     'pendingAttacks' => [$waiting, $decision, $neighbor, $otherScene, $zone],
     'attackReceipts' => array_map('pendingRemovalReceipt', [$waiting, $decision, $neighbor, $otherScene, $completed, $zone]),
     'actionTimers' => [['id' => 'timer-removal-case', 'characterId' => 'character-player', 'abilityId' => 'used-ability',
         'remainingRounds' => 2, 'restUseCount' => 1]],
+    'damageOverTime'=>[$struckDot, $neighborDot, $otherSceneDot],
+    'pendingDotResolutions'=>[$struckDot, $otherSceneDot],
 ];
 $db->put('activity', $before);
 $partyKey = 'token:scene-one:token-monster';
@@ -83,6 +88,9 @@ specialCheck(in_array('activity', array_column($result->body['domains'], 'key'),
 $after = $db->payload('activity');
 specialCheck(array_column($after['pendingAttacks'], 'id') === [$neighbor['id'], $otherScene['id']],
     'Only the removed party’s opposition, validation and unconfirmed area decision leave the queue.');
+specialCheck($after['damageOverTime'] === [$neighborDot, $otherSceneDot]
+    && $after['pendingDotResolutions'] === [$otherSceneDot],
+    'Deleting the exact target retires its active and pending periodics while preserving other scenes.');
 $receipts = array_column($after['attackReceipts'], null, 'requestId');
 foreach ([$waiting, $decision, $zone] as $orig) {
     $receipt = $receipts[$orig['requestId']] ?? [];
@@ -125,5 +133,23 @@ specialCheck($result->status === 200
     && ($historic->payload('activity')['attackReceipts'] ?? []) === $historicBefore['attackReceipts']
     && ($historic->payload('activity')['pendingAttacks'] ?? []) === [],
     'A delete affecting only an old receipt leaves that receipt unchanged.');
+
+$emptyScene = specialFixture();
+$orphanDot = [...$struckDot, 'id'=>'dot-no-token-left', 'sceneId'=>'scene-two', 'targetTokenId'=>'removed-long-ago'];
+$emptyScene->put('activity', [...$emptyScene->payload('activity'), 'damageOverTime'=>[$orphanDot, $neighborDot],
+    'pendingDotResolutions'=>[$orphanDot]]);
+$result = removeAttackToken($emptyScene, [['key'=>'scene:scene-two','operation'=>'delete',
+    'expectedRevision'=>$emptyScene->domains['scene:scene-two']['revision']]]);
+specialCheck($result->status === 200 && $emptyScene->payload('scene:scene-two') === []
+    && $emptyScene->payload('activity')['damageOverTime'] === [$neighborDot]
+    && $emptyScene->payload('activity')['pendingDotResolutions'] === [],
+    'Deleting an inactive scene retires even effects whose original token was removed long ago.');
+
+$transit = applicationCancelPendingAttacksForRemovedTokens(
+    ['damageOverTime'=>[$struckDot, $neighborDot]], ['scene-one'=>['token-monster'=>true]],
+    (int) floor(microtime(true) * 1000), null, [], ['token-monster'=>true]
+);
+specialCheck($transit['damageOverTime'] === [$struckDot, $neighborDot],
+    'The deletion cleanup preserves the effects of a token reappearing atomically in another scene.');
 
 fwrite(STDOUT, json_encode(['ok' => true, 'checks' => $specialChecks], JSON_UNESCAPED_UNICODE) . PHP_EOL);

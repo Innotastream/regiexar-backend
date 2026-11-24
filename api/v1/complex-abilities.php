@@ -16,6 +16,7 @@ require_once __DIR__ . '/ability-icon.php';
 require_once __DIR__ . '/spell-visuals.php';
 require_once __DIR__ . '/complex-defense-gate.php';
 require_once __DIR__ . '/ability-rule-presets.php';
+require_once __DIR__ . '/elemental-resistances.php';
 
 const XAR_COMPLEX_ABILITY_WORKFLOW_VERSION = 8;
 const XAR_COMPLEX_ABILITY_MAXIMUM_STEPS = 12;
@@ -245,8 +246,8 @@ function normalizeApplicationComplexAbilitySpends(mixed $value): array
         if ($kind === 'damage') {
             $effect['formula'] = validApplicationAbilityFormula($rawEffect['formula'] ?? null)
                 ? strtolower(preg_replace('/\s+/', '', $rawEffect['formula']) ?? '') : '1d2';
-            $effect['damageType'] = in_array($rawEffect['damageType'] ?? '', ['physical', 'magical', 'ignore'], true)
-                ? $rawEffect['damageType'] : 'physical';
+            $effect['damageType'] = applicationDamageType($rawEffect['damageType'] ?? null) ?? 'physical';
+            $effect += applicationOptionalDamageElement($rawEffect);
         } elseif ($kind === 'guard') {
             $effect['percent'] = applicationComplexAbilityInteger($rawEffect['percent'] ?? null, 1, 100, 20);
             $effect['stackable'] = ($rawEffect['stackable'] ?? false) === true;
@@ -542,7 +543,7 @@ function applicationComplexAbilityWorkflowError(mixed $value): string
                 if (!is_array($effect) || !in_array($effect['kind'] ?? '', ['none', 'damage', 'guard', 'marker'], true))
                     return 'L’effet d’une utilisation de charge à l’étape ' . ($index + 1) . ' est inconnu.';
                 if ($effect['kind'] === 'damage' && (!validApplicationAbilityFormula($effect['formula'] ?? null)
-                    || !in_array($effect['damageType'] ?? '', ['physical', 'magical', 'ignore'], true)))
+                    || applicationDamageType($effect['damageType'] ?? null) === null || !validApplicationOptionalDamageElement($effect)))
                     return 'Renseignez une formule et un type de dégâts valides à l’étape ' . ($index + 1) . '.';
                 if ($effect['kind'] === 'guard' && (!is_int($effect['percent'] ?? null)
                     || $effect['percent'] < 1 || $effect['percent'] > 100))
@@ -916,6 +917,7 @@ function applicationComplexAbilityGainBleedingCharges(mixed $value, array $conte
     $executions = normalizeApplicationComplexAbilityExecutions($value);
     $target = is_array($context['target'] ?? null) ? $context['target'] : [];
     $added = is_array($context['addedConditions'] ?? null) ? $context['addedConditions'] : [];
+    $added = applicationUnsuppressedConditions($target, $added);
     if (($target['id'] ?? '') === '' || (float) ($context['hpLost'] ?? 0) <= 0 && $added === []) return $executions;
     $map = is_array($context['map'] ?? null) ? $context['map'] : [];
     $width = (float) ($map['naturalWidth'] ?? 0); $height = (float) ($map['naturalHeight'] ?? 0); $grid = (float) ($map['gridSize'] ?? 0);
@@ -931,7 +933,7 @@ function applicationComplexAbilityGainBleedingCharges(mixed $value, array $conte
             || (!empty($context['outsideCombat']) ? empty($step['activateOutsideCombat']) || $execution['combatId'] !== ''
                 : $step['combatPersistent'] && ($combatId === '' || $execution['combatId'] !== $combatId))) continue;
         if ($step['gainCondition'] !== '' && !in_array(onlineConditionKey(normalizeOnlineConditions([$step['gainCondition']])[0] ?? $step['gainCondition']),
-            array_map('onlineConditionKey', normalizeOnlineConditions($target['conditions'] ?? [], $target['condition'] ?? '')), true)) continue;
+            array_map('onlineConditionKey', applicationUnsuppressedConditions($target, normalizeOnlineConditions($target['conditions'] ?? [], $target['condition'] ?? ''))), true)) continue;
         $applied = $step['gainCondition'] !== '' && in_array(onlineConditionKey(normalizeOnlineConditions([$step['gainCondition']])[0] ?? $step['gainCondition']), array_map('onlineConditionKey', normalizeOnlineConditions($added)), true);
         $wounded = (float) ($context['hpLost'] ?? 0) > 0;
         if ($step['gainTrigger'] === 'condition-applied' ? !$applied : ($step['gainTrigger'] === 'hp-loss-or-condition' ? !$wounded && !$applied : !$wounded)) continue;
@@ -1098,7 +1100,7 @@ function applicationComplexAbilityTokenConditionValue(array $token, array $step)
         $wanted = applicationComplexAbilityComparable($step['conditionLabel'] !== '' ? $step['conditionLabel'] : $step['value']);
         $conditions = is_array($token['conditions'] ?? null)
             ? $token['conditions'] : explode(',', (string) ($token['condition'] ?? ''));
-        foreach ($conditions as $condition) if (applicationComplexAbilityComparable($condition) === $wanted) return true;
+        foreach (applicationUnsuppressedConditions($token, $conditions) as $condition) if (applicationComplexAbilityComparable($condition) === $wanted) return true;
         return false;
     }
     if ($step['fact'] === 'stat') {

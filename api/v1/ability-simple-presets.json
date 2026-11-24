@@ -1,7 +1,7 @@
 {
   "ability-28849018-287a-4ce4-b1fa-7ec786d00807": {
     "presetId": "rotatable-thorn-wall",
-    "revision": 1,
+    "revision": 2,
     "effect": "damage",
     "values": {
       "manaCost": 30,
@@ -21,13 +21,23 @@
         "affectAllies": true,
         "affectEnemies": true
       },
+      "damageComponents": [
+        {
+          "type": "physical",
+          "formula": "1d30+10"
+        },
+        {
+          "type": "poison",
+          "formula": "1d10+10"
+        }
+      ],
       "damageOverTime": {
         "label": "Poison · Mur de ronces",
         "formula": "1d10+10",
-        "damageType": "ignore",
+        "damageType": "poison",
         "turns": 2
       },
-      "description": "Place un mur orientable de 5 × 1 cases. À sa création, chaque cible à 2 cases ou moins du mur subit 1d30+10 dégâts magiques et 1d10+10 de poison ignorant l’armure. Le poison frappe encore aux deux tours suivants de chaque victime. Cet obstacle attaquable de 75 PV bloque la vue et le déplacement. Le MJ peut le déplacer ou le détruire. Tout ennemi qui attaque le mur subit 1d30+10 dégâts magiques."
+      "description": "Place un mur orientable de 5 × 1 cases. À sa création, chaque cible à 2 cases ou moins du mur subit 1d30+10 dégâts physiques et 1d10+10 de poison ignorant l’armure. Le poison frappe encore aux deux tours suivants de chaque victime. Cet obstacle attaquable de 75 PV bloque la vue et le déplacement. Le MJ peut le déplacer ou le détruire. Tout ennemi qui attaque le mur subit 1d30+10 dégâts physiques."
     }
   },
   "ability-7BG1hkmR6vBEbTLL": {
@@ -508,6 +518,18 @@
     "effect": "damage",
     "weaponDraw": {
       "name": "Chaîne lacérante",
+      "cloneTemplateFallback": true,
+      "cloneFallbackEquipment": {
+        "templateId": "v370-template-bc70eea5b124221f0cade694",
+        "version": 1,
+        "kind": "weapon",
+        "hands": 2,
+        "formula": "1d70+20",
+        "damageType": "physical",
+        "reach": "reach",
+        "finesse": false,
+        "projectile": false
+      },
       "templateIds": [
         "v370-template-6f8e72ba624ecbbe481091a0",
         "v370-template-bc70eea5b124221f0cade694"

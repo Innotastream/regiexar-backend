@@ -35,6 +35,9 @@ function dsNumber(mixed $value): bool { return (is_int($value) || is_float($valu
 function dsInt(mixed $value, int $minimum, int $maximum, int $fallback): int {
     return is_numeric($value) && (float)$value === (float)(int)$value && $value >= $minimum && $value <= $maximum ? (int)$value : $fallback;
 }
+function dsBatteryRadiusCells(array $definition): int {
+    return dsInt($definition['radiusCells']??null,1,100,2);
+}
 function dsStats(): array { return applicationStatIds(); }
 function dsCastingChoices(mixed $value): array { return is_array($value) ? array_values(array_unique(array_intersect($value, dsStats()))) : []; }
 function dsInfusion(mixed $value): ?array {
@@ -66,24 +69,24 @@ function dsDefinition(mixed $v): array {
     if($v['kind']==='structure')return applicationFixedStructureDefinition($v);
     $int=static fn($key,$min,$max,$fallback)=>dsInt($v[$key]??null,$min,$max,$fallback);
     $formula=static fn($key,$fallback)=>validApplicationAbilityFormula($v[$key]??null)?strtolower(preg_replace('/\s+/','',$v[$key])):$fallback;
-    $damage=static fn($fallback)=>in_array($v['damageType']??'', ['physical','magical','ignore'],true)?$v['damageType']:$fallback;
+    $damage=static fn($fallback)=>applicationDamageType($v['damageType']??null)??$fallback;
     $stat=static fn($key,$fallback)=>in_array($v[$key]??'',dsStats(),true)?$v[$key]:$fallback;
     $base=['version'=>1,'kind'=>$v['kind'],'interactionRangeCells'=>$int('interactionRangeCells',0,100,2),...($v['kind']!=='explosive'?['maximumInstances'=>$int('maximumInstances',1,100,1)]:[])];
     return match($v['kind']) {
-        'battery'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'radiusCells'=>$int('radiusCells',1,100,2),'chargeRatio'=>$int('chargeRatio',1,100,2),'requireDirectRange'=>($v['requireDirectRange']??true)!==false],
-        'launcher'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'damageFormula'=>$formula('damageFormula','1d35'),'damageType'=>$damage('physical'),
+        'battery'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'radiusCells'=>dsBatteryRadiusCells($v),'chargeRatio'=>$int('chargeRatio',1,100,2),'requireDirectRange'=>($v['requireDirectRange']??true)!==false],
+        'launcher'=>[...$base,'canPack'=>($v['canPack']??true)!==false,'damageFormula'=>$formula('damageFormula','1d35'),'damageType'=>$damage('physical'),...applicationOptionalDamageElement($v),
             'infusion'=>dsInfusion([...($v['infusion']??[]),'enabled'=>true,'minimumMana'=>$v['infusion']['minimumMana']??5,'refundOnMiss'=>false]),
             'firingStats'=>dsCastingChoices($v['firingStats']??null)?:['character-stat-intelligence','character-stat-dexterity'],
             'ammoTemplateId'=>preg_match('/^[A-Za-z0-9_-]{1,180}$/D',(string)($v['ammoTemplateId']??''))===1?$v['ammoTemplateId']:'','projectile'=>($v['projectile']??true)!==false],
         'explosive'=>[...$base,'craftManaCost'=>$int('craftManaCost',0,1000000,10),'maximumInventory'=>$int('maximumInventory',1,100,5),
             'minimumDelay'=>$int('minimumDelay',1,100,1),'maximumDelay'=>max($int('minimumDelay',1,100,1),$int('maximumDelay',1,100,3)),
-            'radiusCells'=>$int('radiusCells',1,100,4),'damageFormula'=>$formula('damageFormula','1d60+12'),'damageType'=>$damage('magical'),'gmApproval'=>true],
+            'radiusCells'=>$int('radiusCells',1,100,4),'damageFormula'=>$formula('damageFormula','1d60+12'),'damageType'=>$damage('magical'),...applicationOptionalDamageElement($v),'gmApproval'=>true],
         'dome'=>[...$base,'canSetDown'=>($v['canSetDown']??true)!==false,'radiusCells'=>$int('radiusCells',1,100,5),'channelStartTurn'=>$int('channelStartTurn',1,100,3),
             'channelManaCost'=>$int('channelManaCost',0,1000000,10),'penaltyIncrement'=>$int('penaltyIncrement',0,100,10),'channelStatId'=>$stat('channelStatId','character-stat-intelligence'),
             'projectileStatId'=>$stat('projectileStatId','character-stat-dexterity'),'damagePercent'=>$int('damagePercent',0,100,50),'pointBlankCells'=>$int('pointBlankCells',0,100,1),
             'affectAllies'=>true,'affectEnemies'=>true],
         default=>[...$base,'canPack'=>($v['canPack']??true)!==false,'delayTurns'=>$int('delayTurns',1,100,1),'lengthCells'=>$int('lengthCells',1,100,20),'widthCells'=>$int('widthCells',1,100,1),...(array_key_exists('unlimitedRange',$v)?['unlimitedRange'=>$v['unlimitedRange']===true]:[]),...(array_key_exists('affectUnseen',$v)?['affectUnseen'=>$v['affectUnseen']===true]:[]),
-            'falloffPercent'=>$int('falloffPercent',0,100,10),'damageType'=>$damage('magical'),'consentRequired'=>true,'repairRequiresGm'=>true]
+            'falloffPercent'=>$int('falloffPercent',0,100,10),'damageType'=>$damage('magical'),...applicationOptionalDamageElement($v),'consentRequired'=>true,'repairRequiresGm'=>true]
     };
 }
 function dsEmpty(): array { return ['version'=>1,'devices'=>[],'craftRequests'=>[],'pendingRolls'=>[],'timedConditions'=>[],'receipts'=>[]]; }
@@ -126,7 +129,10 @@ function dsToken(array $state,array $owner,array $args): array {
     dsError('Placez votre personnage sur le niveau courant avant cette action.');
 }
 function dsAssertActions(array $state,array $token,string $sceneId):void {
-    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||unitUsesCharacterSheet($token)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??'')))dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
+    foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||unitUsesCharacterSheet($token)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??''))) {
+        if (applicationElementalConditionSuppressed($token, $condition['label'] ?? null, array_column($state['characters'] ?? [], null, 'id'))) continue;
+        dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
+    }
 }
 function dsTurn(array $state,array $actor,array $token): void {
     $i=$state['initiative']??[];
@@ -157,9 +163,16 @@ function dsResource(array &$state,array &$owner,string $resource,int|float $delt
     foreach($state['scenes']??[] as $s=>$scene) foreach($scene['combat']['map']['tokens']??[] as $t=>$token) if(($token['characterId']??'')===$owner['id'] && ($token['followCharacter']??true)!==false && empty($token['linkedTokenId'])) $state['scenes'][$s]['combat']['map']['tokens'][$t][$resource]=$owner['resources'][$resource];
 }
 function dsProvider(array $store,array $source,array $map,string $sceneId,callable $direct): ?int {
-    $found=[]; foreach($store['devices'] as $index=>$device) if($device['status']==='active' && $device['definition']['kind']==='battery' && $device['sceneId']===$sceneId
-        && $device['layerId']===($source['layerId']??'ground') && dsDistance($source,$device,$map)<=$device['definition']['radiusCells']
-        && (!$device['definition']['requireDirectRange'] || $direct($source,$device,$map))) $found[]=['index'=>$index,'distance'=>dsDistance($source,$device,$map),'id'=>$device['id']];
+    $found=[];
+    foreach ($store['devices'] as $index=>$device) {
+        $definition=$device['definition'];
+        if ($device['status']!=='active'||$definition['kind']!=='battery'||$device['sceneId']!==$sceneId
+            ||$device['layerId']!==($source['layerId']??'ground')) continue;
+        $distance=dsDistance($source,$device,$map);
+        if ($distance>dsBatteryRadiusCells($definition)
+            ||(($definition['requireDirectRange']??true)!==false&&!$direct($source,$device,$map))) continue;
+        $found[]=['index'=>$index,'distance'=>$distance,'id'=>$device['id']];
+    }
     usort($found,static fn($a,$b)=>($a['distance']<=>$b['distance'])?:strcmp($a['id'],$b['id'])); return $found[0]['index']??null;
 }
 function dsPayMana(array &$state,array &$store,array &$owner,?array $token,int|float $value,array $context): array {

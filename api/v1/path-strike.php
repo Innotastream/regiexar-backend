@@ -10,6 +10,12 @@ function applicationPathStrike(mixed $v):?array {if(!$v)return null;if(!is_array
 function applicationPathStrikePoint(mixed $p):bool {return is_array($p)&&array_key_exists('x',$p)&&array_key_exists('y',$p)&&(is_int($p['x'])||is_float($p['x']))&&(is_int($p['y'])||is_float($p['y']))&&is_finite((float)$p['x'])&&is_finite((float)$p['y'])&&$p['x']>=0&&$p['x']<=100&&$p['y']>=0&&$p['y']<=100;}
 function applicationPathStrikeXY(array $p):array{return ['x'=>$p['x'],'y'=>$p['y']];}
 function applicationPathStrikeDistance(array $a,array $b,array $d):float{return hypot(($a['x']-$b['x'])*$d['width']/100,($a['y']-$b['y'])*$d['height']/100);}
+function applicationPathStrikeDistanceFail(float $distance,float $maximum,bool $withStops=false):never {
+    $meters=rtrim(rtrim(number_format($distance,2,',',''), '0'), ',');
+    $subject=$withStops?'Le trajet avec les arrêts pour frapper':'Votre tracé';
+    $correction=$withStops?'Retirez une cible ou rapprochez l’arrivée.':'Retirez le dernier point ou rapprochez l’arrivée.';
+    applicationPathStrikeFail("$subject fait $meters m et dépasse la limite de $maximum mètres. $correction");
+}
 function applicationPathStrikeContext(array $execution,array $step,?array $source,array $tokens,array $map):array {
     if(applicationPathStrike($step['pathStrike']??null)===null||$source===null)applicationPathStrikeFail('Ce déplacement ne prépare pas de frappes successives.');
     $layer=$execution['layerId']??'ground';$level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'sceneId'=>$execution['sceneId'],'activeLayerId'=>$layer];
@@ -27,96 +33,170 @@ function applicationPathStrikeSelectionState(array $execution,array $step,array 
     $path=$selection['path']??[applicationPathStrikeXY($c['body']),applicationPathStrikeXY($destination)];
     if(!is_array($path)||!array_is_list($path)||count($path)<2||count($path)>128||array_filter($path,static fn($p)=>!applicationPathStrikePoint($p))||!applicationChargeSame($path[0],$c['body'])||!applicationChargeSame($path[array_key_last($path)],$destination))applicationPathStrikeFail('Le trajet doit relier le départ courant à la destination choisie.');
     $state=initialApplicationComplexMovementState($c['body'],$now,$step['attackWidthCells']??0);
-    for($i=1;$i<count($path);$i++)$state=appendApplicationComplexMovementPath($state,$path[$i-1],$path[$i],[$path[$i-1],$path[$i]],$c['level'],$step['maximumMeters'],$now);
+    try {
+        for($i=1;$i<count($path);$i++)$state=appendApplicationComplexMovementPath($state,$path[$i-1],$path[$i],[$path[$i-1],$path[$i]],$c['level'],$step['maximumMeters'],$now);
+    } catch(ApplicationComplexAbilityException $error) {
+        $attempted=applicationPathStrikeMeters($path,$c['level']);
+        if($attempted>$step['maximumMeters']+1e-7)applicationPathStrikeDistanceFail($attempted,$step['maximumMeters']);
+        throw $error;
+    }
     if(empty($state['moved']))applicationPathStrikeFail('Choisissez un déplacement réel avant de confirmer.');
     return [...$c,'selectionPath'=>array_map('applicationPathStrikeXY',$path),'destination'=>applicationPathStrikeXY($destination),'selectionState'=>[...$state,'status'=>'completed']];
 }
 function applicationPathStrikeCandidates(array $execution,array $step,array $source,array $tokens,array $map,array $selection):array {
-    $c=applicationPathStrikeSelectionState($execution,$step,$source,$tokens,$map,$selection,0);$riding=applicationAbilityMovementTokenIds($source,$c['level'],true);
+    return applicationPathStrikeCandidatesFor(applicationPathStrikeSelectionState($execution,$step,$source,$tokens,$map,$selection,0),$execution,$source,$tokens);
+}
+function applicationPathStrikeCandidatesFor(array $c,array $execution,array $source,array $tokens):array {
+    $riding=applicationAbilityMovementTokenIds($source,$c['level'],true);
     $candidates=array_values(array_filter($tokens,static fn($t)=>$t['id']!==$source['id']&&!in_array($t['id'],$riding,true)&&empty($t['hidden'])&&empty($t['dimSilhouette'])&&($t['hp']??0)>0&&($t['maxHp']??0)>0&&($t['layerId']??'ground')===$execution['layerId']&&applicationPathStrikePoint($t)&&applicationChargeEnemy($source,$t)&&applicationTargetTouchesComplexMovement($t,$c['selectionState'],$c['level'])));
     usort($candidates,static fn($a,$b)=>(applicationPathStrikeDistance(applicationTokenSpatialFootprint($b,$c['level']),$c['destination'],$c['d'])<=>applicationPathStrikeDistance(applicationTokenSpatialFootprint($a,$c['level']),$c['destination'],$c['d']))?:strcmp($a['id'],$b['id']));return $candidates;
 }
-function applicationPathStrikeObstacles(array $c,array $tokens,bool $first):array {return array_values(array_filter($tokens,static fn($t)=>!in_array($t['id'],$c['group'],true)&&empty($t['mountedOnTokenId'])&&($t['layerId']??'ground')===$c['level']['activeLayerId']&&applicationPathStrikePoint($t)&&!($first&&($c['source']['mountedOnTokenId']??'')===$t['id'])));}
+function applicationPathStrikeLandingBodies(array $c,array $tokens):array {
+    return array_values(array_filter($tokens,static function(array $token)use($c):bool {
+        if(in_array($token['id'],$c['group'],true)||!empty($token['mountedOnTokenId'])
+            ||($token['layerId']??'ground')!==$c['level']['activeLayerId']||!applicationPathStrikePoint($token)
+            ||!empty($token['terrainBarrier']))return false;
+        if(onlineManualDeath($token))return false;
+        $hp=$token['hp']??$token['resources']['hp']??null;
+        $maxHp=$token['maxHp']??$token['resources']['maxHp']??null;
+        $publicHealth=$token['publicHealth']??'';
+        if($publicHealth==='down')return true;
+        if($hp===null)return in_array($publicHealth,['normal','critical'],true)
+            && ($maxHp===null||$maxHp>0);
+        $controlled=!empty($token['controllerPlayerId'])||!empty($token['playerControlled'])||!empty($token['ownedByYou']);
+        return ($hp>0&&($maxHp===null||$maxHp>0))
+            || ($maxHp>0&&onlineHealthState($hp,$maxHp,$controlled)['code']==='down');
+    }));
+}
+function applicationPathStrikeBodyRadius(array $c,array $token):float {
+    return (($c['body']['size']??40)+($token['size']??40))/2;
+}
 function applicationPathStrikeSegmentSafe(array $c,array $from,array $to,array $bodies):bool {
-    if(!applicationChargeTravelAllowed($c['body'],$from,$to,$c['level']))return false;$dx=($to['x']-$from['x'])*$c['d']['width']/100;$dy=($to['y']-$from['y'])*$c['d']['height']/100;
-    foreach($bodies as$other){$x=($other['x']-$from['x'])*$c['d']['width']/100;$y=($other['y']-$from['y'])*$c['d']['height']/100;$t=max(0,min(1,($x*$dx+$y*$dy)/(($dx*$dx+$dy*$dy)?:1)));$needed=(($c['body']['size']??40)+($other['size']??40))/2;
-        if(hypot($x-$dx,$y-$dy)<$needed-1e-6||hypot($x-$t*$dx,$y-$t*$dy)<min($needed,hypot($x,$y))-1e-6)return false;
-    }return true;
+    return applicationChargeTravelAllowed($c['body'],$from,$to,$c['level'])&&!applicationPathStrikeCrossesStructure($c,$from,$to,$bodies);
 }
-function applicationPathStrikeNearestBodyEdge(array $c,array $endpoint,array $bodies):?array {
-    $nearest=null;
-    foreach($bodies as$body){
-        $dx=($endpoint['x']-$body['x'])*$c['d']['width']/100;$dy=($endpoint['y']-$body['y'])*$c['d']['height']/100;
-        $distance=hypot($dx,$dy);$radius=(($c['body']['size']??40)+($body['size']??40))/2;$gap=$distance-$radius;
-        if($distance>0&&$gap>=-1e-6&&$gap<=4+1e-6&&($nearest===null||$gap<$nearest['gap']-1e-6))$nearest=compact('dx','dy','distance','radius','gap');
+function applicationPathStrikeCrossesStructure(array $c,array $from,array $to,array $bodies):bool {
+    $dx=($to['x']-$from['x'])*$c['d']['width']/100;$dy=($to['y']-$from['y'])*$c['d']['height']/100;
+    foreach($bodies as$other){$x=($other['x']-$from['x'])*$c['d']['width']/100;$y=($other['y']-$from['y'])*$c['d']['height']/100;$t=max(0,min(1,($x*$dx+$y*$dy)/(($dx*$dx+$dy*$dy)?:1)));$needed=applicationPathStrikeBodyRadius($c,$other);
+        if(hypot($x-$dx,$y-$dy)<$needed-1e-6||hypot($x-$t*$dx,$y-$t*$dy)<min($needed,hypot($x,$y))-1e-6)return true;
     }
-    return $nearest;
+    return false;
 }
-function applicationPathStrikeBodyEdgeBend(array $c,array $from,array $to,array $bodies):?array {
-    // Recover a tangent that a rasterized portrait can hide. Check both legs
-    // against the exact footprints, the actual map limits and the real walls.
-    foreach([$to,$from]as$endpoint){
-        $edge=applicationPathStrikeNearestBodyEdge($c,$endpoint,$bodies);if($edge===null)continue;
-        $tangent=($edge['radius']+4)/$edge['distance'];
-        foreach([-1,1]as$side){
-            $bend=['x'=>$endpoint['x']-$side*$edge['dy']*$tangent*100/$c['d']['width'],'y'=>$endpoint['y']+$side*$edge['dx']*$tangent*100/$c['d']['height']];
-            if(applicationPathStrikePoint($bend)&&applicationPathStrikeSegmentSafe($c,$from,$bend,$bodies)&&applicationPathStrikeSegmentSafe($c,$bend,$to,$bodies))return [applicationPathStrikeXY($from),$bend,applicationPathStrikeXY($to)];
-        }
+function applicationPathStrikeExplainSegment(array $c,array $from,array $to,array $structures):string {
+    $blocker=applicationChargeTravelBlocker($c['body'],$from,$to,$c['level'],true);
+    if($blocker===null&&applicationPathStrikeCrossesStructure($c,$from,$to,$structures))$blocker='structure';
+    return match($blocker){
+        'edge'=>'Le pion dépasserait le bord de la carte. Éloignez le point du bord.',
+        'wall'=>'Un mur coupe le passage. Ajoutez un point de passage autour du mur ou passez par une ouverture.',
+        'terrain'=>'Une porte ou un obstacle de terrain coupe le passage. Passez par une ouverture ou modifiez le tracé.',
+        'vision'=>'Le trajet quitte la zone visible. Tracez dans la zone visible ou demandez au MJ d’ajuster la vision.',
+        'structure'=>'Une structure fixe bloque le passage. Ajoutez un point de passage à côté.',
+        default=>'Aucun passage praticable n’a été trouvé. Ajoutez un point intermédiaire sur un passage libre.',
+    };
+}
+function applicationPathStrikeLandingFree(array $c,array $endpoint,array $bodies):bool {
+    foreach($bodies as $body) {
+        if(applicationPathStrikeDistance($endpoint,$body,$c['d'])<applicationPathStrikeBodyRadius($c,$body)-1e-6)return false;
     }
-    return null;
+    return true;
 }
-function applicationPathStrikeRoute(array &$c,array $from,array $to,array $tokens,bool $first):?array {
-    $bodies=applicationPathStrikeObstacles($c,$tokens,$first);if(applicationPathStrikeSegmentSafe($c,$from,$to,$bodies))return [applicationPathStrikeXY($from),applicationPathStrikeXY($to)];
-    if(!empty($c['edgeBends'])){$edgePath=applicationPathStrikeBodyEdgeBend($c,$from,$to,$bodies);if($edgePath!==null)return $edgePath;}
+function applicationPathStrikeRoute(array &$c,array $from,array $to,array $bodies):?array {
+    if(applicationPathStrikeSegmentSafe($c,$from,$to,$bodies))return [applicationPathStrikeXY($from),applicationPathStrikeXY($to)];
     if(($c['failedSearches']??0)>=4)return null;
-    $walls=$c['level']['walls']??null;if(!validApplicationWallState($walls))$walls=emptyApplicationWallState($c['d']['width'],$c['d']['height']);
-    $masked=applicationTerrainBarrierWalls($walls,[...$c['level'],'tokens'=>array_map(static fn($t)=>[...$t,'terrainBarrier'=>['version'=>1],'hp'=>1],$bodies)]);
-    $visible=is_callable($c['level']['_chargeVisible']??null)?$c['level']['_chargeVisible']:onlineVisiblePathPointTester($c['level']['fog']??null,$c['level']['visionMask']??['enabled'=>false]);
-    $result=findApplicationVisibleTokenPath($masked,$from,$to,(float)($c['body']['size']??40),$c['d']['width'],$c['d']['height'],$visible);
+    if(!isset($c['routeWalls'])){
+        $walls=$c['level']['walls']??null;
+        if(!validApplicationWallState($walls))$walls=emptyApplicationWallState($c['d']['width'],$c['d']['height']);
+        $c['routeWalls']=applicationTerrainBarrierWalls($walls,[...$c['level'],'tokens'=>[
+            ...array_filter($c['level']['tokens'],static fn($t)=>!empty($t['terrainBarrier'])),
+            ...array_map(static fn($t)=>[...$t,'terrainBarrier'=>['version'=>1],'hp'=>1],$bodies),
+        ]]);
+        $c['routeVisible']=is_callable($c['level']['_chargeVisible']??null)?$c['level']['_chargeVisible']:onlineVisiblePathPointTester($c['level']['fog']??null,$c['level']['visionMask']??['enabled'=>false]);
+    }
+    $result=findApplicationVisibleTokenPath($c['routeWalls'],$from,$to,(float)($c['body']['size']??40),$c['d']['width'],$c['d']['height'],$c['routeVisible']);
     if(!empty($result['blocked'])||empty($result['path'])){if(in_array($result['reason']??'', ['search-limit','no-two-segment-path','unsafe-rounding'],true))$c['failedSearches']=($c['failedSearches']??0)+1;return null;}
     for($i=1;$i<count($result['path']);$i++)if(!applicationPathStrikeSegmentSafe($c,$result['path'][$i-1],$result['path'][$i],$bodies)){$c['failedSearches']=($c['failedSearches']??0)+1;return null;}
     return array_map('applicationPathStrikeXY',$result['path']);
 }
+function applicationPathStrikeRouteThrough(array &$c,array $from,array $waypoints,array $structures,int $firstIndex):?array {
+    $path=[applicationPathStrikeXY($from)];
+    foreach($waypoints as $offset=>$waypoint){
+        $start=$path[array_key_last($path)];
+        $section=applicationPathStrikeRoute($c,$start,$waypoint,$structures);
+        if($section===null){
+            $c['failedStep']=['from'=>$start,'to'=>$waypoint,'index'=>$firstIndex+$offset];
+            return null;
+        }
+        array_push($path,...array_slice($section,1));
+    }
+    return $path;
+}
+function applicationPathStrikeFailGuide(array $c,array $structures):never {
+    ['from'=>$from,'to'=>$to,'index'=>$index]=$c['failedStep'];
+    applicationPathStrikeFail("Passage vers le point n° $index. ".applicationPathStrikeExplainSegment($c,$from,$to,$structures));
+}
+function applicationPathStrikeClosestGuideSegment(array $c,array $target):int {
+    $best=0;
+    $nearest=INF;
+    for($i=0;$i<count($c['selectionPath'])-1;$i++){
+        $gap=applicationChargeClosest($target,$c['selectionPath'][$i],$c['selectionPath'][$i+1],$c['d'])['distance'];
+        if($gap<$nearest){$nearest=$gap;$best=$i;}
+    }
+    return $best;
+}
 function applicationPathStrikeMeters(array $path,array $map):float {$sum=0;for($i=1;$i<count($path);$i++)$sum+=applicationChargeDistanceMeters($path[$i-1],$path[$i],$map);return $sum;}
 function applicationPlanPathStrike(array $execution,array $step,array $source,array $tokens,array $map,array $selection,int $now):array {
-    $c=applicationPathStrikeSelectionState($execution,$step,$source,$tokens,$map,$selection,$now);$candidates=applicationPathStrikeCandidates($execution,$step,$source,$tokens,$map,$selection);$selected=$selection['targetTokenIds']??[];
+    $c=applicationPathStrikeSelectionState($execution,$step,$source,$tokens,$map,$selection,$now);$candidates=applicationPathStrikeCandidatesFor($c,$execution,$source,$tokens);$selected=$selection['targetTokenIds']??[];
     if(!is_array($selected)||!array_is_list($selected)||count($selected)>20||array_filter($selected,static fn($id)=>!is_string($id))||count(array_unique($selected))!==count($selected)||array_diff($selected,array_column($candidates,'id')))applicationPathStrikeFail('Choisissez jusqu’à vingt ennemis distincts sur le trajet.');
     $chosen=array_values(array_filter($candidates,static fn($t)=>in_array($t['id'],$selected,true)));$positions=[];foreach($chosen as$t){$p=applicationTokenSpatialFootprint($t,$c['level']);$positions[]=['tokenId'=>$t['id'],'x'=>$p['x'],'y'=>$p['y'],'size'=>$p['size']??40,'layerId'=>$p['layerId']??'ground'];}
-    $blockedDestination='La destination finale ou son trajet n’est pas libre.';
-    $landingBodies=applicationPathStrikeObstacles($c,$tokens,$chosen===[]);
-    if(!applicationPathStrikeSegmentSafe($c,$c['destination'],$c['destination'],$landingBodies))applicationPathStrikeFail($blockedDestination);
+    $occupants=applicationPathStrikeLandingBodies($c,$tokens);
+    $structures=array_values(array_filter($occupants,static fn($token)=>!empty($token['fixedStructure'])));
+    if(!applicationPathStrikeLandingFree($c,$c['destination'],$occupants))
+        applicationPathStrikeFail('La destination finale est occupée. Choisissez une case libre à côté.');
+    if(!applicationPathStrikeSegmentSafe($c,$c['destination'],$c['destination'],$structures))
+        applicationPathStrikeFail('Point d’arrivée. '.applicationPathStrikeExplainSegment($c,$c['destination'],$c['destination'],$structures));
     $attackStep=null;foreach($execution['workflow']['steps']??[]as$s)if(($s['type']??'')==='allocated-attacks'){foreach($execution['workflow']['steps']as$p)if(($s['sourceStepId']??'')===$step['id']||$p['id']===($s['sourceStepId']??'')&&($p['sourceMovementStepId']??'')===$step['id']){$attackStep=$s;break 2;}}
-    $build=static function(int $side,bool $edgeBends)use($c,$chosen,$positions,$execution,$step,$attackStep,$tokens,$now,$blockedDestination):array {
-    $c['failedSearches']=0;$c['edgeBends']=$edgeBends;
-    $previous=applicationPathStrikeXY($c['body']);$points=[$previous];$distanceMeters=0;$targets=[];$attackPlan=[];$finalPath=null;
+    $build=static function(int $side)use($c,$chosen,$positions,$execution,$step,$attackStep,$structures,$now):array {
+    $c['failedSearches']=0;
+    $previous=applicationPathStrikeXY($c['body']);$points=[$previous];$distanceMeters=0;$targets=[];$attackPlan=[];$finalPath=null;$nextWaypoint=1;
     foreach($chosen as$index=>$target){
-        $physical=applicationTokenSpatialFootprint($target,$c['level']);$radius=(($c['body']['size']??40)+($physical['size']??40))/2+4;
+        $physical=applicationTokenSpatialFootprint($target,$c['level']);$radius=applicationPathStrikeBodyRadius($c,$physical)+4;
+        $guideEnd=max($nextWaypoint,applicationPathStrikeClosestGuideSegment($c,$physical)+1);
+        $approach=applicationPathStrikeRouteThrough($c,$previous,array_slice($c['selectionPath'],$nextWaypoint,$guideEnd-$nextWaypoint),$structures,$nextWaypoint);
+        if($approach===null)applicationPathStrikeFailGuide($c,$structures);
+        $nextWaypoint=$guideEnd;
         $heading=atan2(($c['destination']['y']-$c['body']['y'])*$c['d']['height'],($c['destination']['x']-$c['body']['x'])*$c['d']['width']);$base=$heading+$side*M_PI/2;
         $isLast=$index===count($chosen)-1;$best=null;$reachableStop=false;
         foreach([0,1,-1,2,-2,3,-3,4,-4,5,-5,6,-6,7,-7,8]as$offset){$angle=$base+$offset*M_PI/8;$contact=['x'=>$physical['x']+cos($angle)*$radius*100/$c['d']['width'],'y'=>$physical['y']+sin($angle)*$radius*100/$c['d']['height']];if(!applicationPathStrikePoint($contact))continue;
-            $path=applicationPathStrikeRoute($c,$previous,$contact,$tokens,$attackPlan===[]);if($path===null)continue;$reachableStop=true;
-            $exitPath=$isLast?applicationPathStrikeRoute($c,$contact,$c['destination'],$tokens,false):null;
+            $section=applicationPathStrikeRoute($c,$approach[array_key_last($approach)],$contact,$structures);
+            if($section===null)continue;
+            $path=[...$approach,...array_slice($section,1)];$reachableStop=true;
+            $exitPath=$isLast?applicationPathStrikeRouteThrough($c,$contact,array_slice($c['selectionPath'],$nextWaypoint),$structures,$nextWaypoint):null;
             if($isLast&&$exitPath===null)continue;
             $cost=applicationPathStrikeMeters($path,$c['level']);$totalCost=$cost+($exitPath!==null?applicationPathStrikeMeters($exitPath,$c['level']):0);
             if($best===null||$totalCost<$best['totalCost'])$best=compact('contact','path','cost','totalCost','exitPath');
             if(!$isLast||$distanceMeters+$totalCost<=$step['maximumMeters']+1e-7)break;
         }
-        if($best===null)applicationPathStrikeFail($reachableStop?$blockedDestination:'Aucun arrêt libre ne permet de frapper cette cible sans traverser un corps ou un obstacle.');
+        if($best===null){
+            if($reachableStop)applicationPathStrikeFailGuide($c,$structures);
+            $name=($target['name']??'')?:'cette cible';
+            applicationPathStrikeFail("Aucune position libre pour frapper $name. Retirez cette cible ou rapprochez le tracé.");
+        }
         if($isLast)$finalPath=$best['exitPath'];
         $distanceMeters+=$best['cost'];$points=[...$points,...array_slice($best['path'],1)];$targets[]=['tokenId'=>$target['id'],'contactPoint'=>$best['contact']];
         $attackPlan[]=['tokenId'=>$target['id'],'attackId'=>$execution['abilityId'],'statId'=>$attackStep['statId']??'','configured'=>true,'opposed'=>false,'movePoint'=>$best['contact'],'path'=>$best['path']];$previous=$best['contact'];
     }
-    $finalPath??=applicationPathStrikeRoute($c,$previous,$c['destination'],$tokens,true);if($finalPath===null)applicationPathStrikeFail($blockedDestination);$distanceMeters+=applicationPathStrikeMeters($finalPath,$c['level']);$points=[...$points,...array_slice($finalPath,1)];
+    $finalPath??=applicationPathStrikeRouteThrough($c,$previous,array_slice($c['selectionPath'],$nextWaypoint),$structures,$nextWaypoint);
+    if($finalPath===null)applicationPathStrikeFailGuide($c,$structures);
+    $distanceMeters+=applicationPathStrikeMeters($finalPath,$c['level']);$points=[...$points,...array_slice($finalPath,1)];
     if(count($points)>256)applicationPathStrikeFail('Ce trajet comporte trop de segments.');
     return [...initialApplicationComplexMovementState($c['body'],$now,$step['attackWidthCells']??0),'planned'=>true,'moved'=>true,'selectionPath'=>$c['selectionPath'],'destination'=>$c['destination'],'points'=>$points,'distanceMeters'=>$distanceMeters,'lastMovedAt'=>$now,'targets'=>$targets,
         'allocations'=>array_map(static fn($t)=>['tokenId'=>$t['id'],'targetName'=>$t['name']??'Cible','count'=>1],$chosen),'attackPlan'=>$attackPlan,'finalMovePoint'=>$c['destination'],'finalPath'=>$finalPath,'targetPositions'=>$positions];
     };
     $plans=[];$failure=null;
-    foreach([false,true]as$edgeBends){
-        if($edgeBends&&(array_filter($plans,static fn($plan)=>$plan['distanceMeters']<=$step['maximumMeters']+1e-7)||applicationPathStrikeNearestBodyEdge($c,$c['destination'],$landingBodies)===null))break;
-        foreach([-1,1]as$side)try{$plans[]=$build($side,$edgeBends);}catch(Throwable $error){$failure=$error;}
-    }
-    if($plans===[])throw $failure;usort($plans,static fn($a,$b)=>$a['distanceMeters']<=>$b['distanceMeters']);if($plans[0]['distanceMeters']>$step['maximumMeters']+1e-7)applicationPathStrikeFail('Le trajet réel avec ses arrêts dépasserait les '.$step['maximumMeters'].' mètres de la compétence.');return $plans[0];
+    foreach($chosen!==[]?[-1,1]:[1] as $side)try{$plans[]=$build($side);}catch(RuntimeException $error){$failure=$error;}
+    if($plans===[])throw $failure;usort($plans,static fn($a,$b)=>$a['distanceMeters']<=>$b['distanceMeters']);
+    if($plans[0]['distanceMeters']>$step['maximumMeters']+1e-7)
+        applicationPathStrikeDistanceFail($plans[0]['distanceMeters'],$step['maximumMeters'],$chosen!==[]);
+    return $plans[0];
 }
 function applicationPathStrikeMovementFor(array $execution):?array {foreach($execution['workflow']['steps']??[]as$step)if(!empty($step['pathStrike']['staged']))return ['step'=>$step,'state'=>$execution['stepStates'][$step['id']]??null];return null;}
 function applicationPathStrikeValidatedTravel(array $execution,array $step,array $state,array $tokens,array $map,array $from,array $to,array $path,string $targetTokenId=''):array {
@@ -124,7 +204,12 @@ function applicationPathStrikeValidatedTravel(array $execution,array $step,array
     $source=applicationComplexAbilityTokenById($tokens,$execution['sourceTokenId']);$c=applicationPathStrikeContext($execution,$step,$source,$tokens,$map);
     if(!applicationChargeSame($c['body'],$from)||!applicationPathStrikePoint($to)||count($path)<2||!applicationChargeSame($path[0],$from)||!applicationChargeSame($path[array_key_last($path)],$to))applicationPathStrikeFail('Le lanceur a quitté le trajet prévu.');
     foreach($state['targetPositions']??[]as$saved){$target=applicationComplexAbilityTokenById($tokens,$saved['tokenId']);$p=$target?applicationTokenSpatialFootprint($target,$c['level']):null;if(!$p||!applicationChargeSame($p,$saved)||($p['size']??40)!=$saved['size']||($p['layerId']??'ground')!==$saved['layerId'])applicationPathStrikeFail('Une cible a quitté sa position. Arrêtez puis préparez à nouveau le trajet.');}
-    $bodies=applicationPathStrikeObstacles($c,$tokens,applicationChargeSame($from,$state['origin']));for($i=1;$i<count($path);$i++)if(!applicationPathStrikeSegmentSafe($c,$path[$i-1],$path[$i],$bodies))applicationPathStrikeFail('Un corps, un mur ou une zone non visible bloque le prochain segment.');
+    $occupants=applicationPathStrikeLandingBodies($c,$tokens);
+    $structures=array_values(array_filter($occupants,static fn($token)=>!empty($token['fixedStructure'])));
+    if($targetTokenId===''&&!applicationPathStrikeLandingFree($c,$to,$occupants))
+        applicationPathStrikeFail('La destination finale est maintenant occupée.');
+    for($i=1;$i<count($path);$i++)if(!applicationPathStrikeSegmentSafe($c,$path[$i-1],$path[$i],$structures))
+        applicationPathStrikeFail('Le trajet prévu est désormais bloqué. '.applicationPathStrikeExplainSegment($c,$path[$i-1],$path[$i],$structures));
     $target=applicationComplexAbilityTokenById($tokens,$targetTokenId);$physical=$target?applicationTokenSpatialFootprint($target,$c['level']):null;$moves=[];foreach($c['group']as$id){$t=applicationComplexAbilityTokenById($tokens,$id);$moves[]=['tokenId'=>$id,'size'=>$t['size']??40,'from'=>applicationPathStrikeXY($t),'to'=>applicationPathStrikeXY($to)];}
     return ['sourceTokenId'=>$source['id'],'from'=>applicationPathStrikeXY($from),'to'=>applicationPathStrikeXY($to),'path'=>array_map('applicationPathStrikeXY',$path),'size'=>$c['body']['size']??40,'pathStrike'=>true,...($target?['targetTokenId'=>$target['id'],'targetPoint'=>['x'=>$physical['x'],'y'=>$physical['y'],'size'=>$physical['size']??40]]:[]),
         ...(!applicationChargeSame($from,$to)&&!empty($source['mountedOnTokenId'])&&($step['mountedMovement']??false)!==true?['dismountTokenIds'=>[$source['id']]]:[]),'moves'=>$moves];

@@ -5,7 +5,7 @@ declare(strict_types=1);
 define('XAR_SPECIAL_FIXTURE_ONLY', true);
 require __DIR__ . '/tactical-special-effects.php';
 
-function singleWeaponFixture(?bool $allowWeaponSets = false, int $damagePercent = 50): MemoryConnection {
+function singleWeaponFixture(?bool $allowWeaponSets = false, int $damagePercent = 50, bool $elementalSabres = false): MemoryConnection {
     $db = specialFixture();
     $step = ['id'=>'strikes','type'=>'allocated-attacks','sourceStepId'=>'distribution',
         'awarenessMode'=>'once','awarenessStatId'=>'character-stat-instinct','damagePercent'=>$damagePercent];
@@ -22,11 +22,13 @@ function singleWeaponFixture(?bool $allowWeaponSets = false, int $damagePercent 
     $items = ['version'=>1,'templates'=>[],'instances'=>[],'equipmentLoadouts'=>[
         'character-player'=>['sets'=>[['id'=>'pair','name'=>'Paire fictive','itemIds'=>['fire','ice']]],
             'equippedItemIds'=>['fire','ice'],'activeSetId'=>'pair']]];
+    $sabreTemplates = ['fire'=>'v370-template-d810e782aa535bc6422e6ebf', 'ice'=>'v370-template-82f161523d5dbfa66b734000'];
     foreach (['fire'=>44,'ice'=>10] as $id=>$formula) {
+        $templateId = $elementalSabres ? $sabreTemplates[$id] : 'template-'.$id;
         $equipment = ['version'=>1,'kind'=>'weapon','hands'=>1,'formula'=>(string)$formula,
             'damageType'=>'magical','reach'=>'melee','finesse'=>true];
-        $items['templates'][] = ['id'=>'template-'.$id,'name'=>'Sabre fictif '.$id,'kind'=>'object','equipment'=>$equipment];
-        $items['instances'][] = ['id'=>$id,'templateId'=>'template-'.$id,'revision'=>1,
+        $items['templates'][] = ['id'=>$templateId,'name'=>'Sabre fictif '.$id,'kind'=>'object','equipment'=>$equipment];
+        $items['instances'][] = ['id'=>$id,'templateId'=>$templateId,'revision'=>1,
             'location'=>['kind'=>'inventory','characterId'=>'character-player'],'equipment'=>$equipment];
     }
     $db->put('items', normalizeItemStore($items));
@@ -114,6 +116,20 @@ foreach (['fire'=>44,'ice'=>10] as $weapon=>$expectedDamage) {
     $before=serialize([$db->domains,$db->revision]);$replayed=singleWeaponStrike($db,'equipment-'.$weapon,$request);
     specialCheck($replayed->status===200&&serialize([$db->domains,$db->revision])===$before,'Retry never applies full damage twice');
     specialCheck($db->payload('character:character-player')['fatigue']['current']===5,'Full weapon series still pays fatigue only once');
+}
+
+foreach (['fire'=>[100,0], 'ice'=>[-50,15]] as $weapon=>[$resistance,$expectedDamage]) {
+    $db = singleWeaponFixture(false, 100, true);
+    $targetKey = 'token:scene-one:token-monster';
+    $db->put($targetKey, [...$db->payload($targetKey),'elementalResistances'=>['fire'=>100,'ice'=>-50]]);
+    specialCheck(singleWeaponPlan($db,'equipment-'.$weapon)->status===200,'The elemental series accepts the upgraded sabre');
+    specialCheck(singleWeaponCommand($db,'prepare-target',['targetTokenId'=>'token-monster'])->status===200,'The elemental strike can be prepared');
+    specialCheck(singleWeaponStrike($db,'equipment-'.$weapon)->status===200,'The elemental strike resolves');
+    $attack = end($db->domains['activity']['payload']['attackReceipts'])['attack'];
+    specialCheck($attack['damageType']===$weapon
+        && $attack['damage']['components'][0]['elementalResistancePercent']===$resistance,
+        'The selected sabre uses its own effect against the matching resistance');
+    specialCheck($db->payload($targetKey)['hp']===2000-$expectedDamage, 'Elemental resistance changes actual HP loss for that sabre');
 }
 
 echo 'allocated-single-weapon: '.$specialChecks." checks passed\n";

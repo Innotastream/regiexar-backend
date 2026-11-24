@@ -59,10 +59,10 @@ function applicationSimpleWeaponDamage(array $ability,array $weapons,string $req
     if(empty($weapon['formula']))throw new RuntimeException('Choisissez une arme de votre fiche pour cette compétence.',400);
     if(!empty($ability['mainWeaponOnly'])&&$weapon['id']!==($weapons[0]['id']??''))throw new RuntimeException('Cette compétence utilise uniquement l’arme principale.',400);
     $multiplier=$ability['weaponDamageMultiplier']??1;if(!is_int($multiplier)||$multiplier<1||$multiplier>10)throw new RuntimeException('Le multiplicateur des dégâts d’arme doit être compris entre 1 et 10.',400);
-    $parts=array_map(static fn($part)=>[...$part,'formula'=>!empty($ability['maximumWeaponDamage'])?(string)applicationMaximumFormula($part['formula']):$part['formula']],$weapon['damageComponents']??[['type'=>$weapon['damageType'],'formula'=>$weapon['formula']]]);
+    $parts=array_map(static fn($part)=>[...$part,'formula'=>!empty($ability['maximumWeaponDamage'])?(string)applicationMaximumFormula($part['formula']):$part['formula']],$weapon['damageComponents']??[applicationSimpleDamageComponent($weapon['damageType'],$weapon['formula'],applicationDamageElement($weapon['damageElement']??null))]);
     $parts=array_map(static fn($part)=>[...$part,'formula'=>implode('+',array_fill(0,$multiplier,$part['formula']))],$parts);
-    if(($ability['weaponDamageMode']??'')==='add')$parts=[...$parts,...(applicationDamageComponents($ability['damageComponents']??[])?:[['type'=>$ability['damageType']??'physical','formula'=>$ability['formula']??'1d6']])];
-    $merged=[];foreach($parts as $part){$type=$part['type'];$merged[$type]=isset($merged[$type])?[...$merged[$type],'formula'=>applicationCombinedDamageFormula([$merged[$type],$part])]:$part;}
+    if(($ability['weaponDamageMode']??'')==='add')$parts=[...$parts,...(applicationDamageComponents($ability['damageComponents']??[])?:[applicationSimpleDamageComponent($ability['damageType']??'physical',$ability['formula']??'1d6',applicationDamageElement($ability['damageElement']??null))])];
+    $merged=[];foreach($parts as $part){$key=applicationDamageComponentKey($part);$merged[$key]=isset($merged[$key])?[...$merged[$key],'formula'=>applicationCombinedDamageFormula([$merged[$key],$part])]:$part;}
     $parts=array_values($merged);if(!validApplicationAbilityFormula(applicationCombinedDamageFormula($parts)))throw new RuntimeException('Les dégâts multipliés dépassent les limites de la formule.',400);return ['selectedWeapon'=>$weapon,'damageComponents'=>$parts,'damageFormula'=>applicationCombinedDamageFormula($parts),'damageType'=>$weapon['damageType']];
 }
 

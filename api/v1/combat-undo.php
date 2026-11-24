@@ -3,18 +3,23 @@ declare(strict_types=1);
 require_once __DIR__.'/explosion-fire-undo.php';
 require_once __DIR__.'/unit-authority.php';
 require_once __DIR__.'/trass-beam.php';
+require_once __DIR__.'/impact-bleeding.php';
 
 function combatUndoSame(mixed $a,mixed $b):bool{return json_encode($a)===json_encode($b);}
 function combatUndoLinked(array $t):bool{return unitUsesCharacterSheet($t);}
 function combatUndoIdentified(mixed $v):bool{if(!is_array($v)||!array_is_list($v))return false;$ids=[];foreach($v as$x){if(!is_array($x)||!is_string($x['id']??null)||isset($ids[$x['id']]))return false;$ids[$x['id']]=true;}return true;}
 function combatUndoSelector(mixed $v):bool{return is_array($v)&&is_string($v['id']??null);}
+function combatUndoImpactBleedingPath(string $domain,array $path):bool {
+    return $domain === 'activity' && count($path) === 2 && $path[0] === 'damageOverTime'
+        && combatUndoSelector($path[1]) && applicationIsImpactBleeding($path[1]);
+}
 function combatUndoView(array $domains):array{
- $collections=['actionTimers','abilityExecutions','abilityMovementLeases','damageOverTime','attackEnhancements','nextAttackGuards','statChecks','abilityCueEvents'];$derived=['name','portrait','color','resources','hp','maxHp','mana','maxMana','fatigue','stats','temporaryStats','conditions','conditionsBase','healthOverride','abilities','weaponText','weaponAttacks','armor','magicArmor','armorCategory','magicArmorCategory','initiativeBonus','hitThreshold'];$result=[];
+ $collections=['actionTimers','abilityExecutions','abilityMovementLeases','damageOverTime','attackEnhancements','nextAttackGuards','statChecks','abilityCueEvents'];$derived=['name','portrait','color','resources','hp','maxHp','mana','maxMana','fatigue','stats','temporaryStats','conditions','conditionsBase','healthOverride','abilities','weaponText','weaponAttacks','armor','magicArmor','armorCategory','magicArmorCategory','elementalResistances','initiativeBonus','hitThreshold'];$result=[];
  foreach($domains as$key=>$value){if($key==='activity'){$result[$key]=[];foreach($collections as$k)$result[$key][$k]=$value[$k]??[];continue;}if(!in_array($key,['items','devices','luck'],true)&&!preg_match('/^(character|token|map|initiative):/',$key))continue;$result[$key]=$value;if($key==='devices')unset($result[$key]['receipts']);if(str_starts_with($key,'token:')&&combatUndoLinked($value))foreach($derived as$field)unset($result[$key][$field]);}return $result;
 }
 function combatUndoDifference(mixed $before,mixed $after,string $domain,array $path,array &$out,bool $hasBefore=true,bool $hasAfter=true):void{
  if($hasBefore===$hasAfter&&combatUndoSame($before,$after))return;
- if($hasBefore&&$hasAfter&&is_array($before)&&is_array($after)&&(!array_is_list($before)||$before===[])&&(!array_is_list($after)||$after===[])){foreach(array_unique([...array_keys($before),...array_keys($after)])as$key)if(!preg_match('/^_|^(revision|createdAt|updatedAt|resolvedAt|requestedAt|__proto__|prototype|constructor)$/',(string)$key))combatUndoDifference($before[$key]??null,$after[$key]??null,$domain,[...$path,$key],$out,array_key_exists($key,$before),array_key_exists($key,$after));return;}
+ if($hasBefore&&$hasAfter&&!combatUndoImpactBleedingPath($domain,$path)&&is_array($before)&&is_array($after)&&(!array_is_list($before)||$before===[])&&(!array_is_list($after)||$after===[])){foreach(array_unique([...array_keys($before),...array_keys($after)])as$key)if(!preg_match('/^_|^(revision|createdAt|updatedAt|resolvedAt|requestedAt|__proto__|prototype|constructor)$/',(string)$key))combatUndoDifference($before[$key]??null,$after[$key]??null,$domain,[...$path,$key],$out,array_key_exists($key,$before),array_key_exists($key,$after));return;}
  if($hasBefore&&$hasAfter&&combatUndoIdentified($before)&&combatUndoIdentified($after)){$b=array_column($before,null,'id');$a=array_column($after,null,'id');foreach(array_unique([...array_keys($b),...array_keys($a)])as$id)combatUndoDifference($b[$id]??null,$a[$id]??null,$domain,[...$path,['id'=>$id]],$out,isset($b[$id]),isset($a[$id]));return;}
  $out[]=['domain'=>$domain,'path'=>$path,'hasBefore'=>$hasBefore,'hasAfter'=>$hasAfter,...($hasBefore?['before'=>$before]:[]),...($hasAfter?['after'=>$after]:[])];
 }
@@ -24,7 +29,34 @@ function combatUndoAliases(string $command,array $args,array $result):array{
 }
 function combatUndoAttacks(array $activity):array{$r=[];foreach($activity['attackReceipts']??[]as$v)if(!empty($v['attack']['id']))$r[$v['attack']['id']]=$v['attack'];foreach($activity['pendingAttacks']??[]as$a)if(!empty($a['id']))$r[$a['id']]=$a;return $r;}
 function combatUndoDamageAmount(?array $a):float{return ($a['status']??'')==='applied'?max(0,(float)($a['appliedDamage']??0)):0;}
-function combatUndoEntityKey(array $domains,string $scene,string $id):string{$key='token:'.$scene.':'.$id;$t=$domains[$key]??null;if($t===null)foreach($domains as$k=>$v)if(str_starts_with($k,'token:')&&($v['id']??'')===$id){$key=$k;$t=$v;break;}return $t!==null&&combatUndoLinked($t)?'character:'.$t['characterId']:$key;}
+function combatUndoEntityKey(array $domains, string $scene, string $id): string {
+    $key = 'token:'.$scene.':'.$id;
+    $token = $domains[$key] ?? null;
+    return $token !== null && combatUndoLinked($token) ? 'character:'.$token['characterId'] : $key;
+}
+
+function combatUndoDamageIndex(array $action, mixed $tokenId): int {
+    $candidates = [];
+    foreach ($action['damage'] as $index => $damage) {
+        if ($damage['tokenId'] !== $tokenId || $damage['amount'] <= $damage['refunded']) continue;
+        $scene = $damage['sceneId'] ?? '';
+        if ($scene !== '' && $scene !== ($action['sceneId'] ?? '')) continue;
+        $candidates[] = $index;
+    }
+    if (count($candidates) > 1) throw new RuntimeException('La cible de cette action est ambiguë dans sa scène d’origine.', 409);
+    return $candidates[0] ?? -1;
+}
+
+function combatUndoDamageEntityKey(array $domains, array $damage): string {
+    $scene = (string) ($damage['sceneId'] ?? '');
+    $recorded = (string) ($damage['entityKey'] ?? '');
+    if ($scene === '' || str_starts_with($recorded, 'character:')) return $recorded;
+    $tokenKey = 'token:'.$scene.':'.$damage['tokenId'];
+    if (isset($domains[$tokenKey]) && combatUndoLinked($domains[$tokenKey])) {
+        throw new RuntimeException('La cible est liée à une autre fiche depuis cette action.', 409);
+    }
+    return $tokenKey;
+}
 
 function combatUndoCompactRecord(array $action): array {
     $action['complete'] = false;
@@ -47,6 +79,7 @@ function combatUndoContinuationAliases(array $domains, array $activity): array {
     foreach (['abilityExecutions' => 'execution', 'pendingAttacks' => 'attack', 'pendingAbilityCasts' => 'validation',
         'statChecks' => 'check', 'damageOverTime' => 'effect'] as $field => $kind) {
         foreach ($activity[$field] ?? [] as $entry) {
+            if ($field === 'damageOverTime' && applicationIsImpactBleeding($entry)) continue;
             $live[$kind . ':' . $entry['id']] = true;
             if (!empty($entry['requestId'])) $live['request:' . $entry['requestId']] = true;
         }
@@ -118,7 +151,14 @@ function combatUndoRecord(array $beforeDomains,array &$afterDomains,string $comm
  if(!empty($result['deduplicated'])||!preg_match('/^(ability\.|token\.attack|token\.move|token\.roll|item\.(consume|activate|defenses|trap\.resolve|use\.cancel|opposition)|mechanics\.command|combat\.dot)/',$command)||$command==='token.roll'&&($args['kind']??'')!=='ability'&&($result['roll']['specialSuccessAwarded']??false)!==true)return null;
  $beforeActivity=$beforeDomains['activity']??[];$activity=$afterDomains['activity']??[];$list=$activity['combatActions']??[];$aliases=combatUndoAliases($command,$args,$result);$old=combatUndoAttacks($beforeActivity);$new=combatUndoAttacks($activity);$changed=[];
  foreach($new as$key=>$attack)if(!combatUndoSame($attack,$old[$key]??null)){$changed[]=$attack;$aliases[]='attack:'.$key;if(!empty($attack['complexExecutionId']))$aliases[]='execution:'.$attack['complexExecutionId'];if(!empty($attack['originExecutionId']))$aliases[]='execution:'.$attack['originExecutionId'];}
- foreach([['statChecks','check'],['damageOverTime','effect']]as[$field,$kind])foreach($activity[$field]??[]as$value)if(!in_array($value['id'],array_column($beforeActivity[$field]??[],'id'),true))$aliases[]=$kind.':'.$value['id'];foreach($afterDomains['items']['pendingUses']??[]as$value)if(!in_array($value['id'],array_column($beforeDomains['items']['pendingUses']??[],'id'),true))$aliases[]='item-use:'.$value['id'];if($aliases===[])return null;
+ foreach ([['statChecks','check'],['damageOverTime','effect']] as [$field,$kind]) {
+     foreach ($activity[$field] ?? [] as $value) {
+         if ($field === 'damageOverTime' && applicationIsImpactBleeding($value)) continue;
+         if (!in_array($value['id'], array_column($beforeActivity[$field] ?? [],'id'), true))
+             $aliases[] = $kind.':'.$value['id'];
+     }
+ }
+ foreach($afterDomains['items']['pendingUses']??[]as$value)if(!in_array($value['id'],array_column($beforeDomains['items']['pendingUses']??[],'id'),true))$aliases[]='item-use:'.$value['id'];if($aliases===[])return null;
  $matching=[];$incomplete=false;foreach($list as$i=>$a){if(array_intersect($a['aliases'],$aliases)){if(!empty($a['cancelled']))throw new RuntimeException('Cette action a été annulée par le MJ.',409);$matching[]=$i;}$incomplete=$incomplete||!empty($a['undoUnavailableAliases'])&&array_intersect($a['undoUnavailableAliases'],$aliases)!==[];}$previousIds=array_column($beforeActivity['playerActions']??[],'id');$added=array_values(array_filter($activity['playerActions']??[],static fn($a)=>!in_array($a['id'],$previousIds,true)));
  if($matching===[]){$primary=null;foreach(array_reverse($added)as$a)if(in_array($a['kind']??'',['ability','ability-workflow','attack'],true)){$primary=$a;break;}$action=['id'=>$id??'combat-'.($args['requestId']??$args['arguments']['requestId']??$result['attack']['id']??$result['execution']['id']??$args['executionId']??$args['complexExecutionId']??$args['attackId']??$args['validationId']??$args['effectId']??$args['useId']??randomToken(16)),'sceneId'=>$args['sceneId']??$result['attack']['sceneId']??$result['execution']['sceneId']??$beforeDomains['table']['activeSceneId']??'','sourceTokenId'=>$args['sourceTokenId']??$args['tokenId']??$result['attack']['sourceTokenId']??$result['execution']['sourceTokenId']??'','label'=>$result['execution']['abilityName']??$result['attack']['attackName']??$primary['summary']??'Action de combat','serial'=>max([0,...array_column($list,'serial')])+1,'aliases'=>[],'actionIds'=>[],'patches'=>[],'damage'=>[],'credits'=>[],'cancelled'=>false,'complete'=>!(in_array($command,['ability.resolve','ability.check.respond','token.attack.resolve','token.attack.oppose','token.attack.area.oppose','token.attack.area.resolve','token.move','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)||$command==='ability.complex'&&($args['action']??'')!=='start')];array_unshift($list,$action);$index=0;}
  else{$index=$matching[0];$action=$list[$index];foreach(array_slice($matching,1)as$i){foreach(['aliases','actionIds','patches','damage','credits','undoReceipts','undoUnavailableAliases']as$f)if(!empty($list[$i][$f]))$action[$f]=[...($action[$f]??[]),...$list[$i][$f]];$incomplete=$incomplete||!empty($list[$i]['undoUnavailable']);unset($list[$i]);}}
@@ -136,28 +176,94 @@ function combatUndoRecord(array $beforeDomains,array &$afterDomains,string $comm
 
  return combatUndoFinishRecord($afterDomains, $activity, $list, $index, $action);
 }
-function combatUndoResolveDomain(array $domains,string $key):string{if(!array_key_exists($key,$domains)&&str_starts_with($key,'token:')){$id=substr($key,strrpos($key,':')+1);foreach($domains as$k=>$v)if(str_starts_with($k,'token:')&&($v['id']??'')===$id)return $k;}return $key;}
-function combatUndoRead(array $domains,array $p):array{$key=combatUndoResolveDomain($domains,$p['domain']);if(!array_key_exists($key,$domains))return [false,null];$current=$domains[$key];foreach($p['path']as$part){if(!is_array($current))return [false,null];if(combatUndoSelector($part)){$index=array_search($part['id'],array_column($current,'id'),true);if($index===false)return [false,null];$current=$current[$index];}else{if(!array_key_exists($part,$current))return [false,null];$current=$current[$part];}}return [true,$current];}
+// Undo patches address the original document, including its scene identity.
+function combatUndoRead(array $domains,array $p):array{$key=$p['domain'];if(!array_key_exists($key,$domains))return [false,null];$current=$domains[$key];foreach($p['path']as$part){if(!is_array($current))return [false,null];if(combatUndoSelector($part)){$index=array_search($part['id'],array_column($current,'id'),true);if($index===false)return [false,null];$current=$current[$index];}else{if(!array_key_exists($part,$current))return [false,null];$current=$current[$part];}}return [true,$current];}
 function combatUndoPut(array &$domains,array $p,mixed $value,bool $exists):void{
- $key=combatUndoResolveDomain($domains,$p['domain']);$path=$p['path'];if($path===[]){if($exists)$domains[$key]=$value;else unset($domains[$key]);return;}if(!array_key_exists($key,$domains))return;$current=&$domains[$key];$last=array_pop($path);foreach($path as$part){if(!is_array($current))return;if(combatUndoSelector($part)){$i=array_search($part['id'],array_column($current,'id'),true);if($i===false)return;$current=&$current[$i];}else{if(!array_key_exists($part,$current))return;$current=&$current[$part];}}
+ $key=$p['domain'];$path=$p['path'];if($path===[]){if($exists)$domains[$key]=$value;else unset($domains[$key]);return;}if(!array_key_exists($key,$domains))return;$current=&$domains[$key];$last=array_pop($path);foreach($path as$part){if(!is_array($current))return;if(combatUndoSelector($part)){$i=array_search($part['id'],array_column($current,'id'),true);if($i===false)return;$current=&$current[$i];}else{if(!array_key_exists($part,$current))return;$current=&$current[$part];}}
  if(combatUndoSelector($last)){$i=array_search($last['id'],array_column($current,'id'),true);if($i===false){if($exists)$current[]=$value;}elseif($exists)$current[$i]=$value;else array_splice($current,$i,1);}elseif($exists)$current[$last]=$value;else unset($current[$last]);
 }
 function combatUndoNumeric(array $p):bool{return $p['hasBefore']&&$p['hasAfter']&&(is_int($p['before'])||is_float($p['before']))&&(is_int($p['after'])||is_float($p['after']))&&!preg_match('/At$|Until$|Serial$|^(x|y|size|readyRound|currentStepIndex|round)$/',is_string(end($p['path']))?end($p['path']):'');}
-function combatUndoBounded(?array $entity,array $path,float $value):float|int{$field=end($path);if($field==='specialSuccessStock')return (int)max(0,min(9999,$value));if($field==='personalAdvantageStock')return (int)max(0,min(9007199254740991,$value));if(in_array($field,['hp','mana'],true)){$holder=count($path)===2?($entity[$path[0]]??[]):$entity;$max=$holder[$field==='hp'?'maxHp':'maxMana']??null;if(is_numeric($max))$value=min($value,(float)$max);if($field==='mana')$value=max(0,$value);}if($field==='current'&&($path[count($path)-2]??'')==='fatigue')$value=max(0,$value);return max(-1e9,min(1e9,$value));}
+function combatUndoBounded(?array $entity,array $path,float $value):float|int{
+ $field=end($path);
+ if($field==='specialSuccessStock')return (int)max(0,min(9999,$value));
+ if($field==='personalAdvantageStock')return (int)max(0,min(9007199254740991,$value));
+ if(count($path)===3&&$path[0]==='characters'&&in_array($field,['rollCount','rawTotal'],true))return (int)max(0,min(1e9,$value));
+ if(in_array($field,['hp','mana'],true)){$holder=count($path)===2?($entity[$path[0]]??[]):$entity;$max=$holder[$field==='hp'?'maxHp':'maxMana']??null;if(is_numeric($max))$value=min($value,(float)$max);if($field==='mana')$value=max(0,$value);}
+ if($field==='current'&&($path[count($path)-2]??'')==='fatigue')$value=max(0,$value);
+ return max(-1e9,min(1e9,$value));
+}
+function combatUndoRestoreImpactBleeding(array &$domains,array $patch,?array $current):void {
+    $after = $patch['after'] ?? [];
+    if (empty($after['impactPulseId']) || ($current['impactPulseId'] ?? '') !== $after['impactPulseId']) return;
+    $before = $patch['before'] ?? null;
+    if ($before !== null) {
+        foreach ($domains['activity']['playerActions'] ?? [] as $entry) {
+            if (!empty($entry['undo']) && ($entry['operation']['kind'] ?? '') === 'resource-adjust'
+                && ($entry['operation']['impactBleeding']['after']['impactPulseId'] ?? null) === ($before['impactPulseId'] ?? '')) {
+                $before = null;
+                break;
+            }
+        }
+    }
+    if ($before !== null) {
+        foreach ($domains['activity']['combatActions'] ?? [] as $action) {
+            $refunded = array_filter($action['damage'] ?? [], static fn(array $damage):bool =>
+                $damage['tokenId'] === $before['targetTokenId'] && ($damage['sceneId'] ?? '') === ($before['sceneId'] ?? '')
+                && ($damage['refunded'] ?? 0) > 0);
+            if (empty($action['cancelled']) && $refunded === []) continue;
+            foreach ($action['patches'] ?? [] as $other) {
+                if (combatUndoImpactBleedingPath($other['domain'], $other['path'])
+                    && ($other['after']['impactPulseId'] ?? '') === ($before['impactPulseId'] ?? null)) {
+                    $before = null;
+                    break 2;
+                }
+            }
+        }
+    }
+    if ($before !== null) {
+        $ticks = max(0, (int) $after['remainingTurns'] - (int) $current['remainingTurns']);
+        $before['remainingTurns'] = max(0, (int) $before['remainingTurns'] - $ticks);
+        if ($ticks > 0) {
+            foreach (['combatId','lastManualTurn','lastTurnSerial','lastTargetRound'] as $clock) {
+                if (array_key_exists($clock, $current)) $before[$clock] = $current[$clock];
+                else unset($before[$clock]);
+            }
+        }
+    }
+    combatUndoPut($domains, $patch, $before, ($before['remainingTurns'] ?? 0) > 0);
+}
+function combatUndoRestoreManualImpactBleeding(array &$activity, array $operation): void {
+    $change = applicationImpactBleedingOperationChange($operation);
+    if ($change === null) return;
+    $patch = [
+        'domain'=>'activity',
+        'path'=>['damageOverTime', ['id'=>$change['after']['id']]],
+        'hasBefore'=>$change['before'] !== null,
+        'hasAfter'=>true,
+        ...$change,
+    ];
+    $domains = ['activity'=>$activity];
+    combatUndoRestore($domains, $patch);
+    $activity = $domains['activity'];
+}
 function combatUndoRestore(array &$domains,array $p):void{
  [$exists,$current]=combatUndoRead($domains,$p);$after=$p['after']??null;$before=$p['before']??null;$last=$p['path']===[]?null:end($p['path']);
+ if (combatUndoImpactBleedingPath($p['domain'], $p['path'])) {
+     combatUndoRestoreImpactBleeding($domains, $p, is_array($current) ? $current : null);
+     return;
+ }
  if(!$p['hasBefore']&&$p['hasAfter']&&is_array($after)&&combatUndoSelector($last)&&is_array($current)&&!combatUndoSame($current,$after)){$counters=[];foreach(['restUseCount','combatUseCount','percent','quantity','stackCount']as$k)if(is_numeric($after[$k]??null)&&is_numeric($current[$k]??null))$counters[]=$k;if($counters){$next=$current;$keep=false;foreach($counters as$k){$next[$k]=max(0,$next[$k]-$after[$k]);$keep=$keep||$next[$k]>0;}combatUndoPut($domains,$p,$next,$keep);return;}}
  if(!$p['hasBefore']&&$p['hasAfter']&&is_array($after)&&array_is_list($after)&&count(array_filter($after,'is_string'))===count($after)&&is_array($current)&&array_is_list($current)){$remaining=array_values(array_filter($current,static fn($v)=>!in_array($v,$after,true)));combatUndoPut($domains,$p,$remaining,$remaining!==[]);return;}
  if(!$p['hasBefore']){if(combatUndoSelector($last)||combatUndoSame($current,$after))combatUndoPut($domains,$p,null,false);return;}if(!$p['hasAfter']){if(!$exists)combatUndoPut($domains,$p,$before,true);return;}
  if(is_array($before)&&is_array($after)&&is_array($current)&&array_is_list($before)&&array_is_list($after)&&count(array_filter($before,'is_string'))===count($before)&&count(array_filter($after,'is_string'))===count($after)){combatUndoPut($domains,$p,array_values(array_unique([...array_filter($current,static fn($v)=>in_array($v,$before,true)||!in_array($v,$after,true)),...array_filter($before,static fn($v)=>!in_array($v,$after,true))])),true);return;}
  if(combatUndoSame($current,$after))combatUndoPut($domains,$p,$before,true);
 }
-function combatUndoMark(array &$activity,array $action,string $tokenId=''):void{
- $selected=static fn($a)=>is_array($a)&&(in_array('attack:'.($a['id']??''),$action['aliases'],true)||in_array('execution:'.($a['complexExecutionId']??''),$action['aliases'],true)||in_array('execution:'.($a['originExecutionId']??''),$action['aliases'],true))&&($tokenId===''||($a['targetTokenId']??'')===$tokenId);
+function combatUndoMark(array &$activity,array $action,string $tokenId='',string $sceneId=''):void{
+ $selected=static fn($a)=>is_array($a)&&(in_array('attack:'.($a['id']??''),$action['aliases'],true)||in_array('execution:'.($a['complexExecutionId']??''),$action['aliases'],true)||in_array('execution:'.($a['originExecutionId']??''),$action['aliases'],true))&&($tokenId===''||($a['targetTokenId']??'')===$tokenId&&($sceneId===''||($a['sceneId']??'')===$sceneId));
  if($tokenId===''){$activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($a)=>!$selected($a)));$activity['pendingAbilityCasts']=array_values(array_filter($activity['pendingAbilityCasts']??[],static fn($v)=>!in_array('validation:'.$v['id'],$action['aliases'],true)&&!in_array('request:'.($v['requestId']??''),$action['aliases'],true)));}
  foreach($activity['attackReceipts']??[]as$i=>$receipt)if($selected($receipt['attack']??null))$activity['attackReceipts'][$i]['attack']=[...$receipt['attack'],...($tokenId===''?['status'=>'cancelled','actionUndone'=>true]:['damageUndone'=>true]),'appliedDamage'=>0];
  if($tokenId==='')foreach($activity['resourceReceipts']??[]as$i=>$r)if(in_array('request:'.($r['requestId']??''),$action['aliases'],true)||in_array($r['actionId']??'',$action['actionIds'],true))if(isset($r['result'])){$r['result']=[...$r['result'],'actionUndone'=>true,'castSucceeded'=>false,'execution'=>null,'pendingUse'=>null,'pendingOpposition'=>false,'pendingValidation'=>false];if(isset($r['result']['attack']))$r['result']['attack']=[...$r['result']['attack'],'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];if(isset($r['result']['attacks']))foreach($r['result']['attacks']as$j=>$a)$r['result']['attacks'][$j]=[...$a,'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];unset($r['result']['roll']['mapEvent']);foreach($r['result']['rolls']??[]as$j=>$v)unset($r['result']['rolls'][$j]['mapEvent']);$activity['resourceReceipts'][$i]=$r;}
- foreach($activity['rolls']??[]as$i=>$roll)if($selected(['id'=>$roll['mapEvent']['attackId']??'','complexExecutionId'=>$roll['mapEvent']['complexExecutionId']??'','targetTokenId'=>$roll['mapEvent']['targetTokenId']??'']))unset($activity['rolls'][$i]['mapEvent']);
+ foreach($activity['rolls']??[]as$i=>$roll)if($selected(['id'=>$roll['mapEvent']['attackId']??'','complexExecutionId'=>$roll['mapEvent']['complexExecutionId']??'','targetTokenId'=>$roll['mapEvent']['targetTokenId']??'','sceneId'=>$roll['mapEvent']['sceneId']??'']))unset($activity['rolls'][$i]['mapEvent']);
  foreach($activity['playerActions']??[]as$i=>$entry)if(in_array($entry['id'],$action['actionIds'],true)){$activity['playerActions'][$i]['combatActionId']=$action['id'];if($tokenId==='')$activity['playerActions'][$i]['combatUndone']=true;}
 }
 function combatUndoDeviceReceipts(array &$domains,array $action):void{foreach($domains['devices']['receipts']??[]as$i=>$receipt)if(in_array('request:'.($receipt['requestId']??''),$action['aliases'],true)&&isset($receipt['result'])){$r=[...$receipt['result'],'actionUndone'=>true,'cancelled'=>true,'castSucceeded'=>false,'pendingValidation'=>false,'pendingOpposition'=>false,'pendingUse'=>null,'execution'=>null,'completionCue'=>null];if(isset($r['attack']))$r['attack']=[...$r['attack'],'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];foreach($r['attacks']??[]as$j=>$a)$r['attacks'][$j]=[...$a,'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];unset($r['roll']['mapEvent']);foreach($r['rolls']??[]as$j=>$v)unset($r['rolls'][$j]['mapEvent']);$domains['devices']['receipts'][$i]['result']=$r;}}
@@ -281,7 +387,8 @@ function combatUndoRestoreTimers(array &$domains, array $action): void {
 }
 
 function combatUndoDependencies(array $activity,array $action):void{
- $created=array_filter($action['patches'],static fn($p)=>combatUndoTimerId($p)===null&&!$p['hasBefore']&&$p['hasAfter']&&($p['path']===[]||combatUndoSelector(end($p['path']))));
+ $created=array_filter($action['patches'],static fn($p)=>combatUndoTimerId($p)===null
+    &&!combatUndoImpactBleedingPath($p['domain'],$p['path'])&&!$p['hasBefore']&&$p['hasAfter']&&($p['path']===[]||combatUndoSelector(end($p['path']))));
  foreach($activity['combatActions']??[]as$other){if($other['id']===$action['id']||!empty($other['cancelled'])||($other['serial']??0)<=($action['serial']??0))continue;foreach($other['patches']as$p)foreach($created as$c)if($c['domain']===$p['domain']&&count($c['path'])<=count($p['path'])&&combatUndoSame($c['path'],array_slice($p['path'],0,count($c['path']))))throw new RuntimeException('Une action plus récente utilise un effet ou un compteur créé par celle-ci. Annulez d’abord : '.$other['label'].'.',409);}
 }
 function combatUndoPreserveTimed(array &$domains,array $action,array $previous):void{
@@ -305,7 +412,25 @@ function combatUndoApply(array &$domains,array $args):array{
  $scope=$args['scope']??'action';$tokenId=$args['tokenId']??'';$requestId=$args['requestId']??'';$actorId=$args['actorId']??'';if(!in_array($scope,['action','target-damage'],true)||!is_string($requestId)||!preg_match('/^[A-Za-z0-9_-]{16,80}$/D',$requestId))throw new RuntimeException('Référence d’annulation invalide.',400);
  $activity=&$domains['activity'];$entry=null;foreach($activity['playerActions']??[]as$e)if($e['id']===($args['actionId']??''))$entry=$e;$index=-1;foreach($activity['combatActions']??[]as$i=>$a)if($a['id']===($entry['combatActionId']??$args['actionId']??''))$index=$i;if($index<0)throw new RuntimeException('Le suivi complet de cette action n’est plus disponible.',404);$action=$activity['combatActions'][$index];$signature=$scope.':'.$tokenId;
  foreach($action['undoReceipts']??[]as$r)if($r['requestId']===$requestId){if($r['actorId']!==$actorId||$r['signature']!==$signature)throw new RuntimeException('Cette référence appartient à une autre annulation.',409);return [...$r,'deduplicated'=>true];}if(!empty($action['cancelled']))throw new RuntimeException('Cette action a déjà été annulée.',409);if(!empty($action['undoUnavailable']))throw new RuntimeException('L’historique de cette action ne permet plus de l’annuler en sécurité.',409);if($scope==='action'&&($action['complete']??true)===false)throw new RuntimeException('Le début de cette action précède le suivi complet. Ses coûts et effets anciens ne peuvent pas être reconstruits avec certitude.',409);if($scope==='action'){combatUndoDependencies($activity,$action);combatUndoItemDependencies($domains,$action);}$restoredDamage=0;
- if($scope==='target-damage'){$di=-1;foreach($action['damage']as$i=>$d)if($d['tokenId']===$tokenId&&$d['amount']>$d['refunded'])$di=$i;if($di<0)throw new RuntimeException('Cette cible n’a plus de dégâts à retirer pour cette action.',409);$target=$action['damage'][$di];$entity=$domains[$target['entityKey']]??null;if($entity===null)throw new RuntimeException('Cette unité n’existe plus.',409);$path=isset($entity['resources'])?['resources','hp']:['hp'];$p=['domain'=>$target['entityKey'],'path'=>$path];[, $previous]=combatUndoRead($domains,$p);$next=combatUndoBounded($entity,$path,(float)$previous+$target['amount']-$target['refunded']);combatUndoPut($domains,$p,$next,true);$restoredDamage=$next-$previous;$action['damage'][$di]['refunded']=$target['amount'];$action['credits'][]=['domain'=>$target['entityKey'],'path'=>$path,'amount'=>$restoredDamage];combatUndoMark($activity,$action,$tokenId);}
+ if($scope==='target-damage'){
+    $di = combatUndoDamageIndex($action, $tokenId);
+    if($di<0)throw new RuntimeException('Cette cible n’a plus de dégâts à retirer pour cette action.',409);
+    $target = $action['damage'][$di];
+    $targetScene = (string) ($target['sceneId'] ?? '');
+    $entityKey = combatUndoDamageEntityKey($domains, $target);
+    $entity = $domains[$entityKey] ?? null;
+    if($entity===null)throw new RuntimeException('Cette unité n’existe plus.',409);
+    $path=isset($entity['resources'])?['resources','hp']:['hp'];$p=['domain'=>$entityKey,'path'=>$path];[, $previous]=combatUndoRead($domains,$p);
+    $next=combatUndoBounded($entity,$path,(float)$previous+$target['amount']-$target['refunded']);
+    combatUndoPut($domains,$p,$next,true);$restoredDamage=$next-$previous;
+    $action['damage'][$di]['refunded']=$target['amount'];$action['credits'][]=['domain'=>$entityKey,'path'=>$path,'amount'=>$restoredDamage];
+    foreach (array_reverse($action['patches']) as $patch) {
+        if (combatUndoImpactBleedingPath($patch['domain'], $patch['path']) && ($patch['after']['targetTokenId'] ?? '') === $tokenId
+            && ($targetScene === '' || ($patch['after']['sceneId'] ?? '') === $targetScene))
+            combatUndoRestore($domains, $patch);
+    }
+    combatUndoMark($activity,$action,$tokenId,$targetScene);
+ }
  else{combatUndoRestoreBeamDeltas($domains,$action,true);$previousConditions=$domains['devices']['timedConditions']??[];$executions=array_values(array_filter($activity['abilityExecutions']??[],static fn($e)=>in_array('execution:'.$e['id'],$action['aliases'],true)));$amounts=[];foreach($action['patches']as$p)if(combatUndoTimerId($p)===null&&combatUndoNumeric($p)){$key=json_encode([$p['domain'],$p['path']]);$amounts[$key]??=['patch'=>$p,'amount'=>0];$amounts[$key]['amount']+=$p['before']-$p['after'];}foreach($action['credits']as$c){$key=json_encode([$c['domain'],$c['path']]);$amounts[$key]??=['patch'=>['domain'=>$c['domain'],'path'=>$c['path']],'amount'=>0];$amounts[$key]['amount']-=$c['amount'];}foreach(array_reverse($action['patches'])as$p)if(combatUndoTimerId($p)===null&&!combatUndoNumeric($p)&&!combatUndoBeamWallPatch($p,$action))combatUndoRestore($domains,$p);combatUndoRestoreTimers($domains,$action);combatUndoRestoreBeamDeltas($domains,$action);applicationRemoveActionExplosionFire($domains,$action);foreach($amounts as$row){$p=$row['patch'];[$exists,$value]=combatUndoRead($domains,$p);if($exists&&(is_int($value)||is_float($value)))combatUndoPut($domains,$p,combatUndoBounded($domains[$p['domain']]??null,$p['path'],$value+$row['amount']),true);}foreach($executions as$e){$cancelled=[...$e,'status'=>'cancelled','revision'=>$e['revision']+1,'updatedAt'=>(int)floor(microtime(true)*1000),'completedAt'=>(int)floor(microtime(true)*1000)];$i=array_search($e['id'],array_column($activity['abilityExecutions']??[],'id'),true);if($i===false)$activity['abilityExecutions'][]=$cancelled;else $activity['abilityExecutions'][$i]=$cancelled;}$action['cancelled']=true;combatUndoMark($activity,$action);combatUndoDeviceReceipts($domains,$action);combatUndoPreserveTimed($domains,$action,$previousConditions);}
  $receipt=['requestId'=>$requestId,'actorId'=>$actorId,'actorName'=>$args['actorName']??'MJ','signature'=>$signature,'scope'=>$scope,'tokenId'=>$tokenId,'restoredDamage'=>$restoredDamage,'actionId'=>$action['id'],'createdAt'=>gmdate('c')];$action['undoReceipts'][]=$receipt;$activity['combatActions'][$index]=$action;return [...$receipt,'deduplicated'=>false];
 }
@@ -316,7 +441,51 @@ function combatUndoStamp(array $before,array &$after):void{
 }
 function onlineUndoCombatAction(PDO $db,array &$records,array &$pending,array $identity,array $args):array{
  $records=array_replace($records,applicationDomainRecords($db,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$entry=null;foreach($activity['playerActions']??[]as$a)if($a['id']===($args['actionId']??''))$entry=$a;$action=null;foreach($activity['combatActions']??[]as$a)if($a['id']===($entry['combatActionId']??''))$action=$a;if($action===null)throw new RuntimeException('Le suivi complet de cette action n’est plus disponible.',404);
- $keys=array_values(array_unique(['activity',...array_column($action['patches'],'domain'),...array_column($action['damage'],'entityKey')]));$records=array_replace($records,applicationDomainRecords($db,$keys));$domains=[];foreach($records as$k=>$r)$domains[$k]=applicationDomainPayload($records,$k);foreach($pending as$k=>$r)if(($r['operation']??'upsert')==='delete')unset($domains[$k]);else $domains[$k]=$r['payload'];$before=$domains;$result=combatUndoApply($domains,[...$args,'actorId'=>$identity['id'],'actorName'=>$identity['display_name']??'MJ']);if(!$result['deduplicated'])combatUndoStamp($before,$domains);
+ $keys = ['activity', ...array_column($action['patches'], 'domain'), ...array_column($action['damage'], 'entityKey')];
+ if (($args['scope'] ?? '') === 'target-damage') {
+     $damageIndex = combatUndoDamageIndex($action, $args['tokenId'] ?? null);
+     $damage = $action['damage'][$damageIndex] ?? [];
+     if (!empty($damage['sceneId']) && !str_starts_with($damage['entityKey'] ?? '', 'character:')) {
+         $tokenKey = onlineTokenDomainKey($damage['sceneId'], $damage['tokenId']);
+         if ($tokenKey !== '') $keys[] = $tokenKey;
+     }
+ }
+ $records=array_replace($records,applicationDomainRecords($db,array_values(array_unique($keys))));$domains=[];foreach($records as$k=>$r)$domains[$k]=applicationDomainPayload($records,$k);foreach($pending as$k=>$r)if(($r['operation']??'upsert')==='delete')unset($domains[$k]);else $domains[$k]=$r['payload'];
+ $before=$domains;
+ $archived=($args['scope']??'action')==='action'?applicationReadUndoResourceReceipts($db,$action,applicationResourceReceiptClock()):[];
+ $inline=array_column($domains['activity']['resourceReceipts']??[],null,'requestId');
+ $archived=array_diff_key($archived,$inline);
+ if($archived!==[])$domains['activity']['resourceReceipts']=[...array_values($inline),...array_values($archived)];
+ $archivedAttacks=applicationReadUndoDirectAttackReceipts($db,$action,applicationResourceReceiptClock());
+ $storedAttacks=$domains['activity']['attackReceipts']??[];
+ $archivedAttacks=array_diff_key($archivedAttacks,array_column($storedAttacks,null,'requestId'));
+ if($archivedAttacks!==[])$domains['activity']['attackReceipts']=[...$storedAttacks,...array_values($archivedAttacks)];
+ $result=combatUndoApply($domains,[...$args,'actorId'=>$identity['id'],'actorName'=>$identity['display_name']??'MJ']);
+ if($archivedAttacks!==[]){
+     $updated=[];
+     $retained=[];
+     foreach($domains['activity']['attackReceipts'] as $receipt){
+         $id=$receipt['requestId']??'';
+         if(isset($archivedAttacks[$id])){
+             if(!combatUndoSame($archivedAttacks[$id],$receipt))$updated[]=$receipt;
+         }else $retained[]=$receipt;
+     }
+     if(!$result['deduplicated'])applicationWriteDirectAttackReceipts($db,$updated);
+     $domains['activity']['attackReceipts']=$retained;
+ }
+ if($archived!==[]){
+     $updated=[];
+     $retained=[];
+     foreach($domains['activity']['resourceReceipts'] as $receipt){
+         $id=$receipt['requestId']??'';
+         if(isset($archived[$id])){
+             if(!combatUndoSame($archived[$id],$receipt))$updated[]=$receipt;
+         }else $retained[]=$receipt;
+     }
+     if(!$result['deduplicated'])applicationWriteResourceReceiptLedger($db,$updated);
+     $domains['activity']['resourceReceipts']=$retained;
+ }
+ if(!$result['deduplicated'])combatUndoStamp($before,$domains);
  foreach($domains as$k=>$character)if(str_starts_with($k,'character:')&&!combatUndoSame($before[$k]??null,$character)){$occurrences=applicationCharacterTokenDomainRecords($db,substr($k,10));$records=array_replace($records,$occurrences);foreach($occurrences as$tk=>$record){$token=$domains[$tk]??$pending[$tk]['payload']??applicationDomainPayload($records,$tk);$before[$tk]??=$token;if(unitUsesCharacterSheet($token))$domains[$tk]=synchronizeOnlineCharacterToken($token,$character);}}
  foreach(array_unique([...array_keys($before),...array_keys($domains)])as$k)if(!combatUndoSame($before[$k]??null,$domains[$k]??null)){if(!isset($domains[$k]))queueOnlineDomainDelete($pending,$records,$k);else queueOnlineDomainUpsert($pending,$records,$k,$domains[$k]);}
 

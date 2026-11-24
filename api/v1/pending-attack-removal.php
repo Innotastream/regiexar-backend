@@ -4,22 +4,28 @@ declare(strict_types=1);
 function applicationCancelAttacksForDeletedTokens(PDO $connection, array $changes): array
 {
     $removed = [];
+    $removedScenes = [];
+    $arrivals = [];
     $activityIndex = null;
     foreach ($changes as $index => $change) {
         $key = $change['key'];
         if ($key === 'activity') $activityIndex = $index;
-        if ($change['operation'] === 'delete' && str_starts_with($key, 'token:')) {
+        if ($change['operation'] === 'delete' && str_starts_with($key, 'scene:')) {
+            $removedScenes[substr($key, 6)] = true;
+        }
+        if (str_starts_with($key, 'token:')) {
             [, $sceneId, $tokenId] = explode(':', $key, 3);
-            $removed[$sceneId][$tokenId] = true;
+            if ($change['operation'] === 'delete') $removed[$sceneId][$tokenId] = true;
+            elseif ($change['operation'] === 'upsert' && !isset($change['current'])) $arrivals[$tokenId] = true;
         }
     }
-    if ($removed === []) return $changes;
+    if ($removed === [] && $removedScenes === []) return $changes;
 
     $records = applicationDomainRecords($connection, ['activity']);
     $stored = applicationDomainPayload($records, 'activity');
     $activity = $changes[$activityIndex]['payload'] ?? $stored;
     $reconciled = applicationCancelPendingAttacksForRemovedTokens(
-        $activity, $removed, (int) floor(microtime(true) * 1000), $stored
+        $activity, $removed, (int) floor(microtime(true) * 1000), $stored, $removedScenes, $arrivals
     );
     if ($reconciled === $activity) return $changes;
 
@@ -33,10 +39,22 @@ function applicationCancelAttacksForDeletedTokens(PDO $connection, array $change
     return $changes;
 }
 
-function applicationCancelPendingAttacksForRemovedTokens(array $activity, array $removed, int $now, ?array $stored = null): array
+function applicationCancelPendingAttacksForRemovedTokens(
+    array $activity, array $removed, int $now, ?array $stored = null, array $removedScenes = [], array $arrivals = []
+): array
 {
-    if ($removed === []) return $activity;
+    if ($removed === [] && $removedScenes === []) return $activity;
     $stored ??= $activity;
+    foreach (['damageOverTime', 'pendingDotResolutions'] as $field) {
+        if (!is_array($activity[$field] ?? null)) continue;
+        $activity[$field] = array_values(array_filter($activity[$field], static function (mixed $effect) use ($removed, $removedScenes, $arrivals): bool {
+            if (!is_array($effect)) return true;
+            $sceneId = $effect['sceneId'] ?? '';
+            $targetId = $effect['targetTokenId'] ?? '';
+            return !is_string($sceneId) || (!isset($removedScenes[$sceneId])
+                && (!is_string($targetId) || !isset($removed[$sceneId][$targetId]) || isset($arrivals[$targetId])));
+        }));
+    }
     $removedIds = [];
     foreach ($removed as $tokens) $removedIds += $tokens;
     $wasOmittedByClient = static function (mixed $attack) use ($removedIds): bool {
@@ -46,8 +64,9 @@ function applicationCancelPendingAttacksForRemovedTokens(array $activity, array 
         }
         return false;
     };
-    $involvesRemovedParty = static function (mixed $attack) use ($removed): bool {
+    $involvesRemovedParty = static function (mixed $attack) use ($removed, $removedScenes): bool {
         if (!is_array($attack) || !is_string($attack['sceneId'] ?? null)) return false;
+        if (isset($removedScenes[$attack['sceneId']])) return true;
         $removedOnScene = $removed[$attack['sceneId']] ?? [];
         if ($removedOnScene === []) return false;
         $parties = [$attack['sourceTokenId'] ?? '', $attack['targetTokenId'] ?? '',

@@ -72,6 +72,16 @@ $character['abilities'][] = ['id'=>$danceId,'name'=>'Danse de la griffe','effect
 $db->put('character:character-player', $character);
 $danceRequest = ['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player',
     'attackKind'=>'ability','attackId'=>$danceId,'requestId'=>'claw-dance-'.randomToken(20),'opposed'=>false];
+$enemy = $db->payload('token:scene-one:token-monster');
+$activityBeforeEmptyDance = $db->payload('activity');
+$db->put('token:scene-one:token-monster', [...$enemy,'x'=>96,'y'=>96]);
+$empty = runCommand($db,'token.attack',[...$danceRequest,'requestId'=>'claw-dance-empty-'.randomToken(20)]);
+specialCheck($empty->status === 409 && ($empty->body['code'] ?? '') === 'ability_weapon_area_empty'
+    && str_contains($empty->body['error'] ?? '', 'Rapprochez le lanceur d’un ennemi visible')
+    && $db->payload('activity') === $activityBeforeEmptyDance
+    && $db->payload('character:character-player') === $character,
+    'An empty Danse explains how to find a target and spends no resources.');
+$db->put('token:scene-one:token-monster', $enemy);
 $prepared = runCommand($db, 'token.attack', $danceRequest);
 specialCheck($prepared->status === 200 && !empty($prepared->body['pendingAreaGate']) && $db->payload('items') === $itemStore,
     'Danse prepares a real inventory chain while the original blade stays equipped: ' . json_encode($prepared->body));
@@ -92,6 +102,80 @@ $db->put('items', $itemStore);
 $after = $db->payload('character:character-player');
 $missing = runCommand($db, 'token.attack', [...$danceRequest,'requestId'=>'claw-dance-missing-'.randomToken(20)]);
 specialCheck($missing->status === 409 && ($missing->body['code'] ?? '') === 'ability_weapon_missing'
+    && str_contains($missing->body['error'] ?? '', 'Placez-y l’arme')
     && $db->payload('character:character-player') === $after && $db->payload('items') === $itemStore,
     'Danse cannot borrow an unavailable chain and pays nothing on refusal');
+
+$itemStore['instances'][1]['location']['characterId'] = 'character-player';
+$db->put('items', $itemStore);
+$created = runCommand($db, 'token.clone', ['sceneId'=>'scene-one','tokenId'=>'token-player','requestId'=>'claw-dance-clone-req-0001'], true, 'account-gm');
+$clone = $created->body['token'] ?? [];
+specialCheck($created->status === 200 && ($clone['cloneSourceCharacterId'] ?? '') === 'character-player', 'The native clone command creates an autonomous sheet.');
+$cloneId = $clone['id'];
+$cloneKey = 'token:scene-one:' . $cloneId;
+$initiative = $db->payload('initiative:scene-one');
+$initiative['order'] = [$cloneId, 'token-monster', 'token-player'];
+$initiative['currentIndex'] = 0;
+$initiative['turnSerial']++;
+$db->put('initiative:scene-one', $initiative);
+$cloneItems = $db->payload('items');
+$clonedChain = array_values(array_filter($cloneItems['instances'], static fn($item) =>
+    $item['templateId'] === $chainTemplate && ($item['location']['characterId'] ?? '') === 'unit_' . $cloneId))[0] ?? [];
+specialCheck(($clonedChain['id'] ?? '') !== '' && $clonedChain['id'] !== 'chain', 'A modern clone carries its own chain instance.');
+foreach ([false,true] as $legacyClone) {
+    $capture = $db->payload('items');
+    if ($legacyClone) {
+        $capture['instances'] = array_values(array_filter($capture['instances'], static fn($item) => $item['id'] !== $clonedChain['id']));
+        $db->put('items', $capture);
+        $initiative['round']++;
+        $initiative['turnSerial']++;
+        $db->put('initiative:scene-one', $initiative);
+    }
+    $oldVictim = $db->payload('token:scene-one:token-monster')['hp'];
+    $castMana = $db->payload($cloneKey)['mana'];
+    $newRequest = [...$danceRequest,'sourceTokenId'=>$cloneId,'targetTokenId'=>$cloneId,'requestId'=>'claw-dance-clone-' . (int) $legacyClone . '-' . randomToken(20)];
+    $pendingDance = runCommand($db, 'token.attack', $newRequest);
+    specialCheck($pendingDance->status === 200 && !empty($pendingDance->body['pendingAreaGate']),
+        'The clone’s Danse prepares automatically: ' . json_encode($pendingDance->body));
+    $slashed = fixtureApproveDefenseGate($db, $pendingDance);
+    specialCheck($slashed->status === 200 && $db->payload('token:scene-one:token-monster')['hp'] === $oldVictim - 13
+        && $db->payload($cloneKey)['mana'] === $castMana - 7, 'The chain resolves its original attack and spends only the clone’s mana: ' . json_encode($slashed->body));
+    $child = array_values(array_filter($db->payload('activity')['attackReceipts'], static fn($row) =>
+        ($row['attack']['sourceTokenId'] ?? '') === $cloneId && ($row['attack']['targetTokenId'] ?? '') === 'token-monster'));
+    $context = end($child)['attack']['echoAttackContext'];
+    specialCheck($legacyClone
+        ? $context['equipmentItemIds'] === [] && $context['equipmentTemplateIds'] === [$chainTemplate]
+        : $context['equipmentItemIds'] === [$clonedChain['id']],
+        'A clone draws its own weapon first and uses the approved model only if the old clone had no chain.');
+    specialCheck($db->payload('items') === $capture && $db->payload('character:character-player') === $after,
+        'After the swing, both inventories, hands and original character sheet are preserved.');
+}
+$drawRule = applicationAbilityWeaponDrawRule($character['abilities'][array_key_last($character['abilities'])]);
+$classic = applicationInventoryWeaponForAbilityDraw($drawRule, [], $clone, ['items'=>[]]);
+specialCheck($classic['equipmentTemplateIds'] === [$chainTemplate] && $classic['formula'] === '1d70+20'
+    && applicationInventoryWeaponForAbilityDraw($drawRule, [], [...$clone,'cloneSourceCharacterId'=>null], ['items'=>[]])['formula'] === '1d70+20'
+    && applicationInventoryWeaponForAbilityDraw($drawRule, [], [...$clone,'cloneSourceTokenId'=>null], ['items'=>[]]) === null,
+    'The packaged chain has its original formula when the model is missing and requires real clone provenance.');
+$legacyStore = $db->payload('items');
+foreach ($legacyStore['templates'] as &$template) if ($template['id'] === $chainTemplate) unset($template['equipment']);
+unset($template);
+$db->put('items', $legacyStore);
+$legacyClone = $db->payload($cloneKey);
+foreach ($legacyClone['abilities'] as &$ability) if ($ability['id'] === $danceId) $ability['useWeaponDamage'] = true;
+unset($ability);
+$db->put($cloneKey, $legacyClone);
+$initiative['round']++;
+$initiative['turnSerial']++;
+$db->put('initiative:scene-one', $initiative);
+$staleRequest = [...$danceRequest, 'sourceTokenId'=>$cloneId, 'targetTokenId'=>$cloneId, 'weaponAttackId'=>'blade-strike',
+    'requestId'=>'claw-dance-clone-stale-weapon-0001'];
+$prepared = runCommand($db,'token.attack',$staleRequest);
+specialCheck($prepared->status === 200 && !empty($prepared->body['pendingAreaGate']), 'Old clients selecting the equipped blade still get the forced chain: ' . json_encode($prepared->body));
+$resolved = fixtureApproveDefenseGate($db, $prepared);
+$cloneAttacks = array_values(array_filter($db->payload('activity')['attackReceipts'], static fn($row) =>
+    ($row['attack']['sourceTokenId'] ?? '') === $cloneId && ($row['attack']['targetTokenId'] ?? '') === 'token-monster'));
+$swing = end($cloneAttacks)['attack'];
+specialCheck($resolved->status === 200 && $swing['damageFormula'] === '1d70+20' && $swing['damageType'] === 'physical'
+    && $swing['echoAttackContext']['equipmentTemplateIds'] === [$chainTemplate] && $db->payload('items') === $legacyStore,
+    'Configured weapon damage comes from the fallback chain and does not touch the player’s equipment.');
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

@@ -10,7 +10,9 @@ specialCheck(passiveNativeCommand($db,'item.template.create',['template'=>$templ
 specialCheck(passiveNativeCommand($db,'item.spawn',['templateId'=>$template['id'],'itemId'=>'native-bottle','location'=>['kind'=>'inventory','characterId'=>'character-player']])->status===200,'Native potion inventory');
 $request='passive-once-'.randomToken(18);$args=['requestId'=>$request,'itemId'=>'native-bottle','expectedItemRevision'=>1];$result=passiveNativeCommand($db,'item.consume',$args,false);
 specialCheck($result->status===200,'Real potion consumption: '.json_encode($result->body));specialCheck($db->payload('character:character-player')['resources']['hp']===70,'Forty ignore-armour potion damage becomes thirty');
-$dot=$db->payload('activity')['damageOverTime'][0];specialCheck($dot['remainingTurns']===2&&$dot['sourceItemKind']==='potion','Poison/potion overlap subtracts only one turn');
+$dots=$db->payload('activity')['damageOverTime'];
+$dot=array_values(array_filter($dots,static fn($dot)=>($dot['family']??'')==='poison'))[0];
+specialCheck($dot['remainingTurns']===2&&$dot['sourceItemKind']==='potion','Poison/potion overlap subtracts only one turn');
 specialCheck(!empty(passiveNativeCommand($db,'item.consume',$args,false)->body['deduplicated']),'Native receipt does not consume twice');specialCheck($db->payload('character:character-player')['resources']['hp']===70,'Native receipt leaves HP untouched');
 $records=applicationDomainRecords($db,['activity','token:scene-one:token-player','character:character-player']);$pending=[];$health=applyOnlineAttackDamage($db,$records,$pending,'token:scene-one:token-player',$db->payload('token:scene-one:token-player'),40,false,['rawDamage'=>40,'finalDamage'=>40,'armorPercent'=>0,'damageType'=>'ignore','family'=>'poison']);
 specialCheck($health['appliedDamage']===30&&$health['passivePreventedDamage']===10,'Periodic poison uses the same authoritative passive reduction');specialCheck($pending['character:character-player']['payload']['resources']['hp']===40,'Periodic reduction queues the correct durable HP');

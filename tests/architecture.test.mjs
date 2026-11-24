@@ -5,7 +5,7 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const read = (relative) => readFile(new URL(relative, root), "utf8");
 
-const expectedSharedGmCommands = "timer.delete luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount door.interact rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.defenses.select item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.effect.periodic-hp combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.area.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
+const expectedSharedGmCommands = "timer.delete luck.reset unit.friendly-fire mechanics.command passage.create passage.visibility passage.edit passage.link passage.remove passage.use ensure-player admin.character.delete token.move token.mount door.interact rest.announce item.category.create item.template.delete item.quick.create item.equipment.create item.equipment.update item.equipment.set item.equipment.set.delete item.equipment.equip item.vessel.request item.vessel.resolve item.activate item.trap.resolve item.use.cancel item.defenses.select item.opposition item.opposition.validate item.template.create item.template.update item.spawn item.move item.configure item.transfer item.drop item.pickup item.loot item.favorite.set item.consume item.effects.rest item.destroy tokens.layers tokens.transform token.clone token.reinforce token.conditions.update character.conditions.update light.carry token.resource.adjust ability.use ability.complex ability.resolve ability.check.respond token.roll roll.reveal combat.effect.remove combat.effect.stack combat.effect.periodic-hp combat.dot.resolve action.undo token.attack token.attack.oppose token.attack.area.oppose token.attack.resolve token.attack.area.resolve ping".split(" ");
 function assertSharedGmCommands(source) {
   const guard = source.match(/if \(\$isGm && !in_array\(\$command, \['strategy-break','table-tokens','map.time-weather'\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
   assert.ok(guard, "la liste commune doit rester sous le contrôle du mode MJ");
@@ -17,6 +17,7 @@ function assertSharedGmCommands(source) {
 const PHP_SOURCES = ["api/v1/ability-icon.php","api/v1/ability-stat-check.php","api/v1/ability-stat-check-online.php","tests/ability-stat-check-contract.php","tests/mysql-ability-stat-check.php","api/v1/character-lore.php", "tests/character-lore-contract.php","api/v1/index.php", "api/v1/online.php", "api/v1/domains.php", "api/v1/image-studio.php", "api/v1/ability-assistant.php", "api/v1/health-overlays.php", "api/v1/token-groups.php", "api/v1/token-pathfinding.php", "api/v1/complex-abilities.php", "api/v1/ability-effects.php", "api/v1/ability-use.php", "api/v1/ability-casting.php", "api/v1/ability-complex.php", "api/v1/tactical-rolls.php", "tests/complex-abilities-contract.php", "tests/ability-assistant-contract.php", "tests/ability-casting-contract.php", "tests/tactical-rolls-audio-contract.php", "tests/domain-backward-compatibility.php", "tests/tactical-lifecycle.php", "tests/client-policy.php", "tests/lighting-carry-cases.php", "index.php", "initialisation.php", "recuperation.php", "studio.php"];
 
 PHP_SOURCES.push("api/v1/targeted-attack-authority.php","api/v1/deferred-defense-authority.php","api/v1/device-defense-gates.php","api/v1/complex-defense-gate.php","api/v1/weapon-turn-limits.php","tests/gm-defense-selection.php","tests/weapon-turn-authority.php");
+PHP_SOURCES.push("api/v1/total-opposition.php","tests/total-opposition.php");
 
 function phpBlocks(source) {
   return [...source.matchAll(/<\?php([\s\S]*?)(?:\?>|$)/g)].map((match) => match[1]).join("\n");
@@ -101,8 +102,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.21'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-3-combat-effects-20261121-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.22'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-4-opposition-totale-20261124-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -139,9 +140,9 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
   assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.21");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.3");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 25);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.22");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.4");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 27);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
@@ -239,8 +240,8 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /normalizeOnlineAbilities/);
   assert.match(attack, /findEntryIndex\(\$stats/);
   assert.match(attack, /onlineRollAttackDamage\(\[\.\.\.\$damageSpecification,'sceneId'=>\$sceneId\], \$target,null,onlineAttackEnhancementState\(/);
-  assert.match(effects, /foreach \(\$selected\['components'\] as \$(\w+)\)[\s\S]*?onlineAttackArmorPercent\(\$target, \$\1\['type'\]\)/);
-  assert.match(effects, /onlineAttackArmorPercent\(\$target, \$attack\['damageType'\] \?\? 'physical'\)/);
+  assert.match(effects, /foreach \(\$selected\['components'\] as \$(\w+)\)[\s\S]*?onlineTypedDamageSummary\([^;]+\$target,\s*\$\1\['type'\]/);
+  assert.match(effects, /onlineTypedDamageSummary\([^;]+\$target,\s*\$attack\['damageType'\] \?\? 'physical'/);
   assert.match(effects, /\$final \+= \$summary\['finalDamage'\]/);
   assert.match(attack, /\$combatActive = \(\$initiative\['active'\] \?\? false\) === true/);
   assert.match(attack, /elseif \(\$combatActive\)[\s\S]*?applyOnlineAttackDamage/);
@@ -312,7 +313,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(domains, /pendingAttacks'\] \?\? \[\], XAR_PENDING_ATTACK_MAXIMUM/);
   assert.match(domains, /attackReceipts'\] \?\? \[\], XAR_ATTACK_RECEIPT_MAXIMUM/);
   assert.match(online, /for \(\$suffix = 2; isset\(\$seen\[\$id\]\); \$suffix \+= 1\)/);
-  assert.match(domains, /\['physical', 'magical', 'ignore'\]/);
+  assert.match(domains, /applicationDamageType\(\$payload\['damageType'\]\) === null/);
 });
 
 test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les droits Joueur", async () => {
@@ -362,9 +363,9 @@ test("la santé reste publique mais seule la version courante peut se connecter"
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.3.3");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.3"]);
-  assert.equal(manifest.minimumApplicationVersion, "4.3.3");
+  assert.equal(manifest.announcedApplicationVersion, "4.3.4");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.3.4"]);
+  assert.equal(manifest.minimumApplicationVersion, "4.3.4");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));
   assert.match(policy, /'enforce' => true/);
@@ -394,7 +395,7 @@ test("un déploiement backend demande la sauvegarde puis révoque les anciennes 
   assert.match(index, /INSERT INTO auth_sessions[\s\S]*?backend_version[\s\S]*?:backend_version/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?takeover_requested_at = UTC_TIMESTAMP\(3\)/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?DELETE FROM auth_sessions WHERE backend_version <> :backend_version/);
-  assert.match(index, /ensureCurrentSchema\(\$connection\);\s+synchronizeBackendRelease\(\$connection\);/);
+  assert.match(index, /ensureCurrentSchema\(\$connection\);\s+applicationResourceReceiptLedgerEnabled\(\$connection, true\);\s+applicationDirectAttackLedgerEnabled\(\$connection, true\);\s+synchronizeBackendRelease\(\$connection\);/);
   assert.match(online, /backendSessionNeedsHandoff\(\$identity\)[\s\S]*?'session-takeover'[\s\S]*?'backend-update'/);
 });
 
@@ -807,7 +808,7 @@ test("les PV et le mana d’un token sont ajustés atomiquement sans élargir le
   assert.match(adjustment, /if \(\$resourceChanged\) \{/);
   assert.match(adjustment, /applicationCharacterTokenDomainRecords\(\$connection, \$characterId\)/);
   assert.match(adjustment, /queueOnlineDomainUpsert\(\$pending, \$records, \$characterKey, \$character\)/);
-  assert.match(adjustment, /'resourcePulse' => \$pulse/);
+  assert.match(adjustment, /'resourcePulse' => \$targetPulse/);
   assert.match(adjustment, /'characterId' => is_array\(\$character\) \? \$characterId : ''/);
   assert.match(command, /invalid_resource_request/);
   assert.match(command, /resource_receipt_forbidden/);
@@ -821,6 +822,8 @@ test("les PV et le mana d’un token sont ajustés atomiquement sans élargir le
   assert.match(command, /\$command === 'action\.undo'/);
   assert.match(command, /action_already_undone/);
   assert.match(command, /applyOnlineTokenResourceAdjustment[\s\S]*?-\$originalDelta/);
+  assert.match(command, /combatUndoRestoreManualImpactBleeding\(\$activity, \$operation\)/);
+  assert.match(command, /if \(!\$isGm\) unset\(\$result\['action'\]\['operation'\]\['impactBleeding'\]\)/);
   assert.match(online, /'resourcePulse'/);
   assert.match(online, /array_key_exists\('notes', \$token\)/);
   assert.match(domains, /array_key_exists\('resourcePulse', \$payload\)/);
@@ -1022,7 +1025,8 @@ test("la projection joueur garde les monstres privés et partage les détails un
   const projection = online.slice(online.indexOf("function publicPlayerState"), online.indexOf("function readOnlineState"));
   assert.match(projection, /\$effectiveControllerId = onlineEffectiveTokenControllerId/);
   assert.match(projection, /\$allied = \$effectiveControllerId !== ''/);
-  assert.match(projection, /'conditions' => normalizeOnlineConditions[\s\S]*?'condition' => implode/);
+  assert.match(projection, /\$conditions = applicationUnsuppressedConditions\(\$token, normalizeOnlineConditions/);
+  assert.match(projection, /'conditions' => \$conditions,\s*'condition' => implode\(', ', \$conditions\)/);
   assert.match(projection, /\$notesVisible = \$allied \|\|/);
   assert.match(projection, /\$details = \$allied \|\| \(\$token\['revealDetailsToPlayers'\] \?\? false\) === true/);
   assert.match(projection, /if \(\$details\) \{[\s\S]*?foreach \(\['hp', 'maxHp', 'mana', 'maxMana'/);
@@ -1117,7 +1121,7 @@ test("plusieurs MJ sont sérialisés par transaction sans verrou de session glob
   const [domains, online, index] = await Promise.all([
     read("api/v1/domains.php"), read("api/v1/online.php"), read("api/v1/index.php")
   ]);
-  const patch = domains.slice(domains.indexOf("function patchApplicationDomains"), domains.indexOf("function readDomainHistory"));
+  const patch = domains.slice(domains.indexOf("function patchApplicationDomains"), domains.indexOf("function reconcileApplicationMountedTokenDomains"));
   assert.match(patch, /beginTransaction\(\)/);
   assert.match(patch, /domainClockRecord\(\$connection, true\)/);
   assert.match(patch, /expectedRevision/);
@@ -1131,7 +1135,8 @@ test("plusieurs MJ sont sérialisés par transaction sans verrou de session glob
   assert.match(domains, /function canonicalApplicationDomainValue/);
   assert.match(domains, /applicationDomainPayloadForComparison/);
   assert.match(domains, /protectApplicationDomainAgainstStaleEntityWrite/);
-  assert.match(patch, /prepareApplicationDomainUpsert\(\$key, \$change\['payload'\] \?\? null, \$current, true\)/);
+  assert.match(patch, /\$payload = \$change\['payload'\] \?\? null/);
+  assert.match(patch, /applicationProtectPrivateResourceReceipts\(\$connection, \$payload[\s\S]*?applicationProtectPrivateDirectAttackReceipts\(\$connection, \$payload[\s\S]*?prepareApplicationDomainUpsert\(\$key, \$payload, \$current, true\)/);
   assert.match(online, /GROUP BY a\.id, a\.display_name, s\.effective_mode/);
   assert.match(index, /UNIQUE KEY uq_auth_sessions_account \(account_id\)/);
   assert.doesNotMatch(index, /UNIQUE KEY[^\n]+effective_mode/);

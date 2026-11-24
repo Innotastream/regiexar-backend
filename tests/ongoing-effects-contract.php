@@ -43,6 +43,18 @@ $resolved = runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm');
 requireTactical($resolved->status === 200 && $resolved->body['roll']['formula'] === '20' && $resolved->body['appliedDamage'] === 20 && (int) $db->payload('token:scene-one:token-monster')['hp'] === 20, 'Calculated remainder applies once to current HP');
 requireTactical(runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm')->body['deduplicated'] === true && (int) $db->payload('token:scene-one:token-monster')['hp'] === 20, 'Damage retry never applies twice');
 requireTactical(runCommand($db, 'combat.dot.resolve', [...$body, 'decision' => 'custom', 'formula' => '7'], true, 'account-gm')->status === 409, 'Reusing an id for different damage is rejected');
+$db = effectFixture([[...$dot, 'label' => 'Brûlure', 'damageType' => 'magical']]);
+$target = $db->payload('token:scene-one:token-monster');
+$target['elementalResistances'] = ['fire' => 100];
+$db->put('token:scene-one:token-monster', $target);
+historicalRemainder($db);
+$body = ['effectId' => $dot['id'], 'decision' => 'roll', 'requestId' => 'resolve-fire-immune-0001'];
+$response = runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm');
+requireTactical($response->status === 200 && $response->body['appliedDamage'] === 0
+    && $response->body['roll']['mapEvent']['applied'] === false
+    && $db->payload('token:scene-one:token-monster')['hp'] === 40
+    && $db->payload('activity')['pendingDotResolutions'] === [], 'An immune target clears the legacy remainder without a damage write.');
+requireTactical(runCommand($db, 'combat.dot.resolve', $body, true, 'account-gm')->body['deduplicated'] === true, 'Fully resisted damage is deduplicated.');
 foreach (['custom', 'skip'] as $decision) {
     $db = effectFixture([$dot]); historicalRemainder($db);
     $response = runCommand($db, 'combat.dot.resolve', ['effectId' => $dot['id'], 'decision' => $decision, 'formula' => '7', 'requestId' => 'resolve-' . $decision . '-contract-0001'], true, 'account-gm');
@@ -115,4 +127,19 @@ requireTactical(runCommand($db,'combat.effect.periodic-hp',[...$now,'startNextTu
 $advanced=runCommand($db,'mechanics.command',['command'=>'scene.advance','arguments'=>['sceneId'=>'scene-one','requestId'=>'manual-hp-php-turn-0001']],true,'account-gm');
 requireTactical($advanced->status===200 && $db->payload('character:character-player')['resources']['hp']===18
     && $db->payload('activity')['damageOverTime']===[],'One manual advance completes the immediate two-turn effect');
+
+$existing = array_map(static fn(int $index): array => [...$dot, 'id'=>'existing-dot-'.$index], range(1, 100));
+$db = effectFixture($existing);
+$scheduled = runCommand($db, 'combat.effect.periodic-hp', $periodic, true, 'account-gm');
+requireTactical($scheduled->status === 200 && count($db->payload('activity')['damageOverTime']) === 101,
+    'A full old list does not reject the next scheduled effect.');
+$records = applicationDomainRecords($db);
+$pending = [];
+$attack = applyOnlineAttackConditions($db, $records, $pending, [
+    'id'=>'ongoing-capacity-attack', 'sceneId'=>'scene-one', 'targetTokenId'=>'token-monster', 'status'=>'applied',
+    'damageOverTime'=>['label'=>'Poison de recette', 'formula'=>'7', 'damageType'=>'poison', 'turns'=>2],
+]);
+$activity = validatedDomainPayload('activity', $pending['activity']['payload']);
+requireTactical(($attack['dotApplied'] ?? false) && count($activity['damageOverTime']) === 102,
+    'The attack keeps its poison and the resulting activity remains a valid domain.');
 echo "Ongoing effects, residual damage and roll revelation contracts passed.\n";

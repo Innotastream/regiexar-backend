@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/elemental-resistances.php';
 require_once __DIR__.'/effect-formula.php';
 function normalizeItemTargeting(mixed $v):?array {
  if($v===null)return null;
@@ -15,11 +16,17 @@ function normalizeItemTrap(mixed $v):?array {
 function normalizeItemPayload(mixed $e):?array {
  if(!is_array($e)||!in_array($e['kind']??'',['damage','dot','condition'],true))return null;$kind=$e['kind'];
  if($kind==='damage'){
-  if(!is_array($e['components']??null)||count($e['components'])<1||count($e['components'])>3)itemFailure('Renseignez les dégâts de l’objet.');$parts=[];$seen=[];
-  foreach($e['components'] as $p){if(!in_array($p['type']??'',['physical','magical','ignore'],true)||isset($seen[$p['type']])||!validEffectFormula($p['formula']??null))itemFailure('Formule ou type de dégâts invalide.');$seen[$p['type']]=true;$parts[]=['type'=>$p['type'],'formula'=>normalizeEffectFormula($p['formula'])];}$payload=['kind'=>$kind,'components'=>$parts];
+  if(!is_array($e['components']??null)||count($e['components'])<1||count($e['components'])>7)itemFailure('Renseignez les dégâts de l’objet.');$parts=[];$seen=[];
+  foreach ($e['components'] as $p) {
+   if (!is_array($p)||($type=applicationDamageType($p['type']??null))===null||!validApplicationOptionalDamageElement($p,'element')||!validEffectFormula($p['formula']??null))itemFailure('Formule ou type de dégâts invalide.');
+   $part=applicationSimpleDamageComponent($type,normalizeEffectFormula($p['formula']),applicationDamageElement($p['element']??null));
+   if(isset($seen[$type]))itemFailure('Formule ou type de dégâts invalide.');
+   $seen[$type]=true;$parts[]=$part;
+  }
+  $payload=['kind'=>$kind,'components'=>$parts];
  }elseif($kind==='dot'){
-  if(!validEffectFormula($e['formula']??null)||!in_array($e['damageType']??'',['physical','magical','ignore'],true)||!is_int($e['turns']??null)||$e['turns']<1||$e['turns']>20||!in_array($e['family']??'',['','poison','bleeding'],true))itemFailure('Réglez les dégâts périodiques.');
-  $payload=['kind'=>$kind,'label'=>itemText($e['label']??'Dégâts périodiques',120),'formula'=>normalizeEffectFormula($e['formula']),'damageType'=>$e['damageType'],'turns'=>$e['turns'],...(!empty($e['family'])?['family'=>$e['family']]:[])];
+  if(!validEffectFormula($e['formula']??null)||($type=applicationDamageType($e['damageType']??null))===null||!validApplicationOptionalDamageElement($e)||!is_int($e['turns']??null)||$e['turns']<1||$e['turns']>20||!in_array($e['family']??'',['','poison','bleeding'],true))itemFailure('Réglez les dégâts périodiques.');
+  $payload=['kind'=>$kind,'label'=>itemText($e['label']??'Dégâts périodiques',120),'formula'=>normalizeEffectFormula($e['formula']),'damageType'=>$type,...applicationOptionalDamageElement($e),'turns'=>$e['turns'],...(!empty($e['family'])?['family'=>$e['family']]:[])];
  }else{
   require_once __DIR__.'/device-state.php';$r=$e['rider']??[];$labels=normalizeOnlineConditions([$r['label']??'']);
   if(count($labels)!==1||onlineReservedHealthCondition($labels[0])||!is_int($r['turns']??null)||$r['turns']<1||$r['turns']>100)itemFailure('Choisissez un état et sa durée.');

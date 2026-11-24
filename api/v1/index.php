@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.21';
-const XAR_BACKEND_BUILD = 'client-4-3-3-combat-effects-20261121-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.3';
+const XAR_BACKEND_VERSION = '0.19.22';
+const XAR_BACKEND_BUILD = 'client-4-3-4-opposition-totale-20261124-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.3.4';
 // La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.3'];
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.3.4'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 25;
+const XAR_DATABASE_SCHEMA_VERSION = 27;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_SESSION_TOUCH_INTERVAL_SECONDS = 30;
@@ -1139,6 +1139,14 @@ function ensureCurrentSchema(PDO $connection): void
         }
         if ($version < 25) {
             migrateApplicationDefaultMapScales($connection);
+            $version = 25;
+        }
+        if ($version < 26) {
+            migrateApplicationResourceReceiptLedger($connection);
+            $version = 26;
+        }
+        if ($version < 27) {
+            migrateApplicationDirectAttackReceiptLedger($connection);
         }
     } finally {
         try {
@@ -2201,6 +2209,8 @@ if ($configuration === null) {
 try {
     $connection = databaseConnection($configuration);
     ensureCurrentSchema($connection);
+    applicationResourceReceiptLedgerEnabled($connection, true);
+    applicationDirectAttackLedgerEnabled($connection, true);
     synchronizeBackendRelease($connection);
 } catch (Throwable $error) {
     $runtimeCode = $error instanceof RuntimeException ? $error->getMessage() : '';

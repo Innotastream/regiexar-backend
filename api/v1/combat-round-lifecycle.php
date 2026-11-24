@@ -35,9 +35,27 @@ function applicationFinishRoundTimers(array $state,string $sceneId,?string $now=
     if($removed!==[]){$tombstones=array_column($state['actionTimerTombstones']??[],null,'id');foreach($removed as $id)$tombstones[$id]=['id'=>$id,'deletedAt'=>$now];$state['actionTimerTombstones']=array_slice(array_values($tombstones),-1000);}
     return $state;
 }
+function applicationDamageOverTimeAfterCombat(array $dot): ?array {
+    if (($dot['manualHp'] ?? false) === true) return $dot;
+    $stackedVenom = ($dot['family'] ?? '') === 'poison' && !empty($dot['sourceEffectId']);
+    $impactBleeding = ($dot['family'] ?? '') === 'bleeding'
+        && preg_match('/^impact-bleed-[a-f0-9]{32}$/D', (string)($dot['id'] ?? '')) === 1;
+    return ($dot['remainingTurns'] ?? 0) > 0 && ($stackedVenom || $impactBleeding)
+        ? [...$dot, 'combatId'=>'', 'lastTurnSerial'=>0] : null;
+}
+
 function applicationFinishCombatRounds(array $state,string $sceneId,array $previous,?string $now=null):array {
     $state=applicationFinishRoundTimers($state,$sceneId,$now);
-    foreach(['damageOverTime','pendingDotResolutions','nextAttackGuards','attackEnhancements'] as $key)if(isset($state[$key]))$state[$key]=array_values(array_filter($state[$key],static fn($e)=>($e['sceneId']??'')!==$sceneId||($e['expiry']??'')==='rests'||($key==='damageOverTime'&&($e['manualHp']??false)===true)));
+    foreach (['damageOverTime','pendingDotResolutions','nextAttackGuards','attackEnhancements'] as $key) {
+        if (!isset($state[$key])) continue;
+        $kept = [];
+        foreach ($state[$key] as $effect) {
+            if (($effect['sceneId'] ?? '') !== $sceneId || ($effect['expiry'] ?? '') === 'rests') $kept[] = $effect;
+            elseif ($key === 'damageOverTime' && ($parked = applicationDamageOverTimeAfterCombat($effect)) !== null) $kept[] = $parked;
+            elseif ($key === 'attackEnhancements' && ($parked = applicationPausePoisonEnhancement($effect)) !== null) $kept[] = $parked;
+        }
+        $state[$key] = $kept;
+    }
     $state['abilityExecutions']=applicationEndComplexCombatEffects($state['abilityExecutions']??[],$sceneId,(string)($previous['combatId']??''));
     return $state;
 }

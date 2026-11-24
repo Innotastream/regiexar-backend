@@ -34,7 +34,7 @@ function onlineApplyContactZoneEvents(PDO $db,array &$records,array &$pending,ar
         if($existing!==null){$attacks[]=$existing;continue;}
         $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());$zone=null;foreach($store['contactZones']??[]as$z)if($z['id']===$event['zoneId']){$zone=$z;break;}if($zone===null)continue;
         $rolled=onlineRollFormula($event['damage']['formula']);
-        $device=['id'=>$zone['id'],'abilityId'=>'contact-effect-zone','name'=>'Zone de contact','sceneId'=>$event['sceneId'],'layerId'=>$event['layerId'],'definition'=>['radiusCells'=>$zone['definition']['radiusCells'],'damageType'=>$event['damage']['damageType']]];
+        $device=['id'=>$zone['id'],'abilityId'=>'contact-effect-zone','name'=>'Zone de contact','sceneId'=>$event['sceneId'],'layerId'=>$event['layerId'],'definition'=>['radiusCells'=>$zone['definition']['radiusCells'],'damageType'=>$event['damage']['damageType'],...applicationOptionalDamageElement($event['damage'])]];
         $attack=onlineDeviceAutomaticAttack($db,$records,$pending,$identity,$device,$event['targetTokenId'],max(0,(int)$rolled['total']),false,$event['requestId']);if($attack===[])continue;
         $attack['originExecutionId']=$event['originExecutionId'];$attack['contactZoneId']=$event['zoneId'];$attack['sourceTokenId']=$event['sourceTokenId'];$attack['attackName']='Zone de contact';
         $roll=onlineRollEntry($identity,$rolled,'Zone de contact · Dégâts',(string)($attack['targetName']??'Cible'));$roll['visibility']='gm';$roll['revealed']=false;

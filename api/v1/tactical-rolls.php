@@ -245,10 +245,13 @@ function applicationTacticalRollVisibility(array $roll, array $source, string $k
     return $roll;
 }
 
-function applicationTacticalRollReceipt(array $activity, string $requestId, string $accountId, string $signature, int $now): ?array {
+function applicationTacticalRollReceipt(array $activity, string $requestId, string $accountId, string $signature, int $now, ?PDO $connection = null): ?array {
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) throw new RuntimeException('invalid_tactical_roll_request');
     $count = 0;
-    foreach ($activity['resourceReceipts'] ?? [] as $receipt) {
+    $receipts = $activity['resourceReceipts'] ?? [];
+    $private = $connection === null ? null : applicationReadResourceReceiptLedger($connection, $requestId, $now);
+    if ($private !== null) $receipts[] = $private;
+    foreach ($receipts as $receipt) {
         if (!is_array($receipt) || ($receipt['expiresAt'] ?? 0) <= $now) continue;
         $count += 1;
         if (($receipt['requestId'] ?? '') !== $requestId) continue;
@@ -277,7 +280,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $requestId = (string) ($arguments['requestId'] ?? ''); $accountId = (string) $identity['id'];
     $signature = applicationTacticalRollSignature($sceneId, $arguments);
     $now = (int) floor(microtime(true) * 1000);
-    try { $receipt = applicationTacticalRollReceipt($activity, $requestId, $accountId, $signature, $now); }
+    try { $receipt = applicationTacticalRollReceipt($activity, $requestId, $accountId, $signature, $now, $connection); }
     catch (RuntimeException $error) {
         $code = $error->getMessage(); $status = $code === 'tactical_roll_receipt_forbidden' ? 403 : ($code === 'tactical_roll_receipt_capacity' ? 429 : ($code === 'invalid_tactical_roll_request' ? 400 : 409));
         rejectOnlineCommand($connection, $status, 'Le jet ne peut pas être repris avec cette référence ; actualisez la fiche.', $code);

@@ -41,12 +41,8 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         'ability.use', $sceneId, $arguments, applicationAbilityReceiptHasCastingCheck($receipt)
     );
     // Preserve a healing receipt created by the preceding 3.2.3 candidate.
-    foreach ($continuation === null ? ($activity['resourceReceipts'] ?? []) : [] as $old) if (($old['requestId'] ?? '') === $requestId && ($old['expiresAt'] ?? 0) > (int) floor(microtime(true) * 1000) && ($old['operation']['kind'] ?? '') === 'resource-adjust') {
-        if (($old['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
-        if (($old['operation']['sceneId'] ?? '') !== $sceneId || ($old['operation']['tokenId'] ?? '') !== ($arguments['targetTokenId'] ?? '')) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre soin.', 'ability_request_mismatch');
-        return ['effect' => 'healing', 'appliedDelta' => $old['operation']['appliedDelta'] ?? 0, 'deduplicated' => true];
-    }
-    $receipt = $continuation === null ? onlineAbilityReceipt($connection, $activity, $requestId, $accountId, $receiptSignature, $isGm) : null;
+    $receipt = $continuation === null ? onlineAbilityReceipt($connection, $activity, $requestId, $accountId,
+        $receiptSignature, $isGm, ['sceneId' => $sceneId, 'targetTokenId' => $arguments['targetTokenId'] ?? '']) : null;
     if ($receipt !== null) return $receipt;
     if ($sceneId === '' || (!$isGm && $sceneId !== onlineActiveSceneId($table))) rejectOnlineCommand($connection, 409, 'La scène a changé. Rouvrez la capacité.', 'stale_scene');
     if (($table['tacticalSync']['paused'] ?? false)) rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');

@@ -58,6 +58,7 @@ jobs:
       - name: Tactical lifecycle and concurrent conditions
         run: |
           php tests/tactical-lifecycle.php
+          php tests/monster-reinforcement.php
           php tests/stream-roll-projection.php > /dev/null
           php tests/stream-state-read.php
           php tests/caster-area-footprint.php
@@ -96,6 +97,7 @@ jobs:
           php tests/friendly-fire.php
           php tests/elemental-breath.php
           php tests/elemental-breath-extended.php
+          php tests/elemental-resistances.php
           php tests/audit-v4-combat-identity.php
       - name: Infusions, devices and individual consent
         run: |
@@ -143,6 +145,7 @@ jobs:
           php tests/stream-combat-details.php
           php tests/map-time-weather.php
           php tests/gm-defense-selection.php
+          php tests/total-opposition.php
           php tests/pending-attack-lifecycle.php
           php tests/pending-attack-removal.php
           php tests/map-scale-defaults.php
@@ -267,6 +270,10 @@ jobs:
           grep -Fq 'Local MySQL assistant object plan integration passed.' mysql-assistant-object-plan.log
           php tests/mysql-ability-assistant-combat.php | tee mysql-ability-assistant-combat.log
           grep -Fq 'Local MySQL assistant combat integration passed.' mysql-ability-assistant-combat.log
+          php tests/mysql-resource-receipts.php | tee mysql-resource-receipts.log
+          grep -Fq 'Local MySQL resource receipt integration passed.' mysql-resource-receipts.log
+          php tests/mysql-direct-attack-receipts.php | tee mysql-direct-attack-receipts.log
+          grep -Fq 'Local MySQL direct attack receipt integration passed.' mysql-direct-attack-receipts.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

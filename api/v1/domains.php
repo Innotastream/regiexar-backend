@@ -1,6 +1,8 @@
 <?php
 
 declare(strict_types=1);
+require_once __DIR__ . '/resource-receipt-ledger.php';
+require_once __DIR__ . '/direct-attack-receipt-ledger.php';
 require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/map-time-weather.php';
 require_once __DIR__.'/terrain-effects.php';
@@ -119,12 +121,12 @@ function validApplicationDomainIdentifierList(mixed $value, int $maximumCount, i
     return true;
 }
 
-function validApplicationDomainList(mixed $value, int $maximumCount): bool
+function validApplicationDomainList(mixed $value, ?int $maximumCount = null): bool
 {
-    return is_array($value) && applicationDomainArrayIsList($value) && count($value) <= $maximumCount;
+    return is_array($value) && applicationDomainArrayIsList($value) && ($maximumCount === null || count($value) <= $maximumCount);
 }
 
-function validApplicationDomainObjectList(mixed $value, int $maximumCount): bool
+function validApplicationDomainObjectList(mixed $value, ?int $maximumCount = null): bool
 {
     if (!validApplicationDomainList($value, $maximumCount)) {
         return false;
@@ -1450,7 +1452,8 @@ function validApplicationAbilities(mixed $value): bool
             || (array_key_exists('name', $entry) && !validApplicationDomainText($entry['name'], 120, false))
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
-            || (array_key_exists('damageType', $entry) && !in_array($entry['damageType'], ['physical', 'magical', 'ignore'], true))
+            || (array_key_exists('damageType', $entry) && applicationDamageType($entry['damageType']) === null)
+            || !validApplicationOptionalDamageElement($entry)
             || (array_key_exists('description', $entry) && !validApplicationDomainText($entry['description'], 2000))) {
             return false;
         }
@@ -1467,7 +1470,8 @@ function validApplicationWeaponAttacks(mixed $value): bool
         if (!validApplicationDomainIdentifier($entry['id'] ?? null, 120)
             || !validApplicationDomainText($entry['formula'] ?? null, 100, false)
             || !validApplicationAbilityFormula($entry['formula'] ?? null)
-            || !in_array($entry['damageType'] ?? null, ['physical', 'magical', 'ignore'], true)
+            || applicationDamageType($entry['damageType'] ?? null) === null
+            || !validApplicationOptionalDamageElement($entry)
             || (array_key_exists('reach',$entry) && !in_array($entry['reach'],['melee','reach','ranged'],true))
             || (array_key_exists('naturalWeapon',$entry)&&!is_bool($entry['naturalWeapon']))
             || (array_key_exists('finesse',$entry)&&!is_bool($entry['finesse']))
@@ -1484,6 +1488,14 @@ function validApplicationWeaponAttacks(mixed $value): bool
 
 function validApplicationTokenDomain(array $payload): bool
 {
+    foreach ([
+        'bestiaryRole' => ['neutral', 'enemy'],
+        'bestiaryRank' => ['weak', 'medium', 'strong', 'major'],
+        'bestiaryProfile' => ['ordinary', 'elite'],
+    ] as $field => $choices) {
+        if (array_key_exists($field, $payload) && !in_array($payload[$field], $choices, true)) return false;
+    }
+    if (array_key_exists('elementalResistances', $payload) && !validApplicationElementalResistances($payload['elementalResistances'])) return false;
     if (array_key_exists('sizeCategory', $payload) && !applicationUnitSizeCategoryValid($payload['sizeCategory'])) return false;
     if(isset($payload['terrainBarrier'])&&(!is_array($payload['terrainBarrier'])||($payload['terrainBarrier']['version']??0)!==1))return false;
     if(applicationIsRectangularObstacle($payload)){
@@ -1550,9 +1562,10 @@ function validApplicationTokenDomain(array $payload): bool
             return false;
         }
     }
-    if (array_key_exists('damageType', $payload) && !in_array($payload['damageType'], ['physical', 'magical', 'ignore'], true)) {
+    if (array_key_exists('damageType', $payload) && applicationDamageType($payload['damageType']) === null) {
         return false;
     }
+    if (!validApplicationOptionalDamageElement($payload)) return false;
     if (array_key_exists('temporalPerception', $payload) && !in_array($payload['temporalPerception'], ['normal', 'fast'], true)) {
         return false;
     }
@@ -1588,7 +1601,9 @@ function validApplicationTokenDomain(array $payload): bool
             || !in_array($pulse['resource'] ?? null, ['hp', 'mana'], true)
             || !validApplicationDomainNumber($pulse['delta'] ?? null, -2000000000, 2000000000)
             || (float) ($pulse['delta'] ?? 0) === 0.0
-            || !validApplicationDomainNumber($pulse['at'] ?? null, 1, 9007199254740991)) {
+            || !validApplicationDomainNumber($pulse['at'] ?? null, 1, 9007199254740991)
+            || (array_key_exists('impactBleed', $pulse) && !is_bool($pulse['impactBleed']))
+            || (($pulse['impactBleed'] ?? false) && ($pulse['resource'] !== 'hp' || $pulse['delta'] >= 0))) {
             return false;
         }
     }
@@ -1798,6 +1813,7 @@ function validApplicationDiceAppearance(mixed $value): bool
 
 function validApplicationCharacterDomain(array $payload): bool
 {
+    if (array_key_exists('elementalResistances', $payload) && !validApplicationElementalResistances($payload['elementalResistances'])) return false;
     if(array_key_exists('sizeCategory',$payload)&&!applicationUnitSizeCategoryValid($payload['sizeCategory']))return false;
     if(array_key_exists('honorificTitles',$payload)&&!validApplicationHonorificTitles($payload['honorificTitles']))return false;
     if(array_key_exists('fortune',$payload)&&(!applicationHonorificInteger($payload['fortune'])||$payload['fortune']<0||$payload['fortune']>5))return false;
@@ -1839,6 +1855,7 @@ function validApplicationCharacterDomain(array $payload): bool
         }
     }
     foreach (is_array($payload['linkedTokens'] ?? null) ? $payload['linkedTokens'] : [] as $linkedToken) {
+        if (is_array($linkedToken) && array_key_exists('elementalResistances', $linkedToken) && !validApplicationElementalResistances($linkedToken['elementalResistances'])) return false;
         if(is_array($linkedToken)&&array_key_exists('sizeCategory',$linkedToken)&&!applicationUnitSizeCategoryValid($linkedToken['sizeCategory']))return false;
         if (is_array($linkedToken) && array_key_exists('darkVision', $linkedToken)
             && !validApplicationDarkVision($linkedToken['darkVision'])) return false;
@@ -2130,7 +2147,7 @@ function preserveApplicationPendingAbilityValidation(array $payload, array $prev
         if ($protected($old) || applicationAttackIsFinalized($old)) return $old;
         if (array_key_exists('deferredAbilityCast', $old)) $attack['deferredAbilityCast'] = $old['deferredAbilityCast'];
         else unset($attack['deferredAbilityCast']);
-        foreach(['areaGate','areaGateParentId','targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId'] as $field)unset($attack[$field]);
+        foreach(['areaGate','areaGateParentId','targetRangeCells','strikeTargetPosition','strikeSourcePosition','weaponAttackParentId','deviceOrigin','projectileGate','conditionRider','riderApplied','infusion','echoDefinitions','echoAttackContext','echoAttacks','echoProcessed','echoParentId','oppositionMode'] as $field)unset($attack[$field]);
         if (!empty($old['echoAttackContext'])) $attack['echoAttackContext'] = $old['echoAttackContext'];
         return $attack;
     };
@@ -2263,7 +2280,7 @@ function validatedDomainPayload(string $key, mixed $payload, ?callable $reject =
             || !validApplicationAbilityMovementLeases($payload['abilityMovementLeases'] ?? [])
             || !validApplicationDomainObjectList($payload['pendingDotResolutions'] ?? [], XAR_PENDING_DOT_RESOLUTION_MAXIMUM)
             || !validApplicationDomainObjectList($payload['rollRevelations'] ?? [], 500)
-            || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [], 100)
+            || !validApplicationDomainObjectList($payload['damageOverTime'] ?? [])
             || !validApplicationDomainObjectList($payload['attackEnhancements'] ?? [], 100)
             || !validApplicationDomainObjectList($payload['nextAttackGuards'] ?? [], 60)
             || !validApplicationAbilityCueEvents($payload['abilityCueEvents'] ?? [])
@@ -2592,11 +2609,33 @@ function prepareApplicationDomainUpsert(
         $payload = preserveApplicationPendingAbilityValidation($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
         if(!empty($current['payload']['combatActions']))$payload['combatActions']=$current['payload']['combatActions'];else unset($payload['combatActions']);
         $authoritativeActions=array_column($current['payload']['playerActions']??[],null,'id');
-        foreach($payload['playerActions']??[]as$i=>$entry){foreach(['combatActionId','combatUndone']as$field){unset($payload['playerActions'][$i][$field]);if(array_key_exists($field,$authoritativeActions[$entry['id']??'']??[]))$payload['playerActions'][$i][$field]=$authoritativeActions[$entry['id']][$field];}}
+        foreach ($payload['playerActions'] ?? [] as $index => $entry) {
+            if (!is_array($entry)) continue;
+            $previous = $authoritativeActions[$entry['id'] ?? ''] ?? [];
+            foreach (['combatActionId','combatUndone'] as $field) {
+                unset($payload['playerActions'][$index][$field]);
+                if (array_key_exists($field,$previous)) $payload['playerActions'][$index][$field] = $previous[$field];
+            }
+            if (is_array($previous['operation']['impactBleeding'] ?? null)) {
+                $payload['playerActions'][$index]['operation'] = $previous['operation'];
+                if (isset($previous['undo'])) $payload['playerActions'][$index]['undo'] = $previous['undo'];
+                else unset($payload['playerActions'][$index]['undo']);
+            } elseif (is_array($entry['operation'] ?? null)) {
+                unset($payload['playerActions'][$index]['operation']['impactBleeding']);
+            }
+        }
     }
     $inlineMapPaths=[];if(str_starts_with($key,'map:')&&is_array($payload))$payload=applicationMapUnchangedInlineForValidation($payload,$current['payload']??[],$inlineMapPaths);
     $payload = validatedDomainPayload($key, $payload, $reject);
     if($inlineMapPaths!==[])$payload=applicationRestoreMapUnchangedInline($payload,$inlineMapPaths);
+    if (str_starts_with($key, 'character:') || str_starts_with($key, 'token:')) {
+        unset($payload['elementalResistanceOverrides']);
+        $previousResistances = $current['payload']['elementalResistances'] ?? null;
+        if (isset($payload['elementalResistances']) || ($protectAgainstStaleEntityWrite && $previousResistances !== null)) {
+            $base = $protectAgainstStaleEntityWrite ? normalizeApplicationElementalResistances($previousResistances) : [];
+            $payload['elementalResistances'] = normalizeApplicationElementalResistances(array_replace($base, $payload['elementalResistances'] ?? []));
+        }
+    }
     if ($key === 'audio') $payload = preserveApplicationAudioLoops($payload, is_array($current['payload'] ?? null) ? $current['payload'] : []);
     if ($protectAgainstStaleEntityWrite) {
         $payload = protectApplicationDomainAgainstStaleEntityWrite($key, $payload, $current);
@@ -3194,7 +3233,13 @@ function persistDomainChangesInTransaction(PDO $connection, array $identity, arr
             $delete = $connection->prepare('DELETE FROM application_domains WHERE domain_key = :domain_key');
             $delete->execute([':domain_key' => $key]);
         } else {
-            upsertApplicationDomain($connection, $key, $change['payload'], $nextRevision, $accountId !== '' ? $accountId : null);
+            $payload = $change['payload'];
+            if ($key === 'activity') {
+                $now = applicationResourceReceiptClock();
+                $payload = applicationArchiveFinalResourceReceipts($connection, $payload, $now);
+                $payload = applicationArchiveIndependentAttacks($connection, $payload, $now);
+            }
+            upsertApplicationDomain($connection, $key, $payload, $nextRevision, $accountId !== '' ? $accountId : null);
         }
         insertDomainChange($connection, $globalRevision, $key, $nextRevision, (string) $change['operation']);
     }
@@ -3374,15 +3419,20 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     foreach ($dots as $dot) {
         if (!is_array($dot)) continue;
         $manualHp = ($dot['manualHp'] ?? false) === true;
-        if (!$manualHp && isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) continue;
+        $impactBleeding = applicationIsImpactBleeding($dot);
+        $hasTargetRound = $manualHp || $impactBleeding;
+        if (isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) {
+            $dot = applicationDamageOverTimeAfterCombat($dot);
+            if ($dot === null) continue;
+        }
         $keep = true;
         foreach ($turns as [$sceneId, $tokenId, $initiative, $manualTurn]) {
             if($manualTurn>0)$tokenId=(string)($dot['targetTokenId']??'');
             $sameCombat = ($dot['combatId'] ?? '') === ($initiative['combatId'] ?? '');
             $alreadyTicked = $manualTurn > 0 ? (int) ($dot['lastManualTurn'] ?? 0) >= $manualTurn
-                : (!$manualHp && ($dot['combatId'] ?? '') !== '' && !$sameCombat)
-                    || ((!$manualHp || $sameCombat) && (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial'])
-                    || ($manualHp && (($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']
+                : (!$hasTargetRound && ($dot['combatId'] ?? '') !== '' && !$sameCombat)
+                    || ((!$hasTargetRound || $sameCombat) && (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial'])
+                    || ($hasTargetRound && (($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']
                         || ($sameCombat && (int) ($dot['lastTargetRound'] ?? 0) >= (int) ($initiative['round'] ?? 1))));
             if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId || $alreadyTicked) continue;
             $key = onlineTokenDomainKey($sceneId, $tokenId);
@@ -3390,9 +3440,14 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $target = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
             $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $target);
             $characterKey = 'character:' . (string) ($target['characterId'] ?? '');
+            if ($impactBleeding && unitUsesCharacterSheet($target) && !isset($records[$characterKey]) && !isset($pending[$characterKey])) {
+                $records += applicationDomainRecords($connection, [$characterKey]);
+            }
             $character = $pending[$characterKey]['payload'] ?? applicationDomainPayload($records, $characterKey);
             if ($character !== []) $target = synchronizeOnlineCharacterToken($target, $character);
-            if ($target === [] || onlineTokenIsDead($target, $controllerId !== '') || applicationEffectFamily($dot)==='poison'&&applicationHasEffectImmunity($target,$activity,$sceneId,'poison')) {
+            if ($target === [] || onlineTokenIsDead($target, $controllerId !== '')
+                || ($impactBleeding && applicationImpactBleedingTargetIdentity($target) !== ($dot['targetIdentity'] ?? ''))
+                || (applicationEffectFamily($dot) === 'poison' && applicationHasEffectImmunity($target, $activity, $sceneId, 'poison'))) {
                 $keep = false;
                 break;
             }
@@ -3413,11 +3468,25 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
                 $keep = $dot['remainingTurns'] > 0;
                 break;
             }
+            if ($impactBleeding && $manualTurn <= 0) {
+                $dot['combatId'] = $initiative['combatId'] ?? '';
+                $dot['lastTargetRound'] = (int) ($initiative['round'] ?? 1);
+            }
+            if (applicationElementalPeriodicDamageSuppressed($target, $dot)
+                || ($impactBleeding && applicationHasEffectImmunity($target, $activity, $sceneId, 'bleeding'))) {
+                $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);
+                if ($manualTurn > 0) $dot['lastManualTurn'] = $manualTurn;
+                else $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
+                $keep = $dot['remainingTurns'] > 0;
+                break;
+            }
             $rolled = onlineRollFormulaWithMode($dot['formula'], 'normal');
-            $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent(applicationEnhancedResistanceTarget($target,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId), (string) ($dot['damageType'] ?? 'physical')));
+            $summary = onlineTypedDamageSummary(max(0, (int) $rolled['total']),
+                applicationEnhancedResistanceTarget($target, onlineAttackEnhancementState($connection, $records, $pending, $sceneId), $sceneId),
+                (string) ($dot['damageType'] ?? 'physical'), applicationPeriodicDamageElement($dot));
             $applied = 0;
             if ($summary['finalDamage'] > 0) {
-                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical','family'=>applicationEffectFamily($dot),'sourceItemKind'=>$dot['sourceItemKind']??'']);
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical','family'=>applicationEffectFamily($dot),'sourceItemKind'=>$dot['sourceItemKind']??''], false);
                 $applied = (int) ($health['appliedDamage'] ?? 0);
                 $updatedTarget = $pending[$key]['payload'] ?? $target;
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
@@ -3543,8 +3612,13 @@ function patchApplicationDomains(PDO $connection): never
             $key = trim((string) ($change['key'] ?? ''));
             $operation = (string) ($change['operation'] ?? 'upsert');
             $current = $records[$key] ?? null;
+            $payload = $change['payload'] ?? null;
+            if ($key === 'activity' && $operation === 'upsert') {
+                $payload = applicationProtectPrivateResourceReceipts($connection, $payload, $current['payload'] ?? []);
+                $payload = applicationProtectPrivateDirectAttackReceipts($connection, $payload, $current['payload'] ?? []);
+            }
             $prepared = $operation === 'upsert'
-                ? prepareApplicationDomainUpsert($key, $change['payload'] ?? null, $current, true)
+                ? prepareApplicationDomainUpsert($key, $payload, $current, true)
                 : prepareApplicationDomainDelete($key, $current);
             if ($prepared === null) {
                 continue;
@@ -3689,6 +3763,8 @@ function cleanupApplicationDomainHistory(PDO $connection): void
                 . 'WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 30 DAY) '
                 . 'ORDER BY created_at, history_id LIMIT ' . XAR_DOMAIN_MAINTENANCE_BATCH_SIZE
             );
+            applicationPruneResourceReceiptLedger($connection, applicationResourceReceiptClock());
+            applicationPruneDirectAttackLedger($connection, applicationResourceReceiptClock());
             // Keep the existing cadence of the separate physical-media sweep.
             if (random_int(1, 25) === 1) cleanupExpiredMediaRetention($connection);
         } finally {
@@ -3770,6 +3846,8 @@ function restoreApplicationDomainHistory(PDO $connection): never
         $payload = jsonColumn($record['payload'] ?? null);
         if ($key === 'table') { $payload['strategyBreak'] = normalizeApplicationStrategyBreak($current['payload']['strategyBreak'] ?? null); $payload['tableTokens'] = normalizeApplicationTableTokens($current['payload']['tableTokens'] ?? null); }
         if ($key === 'activity') {
+            $payload = applicationProtectPrivateResourceReceipts($connection, $payload, $current['payload'] ?? []);
+            $payload = applicationProtectPrivateDirectAttackReceipts($connection, $payload, $current['payload'] ?? []);
             $payload = preserveApplicationPendingAbilityValidation($payload, $current['payload'] ?? []);
             $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);
         }

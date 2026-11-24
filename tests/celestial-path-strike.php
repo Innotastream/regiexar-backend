@@ -57,6 +57,39 @@ $emptyArgs=[...$args,'requestId'=>'path-zero-'.randomToken(20),'initialSelection
 specialCheck($empty->status===200&&empty($empty->body['pendingAreaGate'])&&($empty->body['initialSelectionApplied']??false)&&$empty->body['execution']['status']==='completed','Zero chosen victims does not create an empty MJ table: '.json_encode($empty->body));
 specialCheck(abs($zero->payload('token:scene-one:token-player')['x']-50)<1e-7&&count($zero->payload('devices')['contactZones'])===1,'Zero-target route still moves to its endpoint and leaves its accepted filament');
 
+$crowded=$fresh();
+$crowdedTokens=[];
+foreach(['token-monster','token-monster-two'] as $i=>$tokenId){
+    $key='token:scene-one:'.$tokenId;
+    $crowdedTokens[$key]=[...$crowded->payload($key),'x'=>24+13*$i,'y'=>50,'size'=>140];
+    $crowded->put($key,$crowdedTokens[$key]);
+}
+$occupied=['x'=>37,'y'=>50];
+$tooFar=['x'=>80,'y'=>50];
+$longStart=runCommand($crowded,'ability.complex',[...$emptyArgs,'requestId'=>'path-long-'.randomToken(16),
+    'movementSelection'=>['destination'=>$tooFar,'path'=>[['x'=>20,'y'=>50],$tooFar]]]);
+specialCheck($longStart->status===409&&str_contains($longStart->body['error']??'','24 m et dépasse la limite de 20 mètres'),
+    'The player gets the measured distance and the limit when the route is too long.');
+$occupiedStart=runCommand($crowded,'ability.complex',[...$emptyArgs,'requestId'=>'path-occupied-'.randomToken(16),
+    'movementSelection'=>['destination'=>$occupied,'path'=>[['x'=>20,'y'=>50],$occupied]]]);
+specialCheck($occupiedStart->status===409&&str_contains($occupiedStart->body['error']??'','occupée'),'An ordinary pawn can occupy a landing, but not the route.');
+specialCheck($crowded->payload('token:scene-one:token-player')['x']===20,'An invalid landing leaves Hira at her original position.');
+$destination=['x'=>50,'y'=>57];
+$waypoints=[['x'=>20,'y'=>50],['x'=>29,'y'=>53],$destination];
+$pass=runCommand($crowded,'ability.complex',[...$emptyArgs,'requestId'=>'path-crowded-'.randomToken(16),
+    'movementSelection'=>['destination'=>$destination,'path'=>$waypoints]]);
+specialCheck($pass->status===200&&$pass->body['execution']['status']==='completed','Hira may dash directly through adjacent ordinary units. '.json_encode($pass->body));
+$walk=$pass->body['execution']['stepStates']['move'];
+specialCheck($walk['points']===$waypoints&&abs($walk['distanceMeters']-applicationPathStrikeMeters($waypoints,$map))<1e-7,
+    'The server follows and measures the actual clicked waypoints.');
+$arrived=$crowded->payload('token:scene-one:token-player');
+specialCheck($arrived['x']===$destination['x']&&$arrived['y']===$destination['y'],'Hira reaches the unobstructed landing.');
+foreach($crowdedTokens as $key=>$before){
+    $after=$crowded->payload($key);
+    specialCheck($after['x']===$before['x']&&$after['y']===$before['y']&&$after['hp']===$before['hp'],
+        'Crossed pawns remain in place and unhurt when no strikes were selected.');
+}
+
 $mounted=$fresh();$s=$mounted->payload('token:scene-one:token-player');$s=[...$s,'x'=>1,'y'=>1,'mountedOnTokenId'=>'path-mount','mountedAt'=>1];$mounted->put('token:scene-one:token-player',$s);$mount=['id'=>'path-mount','name'=>'Monture','x'=>20,'y'=>50,'size'=>120,'hp'=>100,'maxHp'=>100,'layerId'=>'ground','controllerPlayerId'=>'another-controller'];$mounted->put('token:scene-one:path-mount',$mount);$passenger=[...$mount,'id'=>'path-passenger','mountedOnTokenId'=>'path-mount','mountedAt'=>2,'size'=>40];$mounted->put('token:scene-one:path-passenger',$passenger);$index=$mounted->payload('token-index:scene-one');$index['order']=[...$index['order'],'path-mount','path-passenger'];$mounted->put('token-index:scene-one',$index);
 $mountArgs=[...$args,'requestId'=>'path-mounted-'.randomToken(16),'mountedMovement'=>true];$waiting=runCommand($mounted,'ability.complex',$mountArgs);specialCheck($waiting->status===200&&!empty($waiting->body['pendingAreaGate']),'Mounted source prepares from its real mount position');
 $accepted=runCommand($mounted,'token.attack.area.resolve',['attackId'=>$waiting->body['attack']['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>[],'requestId'=>'path-mounted-approved-'.randomToken(16)],true);specialCheck($accepted->status===200,'Mounted default path passes the same MJ approval: '.json_encode($accepted->body));$e=$accepted->body['execution'];

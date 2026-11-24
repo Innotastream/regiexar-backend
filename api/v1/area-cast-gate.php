@@ -2,17 +2,28 @@
 declare(strict_types=1);
 require_once __DIR__.'/cone-area.php';
 require_once __DIR__.'/unit-authority.php';
+require_once __DIR__.'/elemental-resistances.php';
 
 function applicationChanceCastGate(mixed $value): ?array {
     if ($value === null) return null;
     if (!is_array($value) || ($value['version']??1)!==1 || ($value['kind']??'')!=='chance' || ($value['blockOn']??'critical-failure')!=='critical-failure' || ($value['defenseSelection']??'gm-agility')!=='gm-agility') throw new RuntimeException('Le contrôle de Chance de la zone est invalide.',400);
     return ['version'=>1,'kind'=>'chance','blockOn'=>'critical-failure','defenseSelection'=>'gm-agility'];
 }
-function applicationDamageVariants(mixed $value): array {
+function applicationDamageVariants(mixed $value, mixed $abilityId = null): array {
     if ($value === null) return [];
     if (!is_array($value) || !array_is_list($value) || count($value)<1 || count($value)>12) throw new RuntimeException('Les variantes de dégâts sont invalides.',400);
     $result=[];$seen=[];
-    foreach($value as $row){if(!is_array($row)||!is_string($row['id']??null)||preg_match('/^[A-Za-z0-9_-]{1,80}$/D',$row['id'])!==1||isset($seen[$row['id']])||!is_string($row['label']??null)||trim($row['label'])===''||preg_match('/^.{1,80}$/us',$row['label'])!==1||!in_array($row['damageType']??'', ['physical','magical','ignore'],true))throw new RuntimeException('Une variante de dégâts est invalide.',400);$seen[$row['id']]=true;$result[]=['id'=>$row['id'],'label'=>trim($row['label']),'damageType'=>$row['damageType']];}
+    foreach ($value as $row) {
+        if (!is_array($row) || !is_string($row['id'] ?? null) || preg_match('/^[A-Za-z0-9_-]{1,80}$/D', $row['id']) !== 1
+            || isset($seen[$row['id']]) || !is_string($row['label'] ?? null) || trim($row['label']) === ''
+            || preg_match('/^.{1,80}$/us', $row['label']) !== 1 || ($type = applicationDamageType($row['damageType'] ?? null)) === null
+            || !validApplicationOptionalDamageElement($row)) throw new RuntimeException('Une variante de dégâts est invalide.',400);
+        $seen[$row['id']] = true;
+        $legacyElement = $abilityId === 'ability-mania-elemental-breath' && in_array($row['id'], ['fire', 'ice'], true)
+            && applicationDamageElement($type) === null ? $row['id'] : null;
+        $element = applicationDamageElement($row['damageElement'] ?? null) ?? $legacyElement;
+        $result[] = ['id'=>$row['id'], 'label'=>trim($row['label']), 'damageType'=>$type, ...($element === null ? [] : ['damageElement' => $element])];
+    }
     return $result;
 }
 function applicationAbilityItemRequirement(mixed $value): ?array {
@@ -21,9 +32,12 @@ function applicationAbilityItemRequirement(mixed $value): ?array {
     return ['templateId'=>$value['templateId'],'quantity'=>$value['quantity']??1,'consumeOn'=>'attempt'];
 }
 function applicationSelectedDamageVariant(array $ability,mixed $id): ?array {
-    $variants=applicationDamageVariants($ability['damageVariants']??null);
+    $variants=applicationDamageVariants($ability['damageVariants']??null,$ability['id']??null);
     if($variants===[]){if($id!==null&&$id!=='')throw new RuntimeException('Cette capacité ne possède pas de variante.',400);return null;}
-    foreach($variants as $variant)if($variant['id']===$id)return $variant;
+    foreach ($variants as $variant) {
+        if ($variant['id'] !== $id) continue;
+        return $variant;
+    }
     throw new RuntimeException('Choisissez une nature de dégâts prévue par cette capacité.',400);
 }
 function applicationRequiredAbilityItems(array $store,array $source,?array $requirement): array {

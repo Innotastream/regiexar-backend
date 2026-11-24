@@ -113,8 +113,9 @@ foreach (['areaRadiusCells', 'validationKind', 'oppositionAbility', 'damageOverT
     requireTactical($restored['pendingAttacks'][0][$field] === $attack[$field], 'An older snapshot preserves ' . $field . '.');
 }
 
-$defended = null;
-for ($attempt = 0; $attempt < 200 && $defended === null; $attempt++) {
+$prepareParry = static function (bool $immune): array {
+ $defended = null;
+ for ($attempt = 0; $attempt < 200 && $defended === null; $attempt++) {
     $candidate = fixture();
     $character = $candidate->payload('character:character-player');
     $character['resources']['mana'] = 30;
@@ -123,10 +124,15 @@ for ($attempt = 0; $attempt < 200 && $defended === null; $attempt++) {
     $character['abilities'] = [['id' => 'audit-counter', 'name' => 'Renvoi', 'effect' => 'opposition', 'formula' => '0', 'cooldownRounds' => 3,
         'opposition' => ['statId' => 'character-stat-force', 'options' => [['id' => 'mana', 'label' => 'Renvoi renforcé', 'manaCost' => 10, 'reflectPercent' => 50]]]]];
     $candidate->put('character:character-player', $character);
+    if ($immune) {
+        $source = $candidate->payload('token:scene-one:token-monster');
+        $source['elementalResistances'] = ['fire' => 100];
+        $candidate->put('token:scene-one:token-monster', $source);
+    }
     $attack = ['id' => 'attack-audit-counter-0001', 'requestId' => 'audit-counter-hit-0001', 'sceneId' => 'scene-one',
         'sourceTokenId' => 'token-monster', 'targetTokenId' => 'token-player', 'sourceName' => 'Créature', 'targetName' => 'Personnage',
         'accountId' => 'account-gm', 'attackerRole' => 'gm', 'playerName' => 'MJ test', 'attackName' => 'Griffe',
-        'status' => 'awaiting-opposition', 'damageType' => 'ignore', 'damageFormula' => '20',
+        'status' => 'awaiting-opposition', 'damageType' => $immune ? 'fire' : 'ignore', 'damageFormula' => '20',
         'hit' => ['raw' => 75, 'outcome' => ['raw' => 75, 'result' => 75, 'code' => 'success', 'success' => true, 'threshold' => 90]]];
     $activity = $candidate->payload('activity');
     $activity['pendingAttacks'] = [$attack];
@@ -136,9 +142,11 @@ for ($attempt = 0; $attempt < 200 && $defended === null; $attempt++) {
     $response = runCommand($candidate, 'token.attack.oppose', $payload);
     requireTactical($response->status === 200, 'A configured opposition ability resolves: ' . $response->getMessage());
     if (($response->body['attack']['status'] ?? '') === 'defended') $defended = [$candidate, $response, $payload];
-}
-requireTactical(is_array($defended), 'The configured parry reaches an ordinary winning result.');
-[$db, $response, $payload] = $defended;
+ }
+ requireTactical(is_array($defended), 'The configured parry reaches an ordinary winning result.');
+ return $defended;
+};
+[$db, $response, $payload] = $prepareParry(false);
 requireTactical(($response->body['attack']['reflection']['appliedDamage'] ?? null) === 10
     && $db->payload('token:scene-one:token-monster')['hp'] === 30
     && $db->payload('character:character-player')['resources']['mana'] === 20,
@@ -148,3 +156,10 @@ $revision = $db->revision;
 $retry = runCommand($db, 'token.attack.oppose', $payload);
 requireTactical($retry->status === 200 && ($retry->body['deduplicated'] ?? false) && $revision === $db->revision,
     'A parry retry cannot spend mana or reflect damage again.');
+[$db] = $prepareParry(true);
+$saved = array_values(array_filter($db->payload('activity')['attackReceipts'], static fn ($entry) => $entry['requestId'] === 'audit-counter-hit-0001'));
+$reflection = $saved[0]['attack']['reflection'] ?? [];
+requireTactical(($reflection['basis'] ?? 0) > 0, 'The resisted reflection is attempted using the original damage basis.');
+requireTactical(($reflection['appliedDamage'] ?? null) === 0, 'Full elemental resistance absorbs reflected damage.');
+requireTactical($db->payload('token:scene-one:token-monster')['hp'] === 40, 'Reflection preserves the immune attacker’s HP.');
+requireTactical($db->payload('character:character-player')['resources']['mana'] === 20, 'A successful parry spends mana even when its reflection is absorbed.');

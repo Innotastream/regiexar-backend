@@ -63,8 +63,6 @@ function onlineCreateManualHpEffect(PDO $connection, array &$records, array &$pe
     if (($target['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== ''))
         rejectOnlineCommand($connection, 409, 'Ce pion doit être vivant et disposer de PV.', 'periodic_hp_target_unavailable');
     $activity = $context['activity'];
-    if ((!$applyNow || $turns > 1) && count($activity['damageOverTime'] ?? []) >= 100)
-        rejectOnlineCommand($connection, 429, 'La table contient déjà trop d’effets périodiques.', 'periodic_hp_capacity');
     $clockKey = 'initiative:' . $sceneId;
     $records = array_replace($records, applicationDomainRecords($connection, [$clockKey, 'devices']));
     $clock = $pending[$clockKey]['payload'] ?? applicationDomainPayload($records, $clockKey);
@@ -171,7 +169,8 @@ function onlineStackableEffectCommand(PDO $connection,array &$records,array &$pe
     $signature=hash('sha256',json_encode([$sceneId,$tokenId,$effectId,$delta],JSON_THROW_ON_ERROR));$now=(int)floor(microtime(true)*1000);
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $receipts=array_values(array_filter($activity['resourceReceipts']??[],static fn($r)=>($r['expiresAt']??0)>$now));
-    foreach($receipts as $receipt)if(($receipt['requestId']??'')===$requestId){
+    $receipt=applicationFindResourceReceipt($connection,$receipts,$requestId,$now);
+    if($receipt!==null){
         if(($receipt['accountId']??'')!==$identity['id'])rejectOnlineCommand($connection,403,'Cette action appartient à un autre MJ.','effect_receipt_forbidden');
         if(($receipt['kind']??'')!=='effect-stack'||($receipt['requestSignature']??'')!==$signature)rejectOnlineCommand($connection,409,'Cette référence a déjà un autre contenu.','effect_request_mismatch');
         return [...$receipt['result'],'deduplicated'=>true];
@@ -198,8 +197,8 @@ function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pen
     $now = (int) floor(microtime(true) * 1000);
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Référence de résolution invalide.', 'effect_request_invalid');
     $receipts = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn ($entry): bool => ($entry['expiresAt'] ?? 0) > $now));
-    foreach ($receipts as $receipt) {
-        if (($receipt['requestId'] ?? '') !== $requestId) continue;
+    $receipt = applicationFindResourceReceipt($connection, $receipts, $requestId, $now);
+    if ($receipt !== null) {
         if (($receipt['accountId'] ?? '') !== $identity['id']) rejectOnlineCommand($connection, 403, 'Cette résolution appartient à un autre MJ.', 'effect_receipt_forbidden');
         if (($receipt['kind'] ?? '') !== 'combat-effect' || ($receipt['requestSignature'] ?? '') !== $signature) rejectOnlineCommand($connection, 409, 'Cette référence a déjà un autre contenu.', 'effect_request_mismatch');
         return [...$receipt['result'], 'deduplicated' => true];
@@ -220,17 +219,25 @@ function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pen
         $formula = $decision === 'custom' ? (string) ($arguments['formula'] ?? '') : onlineRemainingDotFormula((string) $entry['formula'], (int) $entry['remainingTurns']);
         if (!validApplicationAbilityFormula($formula)) rejectOnlineCommand($connection, 400, 'La formule de dégâts restants est hors limites ; choisissez un jet personnalisé.', 'dot_formula_invalid');
         $rolled = onlineRollFormulaWithMode($formula, 'normal');
-        $summary = onlineAttackDamageSummary(max(0, (int) $rolled['total']), onlineAttackArmorPercent(applicationEnhancedResistanceTarget($target,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$sceneId), (string) ($entry['damageType'] ?? 'physical')));
-        $health = applyOnlineAttackDamage($connection, $records, $pending, onlineTokenDomainKey($sceneId, $target['id']), $target, $summary['finalDamage'], false, [...$summary, 'damageType' => $entry['damageType'] ?? 'physical','family'=>applicationEffectFamily($entry),'sourceItemKind'=>$entry['sourceItemKind']??'']);
+        $element = applicationPeriodicDamageElement($entry);
+        $summary = onlineTypedDamageSummary(max(0, (int) $rolled['total']),
+            applicationEnhancedResistanceTarget($target, onlineAttackEnhancementState($connection, $records, $pending, $sceneId), $sceneId),
+            (string) ($entry['damageType'] ?? 'physical'), $element);
+        $health = $summary['finalDamage'] > 0
+            ? applyOnlineAttackDamage($connection, $records, $pending, onlineTokenDomainKey($sceneId, $target['id']), $target,
+                $summary['finalDamage'], false, [...$summary, 'damageType' => $entry['damageType'] ?? 'physical',
+                    'family'=>applicationEffectFamily($entry),'sourceItemKind'=>$entry['sourceItemKind']??''], false)
+            : null;
         $applied = (int) ($health['appliedDamage'] ?? 0); $result['appliedDamage'] = $applied;
         $roll = onlineRollEntry($identity, $rolled, 'Fin de combat · ' . ($entry['label'] ?? 'Effet'), (string) $target['name']);
         $roll['diceAppearance'] = onlineDiceAppearance($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '');
-        $roll['mapEvent'] = ['kind' => 'damage', 'applied' => true, 'value' => $applied, 'label' => $entry['label'] ?? 'Effet',
+        $roll['mapEvent'] = ['kind' => 'damage', 'applied' => $applied > 0, 'value' => $applied, 'label' => $entry['label'] ?? 'Effet',
             'targetTokenId' => $target['id'], 'anchorTokenId' => $target['id'], 'targetName' => $target['name'], 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
         if (!onlineGmTokenVisibleToPlayers($connection, $records, $table, $target, $sceneId)) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
+        if ($element !== null) $roll['damageMitigation'] = [...$summary, 'finalDamage' => $applied];
         $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
         $result['roll'] = $roll;
-        $operation = ['kind' => 'resource-adjust', 'requestId' => $requestId, 'sceneId' => $sceneId, 'tokenId' => $target['id'],
+        if ($applied > 0) $operation = ['kind' => 'resource-adjust', 'requestId' => $requestId, 'sceneId' => $sceneId, 'tokenId' => $target['id'],
             'characterId' => $health['characterId'] ?? '', 'resource' => 'hp', 'appliedDelta' => -$applied,
             'previous' => $health['previousHp'] ?? 0, 'current' => $health['currentHp'] ?? 0, 'maximum' => $health['maximumHp'] ?? 0];
     } elseif ($resolve && $decision !== 'skip') $result['targetUnavailable'] = true;

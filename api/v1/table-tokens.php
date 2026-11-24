@@ -88,7 +88,8 @@ function onlineTableTokensCommand(PDO $connection,array &$records,array &$pendin
     $signature=json_encode(($args['action']??'')==='personal-use'?['personal-use',$args['characterId']??'',$args['expectedStock']??null]:[$args['action']??'', $args['side']??'', $args['id']??'', $args['expectedRevision']??null, $args['pools']??null],JSON_THROW_ON_ERROR);
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $receipts=array_values(array_filter($activity['resourceReceipts']??[],static fn($r)=>is_array($r)&&($r['expiresAt']??0)>$now));
-    foreach($receipts as $receipt)if(($receipt['requestId']??'')===$requestId){
+    $receipt=applicationFindResourceReceipt($connection,$receipts,$requestId,$now);
+    if($receipt!==null){
         if(($receipt['accountId']??'')!==$identity['id'])rejectOnlineCommand($connection,403,'Ce reçu appartient à un autre compte.','receipt_forbidden');
         if(($receipt['kind']??'')!=='table-tokens'||($receipt['requestSignature']??'')!==$signature)rejectOnlineCommand($connection,409,'Cette référence correspond à une autre action.','request_mismatch');
         return ['tableTokens'=>applicationTableTokensProjection($table['tableTokens']??null,$identity,$now),...($directPersonalUse?['personalAdvantage'=>onlinePersonalAdvantage($connection,$records,$pending,$identity,$args)]:[]),'deduplicated'=>true];

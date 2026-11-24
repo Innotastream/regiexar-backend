@@ -50,6 +50,7 @@ function onlineQueueDeferredDefenseGate(PDO $connection,array &$records,array &$
     $parties=[];foreach($targets as$target)$parties[$target['id']]=onlineDefenseParty($connection,$records,$target,$map);
     $attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map),'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Cibles sélectionnées','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!($context['visible']??true)?'gm':'public','attackId'=>$arguments['attackId']??$arguments['abilityId'],'attackName'=>$definition['name']??'Action de groupe','attackKind'=>$arguments['attackKind']??'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'damage'=>[],'finalDamage'=>0,'opposed'=>false,'createdAt'=>$now,
         ...($preparedHit!==null?['hit'=>$preparedHit['hit']]:[]),'areaGate'=>['version'=>1,'kind'=>$kind,'deferred'=>true,...($preparedHit!==null?['preparedHit'=>$preparedHit]:[]),...(isset($context['pathStrikeFingerprint'])?['pathStrikeFingerprint'=>$context['pathStrikeFingerprint']]:[]),'defenseStatId'=>'','targetTokenIds'=>$ids,'defenseEligibleTokenIds'=>$eligible,'requestBody'=>$arguments,'definition'=>$definition,'sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$context['targetPoint']??null,'sourceParty'=>onlineDefenseParty($connection,$records,$source,$map),'targetParties'=>$parties]];
+    if (onlineWantsTotalOpposition($arguments)) $attack['areaGate']['oppositionMode'] = 'total';
     $activity['pendingAttacks'][]=$attack;$activity['attackReceipts'][]=['requestId'=>$arguments['requestId'],'accountId'=>$identity['id'],'requestSignature'=>$context['requestSignature'],'expiresAt'=>$now+XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,'attack'=>$attack];
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
     onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$source['name'],'summary'=>$source['name'].' prépare '.$attack['attackName'],'detail'=>'Défenses individuelles en attente du MJ · aucun coût ni dégât appliqué']);
@@ -71,7 +72,7 @@ function onlineAssertDeferredDefenseParties(PDO $connection,array &$records,arra
     return compact('map','source','targets');
 }
 function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array &$pending,array $identity,array $arguments,array $attack):array{
-    $gate=$attack['areaGate'];$allowed=applicationApprovedAreaDefenseIds([...$gate,'targetTokenIds'=>$gate['defenseEligibleTokenIds']??$gate['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=json_encode([$arguments['decision'],$allowed],JSON_THROW_ON_ERROR);
+    $gate=$attack['areaGate'];$allowed=applicationApprovedAreaDefenseIds([...$gate,'targetTokenIds'=>$gate['defenseEligibleTokenIds']??$gate['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=onlineAreaDefenseSignature($arguments,$allowed);
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     if(isset($gate['resolutionSignature'])){if($gate['resolutionSignature']!==$signature)throw new RuntimeException('Cette action a déjà reçu une autre décision.',409);$children=[];foreach($activity['attackReceipts']as$receipt)if(($receipt['attack']['areaGateParentId']??'')===$attack['id'])$children[]=$receipt['attack'];$result=['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>true];if(!empty($gate['executionId']))foreach($activity['abilityExecutions']??[]as$execution)if($execution['id']===$gate['executionId'])$result['execution']=$execution;return $result;}
     $released=null;
@@ -79,6 +80,9 @@ function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array 
         onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);
         $gate['resolving']=true;$attack['areaGate']=$gate;foreach($activity['pendingAttacks']as&$entry)if($entry['id']===$attack['id'])$entry=$attack;unset($entry);foreach($activity['attackReceipts']as&$entry)if(($entry['attack']['id']??'')===$attack['id'])$entry['attack']=$attack;unset($entry);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
         $actor=['id'=>$attack['accountId'],'display_name'=>$attack['playerName'],'effective_mode'=>$attack['attackerRole'],'permanent_role'=>$attack['attackerRole']];$request=[...$gate['requestBody'],'requestId'=>'release-'.$attack['id']];$table=$pending['table']['payload']??applicationDomainPayload($records,'table');
+        if ($gate['kind']!=='complex-start' && onlineWantsTotalOpposition($gate)) {
+            $request['oppositionMode']='total';$request['opposed']=true;
+        }
         $approval=['gate'=>$gate,'defenseTokenIds'=>$allowed,'gm'=>$identity];
         if($gate['kind']==='complex-start')$released=onlineUseComplexAbility($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',null,['defenseApproval'=>$approval]);
         else $released=onlinePerformTargetAttack($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',['sceneId'=>$attack['sceneId'],'defenseApproval'=>$approval]);

@@ -26,7 +26,7 @@ function applicationTelluricStationVisuals(array $store,array $visibleDevices,ar
         if($index!==null&&isset($stations[$store['devices'][$index]['id']]))$links[$store['devices'][$index]['id']][]=$token['id'];
     }
     $rows=[];foreach($stations as $id=>$station){
-        $row=['version'=>1,'kind'=>'telluric-station','id'=>$id,'sceneId'=>$sceneId,'layerId'=>$layerId,'x'=>$station['x'],'y'=>$station['y'],'size'=>$station['size']??64,'rangeCells'=>$station['definition']['radiusCells'],'linkTokenIds'=>$links[$id]];
+        $row=['version'=>1,'kind'=>'telluric-station','id'=>$id,'sceneId'=>$sceneId,'layerId'=>$layerId,'x'=>$station['x'],'y'=>$station['y'],'size'=>$station['size']??64,'rangeCells'=>dsBatteryRadiusCells($station['definition']),'linkTokenIds'=>$links[$id]];
         if(($station['artworkPreset']??'')!=='telluric-station'&&dsImage($station['image']??'')!=='')$row['image']=dsImage($station['image']);
         $rows[]=$row;
     }

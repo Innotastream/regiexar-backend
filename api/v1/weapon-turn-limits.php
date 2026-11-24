@@ -1,9 +1,15 @@
 <?php
 declare(strict_types=1);
+function isVarskaPawAttack(array $weapon, array $source): bool {
+ if (($weapon['id'] ?? '') !== 'weapon-2') return false;
+ $identities = [$source['id']??'', 'unit_'.($source['id']??''), $source['characterId']??'',
+     $source['baseCharacterId']??'', $source['clonedFromCharacterId']??''];
+ return array_intersect($identities, ['character-X4kmpvnbF9rQgNGc', 'unit_token-P-CK3ZtFhBidBd0rf3mlyA']) !== [];
+}
+
 function normalizeWeaponAttackTurnLimit(mixed $value):int {return (!is_string($value)||preg_match('/^(0|[1-9]\d*)$/D',$value)===1)&&is_numeric($value)&&is_finite((float)$value)&&(float)$value===floor((float)$value)&&(float)$value>0&&(float)$value<=9007199254740991?min(100,(int)$value):0;}
 function weaponAttackTurnLimit(array $weapon,array $source=[]):int {
- $presets=['character-X4kmpvnbF9rQgNGc'=>['weapon-2'=>1],'unit_token-P-CK3ZtFhBidBd0rf3mlyA'=>['weapon-2'=>1]];
- foreach([$source['id']??'','unit_'.($source['id']??''),$source['characterId']??'',$source['baseCharacterId']??'',$source['clonedFromCharacterId']??'']as$id)if(isset($presets[$id][$weapon['id']??'']))return $presets[$id][$weapon['id']];
+ if (isVarskaPawAttack($weapon, $source)) return 1;
  return normalizeWeaponAttackTurnLimit($weapon['maxAttacksPerTurn']??null);
 }
 function configuredWeaponTurnLimits(array $weapons,array $source=[]):array {return array_map(static function($weapon)use($source){$limit=weaponAttackTurnLimit($weapon,$source);return $limit?[...$weapon,'maxAttacksPerTurn'=>$limit]:$weapon;},$weapons);}

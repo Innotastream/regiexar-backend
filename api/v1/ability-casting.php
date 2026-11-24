@@ -114,6 +114,7 @@ function applicationAbilityRequestSignature(string $route, string $sceneId, arra
         $simpleRoll && !$hasCastingCheck ? normalizeOnlineD100Modifier($arguments['modifier'] ?? 0) : 0,
         $attack ? normalizeOnlineD100Modifier($arguments['damageModifier'] ?? 0) : 0,
         $attack && ($arguments['opposed'] ?? false) === true,
+        ...($attack && onlineWantsTotalOpposition($arguments) ? ['total'] : []),
         ...(applicationRequestsSpecialSuccess($arguments)?['joker']:[]),
         ...(array_key_exists('variantId',$arguments)?[['variantId'=>$arguments['variantId']]]:[]),
         ...(array_key_exists('areaVariantId',$arguments)?[['areaVariantId'=>$arguments['areaVariantId']]]:[]),
@@ -332,7 +333,7 @@ function applicationAttackVisualWaitsForDamage(array $activity,array $attack): b
     foreach($activity['abilityExecutions']??[] as $entry)if(($entry['id']??'')===($attack['complexExecutionId']??null)){$abilityId=$entry['abilityId']??'';break;}
     return !empty(applicationMeleeVisualBindings()['abilities'][$abilityId]['resolvedDamageOnly'])||!empty(applicationSpellVisualBindings()[$abilityId]['onResolvedDamage']);
 }
-function appendApplicationAttackVisualEvent(array &$activity,array $attack,array $map,array $items,array $alternatives=[],bool $approved=false,bool $deferredOnly=false,array $devices=[]): void {
+function appendApplicationAttackVisualEvent(array &$activity,array $attack,array $map,array $items,array $alternatives=[],bool $approved=false,bool $deferredOnly=false,array $devices=[],bool $enemyOnly=false): void {
     $execution=null;foreach($activity['abilityExecutions']??[] as $entry)if(($entry['id']??'')===($attack['complexExecutionId']??null)){$execution=$entry;break;}
     $step=$execution['workflow']['steps'][$execution['currentStepIndex']??-1]??null;
     $strikeIndex=count($execution['stepStates'][$step['id']??'']['attacks']??[]);
@@ -348,12 +349,56 @@ function appendApplicationAttackVisualEvent(array &$activity,array $attack,array
     $candidates=$weaponChildren!==[]?[$attack,...$weaponChildren]:[$candidate];$seen=[];
     foreach($candidates as $index=>$candidate){
         if($candidate===null||isset($seen[$candidate['id']??'']))continue;$seen[$candidate['id']??'']=true;
-        $spell=applicationTrustedMeleeVisual($candidate,['map'=>$map,'items'=>$items,'abilityId'=>$execution['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):''),
-            'strikeIndex'=>$strikeIndex+$index,'approved'=>$approved,'deferredOnly'=>$deferredOnly])??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'devices'=>$devices,'approved'=>$approved]);
+        $abilityId=$execution['abilityId']??$candidate['attackId']??'';
+        $spell=applicationTrustedMeleeVisual($candidate,['map'=>$map,'items'=>$items,
+            'abilityId'=>$execution['abilityId']??(($attack['attackKind']??'')==='ability'?($attack['attackId']??''):''),
+            'strikeIndex'=>$strikeIndex+$index,'approved'=>$approved,'deferredOnly'=>$deferredOnly])
+            ??applicationTrustedDamageSpellVisual($candidate,['map'=>$map,'devices'=>$devices,'approved'=>$approved]);
+        if ($enemyOnly && $spell !== null) continue;
+        $spell ??= applicationTrustedEnemyAttackVisual($candidate,['map'=>$map,'approved'=>$approved,'abilityId'=>$abilityId]);
         if($spell!==null)appendApplicationAbilityCueEvent($activity,normalizeApplicationAbilityCompletionCue(['spell'=>$spell]),
             $attack['sceneId'],$attack['layerId'],$spell['presetId']==='stationary-blue-bolt'?$candidate['attackId']:$attack['sourceTokenId'],$candidate['visibility']??$attack['visibility']??'public',
-            $weaponChildren!==[]||!empty($candidate['weaponAttackParentId'])||$spell['presetId']==='stationary-blue-bolt'?'attack-visual-'.$candidate['id']:'');
+            $weaponChildren!==[]||!empty($candidate['weaponAttackParentId'])||$spell['presetId']==='stationary-blue-bolt'
+            ||str_starts_with($spell['presetId'],'enemy-')?'attack-visual-'.$candidate['id']:'');
     }
+}
+
+function onlineAppendConcludedEnemyAttackVisual(
+    PDO $connection, array &$records, array &$pending, array &$activity, array $attack,
+    array $source, array $target, bool $approved = false
+): void {
+    if (!applicationEnemyAttackVisualResolved($attack, $approved)) return;
+    $sceneId = (string) ($attack['sceneId'] ?? '');
+    $sourceKey = onlineTokenDomainKey($sceneId, $source['id'] ?? '');
+    $targetKey = onlineTokenDomainKey($sceneId, $target['id'] ?? '');
+    if ($sourceKey === '' || $targetKey === '' || $sourceKey === $targetKey
+        || ($pending[$sourceKey]['operation'] ?? '') === 'delete' || ($pending[$targetKey]['operation'] ?? '') === 'delete') return;
+    $source = $pending[$sourceKey]['payload'] ?? $source;
+    $target = $pending[$targetKey]['payload'] ?? $target;
+    if (!applicationEnemyAttackVisualSource($source)) return;
+
+    $mapKey = 'map:' . $sceneId;
+    $mountKeys = [];
+    foreach ([$source, $target] as $token) {
+        $key = onlineTokenDomainKey($sceneId, $token['mountedOnTokenId'] ?? '');
+        if ($key !== '' && $key !== $sourceKey && $key !== $targetKey) $mountKeys[$key] = true;
+    }
+    $hasEquipment = !empty($attack['echoAttackContext']['equipmentItemIds']);
+    $required = [$mapKey, ...array_keys($mountKeys), ...($hasEquipment ? ['items'] : [])];
+    $missing = array_diff($required, array_keys($records), array_keys($pending));
+    if ($missing !== []) $records += applicationDomainRecords($connection, array_values($missing));
+    $map = $pending[$mapKey]['payload'] ?? applicationDomainPayload($records, $mapKey);
+    if ($map === []) return;
+    $map['tokens'] = [$source, $target];
+    foreach (array_keys($mountKeys) as $key) {
+        if (($pending[$key]['operation'] ?? '') === 'delete') continue;
+        $mount = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+        if ($mount !== []) $map['tokens'][] = $mount;
+    }
+    $items = $hasEquipment ? ($pending['items']['payload'] ?? applicationDomainPayload($records, 'items')) : [];
+    $before = $activity['abilityCueEvents'] ?? [];
+    appendApplicationAttackVisualEvent($activity, $attack, $map, $items, [], $approved, false, [], true);
+    if (($activity['abilityCueEvents'] ?? []) !== $before) queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
 }
 
 function onlineRefundAbilityFatigue(PDO $connection, array &$records, array &$pending, string $sceneId, string $sourceTokenId, string $characterId, int|float $amount,string $deferredEffectId=''): int|float {
@@ -561,20 +606,27 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         'reducedFailureEnabled' => ($plan['reducedFailureEnabled'] ?? false) === true, 'reducedFailureApplied' => $failedCooldown > 0];
 }
 
-function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, mixed $signature, bool $isGm = false): ?array {
+function onlineAbilityReceipt(PDO $connection, array $activity, string $requestId, string $accountId, mixed $signature, bool $isGm = false, ?array $legacyHealing = null): ?array {
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) rejectOnlineCommand($connection, 400, 'Actualisez le client pour sécuriser le lancement de cette compétence.', 'invalid_ability_request');
-    $now = (int) floor(microtime(true) * 1000); $count = 0;
-    foreach ($activity['resourceReceipts'] ?? [] as $receipt) {
-        if (!is_array($receipt) || ($receipt['expiresAt'] ?? 0) <= $now) continue;
-        $count += 1;
-        if (($receipt['requestId'] ?? '') !== $requestId) continue;
+    $now = applicationResourceReceiptClock();
+    $live = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn($entry): bool =>
+        is_array($entry) && ($entry['expiresAt'] ?? 0) > $now));
+    $receipt = applicationFindResourceReceipt($connection, $live, $requestId, $now);
+    if ($receipt !== null) {
         if (($receipt['accountId'] ?? '') !== $accountId) rejectOnlineCommand($connection, 403, 'Ce reçu appartient à un autre compte.', 'ability_receipt_forbidden');
+        $operation = $receipt['operation'] ?? null;
+        if ($legacyHealing !== null && ($operation['kind'] ?? '') === 'resource-adjust') {
+            if (($operation['sceneId'] ?? '') !== $legacyHealing['sceneId'] || ($operation['tokenId'] ?? '') !== $legacyHealing['targetTokenId']) {
+                rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre soin.', 'ability_request_mismatch');
+            }
+            return ['effect' => 'healing', 'appliedDelta' => $operation['appliedDelta'] ?? 0, 'deduplicated' => true];
+        }
         $expectedSignature = is_callable($signature) ? $signature($receipt) : (string) $signature;
         if (($receipt['requestSignature'] ?? '') !== $expectedSignature || ($receipt['kind'] ?? '') !== 'ability-cast' || !is_array($receipt['result'] ?? null)) rejectOnlineCommand($connection, 409, 'Cette référence désigne un autre lancement.', 'ability_request_mismatch');
         onlineAssertAbilityReceiptVisibility($connection, $receipt['result'], $isGm);
         return [...$receipt['result'], 'deduplicated' => true];
     }
-    if ($count + count($activity['pendingAbilityCasts'] ?? []) >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
+    if (count($live) + count($activity['pendingAbilityCasts'] ?? []) >= XAR_RESOURCE_RECEIPT_MAXIMUM) rejectOnlineCommand($connection, 429, 'Le journal de sécurité des compétences est plein.', 'ability_receipt_capacity');
     return null;
 }
 

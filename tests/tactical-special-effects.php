@@ -60,6 +60,9 @@ $wallAbility=$wall;
 $wallAbility['id']='ability-28849018-287a-4ce4-b1fa-7ec786d00807';
 $wallAbility['damageComponents']=[['type'=>'magical','formula'=>'10'],['type'=>'ignore','formula'=>'11']];
 $c['abilities']=[$wallAbility];$db->put('character:character-player',$c);
+$monsterKey='token:scene-one:token-monster';
+$m=$db->payload($monsterKey);
+$db->put($monsterKey,[...$m,'armorCategory'=>'special','armor'=>50,'magicArmor'=>100,'elementalResistances'=>['poison'=>50]]);
 $args=['requestId'=>'thorn-wall-rectangular','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player',
     'attackKind'=>'ability','attackId'=>$wallAbility['id'],'targetPoint'=>['x'=>50,'y'=>50,'rotation'=>90],'opposed'=>false];
 $r=runCommand($db,'token.attack',$args);
@@ -72,11 +75,10 @@ $cue=array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],
 specialCheck(count($cue)===1&&$cue[0]['sourceTokenId']==='token-player','Wall growth cue is emitted once by the caster');
 specialCheck($cue[0]['completionCue']['spell']['targetPoint']['rotation']===90&&$cue[0]['completionCue']['spell']['anchorTokenId']===$token['id'],'Cue preserves the actual wall position and rotation');
 specialCheck($db->payload('character:character-player')['resources']['mana']===70,'Canonical wall costs thirty mana');
-$monsterKey='token:scene-one:token-monster';
 $m=$db->payload($monsterKey);
-specialCheck($m['hp']===479,'Initial magic and poison are both immediate');
+specialCheck($m['hp']===489,'Initial physical damage and poison are immediate and mitigate independently');
 $dots=array_values(array_filter($db->payload('activity')['damageOverTime']??[],static fn($dot)=>$dot['targetTokenId']==='token-monster'));
-specialCheck(count($dots)===1&&$dots[0]['remainingTurns']===2,'Poison has precisely two later ticks');
+specialCheck(count($dots)===1&&$dots[0]['damageType']==='poison'&&$dots[0]['remainingTurns']===2,'Poison has precisely two later ticks');
 $map=$db->payload('map:scene-one');$mask=applicationActiveMapOcclusionState($map,[$token])['walls'];
 $covers=static fn($mask,$x,$y)=>applicationMaskBit(applicationWallMaskBytes($mask),(int)round($y/100*($mask['height']-1))*$mask['width']+(int)round($x/100*($mask['width']-1)));
 specialCheck($covers($mask,50,60)&&!$covers($mask,60,50),'Wall mask keeps the vertical rectangular footprint');
@@ -92,11 +94,12 @@ $initiative=$db->payload('initiative:scene-one');$initiative['currentIndex']=1;$
 $attack=['requestId'=>'thorn-wall-demolish-native','sceneId'=>'scene-one','sourceTokenId'=>'token-monster','targetTokenId'=>$token['id'],
     'attackKind'=>'ability','attackId'=>'demolition','opposed'=>false];
 $r=runCommand($db,'token.attack',$attack,true);
-$counter=$r->body['attack']['thornWallRetaliation']['appliedDamage']??0;
-specialCheck($r->status===200&&$counter>=11&&$counter<=40,'Fatal enemy strike triggers magical retaliation: '.json_encode($r->body));
-specialCheck($db->payload($monsterKey)['hp']===479-$counter&&$db->payload($wallKey)['hp']===0,'Both wall and enemy take their damage');
+$retaliation=$r->body['attack']['thornWallRetaliation']??[];
+$counter=$retaliation['appliedDamage']??0;
+specialCheck($r->status===200&&($retaliation['formula']??null)==='1d30+10'&&$counter===(int)round($retaliation['rawDamage']/2),'Fatal enemy strike triggers retaliation mitigated by physical armor: '.json_encode($r->body));
+specialCheck($db->payload($monsterKey)['hp']===489-$counter&&$db->payload($wallKey)['hp']===0,'Both wall and enemy take their damage');
 $r=runCommand($db,'token.attack',$attack,true);
-specialCheck(!empty($r->body['deduplicated'])&&$db->payload($monsterKey)['hp']===479-$counter,'Retaliation cannot be replayed');
+specialCheck(!empty($r->body['deduplicated'])&&$db->payload($monsterKey)['hp']===489-$counter,'Retaliation cannot be replayed');
 
 $door=applicationCreateTerrainBarrierToken(['id'=>'door','terrainBarrier'=>['version'=>1,'shape'=>'door','hp'=>75,'size'=>40]],['x'=>50,'y'=>50,'rotation'=>0],'fixture-door');
 $doorMask=applicationActiveMapOcclusionState($map,[$door])['walls'];

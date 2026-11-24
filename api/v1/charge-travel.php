@@ -5,12 +5,26 @@ require_once __DIR__.'/ability-mount-movement.php';
 require_once __DIR__.'/ability-movement-lock.php';
 function applicationChargeSame(array $a,array $b):bool {return abs($a['x']-$b['x'])<1e-5&&abs($a['y']-$b['y'])<1e-5;}
 function applicationChargeTravelMap(array $map,string $layer):array {return [...$map,...($map['layers'][$layer]??[]),'activeLayerId'=>$layer,'tokens'=>$map['tokens']??[]];}
-function applicationChargeTravelAllowed(array $token,array $from,array $to,array $map):bool {
+function applicationChargeTravelBlocker(array $token,array $from,array $to,array $map,bool $identifyTerrain=false):?string {
  $d=applicationComplexMovementDimensions($map);$r=($token['size']??40)/2;
- if($to['x']*$d['width']/100<$r||$to['x']*$d['width']/100>$d['width']-$r||$to['y']*$d['height']/100<$r||$to['y']*$d['height']/100>$d['height']-$r)return false;
- $rawWalls=$map['walls']??null;$walls=applicationTerrainBarrierWalls(validApplicationWallState($rawWalls)?$rawWalls:emptyApplicationWallState($d['width'],$d['height']),$map);$route=applicationResolveWallCollision($walls,$from,$to,$token['size']??40,$d['width'],$d['height'],false);if(!empty($route['blocked'])||!applicationChargeSame($route,$to))return false;
+ if($to['x']*$d['width']/100<$r||$to['x']*$d['width']/100>$d['width']-$r||$to['y']*$d['height']/100<$r||$to['y']*$d['height']/100>$d['height']-$r)return 'edge';
+ $rawWalls=$map['walls']??null;
+ $paintedWalls=validApplicationWallState($rawWalls)?$rawWalls:emptyApplicationWallState($d['width'],$d['height']);
+ $walls=applicationTerrainBarrierWalls($paintedWalls,$map);
+ $route=applicationResolveWallCollision($walls,$from,$to,$token['size']??40,$d['width'],$d['height'],false);
+ if(!empty($route['blocked'])||!applicationChargeSame($route,$to)){
+  if($identifyTerrain&&$walls!==$paintedWalls){
+   $painted=applicationResolveWallCollision($paintedWalls,$from,$to,$token['size']??40,$d['width'],$d['height'],false);
+   if(empty($painted['blocked'])&&applicationChargeSame($painted,$to))return 'terrain';
+  }
+  return 'wall';
+ }
  $visible=is_callable($map['_chargeVisible']??null)?$map['_chargeVisible']:onlineVisiblePathPointTester($map['fog']??null,$map['visionMask']??['enabled'=>false]);$n=max(1,(int)ceil(hypot(($to['x']-$from['x'])*$d['width']/100,($to['y']-$from['y'])*$d['height']/100)/2));
- for($i=0;$i<=$n;$i++)if(!$visible($from['x']+($to['x']-$from['x'])*$i/$n,$from['y']+($to['y']-$from['y'])*$i/$n))return false;return true;
+ for($i=0;$i<=$n;$i++)if(!$visible($from['x']+($to['x']-$from['x'])*$i/$n,$from['y']+($to['y']-$from['y'])*$i/$n))return 'vision';
+ return null;
+}
+function applicationChargeTravelAllowed(array $token,array $from,array $to,array $map):bool {
+ return applicationChargeTravelBlocker($token,$from,$to,$map)===null;
 }
 function applicationChargeClosest(array $p,array $a,array $b,array $d):array {$dx=($b['x']-$a['x'])*$d['width']/100;$dy=($b['y']-$a['y'])*$d['height']/100;$x=($p['x']-$a['x'])*$d['width']/100;$y=($p['y']-$a['y'])*$d['height']/100;$t=max(0,min(1,($x*$dx+$y*$dy)/(($dx*$dx+$dy*$dy)?:1)));return ['x'=>$a['x']+($b['x']-$a['x'])*$t,'y'=>$a['y']+($b['y']-$a['y'])*$t,'distance'=>hypot($x-$dx*$t,$y-$dy*$t),'progress'=>$t];}
 function applicationChargePushAside(array $source,array $from,array $to,array $tokens,array $map,array $options=[]):array {

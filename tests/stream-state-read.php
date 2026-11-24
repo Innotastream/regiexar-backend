@@ -81,6 +81,18 @@ function loadedStreamFixture(): MemoryConnection
     return $db;
 }
 $gm = ['id' => 'account-gm', 'display_name' => 'MJ fictif', 'effective_mode' => 'gm', 'permanent_role' => 'gm'];
+$legacyStation = loadedStreamFixture();
+$legacyStore = $legacyStation->payload('devices');
+$legacySource = $legacyStation->payload('token:scene-one:token-player');
+$legacyMap = $legacyStation->payload('map:scene-one');
+requireTactical(dsProvider($legacyStore, $legacySource, $legacyMap, 'scene-one', static fn():bool=>true) === 0,
+    'Une ancienne batterie sans rayon fournit le mana à deux cases.');
+requireTactical(dsProvider($legacyStore, $legacySource, $legacyMap, 'scene-one', static fn():bool=>false) === null,
+    'Une ancienne batterie garde le besoin de portée directe.');
+$legacyStore['devices'][0]['definition']['radiusCells'] = 7;
+$legacyStore['devices'][0]['definition']['requireDirectRange'] = false;
+requireTactical(dsProvider($legacyStore, [...$legacySource,'x'=>37], $legacyMap, 'scene-one', static fn():bool=>false) === 0,
+    'Une batterie configurée conserve son rayon et le choix de sa portée.');
 $evidence = [];
 foreach (['live', 'vision', 'paused', 'paused-legacy', 'other-layer', 'empty'] as $scenario) {
     $db = loadedStreamFixture();
@@ -131,6 +143,8 @@ foreach (['live', 'vision', 'paused', 'paused-legacy', 'other-layer', 'empty'] a
         requireTactical(($response->body['state']['devices']['manualTurns']['scene-one'] ?? null) === 17,
             'Round clocks survive the selective read.');
         requireTactical(count($response->body['state']['devices']['devices']) === 1, 'Visible machines survive the selective read.');
+        requireTactical(($response->body['state']['devices']['telluricVisuals'][0]['rangeCells']??null)===2,
+            'Le cercle de la station ancienne utilise le même rayon de deux cases.');
         requireTactical(count($response->body['state']['items']['instances']) === 1, 'Visible ground items survive the selective read.');
         requireTactical(count($response->body['state']['abilityCueEvents']) === 1 && count($response->body['state']['rolls']) === 1,
             'The complete read still delivers ability and special-success animations.');
