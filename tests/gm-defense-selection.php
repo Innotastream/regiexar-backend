@@ -179,4 +179,35 @@ $c=$db->payload('character:character-player');$c['abilities'][0]['castingStatId'
 $db=specialFixture();$id='ability-566f321d-ca05-4b02-92ad-8149076076e6';$preset=json_decode(file_get_contents(__DIR__.'/../api/v1/ability-simple-presets.json'),true,512,JSON_THROW_ON_ERROR)[$id];$c=$db->payload('character:character-player');$c['abilities']=[['id'=>$id,'name'=>'Charge native MJ',...$preset['values'],'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]]];$c['weaponAttacks'][0]['naturalWeapon']=true;$db->put('character:character-player',$c);
 foreach(['token-player'=>20,'token-monster'=>40,'token-monster-two'=>90,'token-independent'=>95]as$tokenId=>$x){$key='token:scene-one:'.$tokenId;$token=$db->payload($key);$token['x']=$x;$token['y']=$tokenId==='token-independent'?90:50;$db->put($key,$token);}
 $selection=['allocations'=>[['tokenId'=>'token-monster','count'=>1]]];$before=$db->payload('character:character-player');$from=$db->payload('token:scene-one:token-player');$started=runCommand($db,'ability.complex',['action'=>'start','requestId'=>'native-charge-selection-'.randomToken(16),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','abilityId'=>$id,'initialSelection'=>$selection,'chargeSelection'=>$selection]);specialCheck($started->status===200,'Charge prepares authoritative targets: '.json_encode($started->body));specialCheck(!empty($started->body['pendingAreaGate'])&&$started->body['execution']===null,'Charge waits with no execution');specialCheck($db->payload('character:character-player')===$before&&$db->payload('token:scene-one:token-player')===$from,'Charge preview spends and moves nothing');$approved=runCommand($db,'token.attack.area.resolve',['requestId'=>'native-charge-approved-'.randomToken(16),'attackId'=>$started->body['attack']['id'],'confirmed'=>true,'decision'=>'approve','defenseTokenIds'=>['token-monster']],true);specialCheck($approved->status===200&&!empty($approved->body['execution']),'MJ approval starts real charge: '.json_encode($approved->body));specialCheck($db->payload('character:character-player')['fatigue']['current']===$before['fatigue']['current']+10,'Charge fatigue paid once after MJ only');specialCheck($db->payload('token:scene-one:token-player')['x']===$from['x'],'Charge travel waits for its real attack step');
+// Ordinary out-of-combat area damage is approved atomically in one call.
+$automaticDb = specialFixture();
+$automaticDb->put('character:character-player', $before = $groupDb->payload('character:character-player'));
+$automaticDb->put('initiative:scene-one', [...$automaticDb->payload('initiative:scene-one'), 'active'=>false]);
+$automaticDb->put('map:scene-one', $map);
+$targetsBefore = [];
+foreach (['token-player'=>20, 'token-monster'=>25, 'token-monster-two'=>27, 'token-independent'=>90] as $tokenId=>$x) {
+    $key = 'token:scene-one:'.$tokenId;
+    $token = [...$automaticDb->payload($key), 'x'=>$x, 'y'=>$x===90?90:50];
+    $automaticDb->put($key, $token);
+    $targetsBefore[$tokenId] = $token['hp'];
+}
+$automaticCast = runCommand($automaticDb, 'token.attack', [...$args, 'requestId'=>'automatic-area-launch-'.randomToken(12)]);
+specialCheck($automaticCast->status === 200 && ($automaticCast->body['pendingAreaGate'] ?? false), 'Area keeps its defense decision independently of automatic damage approval');
+$allowed = runCommand($automaticDb, 'token.attack.area.resolve', [
+    ...$decision, 'attackId'=>$automaticCast->body['attack']['id'], 'defenseTokenIds'=>[]
+], true);
+$automaticIds = array_column(array_filter($allowed->body['areaAttacks'] ?? [], static fn($a) => ($a['status'] ?? '')==='pending'), 'id');
+specialCheck($allowed->status === 200 && count($automaticIds) === 2
+    && $automaticDb->payload('token:scene-one:token-monster')['hp'] === $targetsBefore['token-monster'], 'Manual damage still waits outside combat');
+$autoArgs = ['attackIds'=>$automaticIds, 'confirmed'=>true, 'decision'=>'approve'];
+specialCheck(runCommand($automaticDb, 'token.attack.resolve', $autoArgs)->status === 403, 'Only a GM can approve automatic damage in bulk');
+$autoResult = runCommand($automaticDb, 'token.attack.resolve', $autoArgs, true);
+specialCheck($autoResult->status === 200 && ($autoResult->body['attackCount'] ?? 0) === 2
+    && $automaticDb->payload('token:scene-one:token-monster')['hp'] === $targetsBefore['token-monster'] - 7
+    && $automaticDb->payload('token:scene-one:token-monster-two')['hp'] === $targetsBefore['token-monster-two'] - 7,
+    'One automatic approval applies both computed damage values: '.json_encode($autoResult->body));
+$autoRetry = runCommand($automaticDb, 'token.attack.resolve', $autoArgs, true);
+specialCheck($autoRetry->status === 200 && ($autoRetry->body['attackCount'] ?? -1) === 0 && ($autoRetry->body['deduplicated'] ?? false)
+    && $automaticDb->payload('token:scene-one:token-monster')['hp'] === $targetsBefore['token-monster'] - 7, 'A retried batch does not apply damage twice');
+
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

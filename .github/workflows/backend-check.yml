@@ -58,6 +58,7 @@ jobs:
       - name: Tactical lifecycle and concurrent conditions
         run: |
           php tests/tactical-lifecycle.php
+          php tests/initiative-batch.php
           php tests/monster-reinforcement.php
           php tests/stream-roll-projection.php > /dev/null
           php tests/stream-state-read.php
@@ -144,6 +145,7 @@ jobs:
           php tests/player-stocks-authority.php
           php tests/stream-combat-details.php
           php tests/map-time-weather.php
+          php tests/map-animation.php
           php tests/gm-defense-selection.php
           php tests/total-opposition.php
           php tests/pending-attack-lifecycle.php

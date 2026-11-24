@@ -106,9 +106,15 @@ $check($resolved->status === 200 && count($enemyEvents($db)) === 1
 $declined = runCommand($db, 'token.attack.resolve', ['attackId'=>$initialAttack['id'],'decision'=>'reject'], true, 'account-gm');
 $check($declined->status === 200 && $declined->body['attack']['status'] === 'rejected'
     && $enemyEvents($db) === [], 'Une frappe refusée n’a aucun effet visuel.');
-[$db,$initialAttack] = $seedEnemyAttack(true,true,'awaiting-opposition',['bestiaryRole'=>'neutral']);
-runCommand($db, 'token.attack.oppose', [...$skip,'attackId'=>$initialAttack['id']], true, 'account-gm');
-$check($enemyEvents($db) === [], 'Un PNJ neutre ne reçoit pas l’effet générique du bestiaire.');
+foreach (['peaceful', 'neutral'] as $role) {
+    [$db,$initialAttack] = $seedEnemyAttack(true,true,'awaiting-opposition',['bestiaryRole'=>$role, 'bestiaryRank'=>'strong']);
+    $reaction = runCommand($db, 'token.attack.oppose', [...$skip,'attackId'=>$initialAttack['id']], true, 'account-gm');
+    $check($reaction->status === 200 && $enemyEvents($db) === [], 'Un PNJ neutre classé ne reçoit pas l’effet générique du bestiaire.');
+    $model = $db->payload('token:scene-one:token-monster');
+    $library = validatedDomainPayload('library', ['tokenLibrary'=>[$model]]);
+    $check($library['tokenLibrary'][0]['bestiaryRole'] === $role && validApplicationTokenDomain($model),
+        'Le rôle neutre est préservé en bibliothèque et sur la carte.');
+}
 
 [$db,$initialAttack] = $seedEnemyAttack(true,false,'applied');
 $check(count($enemyEvents($db)) === 1, 'Un coup immédiat garde son visuel de bestiaire exactement une fois.');

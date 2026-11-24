@@ -42,8 +42,14 @@ try {
     groupedSqlCheck(count($pending['pendingAttacks'])===1&&applicationReadDirectAttackReceipt($observer,$newArgs['requestId'],$now)===null,'An undecided area gate remains in the synchronized active domain');
     $resolveArgs=['requestId'=>'group-ledger-area-approval','attackId'=>$opened->body['attack']['id'],'confirmed'=>true,'decision'=>'approve','defenseTokenIds'=>[]];
     $beforeResources=groupedSqlPayload($observer,'character:character-player');$beforeTarget=groupedSqlPayload($observer,'token:scene-one:token-monster');
+    // An orphan document from a previous scene edit is not an area target.
+    $orphanKey = 'token:scene-one:token-removed-from-index';
+    $orphan = [...$beforeTarget, 'id'=>'token-removed-from-index', 'unitId'=>'unit-removed-from-index'];
+    upsertApplicationDomain($db, $orphanKey, $orphan, 1, null);
     $released=groupedSqlCommand($db,'token.attack.area.resolve',$resolveArgs,true,'account-gm');
     groupedSqlCheck($released->status===200&&count($released->body['areaAttacks']??[])>=2,'Actual area resolution creates the child outcomes after 1024 archived rows',['body'=>$released->body]);
+    groupedSqlCheck(!in_array($orphan['id'], array_column($released->body['areaAttacks'], 'targetTokenId'), true)
+        && groupedSqlPayload($observer, $orphanKey)['hp'] === $orphan['hp'], 'A token removed from the index does not change the prepared defense or take damage');
     $children=array_column($released->body['areaAttacks'],'id');$parent=applicationReadDirectAttackReceipt($observer,$newArgs['requestId'],$now);
     groupedSqlCheck((int)$observer->query('SELECT COUNT(*) FROM application_direct_attack_receipts')->fetchColumn()>1024&&groupedSqlPayload($observer,'activity')['attackReceipts']===[],'More than 1024 terminal outcomes coexist in the private ledger while activity stays bounded');
     $snapshot=groupedSqlSnapshot($observer);$resolveReplay=groupedSqlCommand($observer,'token.attack.area.resolve',$resolveArgs,true,'account-gm');

@@ -137,8 +137,16 @@ if (is_array($deduplicatedAttack)) {
         && applicationAbilityWeaponDrawRule(['id'=>$arguments['attackId'] ?? '', 'effect'=>'damage']) !== null;
     $source = applicationDomainPayload($records, $sourceKey);
     $target = applicationDomainPayload($records, $targetKey);
+    $sceneTokens = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
+    $tokenOrder = onlineLightPendingDomainPayload($records, $pending, 'token-index:' . $sceneId)['order'] ?? null;
+    if (is_array($tokenOrder)) {
+        // Previously fetched token documents can outlive their scene membership.
+        $indexedTokenIds = array_fill_keys($tokenOrder, true);
+        $sceneTokens = array_values(array_filter($sceneTokens,
+            static fn (array $token): bool => isset($indexedTokenIds[$token['id'] ?? ''])));
+    }
     $map = $isGm && $mechanicsApplied !== null ? $mechanicsApplied['state']['map'] : applicationDomainPayload($records, $mapKey);
-    $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
+    $map['tokens'] = $sceneTokens;
     if (($source !== [] && !onlineTokenOnActiveLayer($source, $map)) || ($target !== [] && !onlineTokenOnActiveLayer($target, $map))) {
         rejectOnlineCommand($connection, 409, $automaticDrawRequested
             ? 'Le lanceur de la Danse n’est plus sur ce niveau. Sélectionnez son pion sur son niveau actuel, puis relancez la Danse.'
@@ -178,8 +186,9 @@ if (is_array($deduplicatedAttack)) {
     if (onlineTokenIsDead($target, $targetController !== '')) {
         rejectOnlineCommand($connection, 409, 'Cette cible est déjà morte.', 'target_already_defeated');
     }
-    $map = [...applicationDomainPayload($records, $mapKey),'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,$sceneId)];
-    if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)) {
+    $map = [...applicationDomainPayload($records, $mapKey), 'tokens' => $sceneTokens];
+    $targetVisibility = $isGm ? null : onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId, $sceneTokens);
+    if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId, $targetVisibility)) {
         rejectOnlineCommand($connection, 403, 'Cette cible n’est pas visible par votre joueur.', 'attack_target_hidden');
     }
     $characterId = trim((string) ($source['characterId'] ?? ''));
@@ -402,7 +411,7 @@ if (is_array($deduplicatedAttack)) {
     foreach($requestedWeaponIds as $weaponTargetId){
         $key=onlineTokenDomainKey($sceneId,$weaponTargetId);$records=array_replace($records,applicationDomainRecords($connection,[$key]));$candidate=applicationDomainPayload($records,$key);
         $controller=onlineTokenControllerIdFromRecords($connection,$records,$candidate);
-        if($candidate===[]||$weaponTargetId===$source['id']||!empty($candidate['hidden'])||!onlineTokenOnActiveLayer($candidate,$map)||(!$isGm&&(!onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId))))rejectOnlineCommand($connection,403,'Chaque cible doit être distincte, visible et sur le niveau actif.','weapon_target_forbidden');
+        if($candidate===[]||$weaponTargetId===$source['id']||!empty($candidate['hidden'])||!onlineTokenOnActiveLayer($candidate,$map)||(!$isGm&&(!onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId,$targetVisibility))))rejectOnlineCommand($connection,403,'Chaque cible doit être distincte, visible et sur le niveau actif.','weapon_target_forbidden');
         if(onlineResourceNumber($candidate['maxHp']??0)<=0||onlineTokenIsDead($candidate,$controller!==''))rejectOnlineCommand($connection,409,'Une des cibles ne peut plus être attaquée.','weapon_target_unavailable');
         $rangeTarget=$mechanicsStrikePosition?[...$candidate,...$mechanicsStrikePosition]:$candidate;
         $rangeSource=$strikeSourcePosition?[...$source,...$strikeSourcePosition]:$source;
@@ -412,7 +421,6 @@ if (is_array($deduplicatedAttack)) {
     if(count($weaponTargets)>1&&(count($activity['pendingAttacks']??[])+count($weaponTargets)>XAR_PENDING_ATTACK_MAXIMUM||count($receipts)+count($weaponTargets)>XAR_ATTACK_RECEIPT_MAXIMUM))rejectOnlineCommand($connection,409,'La file des attaques est pleine.','pending_attack_capacity_reached');
     $areaTargetCandidates = [];
     $damageTargeting=$mechanicsDefinition['damageTargeting']??null;
-    if(($damageTargeting['shape']??'')==='cone')$map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
     if(validApplicationDamageTargeting($damageTargeting)&&($complexExecutionId!==''||array_key_exists('targetTokenIds',$arguments)))rejectOnlineCommand($connection,400,'La zone détermine ses propres cibles et ne peut pas remplacer une frappe de série.','attack_area_targets_invalid');
     $singleAreaTarget = ($arguments['targetingMode']??'')==='single';
     if($singleAreaTarget&&(!validApplicationDamageTargeting($damageTargeting)||empty($damageTargeting['singleTargetHalfMana'])))rejectOnlineCommand($connection,400,'Cette compétence ne permet pas ce mode cible unique.','attack_single_mode_invalid');
@@ -422,23 +430,23 @@ if (is_array($deduplicatedAttack)) {
         ?'La zone de la Danse est centrée sur le lanceur. Sélectionnez son pion, puis validez le cercle autour de lui.':'Cette zone ne peut pas être visée ici.','attack_area_point_invalid');
     $isWallCast=($damageTargeting['shape']??'')==='thorn-wall'&&($mechanicsDefinition['terrainBarrier']['shape']??'')==='thorn-wall';
     if(($damageTargeting['shape']??'')==='thorn-wall'&&!$isWallCast)rejectOnlineCommand($connection,400,'Définition du mur invalide.','terrain_barrier_invalid');
-    if($aimedPoint&&!$isGm&&!$isWallCast&&!onlineAttackTargetVisible($connection,$records,$map,$aimedPoint,$accountId,$sceneId))rejectOnlineCommand($connection,403,'Le centre de cette zone doit être visible.','attack_area_point_hidden');
+    if($aimedPoint&&!$isGm&&!$isWallCast&&!onlineAttackTargetVisible($connection,$records,$map,$aimedPoint,$accountId,$sceneId,$targetVisibility))rejectOnlineCommand($connection,403,'Le centre de cette zone doit être visible.','attack_area_point_hidden');
     if (validApplicationDamageTargeting($damageTargeting)) {
         if (($damageTargeting['origin'] ?? 'target') === 'caster' && ($target['id'] ?? '') !== ($source['id'] ?? '')) {
             rejectOnlineCommand($connection, 403, $weaponDraw !== null
                 ? 'La zone de la Danse est centrée sur le lanceur. Sélectionnez son pion, puis validez le cercle autour de lui.'
                 : 'Une zone autour du lanceur doit être lancée sur son propre pion.', 'attack_area_origin_invalid');
         }
-        $areaTargetCandidates = $isWallCast ? applicationThornWallAreaTargets(onlineSceneTokensForLights($connection,$records,$pending,$sceneId),$aimedPoint??[],$map)
-            : (($damageTargeting['shape']??'')==='cone' ? applicationConeAreaTargets(onlineSceneTokensForLights($connection,$records,$pending,$sceneId),$source,$aimedPoint??[], $map,(int)$damageTargeting['lengthCells']) : (($damageTargeting['shape']??'')==='square'?applicationSquareAreaTargets(onlineSceneTokensForLights($connection,$records,$pending,$sceneId),$aimedPoint??(($damageTargeting['origin']??'target')==='caster'?$source:$target),$map,(float)$damageTargeting['radiusCells'],($damageTargeting['origin']??'target')==='caster'):onlineDamageAreaTargets(
-            onlineSceneTokensForLights($connection, $records, $pending, $sceneId),
+        $areaTargetCandidates = $isWallCast ? applicationThornWallAreaTargets($sceneTokens,$aimedPoint??[],$map)
+            : (($damageTargeting['shape']??'')==='cone' ? applicationConeAreaTargets($sceneTokens,$source,$aimedPoint??[], $map,(int)$damageTargeting['lengthCells']) : (($damageTargeting['shape']??'')==='square'?applicationSquareAreaTargets($sceneTokens,$aimedPoint??(($damageTargeting['origin']??'target')==='caster'?$source:$target),$map,(float)$damageTargeting['radiusCells'],($damageTargeting['origin']??'target')==='caster'):onlineDamageAreaTargets(
+            $sceneTokens,
             $aimedPoint ?? (($damageTargeting['origin'] ?? 'target') === 'caster' ? $source : $target), $map,
             (float) $damageTargeting['radiusCells'], ($damageTargeting['origin'] ?? 'target') === 'caster')));
         if($singleAreaTarget)$areaTargetCandidates=[];
         $areaTargetCandidates = array_values(array_filter($areaTargetCandidates,
-            static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController, $map, $accountId, $sceneId, $isGm, $isWallCast): bool {
+            static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController, $map, $accountId, $sceneId, $isGm, $isWallCast, $targetVisibility): bool {
                 $controller = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
-                return ($isGm || $isWallCast || onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId)) && applicationDamageAreaAffects([...$damageTargeting,'affectAllies'=>!empty($source['friendlyFire'])||($damageTargeting['affectAllies']??true)], (string) $source['id'], $sourceController,
+                return ($isGm || $isWallCast || onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId,$targetVisibility)) && applicationDamageAreaAffects([...$damageTargeting,'affectAllies'=>!empty($source['friendlyFire'])||($damageTargeting['affectAllies']??true)], (string) $source['id'], $sourceController,
                     (string) ($candidate['id'] ?? ''), $controller,unitIdForToken($source),unitIdForToken($candidate));
             }));
         if (count($areaTargetCandidates) > XAR_PENDING_ATTACK_MAXIMUM) {

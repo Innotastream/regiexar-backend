@@ -47,8 +47,19 @@ function applicationPlaceSilkWeb(array &$state,array $point,string $id,?int $now
  $state['map']['tokens'][]=$web;
  return $web;
 }
-function applicationProtectFixedStructure(array $before,array $next):array {
- if(empty($before['fixedStructure']))return $next;foreach(['x','y','layerId'] as $k)if(($next[$k]??null)!==($before[$k]??null))throw new RuntimeException('Cet élément fixe reste à son emplacement.',409);
+final class ApplicationFixedStructurePlacementException extends RuntimeException {}
+
+function applicationProtectFixedStructure(array $before,array $next,bool $allowSilkWebPlacement=false):array {
+ if(empty($before['fixedStructure']))return $next;
+ $allowPosition=$allowSilkWebPlacement&&empty($before['terrainBarrier'])&&applicationIsSilkWeb($before);
+ foreach($allowPosition?['layerId']:['x','y','layerId'] as $field){
+  if(($next[$field]??null)!==($before[$field]??null)) {
+   $message=applicationIsSilkWeb($before)
+       ? 'Pour repositionner cette toile, déplacez-la sur la carte du MJ.'
+       : 'Cet élément fixe reste à son emplacement.';
+   throw new ApplicationFixedStructurePlacementException($message,409);
+  }
+ }
  return [...$next,'fixedStructure'=>$before['fixedStructure'],'nonCombatant'=>true,'immovable'=>true,'characterId'=>null,'controllerPlayerId'=>null,'followCharacter'=>false,'mountable'=>false,'mountControllable'=>false,'armorCategory'=>'none','armor'=>0,'magicArmorCategory'=>'none','magicArmor'=>0,'abilities'=>[],'weaponAttacks'=>[],'stats'=>[]];
 }
 function applicationCompleteFixedStructure(array &$state,array &$device,array &$effects,array $context):void {

@@ -64,9 +64,10 @@ test("la commande de déplacement arbitre le trajet Joueur et la destination MJ 
   assert.match(movement, /\$mapKey = 'map:' \. \$moveSceneId/);
   assert.match(movement, /\$moveSceneId = \$requestedSceneId/);
   assert.match(movement, /\$isGm && \(\$arguments\['assisted'\] \?\? false\) !== true \? applicationResolveGmTokenPlacement\(/);
-  assert.match(movement, /\$freeWallPlacement\s*=\s*\$isGm\s*&&\s*applicationIsRectangularObstacle\(\$token\)/,
-    'seul le MJ qui place un obstacle rectangulaire peut déborder des murs');
-  assert.match(movement, /if \(!\$freeWallPlacement && \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)\)/,
+  assert.match(movement, /\$gmSilkWebPlacement\s*=\s*\$isGm\s*&&\s*empty\(\$token\['terrainBarrier'\]\)\s*&&\s*applicationIsSilkWeb\(\$token\)/);
+  assert.match(movement, /\$freeObjectPlacement\s*=\s*\$gmSilkWebPlacement\s*\|\|\s*\$isGm\s*&&\s*applicationIsRectangularObstacle\(\$token\)/,
+    'la pose libre reste réservée au MJ pour les obstacles rectangulaires et les toiles');
+  assert.match(movement, /if \(!\$freeObjectPlacement && \(!\$isGm \|\| \(\$arguments\['assisted'\] \?\? false\) === true\)\)/,
     'les déplacements Joueur et les déplacements assistés ordinaires conservent le contrôle de visibilité');
   assert.match(movement, /onlineMapMovementVisibility\(\$connection, \$records, \$map, \$accountId, \$moveSceneId\)/);
   assert.match(movement, /applicationComputeVisionMask\(\$occlusion, \$origins/);

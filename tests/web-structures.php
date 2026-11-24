@@ -70,4 +70,42 @@ specialCheck($manualWeb['size']===109&&$manualWeb['hp']===90&&applicationIsSilkW
 specialCheck(empty($manualDb->payload('devices')['devices'])&&$manualDb->payload('initiative:scene-one')===$manualClock,'No device or turn advance on placement');
 specialCheck(!empty(specialMechanics($manualDb,'structure.web.place',$manualArgs)->body['deduplicated']),'Replay preserves the original obstacle');
 specialCheck(specialMechanics($manualDb,'structure.web.place',[...$manualArgs,'structureSize'=>110])->status===409,'Different size under the same receipt is rejected');
+foreach ([[$sizeDb, $sizeWeb['id']], [$manualDb, $manualId]] as [$moveDb, $webId]) {
+    $key = 'token:scene-one:' . $webId;
+    $before = $moveDb->payload($key);
+    $devices = $moveDb->payload('devices');
+    $activity = $moveDb->payload('activity');
+    $args = ['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>$webId,'x'=>37,'y'=>49];
+    $playerMove = runCommand($moveDb, 'token.move', [...$args, 'allowSilkWebPlacement'=>true]);
+    specialCheck($playerMove->status === 403 && $moveDb->payload($key) === $before,
+        'A player cannot reposition a web even with an explicit placement hint.');
+    $wrongFloor = runCommand($moveDb, 'token.move', [...$args, 'layerId'=>'upper'], true, 'account-gm');
+    specialCheck($wrongFloor->status === 409 && $moveDb->payload($key) === $before,
+        'A stale floor still prevents a GM from moving the web.');
+    $move = runCommand($moveDb, 'token.move', $args, true, 'account-gm');
+    specialCheck($move->status === 200 && ($move->body['positionChanged'] ?? false),
+        'The GM can reposition a silk web: ' . json_encode($move->body));
+    $after = $moveDb->payload($key);
+    specialCheck($after['x'] == 37 && $after['y'] == 49 && $after['layerId'] === $before['layerId']
+        && $after['fixedStructure'] === $before['fixedStructure'] && $after['hp'] === $before['hp']
+        && $after['size'] === $before['size'] && $after['immovable'] && applicationIsNonCombatant($after),
+        'The web keeps its original size, health, geometry and identity at the new position.');
+    specialCheck($moveDb->payload('devices') === $devices && $moveDb->payload('activity') === $activity,
+        'Editor placement does not trigger contacts, consume the ability or reroll a defense.');
+    try {
+        prepareApplicationDomainUpsert($key, [...$after,'x'=>60], $moveDb->domains[$key], true);
+        $genericPatchBlocked = false;
+    } catch (RuntimeException $error) {
+        $genericPatchBlocked = $error->getCode() === 409;
+    }
+    specialCheck($genericPatchBlocked, 'The generic domain write still cannot relocate the web.');
+}
+
+$otherStructure = [...$manualWeb, 'id'=>'structure-test-fixed'];
+unset($otherStructure['fixedStructure']['definition']['artworkPreset']);
+$manualDb->put('token:scene-one:' . $otherStructure['id'], $otherStructure);
+$otherMove = runCommand($manualDb, 'token.move', [
+    'sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>$otherStructure['id'],'x'=>40,'y'=>50
+], true, 'account-gm');
+specialCheck($otherMove->status === 409, 'The GM still cannot drag unrelated fixed structures.');
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

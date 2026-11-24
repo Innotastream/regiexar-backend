@@ -5,6 +5,7 @@ require_once __DIR__ . '/resource-receipt-ledger.php';
 require_once __DIR__ . '/direct-attack-receipt-ledger.php';
 require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/map-time-weather.php';
+require_once __DIR__.'/map-animation.php';
 require_once __DIR__.'/terrain-effects.php';
 require_once __DIR__ . '/character-statistics.php';
 
@@ -1489,7 +1490,7 @@ function validApplicationWeaponAttacks(mixed $value): bool
 function validApplicationTokenDomain(array $payload): bool
 {
     foreach ([
-        'bestiaryRole' => ['neutral', 'enemy'],
+        'bestiaryRole' => ['peaceful', 'neutral', 'enemy'],
         'bestiaryRank' => ['weak', 'medium', 'strong', 'major'],
         'bestiaryProfile' => ['ordinary', 'elite'],
     ] as $field => $choices) {
@@ -2334,6 +2335,10 @@ function validatedDomainPayload(string $key, mixed $payload, ?callable $reject =
         }
     }
     if(str_starts_with($key,'map:'))$payload=applicationNormalizeMapTimeWeatherFields($payload);
+    if (str_starts_with($key, 'map:')) $payload = applicationNormalizeMapAnimationFields($payload);
+    if (str_starts_with($key, 'presentation:') && is_array($payload['map'] ?? null)) {
+        $payload['map'] = applicationNormalizeMapAnimationFields($payload['map']);
+    }
     if (str_starts_with($key, 'map:') && !validApplicationMapFogState($payload)) {
         $reject(400, 'Brouillard de carte incohérent.', 'invalid_map_fog');
     }
@@ -2541,6 +2546,7 @@ function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $pay
     }
     $currentPayload = $current['payload'];
     if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$currentPayload);
+    if (str_starts_with($key, 'map:')) $payload = preserveApplicationMapAnimation($payload, $currentPayload);
     $payload = preserveApplicationAbilityExtensions($key, $payload, $currentPayload);
     $incomingUpdatedAt = applicationDomainEntityTimestamp($payload, '_updatedAt');
     $currentUpdatedAt = applicationDomainEntityTimestamp($currentPayload, '_updatedAt');
@@ -2581,7 +2587,8 @@ function prepareApplicationDomainUpsert(
     mixed $payload,
     ?array $current,
     bool $protectAgainstStaleEntityWrite = false,
-    ?callable $reject = null
+    ?callable $reject = null,
+    bool $allowSilkWebPlacement = false
 ): ?array
 {
     if($key==='devices'&&$protectAgainstStaleEntityWrite&&is_array($payload)){
@@ -2589,12 +2596,17 @@ function prepareApplicationDomainUpsert(
     }
     if($protectAgainstStaleEntityWrite&&str_starts_with($key,'token:')&&is_array($payload)&&empty($current['payload']['fixedStructure']))unset($payload['fixedStructure']);
     if(str_starts_with($key,'token:')&&is_array($payload)){
-        $payload=applicationProtectFixedStructure($current['payload']??[],applicationProtectTerrainBarrier($current['payload']??[],$payload,!$protectAgainstStaleEntityWrite));
+        $previous = $current['payload'] ?? [];
+        $payload = applicationProtectFixedStructure(
+            $previous,
+            applicationProtectTerrainBarrier($previous, $payload, !$protectAgainstStaleEntityWrite),
+            $allowSilkWebPlacement && !$protectAgainstStaleEntityWrite
+        );
         if($protectAgainstStaleEntityWrite){
             foreach(['appearanceState','controlEffect','predatoryMarks'] as $field){
                 if(array_key_exists($field,$current['payload']??[]))$payload[$field]=$current['payload'][$field];else unset($payload[$field]);
             }
-            $previous=$current['payload']??[];$moved=false;
+            $moved=false;
             foreach(['x','y','layerId','mountedOnTokenId','_movedAt'] as $field)if(($payload[$field]??null)!=($previous[$field]??null)){$moved=true;break;}
             if(!$moved&&!empty($previous['doorPeek']))$payload['doorPeek']=$previous['doorPeek'];else unset($payload['doorPeek']);
         }
@@ -3625,14 +3637,22 @@ function patchApplicationDomains(PDO $connection): never
                 $payload = applicationProtectPrivateResourceReceipts($connection, $payload, $current['payload'] ?? []);
                 $payload = applicationProtectPrivateDirectAttackReceipts($connection, $payload, $current['payload'] ?? []);
             }
-            $prepared = $operation === 'upsert'
-                ? prepareApplicationDomainUpsert($key, $payload, $current, true)
-                : prepareApplicationDomainDelete($key, $current);
+            $expected = max(0, (int) ($change['expectedRevision'] ?? 0));
+            $currentRevision = (int) ($current['revision'] ?? 0);
+            try {
+                $prepared = $operation === 'upsert'
+                    ? prepareApplicationDomainUpsert($key, $payload, $current, true)
+                    : prepareApplicationDomainDelete($key, $current);
+            } catch (ApplicationFixedStructurePlacementException $error) {
+                if ($expected === $currentRevision) {
+                    rejectOnlineCommand($connection,409,$error->getMessage(),'fixed_structure_position_locked');
+                }
+                $conflicts[] = ['key' => $key, 'expectedRevision' => $expected, 'currentRevision' => $currentRevision];
+                continue;
+            }
             if ($prepared === null) {
                 continue;
             }
-            $expected = max(0, (int) ($change['expectedRevision'] ?? 0));
-            $currentRevision = (int) ($current['revision'] ?? 0);
             if ($expected !== $currentRevision) {
                 $conflicts[] = ['key' => $key, 'expectedRevision' => $expected, 'currentRevision' => $currentRevision];
                 continue;
@@ -3860,6 +3880,7 @@ function restoreApplicationDomainHistory(PDO $connection): never
             $payload = preserveApplicationAbilityExtensions($key, $payload, $current['payload'] ?? []);
         }
         if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$current['payload']??[]);
+        if (str_starts_with($key, 'map:')) $payload = preserveApplicationMapAnimation($payload, $current['payload'] ?? []);
         $payload = validatedDomainPayload($key, $payload);
         $pending = [['key' => $key, 'operation' => 'upsert', 'payload' => $payload, 'current' => $current]];
         $revision = persistDomainChangesInTransaction($connection, $identity, $clock, $pending);

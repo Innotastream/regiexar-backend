@@ -1024,6 +1024,7 @@ function applyOnlineMountCommand(PDO $connection, array &$records, array &$pendi
 
 require_once __DIR__.'/stream-combat-details.php';
 require_once __DIR__.'/map-time-weather.php';
+require_once __DIR__.'/initiative-batch.php';
 function publicPlayerState(array $fullState, array $identity, array $presence, bool $streamPov = false, bool $includeDoorPeek = false): array
 {
     $accountId = $streamPov ? 'stream-public-view' : (string) $identity['id'];
@@ -1324,6 +1325,7 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
             $phase === 'damage' && isset($ownedVisibleIds[$targetTokenId]));
     }
     $rolls = array_values($rolls);
+    $mapAnimation = publicApplicationMapAnimation($map, $visibleLayerId);
     $map = stripForbiddenPlayerData($map);
     $initiative = stripForbiddenPlayerData($initiative);
     $map = is_array($map) ? $map : [];
@@ -1331,6 +1333,8 @@ function publicPlayerState(array $fullState, array $identity, array $presence, b
     unset($map['layers']);
     unset($map['walls']);
     unset($map['mapTimeWeather']);
+    if ($mapAnimation !== null) $map['mapAnimation'] = $mapAnimation;
+    else unset($map['mapAnimation']);
     // A hidden carrier may cast visible light without leaking its token id.
     $map['lights'] = array_map(static function (array $light) use ($visibleIds): array {
         if (($light['carrierTokenId'] ?? null) !== null && !isset($visibleIds[(string) $light['carrierTokenId']])) {
@@ -2876,6 +2880,10 @@ function rejectOnlineCommand(PDO $connection, int $status, string $message, stri
 
 function queueOnlineDomainUpsert(array &$pending, array $records, string $key, mixed $payload): void
 {
+    if ($key === 'activity' && !empty($pending[$key]['deferActivityUpsert'])) {
+        $pending[$key]['payload'] = $payload;
+        return;
+    }
     if (is_array($payload) && str_starts_with($key, 'token:')) {
         $previous = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
         $payload = preserveApplicationAbilityExtensions($key, $payload, $previous);
@@ -3306,20 +3314,24 @@ function onlineRecordTokenInitiative(PDO $connection, array &$records, array &$p
     queueOnlineDomainUpsert($pending, $records, $initiativeKey, $initiative);
 }
 
-function onlineMapMovementVisibility(PDO $connection, array &$records, array $map, string $accountId, string $sceneId): Closure
+function onlineMapMovementVisibility(PDO $connection, array &$records, array $map, string $accountId, string $sceneId, ?array $sceneTokens = null): Closure
 {
-    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+    if ($sceneTokens === null) {
+        $records = onlineSceneTokenRecords($connection, $sceneId, $records);
+        $sceneTokens = [];
+        foreach ($records as $key => $record) {
+            if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
+            $candidate = applicationDomainPayload($records, $key);
+            if ($candidate !== []) $sceneTokens[] = $candidate;
+        }
+    }
     $fog = applicationActiveMapFogState($map);
     $vision = applicationMapVisionSettings($map);
     $isolated = array_fill_keys($vision['isolatedPlayerIds'], true);
     $viewerIsIsolated = isset($isolated[$accountId]);
     $origins = [];
-    $sceneTokens = [];
-    foreach ($records as $key => $record) {
-        if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
-        $candidate = applicationDomainPayload($records, $key);
-        if ($candidate !== []) $sceneTokens[] = $candidate;
-        if ($candidate === [] || ($candidate['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidate, $map)) continue;
+    foreach ($sceneTokens as $candidate) {
+        if (($candidate['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($candidate, $map)) continue;
         $controllerId = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
         $sharesWithViewer = $vision['shared'] && !$viewerIsIsolated
             ? $controllerId !== '' && !isset($isolated[$controllerId])
@@ -3341,45 +3353,17 @@ function onlineMapMovementVisibility(PDO $connection, array &$records, array $ma
     return onlineVisiblePathPointTester($fog, $visionMask);
 }
 
-function onlineAttackTargetVisible(PDO $connection, array &$records, array $map, array $target, string $accountId, string $sceneId): bool
+function onlineAttackTargetVisible(PDO $connection, array &$records, array $map, array $target, string $accountId, string $sceneId, ?Closure $visible = null): bool
 {
     if (!onlineTokenOnActiveLayer($target, $map)) return false;
-    $visible = onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId);
+    $visible ??= onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId);
     return applicationTerrainBarrierPointVisible($target,$map,$visible);
 }
 
 function onlineGmTokenVisibleToPlayers(PDO $connection, array &$records, array $table, array $source, string $sceneId): bool
 {
-    if (($source['hidden'] ?? false) === true || empty($source['id']) || $sceneId !== onlineActiveSceneId($table)
-        || ($table['tacticalSync']['paused'] ?? false) === true) return false;
-    $mapKey = 'map:' . $sceneId;
-    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
-    $map = applicationDomainPayload($records, $mapKey);
-    if ($map === [] || !onlineTokenOnActiveLayer($source, $map)
-        || applicationFogCoversPoint(applicationActiveMapFogState($map), $source['x'] ?? 0, $source['y'] ?? 0)) return false;
-    $vision = applicationMapVisionSettings($map);
-    if (!$vision['enabled']) return true;
-    $records = onlineSceneTokenRecords($connection, $sceneId, $records);
-    $tokens = []; $origins = [];
-    foreach ($records as $key => $record) {
-        if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
-        $token = applicationDomainPayload($records, $key);
-        if ($token === []) continue;
-        $tokens[] = $token;
-        if (($token['hidden'] ?? false) === true || !onlineTokenOnActiveLayer($token, $map)
-            || onlineTokenControllerIdFromRecords($connection, $records, $token) === '') continue;
-        $character = applicationDomainPayload($records, 'character:' . ($token['characterId'] ?? ''));
-        $origins[] = [
-            'x' => $token['x'] ?? 50, 'y' => $token['y'] ?? 50,
-            'visionDistance' => onlineTokenVisionDistance($token, $character !== [] ? $character : null),
-            'darkVision' => onlineTokenDarkVision($token, $character !== [] ? $character : null),
-            'source' => 'token',
-        ];
-    }
-    if ($origins === []) return false;
-    $occlusion = applicationActiveMapOcclusionState($map, $tokens);
-    $mask = applicationComputeVisionMask($occlusion, $origins, $map['gridSize'] ?? 50);
-    return !applicationVisionCoversPoint($mask, $source['x'] ?? 0, $source['y'] ?? 0);
+    if (($source['hidden'] ?? false) === true || empty($source['id'])) return false;
+    return onlineGmTokenVisibility($connection, $records, $table, $sceneId)($source);
 }
 
 function applyOnlineLightCarryCommand(
@@ -3538,76 +3522,318 @@ function applyOnlineLightCarryCommand(
     return ['light' => $light, 'deduplicated' => false];
 }
 
-function onlinePendingAttackParties(PDO $connection, array &$records, array $attack): array
+function onlineResolvePendingAttackDecision(PDO $connection, array &$records, array &$pending, array $identity,
+    string $attackId, string $decision, bool $automatic = false, ?array &$visibility = null): ?array
 {
+    $result = [];
+    if (!$automatic || !isset($records['activity'])) {
+        $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    }
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? array_values($activity['pendingAttacks']) : [];
+    $pendingIndex = findEntryIndex($pendingAttacks, $attackId);
+    if ($automatic && ($pendingIndex < 0 || !onlineAttackReadyForGroupedAutomaticDamage($pendingAttacks[$pendingIndex]))) return null;
+    if ($pendingIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
+    $attack = $pendingAttacks[$pendingIndex];
+    if (!is_array($attack)) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
+    if(($attack['validationKind']??'')==='area-gate')rejectOnlineCommand($connection,409,'Utilisez le tableau des esquives de cette zone.','area_gate_decision_required');
+    if ((string) ($attack['status'] ?? '') !== 'pending') {
+        rejectOnlineCommand($connection, 409, 'Cette attaque attend d’abord un jet d’opposition.', 'opposition_required');
+    }
+    $parties = null;
+    if ($automatic) {
+        try { $parties = onlinePendingAttackParties($connection, $records, $attack, true, $pending, $visibility); }
+        catch (RuntimeException $error) {
+            if (in_array($error->getCode(), [404, 409], true)) return null;
+            throw $error;
+        }
+        $hasDamage = ($attack['validationKind'] ?? '') !== 'outcome' || ($attack['provisionalStatus'] ?? '') === 'applied';
+        if ($hasDamage && (int) $attack['finalDamage'] > 0 && (!is_numeric($parties['target']['maxHp'] ?? null)
+            || (float) $parties['target']['maxHp'] <= 0 || onlineTokenIsDead($parties['target'], $parties['targetController'] !== ''))) {
+            return null;
+        }
+    }
+    array_splice($pendingAttacks, $pendingIndex, 1);
+    $activity['pendingAttacks'] = $pendingAttacks;
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    if ($decision === 'approve') {
+        $parties ??= onlinePendingAttackParties($connection, $records, $attack);
+        if(!empty($attack['oppositionAbility']['ability']['opposition']['consumeOnAttempt'])||($attack['oppositionAbility']['ability']['opposition']['successTrigger']??'')==='roll'){$previousStatus=$attack['status'];$attack['status']=$attack['provisionalStatus']??'applied';onlineApplyOppositionAbility($connection,$records,$pending,$attack,$identity);$attack['status']=$previousStatus;}
+        $targetKey = $parties['targetKey'];
+        $target = $parties['target'];
+        if (is_array($attack['deferredAbilityCast'] ?? null)) {
+            $saved = $attack['deferredAbilityCast']; $source = $parties['source'];
+            $abilities = normalizeOnlineAbilities($source['abilities'] ?? []);
+            if (!empty($saved['deviceId'])) {
+                $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
+                $store = dsStore(applicationDomainPayload($records, 'devices', dsEmpty()));
+                $device = $store['devices'][dsDevice($store, $saved['deviceId'], false)];
+                if ($device['definition']['kind'] !== 'launcher') rejectOnlineCommand($connection, 409, 'Le dispositif de cette attaque a changé.', 'device_changed');
+                $abilities = normalizeOnlineAbilities([onlineLauncherAbility($device, $saved['deviceMana'], $saved['ability']['castingStatId'], $source, onlineDeviceState($connection,$records,$pending))]);
+            }
+            $abilityIndex = findEntryIndex($abilities, (string) ($attack['attackId'] ?? ''));
+            if($abilityIndex>=0&&!empty($abilities[$abilityIndex]['areaVariants']))$abilities[$abilityIndex]=applicationWithAreaVariant($abilities[$abilityIndex],$saved['areaVariantId']??null);
+            if ($abilityIndex < 0 || $abilities[$abilityIndex] != $saved['ability']
+                || ($source['characterId'] ?? '') !== ($saved['sourceCharacterId'] ?? $saved['characterId'])
+                || $parties['sourceController'] !== ($saved['controllerAccountId'] ?? '')) {
+                rejectOnlineCommand($connection, 409, 'La capacité ou son porteur a changé. Refusez cette attaque.', 'ability_validation_context_changed');
+            }
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+            $plan = onlineResumedAbilityPlan($saved['plan'], applicationDomainPayload($records, 'initiative:' . $attack['sceneId']), $activity);
+            $attack['cast'] = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $attack['cast'], $source, $saved['identity'], false, false);
+            $activity = $pending['activity']['payload'];
+        }
+        $projectileWasPending = ($attack['projectileGate']['pending'] ?? false) === true;
+        if ($projectileWasPending) $attack['projectileGate']['pending'] = false;
+        if($projectileWasPending&&$attack['projectileGate']['percent']>0&&($attack['opposed']??false)&&!($attack['hit']['outcome']['breaksOpposition']??false)) {
+            $attack['status']='awaiting-opposition';unset($attack['validationKind'],$attack['provisionalStatus']);$activity['pendingAttacks'][]=$attack;
+            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+        } elseif (in_array($attack['validationKind'] ?? '', ['outcome', 'reaction'], true)) {
+            $provisionalStatus = in_array($attack['provisionalStatus'] ?? '', ['applied', 'blocked', 'missed', 'defended'], true)
+                ? (string) $attack['provisionalStatus']
+                : 'rejected';
+            if ($provisionalStatus === 'applied' && (int) ($attack['finalDamage'] ?? 0) > 0) {
+                $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $attack['finalDamage'], true, [...$attack['damage'], 'damageType'=>$attack['damageType']]);
+                $attack = onlineRecordAttackGuard($attack, $health);
+                $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
+                $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+            } else {
+                $attack['status'] = $provisionalStatus === 'applied' ? 'blocked' : $provisionalStatus;
+                onlineApplyOppositionAbility($connection, $records, $pending, $attack, $identity);
+                $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+            }
+        } else {
+            $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, max(0, (int) ($attack['finalDamage'] ?? 0)), true, [...$attack['damage'], 'damageType'=>$attack['damageType']]);
+            $attack = onlineRecordAttackGuard($attack, $health);
+            $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
+            $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+        }
+        onlineApplyOppositionAbility($connection,$records,$pending,$attack,$identity);
+        $result['discordContent'] = onlineAttackDiscordContent($attack);
+    } else {
+        $attack['status'] = 'rejected';
+        $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
+    }
+    $usesExistingVisualPath = $decision === 'approve'
+        && (!empty($attack['hit']['outcome']['requiresGmValidation']) || applicationAttackVisualWaitsForDamage($activity,$attack));
+    if ($usesExistingVisualPath) {
+        $visualState=onlineEquipmentState($connection,$records,$pending,(string)$attack['sceneId']);
+        $visualMap=[...$visualState['map'],'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,(string)$attack['sceneId'])];
+        $activity=$pending['activity']['payload']??$activity;
+        appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$visualState['items'],[],true,empty($attack['hit']['outcome']['requiresGmValidation']),$visualState['devices']['devices']??[]);
+        queueOnlineDomainUpsert($pending,$records,'activity',$activity);
+    }
+    unset($attack['deferredAbilityCast'], $attack['oppositionAbility'], $attack['cast']['pendingValidation']);
+    $attack = applyOnlineAttackConditions($connection, $records, $pending, $attack);
+    $attack = onlineFinalizeAttackDamageRoll($attack);
+    $activity = $pending['activity']['payload'] ?? $activity;
+    $activity = onlineMergeAttackActivityRolls($activity, $attack, applicationDomainPayload($records, 'initiative:' . (string) ($attack['sceneId'] ?? '')));
+    $receipts = is_array($activity['attackReceipts'] ?? null) ? array_values($activity['attackReceipts']) : [];
+    foreach ($receipts as $index => $receipt) {
+        if (is_array($receipt) && (string) ($receipt['requestId'] ?? '') === (string) ($attack['requestId'] ?? '')) {
+            $receipts[$index]['attack'] = $attack;
+            $receipts[$index]['expiresAt'] = (int) floor(microtime(true) * 1000) + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
+        }
+    }
+    $activity['attackReceipts'] = $receipts;
+    foreach ($activity['resourceReceipts'] ?? [] as $i => $receipt) {
+        if (($receipt['kind'] ?? '') !== 'ability-cast' || ($receipt['requestId'] ?? '') !== ($attack['requestId'] ?? '')
+            || ($receipt['accountId'] ?? '') !== ($attack['accountId'] ?? '') || !is_array($attack['cast'] ?? null)) continue;
+        $activity['resourceReceipts'][$i]['result'] = [...$receipt['result'], 'cast' => $attack['cast'],
+            'castSucceeded' => $attack['cast']['success'],
+            ...onlineAttackResponseRollFields($attack, ($attack['attackerRole'] ?? '') === 'gm', true, false)];
+        $activity['resourceReceipts'][$i]['expiresAt'] = (int) floor(microtime(true) * 1000) + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS;
+    }
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    if (($attack['validationKind'] ?? '') === 'outcome') {
+        $remarkableLabel = (string) ($attack['opposition']['outcome']['label'] ?? $attack['hit']['outcome']['label'] ?? 'le résultat remarquable');
+        onlineAppendPlayerAction($connection, $records, $pending, $identity, (string) ($attack['sceneId'] ?? ''), [
+            'kind' => 'attack', 'attackId'=>$attack['id'],
+            'characterName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
+            'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
+            'summary' => ($decision === 'approve' ? 'Le MJ valide ' : 'Le MJ refuse ') . $remarkableLabel,
+            'detail' => onlineAttackHistoryDetail($attack) . ' · ' . ($decision === 'approve' ? 'résultat final ' . (string) ($attack['status'] ?? '') : 'aucun PV retiré'),
+        ]);
+    }
+    if (($attack['status'] ?? '') === 'applied') {
+        onlineAppendAppliedDamageAction($connection, $records, $pending, [
+            'id' => (string) ($attack['accountId'] ?? ''),
+            'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
+        ], $attack);
+    }
+    if ($decision === 'approve') $attack = onlineApplyAttackEchoes($connection, $records, $pending, $attack, true);
+    if ($decision === 'approve' && !$usesExistingVisualPath) {
+        $activity = $pending['activity']['payload'] ?? $activity;
+        onlineAppendConcludedEnemyAttackVisual($connection, $records, $pending, $activity, $attack,
+            $parties['source'], $parties['target'], true);
+    }
+    $result['attack'] = $attack;
+    $result = [...$result, ...onlineAttackResponseRollFields($attack, true, true, true)];
+    if (onlineWantsTotalOpposition($attack) || !empty($attack['complexExecutionId'])) {
+        $result = onlineResolveTotalOppositionResults($connection, $records, $pending, $result, true);
+    }
+    return $result;
+}
+
+function onlineAutomaticDamageFamily(array $attack): ?string
+{
+    return $attack['areaGateParentId'] ?? $attack['weaponAttackParentId']
+        ?? (($attack['areaRadiusCells'] ?? 0) >= 0.5 && empty($attack['areaGate']) ? ($attack['id'] ?? null) : null);
+}
+
+function onlineAttackReadyForGroupedAutomaticDamage(?array $attack): bool
+{
+    $damage = $attack['finalDamage'] ?? null;
+    $kind = $attack['validationKind'] ?? '';
+    return ($attack['status'] ?? '') === 'pending' && (is_int($damage) || is_float($damage)) && is_finite($damage) && $damage >= 0
+        && onlineAutomaticDamageFamily($attack) !== null
+        && !in_array($kind, ['area-gate', 'reaction'], true) && empty($attack['areaGate']) && empty($attack['projectileGate']['pending'])
+        && empty($attack['complexExecutionId']) && empty($attack['deferredAbilityCast']) && empty($attack['oppositionAbility'])
+        && ($kind === 'outcome' ? in_array($attack['provisionalStatus'] ?? '', ['applied', 'blocked', 'missed', 'defended'], true) : $damage > 0);
+}
+
+function onlineResolveAutomaticAttackGroup(PDO $connection, array &$records, array &$pending, array $identity, array $attackIds): array
+{
+    $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $queued = array_column($activity['pendingAttacks'] ?? [], null, 'id');
+    $first = null;
+    $result = ['attackCount'=>0, 'skippedAttackIds'=>[]];
+    $notifications = [];
+    $visibility = [];
+    $previousActivity = $pending['activity'] ?? null;
+    // Consequences still share the same working payload. Normalize the full
+    // journal once for this transaction, after the last related result.
+    $pending['activity']['payload'] = $activity;
+    $pending['activity']['deferActivityUpsert'] = true;
+    try {
+        foreach ($attackIds as $id) {
+            $attack = $queued[$id] ?? null;
+            if (!onlineAttackReadyForGroupedAutomaticDamage($attack)) {
+                $result['skippedAttackIds'][] = $id;
+                continue;
+            }
+            if ($first === null) {
+                $first = $attack;
+                $scene = $attack['sceneId'];
+                $records = array_replace($records, applicationDomainRecords($connection, ['scene:'.$scene, 'map:'.$scene, 'initiative:'.$scene]));
+                $records = onlineSceneTokenRecords($connection, $scene, $records);
+            }
+            if (onlineAutomaticDamageFamily($attack) !== onlineAutomaticDamageFamily($first)
+                || $attack['sceneId'] !== $first['sceneId'] || ($attack['layerId'] ?? 'ground') !== ($first['layerId'] ?? 'ground')) {
+                $result['skippedAttackIds'][] = $id;
+                continue;
+            }
+            $resolution = onlineResolvePendingAttackDecision($connection, $records, $pending, $identity, $id, 'approve', true, $visibility);
+            if ($resolution === null) {
+                $result['skippedAttackIds'][] = $id;
+                continue;
+            }
+            $result['attack'] ??= $resolution['attack'];
+            $result['attackCount']++;
+            if (!empty($resolution['discordContent'])) $notifications[] = $resolution['discordContent'];
+        }
+        $staged = $pending['activity'];
+    } finally {
+        if ($previousActivity === null) unset($pending['activity']);
+        else $pending['activity'] = $previousActivity;
+    }
+    if ($result['attackCount'] > 0) {
+        if (isset($staged['settledOverdriveDebtIds'])) $pending['activity']['settledOverdriveDebtIds'] = $staged['settledOverdriveDebtIds'];
+        queueOnlineDomainUpsert($pending, $records, 'activity', $staged['payload']);
+    }
+    return $result + ['deduplicated'=>$result['attackCount'] === 0, 'discordContent'=>dsTextSlice(implode("\n\n", $notifications), 0, 1900)];
+}
+
+function onlinePendingAttackParties(PDO $connection, array &$records, array $attack, bool $deferErrors = false,
+    array $queued = [], ?array &$visibility = null): array
+{
+    $reject = static function (int $status, string $message, string $code) use ($connection, $deferErrors): never {
+        if ($deferErrors) throw new RuntimeException($message, $status);
+        rejectOnlineCommand($connection, $status, $message, $code);
+    };
+    $load = static function (array $keys) use ($connection, &$records, $deferErrors): void {
+        if ($deferErrors) $keys = array_values(array_filter($keys, static fn($key) => !isset($records[$key])));
+        if ($keys !== []) $records = array_replace($records, applicationDomainRecords($connection, $keys));
+    };
     $fieldId=$attack['spellFieldId']??$attack['cast']['spellFieldId']??'';
     if($fieldId!==''&&empty($attack['deferredAbilityCast'])){
         $records=array_replace(applicationDomainRecords($connection,['activity']),$records);
-        foreach(applicationDomainPayload($records,'activity')['pendingAttacks']??[]as$parent)if(!empty($parent['deferredAbilityCast'])&&($parent['spellFieldId']??$parent['cast']['spellFieldId']??'')===$fieldId)rejectOnlineCommand($connection,409,'Validez le lancement de la zone avant ses cibles.','field_cast_validation_pending');
+        foreach(($queued['activity']['payload']??applicationDomainPayload($records,'activity'))['pendingAttacks']??[]as$parent)if(!empty($parent['deferredAbilityCast'])&&($parent['spellFieldId']??$parent['cast']['spellFieldId']??'')===$fieldId)$reject(409,'Validez le lancement de la zone avant ses cibles.','field_cast_validation_pending');
     }
     $sceneId = trim((string) ($attack['sceneId'] ?? ''));
     if ($sceneId === '' || (($attack['attackerRole'] ?? 'player') !== 'gm'
         && $sceneId !== onlineActiveSceneId(applicationDomainPayload($records, 'table')))) {
-        rejectOnlineCommand($connection, 409, 'Revenez sur la scène de cette attaque avant de la résoudre.', 'stale_scene');
+        $reject( 409, 'Revenez sur la scène de cette attaque avant de la résoudre.', 'stale_scene');
     }
-    $records = array_replace($records, applicationDomainRecords($connection, ['scene:' . $sceneId]));
+    $load(['scene:' . $sceneId]);
     if (applicationDomainPayload($records, 'scene:' . $sceneId) === []) {
-        rejectOnlineCommand($connection, 409, 'Cette scène n’existe plus.', 'stale_scene');
+        $reject( 409, 'Cette scène n’existe plus.', 'stale_scene');
     }
     $sourceKey = onlineTokenDomainKey($sceneId, $attack['sourceTokenId'] ?? '');
     $targetKey = onlineTokenDomainKey($sceneId, $attack['targetTokenId'] ?? '');
-    $records = array_replace($records, applicationDomainRecords($connection, array_values(array_filter([$sourceKey, $targetKey]))));
-    $source = $sourceKey === '' ? [] : applicationDomainPayload($records, $sourceKey);
-    $target = $targetKey === '' ? [] : applicationDomainPayload($records, $targetKey);
+    $load(array_values(array_filter([$sourceKey, $targetKey])));
+    $source = $sourceKey === '' ? [] : ($queued[$sourceKey]['payload'] ?? applicationDomainPayload($records, $sourceKey));
+    $target = $targetKey === '' ? [] : ($queued[$targetKey]['payload'] ?? applicationDomainPayload($records, $targetKey));
     if (!empty($attack['deviceOrigin'])) {
-        $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
+        $load(['devices']);
         $store = dsStore(applicationDomainPayload($records, 'devices', dsEmpty()));
         $index = dsDevice($store, $attack['deviceOrigin'], false); $device = $store['devices'][$index];
-        if ($device['id'] !== ($attack['sourceTokenId'] ?? '') || $device['sceneId'] !== $sceneId || $device['layerId'] !== ($attack['layerId'] ?? '')) rejectOnlineCommand($connection, 409, 'L’origine de ce dispositif a changé.', 'device_origin_changed');
+        if ($device['id'] !== ($attack['sourceTokenId'] ?? '') || $device['sceneId'] !== $sceneId || $device['layerId'] !== ($attack['layerId'] ?? '')) $reject( 409, 'L’origine de ce dispositif a changé.', 'device_origin_changed');
         $source = [...$device, 'hp'=>1, 'maxHp'=>1, 'hidden'=>false, 'controllerPlayerId'=>$device['controllerAccountId']];
     }
     if ($source === [] || $target === []) {
-        rejectOnlineCommand($connection, 404, 'Un token de cette attaque n’existe plus.', 'attack_party_missing');
+        $reject( 404, 'Un token de cette attaque n’existe plus.', 'attack_party_missing');
     }
     if (!empty($attack['areaGateParentId']) && (unitIdForToken($source) !== ($attack['areaGateParties']['sourceUnitId'] ?? null) || empty($attack['areaAnchorOnly'])&&unitIdForToken($target) !== ($attack['areaGateParties']['targetUnitId'] ?? null))) {
-        rejectOnlineCommand($connection, 409, 'Une unité de ce souffle a changé de fiche. Le MJ doit annuler cette attaque.', 'area_attack_party_changed');
+        $reject( 409, 'Une unité de ce souffle a changé de fiche. Le MJ doit annuler cette attaque.', 'area_attack_party_changed');
     }
     $mapKey = 'map:' . $sceneId;
-    $records = array_replace($records, applicationDomainRecords($connection, [$mapKey, 'initiative:' . $sceneId]));
+    $load([$mapKey, 'initiative:' . $sceneId]);
     $map = applicationDomainPayload($records, $mapKey);
     $attackLayerId = onlinePersistedLayerId($attack);
     if ($attackLayerId === null || $attackLayerId !== onlineTokenLayerId([], $map)
         || !onlineTokenOnActiveLayer($source, $map) || !onlineTokenOnActiveLayer($target, $map)) {
-        rejectOnlineCommand($connection, 409, 'Les pions de cette attaque doivent être sur le niveau actif.', 'stale_token_layer');
+        $reject( 409, 'Les pions de cette attaque doivent être sur le niveau actif.', 'stale_token_layer');
     }
     $sourceController = onlineTokenControllerIdFromRecords($connection, $records, $source);
     $targetController = onlineTokenControllerIdFromRecords($connection, $records, $target);
-    $map['tokens']=onlineSceneTokensForLights($connection,$records,[],$sceneId);
+    if (!$deferErrors || !empty($attack['targetRangeCells']) && empty($attack['areaRadiusCells'])) {
+        $map['tokens'] = onlineSceneTokensForLights($connection, $records, $queued, $sceneId);
+    }
     $areaAttack = is_numeric($attack['areaRadiusCells'] ?? null) && $attack['areaRadiusCells'] >= 0.5;
     foreach (['source', 'target'] as $partyName) {
         $partyCharacterId = trim((string) (${$partyName}['characterId'] ?? ''));
-        $partyCharacter = $partyCharacterId !== '' ? applicationDomainPayload($records, 'character:' . $partyCharacterId) : [];
+        $partyCharacter = $partyCharacterId !== '' ? ($queued['character:' . $partyCharacterId]['payload'] ?? applicationDomainPayload($records, 'character:' . $partyCharacterId)) : [];
         if ($partyCharacter !== []) ${$partyName} = synchronizeOnlineCharacterToken(${$partyName}, $partyCharacter);
     }
-    if(!empty($attack['targetRangeCells'])&&empty($attack['areaRadiusCells'])&&empty($attack['echoParentId'])&&!applicationAbilityTargetInRange(['rangeCells'=>$attack['targetRangeCells'],'minimumReach'=>$attack['minimumReach']??''],[...$source,...($attack['strikeSourcePosition']??[])],[...$target,...($attack['strikeTargetPosition']??[])],$map))rejectOnlineCommand($connection,409,'La cible est désormais hors de portée. Le MJ peut annuler cette attaque.','attack_target_out_of_range');
+    if(!empty($attack['targetRangeCells'])&&empty($attack['areaRadiusCells'])&&empty($attack['echoParentId'])&&!applicationAbilityTargetInRange(['rangeCells'=>$attack['targetRangeCells'],'minimumReach'=>$attack['minimumReach']??''],[...$source,...($attack['strikeSourcePosition']??[])],[...$target,...($attack['strikeTargetPosition']??[])],$map))$reject(409,'La cible est désormais hors de portée. Le MJ peut annuler cette attaque.','attack_target_out_of_range');
     if (($attack['attackerRole'] ?? 'player') === 'gm') {
         if (($source['hidden'] ?? false) === true || ($target['hidden'] ?? false) === true
             || (!$areaAttack && (string) ($source['id'] ?? '') === (string) ($target['id'] ?? ''))) {
-            rejectOnlineCommand($connection, 409, 'Un pion de cette attaque est masqué ou n’est plus une cible distincte.', 'attack_parties_changed');
+            $reject( 409, 'Un pion de cette attaque est masqué ou n’est plus une cible distincte.', 'attack_parties_changed');
         }
     } elseif (($source['hidden'] ?? false) === true || $sourceController !== (string) ($attack['accountId'] ?? '')
         || ($target['hidden'] ?? false) === true
         || (!$areaAttack && ($attack['attackKind']??'weapon')!=='weapon' && $targetController === (string) ($attack['accountId'] ?? ''))) {
-        rejectOnlineCommand($connection, 409, 'L’attaquant et la cible ne sont plus adversaires.', 'attack_parties_changed');
+        $reject( 409, 'L’attaquant et la cible ne sont plus adversaires.', 'attack_parties_changed');
     }
     if (!$areaAttack && empty($attack['echoParentId']) && (!is_numeric($source['hp'] ?? null) || (float) $source['hp'] <= 0 || onlineTokenIsDead($source, $sourceController !== ''))) {
-        rejectOnlineCommand($connection, 409, 'L’attaquant est KO ou mort. Le MJ doit annuler cette attaque.', 'attack_source_defeated');
+        $reject( 409, 'L’attaquant est KO ou mort. Le MJ doit annuler cette attaque.', 'attack_source_defeated');
     }
     if (($attack['attackerRole'] ?? 'player') !== 'gm' && $sceneId === onlineActiveSceneId(applicationDomainPayload($records, 'table'))) {
         $mapKey = 'map:' . $sceneId;
-        $records = array_replace($records, applicationDomainRecords($connection, [$mapKey]));
-        if (!onlineAttackTargetVisible($connection, $records, applicationDomainPayload($records, $mapKey), $target, (string) ($attack['accountId'] ?? ''), $sceneId)) {
-            rejectOnlineCommand($connection, 409, 'La cible n’est plus visible par l’attaquant.', 'attack_target_hidden');
+        $load([$mapKey]);
+        $visibilityMap = applicationDomainPayload($records, $mapKey);
+        $accountId = (string) ($attack['accountId'] ?? '');
+        if ($visibility !== null) {
+            $test = $visibility[$sceneId.':'.$accountId] ??= onlineMapMovementVisibility($connection, $records, $visibilityMap, $accountId, $sceneId);
+            $targetVisible = applicationTerrainBarrierPointVisible($target, $visibilityMap, $test);
+        } else {
+            $targetVisible = onlineAttackTargetVisible($connection, $records, $visibilityMap, $target, $accountId, $sceneId);
+        }
+        if (!$targetVisible) {
+            $reject( 409, 'La cible n’est plus visible par l’attaquant.', 'attack_target_hidden');
         }
     }
     return [
@@ -4103,7 +4329,7 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
     $public = publicOnlineAttackProjectionFields($source, [
         'id', 'rollId', 'raw', 'total', 'formula', 'breakdown', 'rollMode', 'selectedIndex',
         'visibility', 'revealed', 'rollerName', 'rollerRole', 'characterName', 'defenderName', 'createdAt',
-        'skipped', 'reason', 'requiresGmValidation', 'cancelled', 'sourceTokenId', 'sourceSceneId',
+        'skipped', 'reason', 'requiresGmValidation', 'cancelled', 'sourceTokenId', 'sourceSceneId', 'initiativeBatchId',
     ]);
     $resourceLabel = $phase === 'roll' && in_array($source['mapEvent']['label'] ?? null, ['Ajout de PV', 'Retrait de PV'], true)
         ? (string) $source['mapEvent']['label'] : null;
@@ -4211,14 +4437,14 @@ function publicOnlineAttackResult(array $attack, bool $hitDetailsVisible = false
     return $public;
 }
 
-function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pending, array $identity, string $sceneId, array $action): array
+function onlineAppendPlayerAction(PDO $connection, array &$records, array &$pending, array $identity, string $sceneId, array $action, ?array $activityOverride = null): array
 {
     if (!isset($records['activity'])) {
         $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
     }
-    $activity = is_array($pending['activity']['payload'] ?? null)
+    $activity = $activityOverride ?? (is_array($pending['activity']['payload'] ?? null)
         ? $pending['activity']['payload']
-        : applicationDomainPayload($records, 'activity');
+        : applicationDomainPayload($records, 'activity'));
     $entries = array_values(array_filter(is_array($activity['playerActions'] ?? null) ? $activity['playerActions'] : [],
         static fn (mixed $entry): bool => is_array($entry) && ($entry['kind'] ?? '') !== 'movement'));
     $originalIds=array_fill_keys(array_column(applicationDomainPayload($records,'activity')['playerActions']??[],'id'),true);
@@ -5997,7 +6223,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             }
         }
 
-        if ($isGm && !in_array($command, ['strategy-break','table-tokens','map.time-weather'], true) && !in_array(
+        if ($isGm && !in_array($command, ['strategy-break','table-tokens','map.time-weather','map.animation','token.initiative.batch'], true) && !in_array(
             $command,
             ['timer.delete', 'luck.reset', 'unit.friendly-fire', 'mechanics.command', 'passage.create', 'passage.visibility', 'passage.edit', 'passage.link', 'passage.remove', 'passage.use', 'ensure-player', 'admin.character.delete', 'token.move', 'token.mount', 'door.interact', 'rest.announce', 'item.category.create', 'item.template.delete', 'item.quick.create', 'item.equipment.create', 'item.equipment.update', 'item.equipment.set', 'item.equipment.set.delete', 'item.equipment.equip', 'item.vessel.request','item.vessel.resolve','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate','item.template.create', 'item.template.update', 'item.spawn', 'item.move', 'item.configure', 'item.transfer', 'item.drop', 'item.pickup', 'item.loot', 'item.favorite.set', 'item.consume', 'item.effects.rest', 'item.destroy', 'tokens.layers', 'tokens.transform', 'token.clone', 'token.reinforce', 'token.conditions.update', 'character.conditions.update', 'light.carry', 'token.resource.adjust', 'ability.use', 'ability.complex', 'ability.resolve', 'ability.check.respond', 'token.roll', 'roll.reveal', 'combat.effect.remove', 'combat.effect.stack', 'combat.effect.periodic-hp', 'combat.dot.resolve', 'action.undo', 'token.attack', 'token.attack.oppose', 'token.attack.area.oppose', 'token.attack.resolve', 'token.attack.area.resolve', 'ping'],
             true
@@ -6005,7 +6231,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
             rejectOnlineCommand($connection, 403, 'Cette commande est réservée au mode Joueur.', 'player_mode_required');
         }
 
-        if($command==='map.time-weather'){try{$result=onlineMapTimeWeatherCommand($connection,$records,$pending,$table,$identity,$arguments);}catch(RuntimeException $error){rejectOnlineCommand($connection,in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():400,$error->getMessage(),'map_time_weather_rejected');}$commandActionAlreadyLogged=true;} elseif ($command === 'table-tokens') {
+        if ($command === 'map.animation') {
+            try { $result = onlineMapAnimationCommand($connection, $records, $pending, $identity, $arguments); }
+            catch (RuntimeException $error) {
+                $status = in_array($error->getCode(), [400, 403, 409], true) ? $error->getCode() : 400;
+                rejectOnlineCommand($connection, $status, $error->getMessage(), 'map_animation_rejected');
+            }
+            $commandActionAlreadyLogged = true;
+        } elseif($command==='map.time-weather'){try{$result=onlineMapTimeWeatherCommand($connection,$records,$pending,$table,$identity,$arguments);}catch(RuntimeException $error){rejectOnlineCommand($connection,in_array($error->getCode(),[400,403,404,409],true)?$error->getCode():400,$error->getMessage(),'map_time_weather_rejected');}$commandActionAlreadyLogged=true;} elseif ($command === 'table-tokens') {
             $result = onlineTableTokensCommand($connection, $records, $pending, $table, $identity, $arguments);
             $commandActionAlreadyLogged = true;
         } elseif ($command === 'strategy-break') {
@@ -6491,8 +6724,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 && ($movementControllerId !== $accountId || ($token['hidden'] ?? false) === true))) {
                 rejectOnlineCommand($connection, 403, 'Déplacement refusé.', 'token_forbidden');
             }
+            $gmSilkWebPlacement = $isGm && empty($token['terrainBarrier']) && applicationIsSilkWeb($token);
             $abilityMoveLock=applicationAbilityMovementLock($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[],$moveSceneId,$token['id'],onlineSceneTokensForLights($connection,$records,$pending,$moveSceneId),null,$pending['activity']['payload']['abilityMovementLeases']??applicationDomainPayload($records,'activity')['abilityMovementLeases']??[]);if($abilityMoveLock!==null)rejectOnlineCommand($connection,409,$abilityMoveLock['label'],'ability_movement_locked');
-            if (($token['immovable'] ?? false) === true||$mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true&&($movementBody['immovable']??false)===true) rejectOnlineCommand($connection, 409, 'Ce pion est inamovible.', 'token_immovable');
+            if (!$gmSilkWebPlacement && (($token['immovable'] ?? false) === true||$mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)===true&&($movementBody['immovable']??false)===true)) rejectOnlineCommand($connection, 409, 'Ce pion est inamovible.', 'token_immovable');
             if (!$isGm) {
                 $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
                 $movingGroup = $mountedAbilityMovement && ($abilityMovementStep['mountedMovement'] ?? false) === true
@@ -6537,9 +6771,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($candidate !== []) $sceneTokens[] = $candidate;
             }
             foreach(($pending['activity']['payload']['abilityExecutions']??applicationDomainPayload($records,'activity')['abilityExecutions']??[]) as $e)if(($e['status']??'')==='active'&&($e['sceneId']??'')===$moveSceneId&&($e['sourceTokenId']??'')===($token['id']??'')&&!empty($e['workflow']['steps'][$e['currentStepIndex']]['charge']))$arguments['assisted']=true;
-            $occlusion = applicationActiveMapOcclusionState($map, $sceneTokens);
-            $freeWallPlacement=$isGm&&applicationIsRectangularObstacle($token);
-            $resolved = $freeWallPlacement ? [...$desired,'blocked'=>false] : ($isGm && ($arguments['assisted'] ?? false) !== true ? applicationResolveGmTokenPlacement(
+            $freeObjectPlacement = $gmSilkWebPlacement || $isGm && applicationIsRectangularObstacle($token);
+            $occlusion = $freeObjectPlacement ? null : applicationActiveMapOcclusionState($map, $sceneTokens);
+            $resolved = $freeObjectPlacement ? [...$desired,'blocked'=>false] : ($isGm && ($arguments['assisted'] ?? false) !== true ? applicationResolveGmTokenPlacement(
                 $occlusion['walls'],
                 ['x' => (float) ($token['x'] ?? 50), 'y' => (float) ($token['y'] ?? 50)],
                 $desired,
@@ -6549,7 +6783,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
             ) : null);
             // Player darkness checks cannot be disabled by omitting a hint.
             // Assisted MJ moves follow this token's POV; editor placement stays free.
-            if (!$freeWallPlacement && (!$isGm || ($arguments['assisted'] ?? false) === true)) {
+            if (!$freeObjectPlacement && (!$isGm || ($arguments['assisted'] ?? false) === true)) {
                 if ($isGm) {
                     $character = applicationDomainPayload($records, 'character:' . ($token['characterId'] ?? ''));
                     $character = $character !== [] ? $character : null;
@@ -6568,14 +6802,18 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $result['pathReason'] = $resolved['reason'] ?? null;
                 $result['adjustedDestination'] = ($resolved['adjusted'] ?? false) === true;
             }
-            if(!$freeWallPlacement&&(!$isGm||($arguments['separate']??false)===true||($arguments['assisted']??false)===true)&&!($mountedAbilityMovement&&(float)$token['x']===(float)$resolved['x']&&(float)$token['y']===(float)$resolved['y'])){
+            if(!$freeObjectPlacement&&(!$isGm||($arguments['separate']??false)===true||($arguments['assisted']??false)===true)&&!($mountedAbilityMovement&&(float)$token['x']===(float)$resolved['x']&&(float)$token['y']===(float)$resolved['y'])){
                 $resolved=separateOnlineTokenPosition($token,$resolved,$map,$sceneTokens,(!$isGm||($arguments['assisted']??false)===true)?$visible:null);
                 if($resolved['separated']??false){$result['path']=$resolved['path']??null;$result['adjustedDestination']=true;}
             }
             $positionChanged = (float) ($token['x'] ?? 50) !== (float) $resolved['x']
                 || (float) ($token['y'] ?? 50) !== (float) $resolved['y'];
-            $contactStarts=[];foreach($sceneMountTokens as$contactToken){$contactBody=applicationTokenSpatialFootprint($contactToken,[...$map,'tokens'=>$sceneMountTokens]);$contactStarts[$contactToken['id']]=['x'=>$contactBody['x'],'y'=>$contactBody['y']];}
-            if ($positionChanged) {
+            if ($positionChanged && $gmSilkWebPlacement) {
+                $token = [...$token, 'x' => $resolved['x'], 'y' => $resolved['y'], '_movedAt' => (int) floor(microtime(true) * 1000)];
+                $placement = prepareApplicationDomainUpsert($tokenKey, $token, $records[$tokenKey], allowSilkWebPlacement: true);
+                if ($placement !== null) $pending[$tokenKey] = $placement;
+            } elseif ($positionChanged) {
+                $contactStarts=[];foreach($sceneMountTokens as$contactToken){$contactBody=applicationTokenSpatialFootprint($contactToken,[...$map,'tokens'=>$sceneMountTokens]);$contactStarts[$contactToken['id']]=['x'=>$contactBody['x'],'y'=>$contactBody['y']];}
                 $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
                 try {
                     $executions = recordApplicationComplexAbilityMovement($activity['abilityExecutions'] ?? [], ['sceneId' => $moveSceneId, 'layerId' => onlineTokenLayerId($token, $map), 'source' => $token, 'destination' => $resolved, 'path' => $resolved['path'] ?? null, 'map' => $map, 'tokens'=>$sceneTokens, 'now' => (int) floor(microtime(true) * 1000)]);
@@ -6588,7 +6826,7 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 $movingIds=$mountedAbilityMovement?applicationAbilityMovementTokenIds($storedMovementToken,['tokens'=>$sceneMountTokens],($abilityMovementStep['mountedMovement']??false)===true):[$token['id'],...array_column(onlineMountedRiders($sceneMountTokens,$token),'id')];
                 foreach($sceneMountTokens as $moved)if(in_array($moved['id'],$movingIds,true)){$moved['x']=$resolved['x'];$moved['y']=$resolved['y'];$moved['_movedAt']=(int)floor(microtime(true)*1000);if($mountedAbilityMovement&&($abilityMovementStep['mountedMovement']??false)!==true&&$moved['id']===$storedMovementToken['id'])unset($moved['mountedOnTokenId'],$moved['mountedAt']);queueOnlineDomainUpsert($pending,$records,onlineTokenDomainKey($moveSceneId,$moved['id']),$moved);if($moved['id']===$storedMovementToken['id'])$token=$moved;}
             }
-            if($positionChanged)foreach($movingIds as$movedId){$moved=$pending[onlineTokenDomainKey($moveSceneId,$movedId)]['payload']??null;if($moved!==null)onlineContactZoneMovement($connection,$records,$pending,$identity,$moveSceneId,$moved,$contactStarts[$movedId],$resolved,$resolved['path']??[]);}
+            if($positionChanged&&!$gmSilkWebPlacement)foreach($movingIds as$movedId){$moved=$pending[onlineTokenDomainKey($moveSceneId,$movedId)]['payload']??null;if($moved!==null)onlineContactZoneMovement($connection,$records,$pending,$identity,$moveSceneId,$moved,$contactStarts[$movedId],$resolved,$resolved['path']??[]);}
             $result['token'] = $pending[$tokenKey]['payload']??$token;
             $result['blockedByWall'] = $resolved['blocked'];
             $result['positionChanged'] = $positionChanged;
@@ -6943,10 +7181,6 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $result = onlinePerformAreaOppositions($connection, $records, $pending, $identity, $arguments, $isGm, $sceneId);
         } elseif ($command === 'token.attack.resolve') {
             if (!$isGm) rejectOnlineCommand($connection, 403, 'La validation des dégâts est réservée au MJ.', 'gm_required');
-            $attackId = trim((string) ($arguments['attackId'] ?? ''));
-            if (preg_match('/^attack-[A-Za-z0-9_-]{12,80}$/D', $attackId) !== 1) {
-                rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack');
-            }
             $decision = $arguments['decision'] ?? null;
             if (!is_string($decision) || !in_array($decision, ['approve', 'reject'], true)) {
                 rejectOnlineCommand($connection, 400, 'Décision d’attaque invalide.', 'invalid_attack_decision');
@@ -6954,135 +7188,21 @@ function commandOnlineState(PDO $connection, array $configuration): never
             if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) {
                 rejectOnlineCommand($connection, 400, 'Cochez explicitement la validation du résultat ou de la perte de PV.', 'attack_confirmation_required');
             }
-            $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
-            $activity = applicationDomainPayload($records, 'activity');
-            $pendingAttacks = is_array($activity['pendingAttacks'] ?? null) ? array_values($activity['pendingAttacks']) : [];
-            $pendingIndex = findEntryIndex($pendingAttacks, $attackId);
-            if ($pendingIndex < 0) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
-            $attack = $pendingAttacks[$pendingIndex];
-            if (!is_array($attack)) rejectOnlineCommand($connection, 404, 'Cette attaque n’est plus en attente.', 'pending_attack_missing');
-            if(($attack['validationKind']??'')==='area-gate')rejectOnlineCommand($connection,409,'Utilisez le tableau des esquives de cette zone.','area_gate_decision_required');
-            if ((string) ($attack['status'] ?? '') !== 'pending') {
-                rejectOnlineCommand($connection, 409, 'Cette attaque attend d’abord un jet d’opposition.', 'opposition_required');
-            }
-            array_splice($pendingAttacks, $pendingIndex, 1);
-            $activity['pendingAttacks'] = $pendingAttacks;
-            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-            if ($decision === 'approve') {
-                $parties = onlinePendingAttackParties($connection, $records, $attack);
-                if(!empty($attack['oppositionAbility']['ability']['opposition']['consumeOnAttempt'])||($attack['oppositionAbility']['ability']['opposition']['successTrigger']??'')==='roll'){$previousStatus=$attack['status'];$attack['status']=$attack['provisionalStatus']??'applied';onlineApplyOppositionAbility($connection,$records,$pending,$attack,$identity);$attack['status']=$previousStatus;}
-                $targetKey = $parties['targetKey'];
-                $target = $parties['target'];
-                if (is_array($attack['deferredAbilityCast'] ?? null)) {
-                    $saved = $attack['deferredAbilityCast']; $source = $parties['source'];
-                    $abilities = normalizeOnlineAbilities($source['abilities'] ?? []);
-                    if (!empty($saved['deviceId'])) {
-                        $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
-                        $store = dsStore(applicationDomainPayload($records, 'devices', dsEmpty()));
-                        $device = $store['devices'][dsDevice($store, $saved['deviceId'], false)];
-                        if ($device['definition']['kind'] !== 'launcher') rejectOnlineCommand($connection, 409, 'Le dispositif de cette attaque a changé.', 'device_changed');
-                        $abilities = normalizeOnlineAbilities([onlineLauncherAbility($device, $saved['deviceMana'], $saved['ability']['castingStatId'], $source, onlineDeviceState($connection,$records,$pending))]);
-                    }
-                    $abilityIndex = findEntryIndex($abilities, (string) ($attack['attackId'] ?? ''));
-                    if($abilityIndex>=0&&!empty($abilities[$abilityIndex]['areaVariants']))$abilities[$abilityIndex]=applicationWithAreaVariant($abilities[$abilityIndex],$saved['areaVariantId']??null);
-                    if ($abilityIndex < 0 || $abilities[$abilityIndex] != $saved['ability']
-                        || ($source['characterId'] ?? '') !== ($saved['sourceCharacterId'] ?? $saved['characterId'])
-                        || $parties['sourceController'] !== ($saved['controllerAccountId'] ?? '')) {
-                        rejectOnlineCommand($connection, 409, 'La capacité ou son porteur a changé. Refusez cette attaque.', 'ability_validation_context_changed');
-                    }
-                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-                    $plan = onlineResumedAbilityPlan($saved['plan'], applicationDomainPayload($records, 'initiative:' . $attack['sceneId']), $activity);
-                    $attack['cast'] = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $attack['cast'], $source, $saved['identity'], false, false);
-                    $activity = $pending['activity']['payload'];
+            if (array_key_exists('attackIds', $arguments)) {
+                $ids = $arguments['attackIds'];
+                if ($decision !== 'approve' || array_key_exists('attackId', $arguments)
+                    || !is_array($ids) || !array_is_list($ids) || count($ids) < 1 || count($ids) > 100
+                    || count(array_filter($ids, static fn($id): bool => is_string($id) && preg_match('/^attack-[A-Za-z0-9_-]{12,80}$/D', $id) === 1)) !== count($ids)
+                    || count(array_unique($ids)) !== count($ids)) {
+                    rejectOnlineCommand($connection, 400, 'La liste des dégâts à confirmer est invalide.', 'invalid_attack_group');
                 }
-                $projectileWasPending = ($attack['projectileGate']['pending'] ?? false) === true;
-                if ($projectileWasPending) $attack['projectileGate']['pending'] = false;
-                if($projectileWasPending&&$attack['projectileGate']['percent']>0&&($attack['opposed']??false)&&!($attack['hit']['outcome']['breaksOpposition']??false)) {
-                    $attack['status']='awaiting-opposition';unset($attack['validationKind'],$attack['provisionalStatus']);$activity['pendingAttacks'][]=$attack;
-                    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-                } elseif (in_array($attack['validationKind'] ?? '', ['outcome', 'reaction'], true)) {
-                    $provisionalStatus = in_array($attack['provisionalStatus'] ?? '', ['applied', 'blocked', 'missed', 'defended'], true)
-                        ? (string) $attack['provisionalStatus']
-                        : 'rejected';
-                    if ($provisionalStatus === 'applied' && (int) ($attack['finalDamage'] ?? 0) > 0) {
-                        $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, (int) $attack['finalDamage'], true, [...$attack['damage'], 'damageType'=>$attack['damageType']]);
-                        $attack = onlineRecordAttackGuard($attack, $health);
-                        $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
-                        $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
-                    } else {
-                        $attack['status'] = $provisionalStatus === 'applied' ? 'blocked' : $provisionalStatus;
-                        onlineApplyOppositionAbility($connection, $records, $pending, $attack, $identity);
-                        $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
-                    }
-                } else {
-                    $health = applyOnlineAttackDamage($connection, $records, $pending, $targetKey, $target, max(0, (int) ($attack['finalDamage'] ?? 0)), true, [...$attack['damage'], 'damageType'=>$attack['damageType']]);
-                    $attack = onlineRecordAttackGuard($attack, $health);
-                    $attack['status'] = $health['appliedDamage'] > 0 ? 'applied' : 'blocked';
-                    $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
-                }
-                onlineApplyOppositionAbility($connection,$records,$pending,$attack,$identity);
-                $result['discordContent'] = onlineAttackDiscordContent($attack);
+                $result = onlineResolveAutomaticAttackGroup($connection, $records, $pending, $identity, $ids);
             } else {
-                $attack['status'] = 'rejected';
-                $attack['resolvedAt'] = (int) floor(microtime(true) * 1000);
-            }
-            $usesExistingVisualPath = $decision === 'approve'
-                && (!empty($attack['hit']['outcome']['requiresGmValidation']) || applicationAttackVisualWaitsForDamage($activity,$attack));
-            if ($usesExistingVisualPath) {
-                $visualState=onlineEquipmentState($connection,$records,$pending,(string)$attack['sceneId']);
-                $visualMap=[...$visualState['map'],'tokens'=>onlineSceneTokensForLights($connection,$records,$pending,(string)$attack['sceneId'])];
-                $activity=$pending['activity']['payload']??$activity;
-                appendApplicationAttackVisualEvent($activity,$attack,$visualMap,$visualState['items'],[],true,empty($attack['hit']['outcome']['requiresGmValidation']),$visualState['devices']['devices']??[]);
-                queueOnlineDomainUpsert($pending,$records,'activity',$activity);
-            }
-            unset($attack['deferredAbilityCast'], $attack['oppositionAbility'], $attack['cast']['pendingValidation']);
-            $attack = applyOnlineAttackConditions($connection, $records, $pending, $attack);
-            $attack = onlineFinalizeAttackDamageRoll($attack);
-            $activity = $pending['activity']['payload'] ?? $activity;
-            $activity = onlineMergeAttackActivityRolls($activity, $attack, applicationDomainPayload($records, 'initiative:' . (string) ($attack['sceneId'] ?? '')));
-            $receipts = is_array($activity['attackReceipts'] ?? null) ? array_values($activity['attackReceipts']) : [];
-            foreach ($receipts as $index => $receipt) {
-                if (is_array($receipt) && (string) ($receipt['requestId'] ?? '') === (string) ($attack['requestId'] ?? '')) {
-                    $receipts[$index]['attack'] = $attack;
-                    $receipts[$index]['expiresAt'] = (int) floor(microtime(true) * 1000) + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS;
+                $attackId = trim((string) ($arguments['attackId'] ?? ''));
+                if (preg_match('/^attack-[A-Za-z0-9_-]{12,80}$/D', $attackId) !== 1) {
+                    rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack');
                 }
-            }
-            $activity['attackReceipts'] = $receipts;
-            foreach ($activity['resourceReceipts'] ?? [] as $i => $receipt) {
-                if (($receipt['kind'] ?? '') !== 'ability-cast' || ($receipt['requestId'] ?? '') !== ($attack['requestId'] ?? '')
-                    || ($receipt['accountId'] ?? '') !== ($attack['accountId'] ?? '') || !is_array($attack['cast'] ?? null)) continue;
-                $activity['resourceReceipts'][$i]['result'] = [...$receipt['result'], 'cast' => $attack['cast'],
-                    'castSucceeded' => $attack['cast']['success'],
-                    ...onlineAttackResponseRollFields($attack, ($attack['attackerRole'] ?? '') === 'gm', true, false)];
-                $activity['resourceReceipts'][$i]['expiresAt'] = (int) floor(microtime(true) * 1000) + XAR_RESOURCE_RECEIPT_TTL_MILLISECONDS;
-            }
-            queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-            if (($attack['validationKind'] ?? '') === 'outcome') {
-                $remarkableLabel = (string) ($attack['opposition']['outcome']['label'] ?? $attack['hit']['outcome']['label'] ?? 'le résultat remarquable');
-                onlineAppendPlayerAction($connection, $records, $pending, $identity, (string) ($attack['sceneId'] ?? ''), [
-                    'kind' => 'attack', 'attackId'=>$attack['id'],
-                    'characterName' => (string) ($attack['sourceName'] ?? 'Attaquant'),
-                    'targetName' => (string) ($attack['targetName'] ?? 'Cible'),
-                    'summary' => ($decision === 'approve' ? 'Le MJ valide ' : 'Le MJ refuse ') . $remarkableLabel,
-                    'detail' => onlineAttackHistoryDetail($attack) . ' · ' . ($decision === 'approve' ? 'résultat final ' . (string) ($attack['status'] ?? '') : 'aucun PV retiré'),
-                ]);
-            }
-            if (($attack['status'] ?? '') === 'applied') {
-                onlineAppendAppliedDamageAction($connection, $records, $pending, [
-                    'id' => (string) ($attack['accountId'] ?? ''),
-                    'display_name' => (string) ($attack['playerName'] ?? 'Joueur'),
-                ], $attack);
-            }
-            if ($decision === 'approve') $attack = onlineApplyAttackEchoes($connection, $records, $pending, $attack, true);
-            if ($decision === 'approve' && !$usesExistingVisualPath) {
-                $activity = $pending['activity']['payload'] ?? $activity;
-                onlineAppendConcludedEnemyAttackVisual($connection, $records, $pending, $activity, $attack,
-                    $parties['source'], $parties['target'], true);
-            }
-            $result['attack'] = $attack;
-            $result = [...$result, ...onlineAttackResponseRollFields($attack, true, true, true)];
-            if (onlineWantsTotalOpposition($attack) || !empty($attack['complexExecutionId'])) {
-                $result = onlineResolveTotalOppositionResults($connection, $records, $pending, $result, true);
+                $result = onlineResolvePendingAttackDecision($connection, $records, $pending, $identity, $attackId, $decision);
             }
         } elseif ($command === 'ping') {
             $records = array_replace($records, applicationDomainRecords($connection, ['activity', 'map:' . $sceneId]));
@@ -7153,6 +7273,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $activity['pingReceipts'] = array_slice($receipts, -256);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $result['ping'] = $ping;
+        } elseif ($command === 'token.initiative.batch') {
+            $result = onlineGmInitiativeBatch($connection, $records, $pending, $table, $identity, $arguments);
+            $commandActionAlreadyLogged = true;
         } elseif ($command === 'token.roll' && ($arguments['kind'] ?? '') === 'ability') {
             $result = onlineSimpleAbilityRoll($connection, $records, $pending, $table, $identity, $arguments, $isGm);
         } elseif ($command === 'token.roll' && ($isGm || applicationRequestsSpecialSuccess($arguments) || in_array($arguments['kind'] ?? '', ['custom-stat', 'custom-damage'], true))) {

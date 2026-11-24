@@ -58,6 +58,10 @@ function applicationApplyMapTimeWeatherResult(array $map,array $context,string $
  if(!isset($p['expectedBackgroundHash'],$p['sourceBackground'])||!hash_equals($p['expectedBackgroundHash'],hash('sha256',(string)($layer['background']??'')))||$context['intentRevision']!==($reg['intentRevision']??0)||$context['expectedBackgroundHash']!==$p['expectedBackgroundHash']||$context['sourceBackground']!==$p['sourceBackground']||$reg['normal']['background']!==$context['normalBackground']||$p['time']!==$context['time']||$p['weather']!==$context['weather']){
   $reg['pending']=null;$reg['lastError']=['requestId'=>$context['requestId'],'code'=>'map_source_changed','message'=>'Le fond a changé pendant la génération. Le résultat est conservé dans le Studio.','createdAt'=>$now];$layer['mapTimeWeather']=$reg;return ['applied'=>false,'changed'=>true,'map'=>applicationSetMapTimeWeatherLayer($map,$context['layerId'],$layer)];
  }
+ // A previous visual may be replaced under the same weather choice. Resolve
+ // older masks against the current family before that visual leaves the registry.
+ $mapAnimation = applicationNormalizeLayerMapAnimation($layer);
+ if ($mapAnimation !== null) $map['layers'][$context['layerId']]['mapAnimation'] = $mapAnimation;
  $id=applicationMapTimeWeatherVariantId($p['time'],$p['weather']);$variant=['id'=>$id,'label'=>applicationMapTimeWeatherLabel($p['time'],$p['weather']),'time'=>$p['time'],'weather'=>$p['weather'],'background'=>$background,'backgroundName'=>$reg['normal']['backgroundName'].' · '.applicationMapTimeWeatherLabel($p['time'],$p['weather']),'createdAt'=>$now];
  $reg['variants']=array_values(array_filter($reg['variants'],static fn($v)=>$v['id']!==$id));$reg['variants'][]=$variant;$reg['activeVariantId']=$id;$reg['pending']=null;$reg['lastError']=null;$layer['mapTimeWeather']=$reg;$layer['background']=$background;$layer['backgroundName']=$variant['backgroundName'];$layer['backgroundTransition']=['version'=>1,'id'=>$p['requestId'],'createdAt'=>$now,'durationMs'=>1400];return ['applied'=>true,'map'=>applicationSetMapTimeWeatherLayer($map,$context['layerId'],$layer)];
 }

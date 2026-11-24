@@ -89,6 +89,14 @@ specialCheck($third->status === 200 && $third->body['token']['name'] === 'Gobeli
     && $db->payload($sourceKey) === $renamed, 'A renamed Gobelin keeps the original untouched and gives its reinforcement a stable species name.');
 
 $db = specialFixture();
+$neutral = [...$goblin, 'bestiaryRole'=>'peaceful', 'bestiaryRank'=>'weak', 'bestiaryProfile'=>'ordinary'];
+$db->put($sourceKey, $neutral);
+$reinforced = runCommand($db, 'token.reinforce', $request, true, 'account-gm');
+$classifications = array_intersect_key($reinforced->body['token'] ?? [], array_flip(['bestiaryRole','bestiaryRank','bestiaryProfile']));
+specialCheck($reinforced->status === 200 && $classifications === array_intersect_key($neutral, $classifications)
+    && count($classifications) === 3, 'The reinforcement retains explicit bestiary classification.');
+
+$db = specialFixture();
 $db->put($sourceKey, $goblin);
 $forbiddenLayer = runCommand($db, 'token.reinforce', [...$request,'layerId'=>'upper'], true, 'account-gm');
 specialCheck($forbiddenLayer->status === 409, 'A stale floor cannot spawn.');

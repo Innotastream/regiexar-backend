@@ -90,8 +90,26 @@ function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array 
             $request['oppositionMode']='total';$request['opposed']=true;
         }
         $approval=['gate'=>$gate,'defenseTokenIds'=>$allowed,'gm'=>$identity];
-        if($gate['kind']==='complex-start')$released=onlineUseComplexAbility($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',null,['defenseApproval'=>$approval]);
-        else $released=onlinePerformTargetAttack($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',['sceneId'=>$attack['sceneId'],'defenseApproval'=>$approval]);
+        if ($gate['kind'] === 'complex-start') {
+            $released = onlineUseComplexAbility($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',null,['defenseApproval'=>$approval]);
+        } else {
+            // Each target and its effects read the same working journal. The
+            // transaction validates and serializes it once after all strikes.
+            $previousActivity = $pending['activity'] ?? null;
+            $pending['activity']['payload'] = $previousActivity['payload'] ?? $activity;
+            $pending['activity']['deferActivityUpsert'] = true;
+            try {
+                $released = onlinePerformTargetAttack($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',['sceneId'=>$attack['sceneId'],'defenseApproval'=>$approval]);
+                $stagedActivity = $pending['activity'];
+            } finally {
+                if ($previousActivity === null) unset($pending['activity']);
+                else $pending['activity'] = $previousActivity;
+            }
+            if (isset($stagedActivity['settledOverdriveDebtIds'])) {
+                $pending['activity']['settledOverdriveDebtIds'] = $stagedActivity['settledOverdriveDebtIds'];
+            }
+            queueOnlineDomainUpsert($pending, $records, 'activity', $stagedActivity['payload']);
+        }
         if(!empty($released['pendingAreaGate']))throw new RuntimeException('La décision doit porter sur cette préparation exacte.',409);
     }
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$childIds=[];if(!empty($released['attack']['id']))$childIds[]=$released['attack']['id'];foreach($released['areaAttacks']??[]as$child)$childIds[]=$child['id'];$children=[];

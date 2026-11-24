@@ -229,7 +229,7 @@ function applicationEnemyAttackVisualResolved(array $attack, bool $approved = fa
 
 function applicationEnemyAttackVisualSource(array $source): bool {
     return $source!==[] && !unitUsesCharacterSheet($source) && empty($source['allied'])
-        && ($source['bestiaryRole']??'')!=='neutral' && empty($source['playerControlled']) && empty($source['controllerPlayerId'])
+        && !in_array($source['bestiaryRole']??'', ['peaceful','neutral'], true) && empty($source['playerControlled']) && empty($source['controllerPlayerId'])
         && empty($source['controllerAccountId']) && empty($source['ownerPlayerId']) && empty($source['controlEffect']['controllerId'])
         && !applicationIsNonCombatant($source) && (($source['bestiaryRole']??'')==='enemy' || !empty($source['bestiaryRank'])
             || in_array($source['frameVariant']??'',['creature','elite','boss','apostle'],true));

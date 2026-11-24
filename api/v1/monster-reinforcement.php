@@ -188,7 +188,7 @@ function applyOnlineMonsterReinforcementCommand(PDO $connection, array &$records
         ...array_intersect_key($source, array_flip(['image', 'frameVariant', 'color', 'size', 'sizeCategory', 'armorCategory', 'armor',
             'magicArmorCategory', 'magicArmor', 'elementalResistances', 'temporalPerception', 'visionDistance', 'darkVision',
             'abilities', 'passiveAbilities', 'conditionImmunities', 'friendlyFire', 'initiativeBonus', 'hidden', 'revealDetailsToPlayers',
-            'allied', 'hitThreshold', 'mountable', 'mountControllable', 'maxRiders', 'notes', 'gmNotes'])),
+            'allied', 'bestiaryRole', 'bestiaryRank', 'bestiaryProfile', 'hitThreshold', 'mountable', 'mountControllable', 'maxRiders', 'notes', 'gmNotes'])),
         ...applicationMonsterReinforcementProfile($source, $template, $weapons, 'random_int'),
         'id'=>'token-'.randomToken(16), 'name'=>$name, 'frameVariant'=>$frame,
         'layerId'=>$layerId, 'followCharacter'=>false, 'characterId'=>null, 'controllerPlayerId'=>null, 'linkedTokenId'=>null,

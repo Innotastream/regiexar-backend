@@ -155,13 +155,16 @@ function applicationEnhancementAuraAffects(array $effect,array $source,array $st
     foreach($recipients as $recipient)foreach($near as $token)if(($token['id']??'')===($recipient['id']??null)&&applicationDamageAreaAffects($a,$caster['id'],$controller($caster),$token['id'],$controller($token),unitIdForToken($caster),unitIdForToken($token)))return true;
     return false;
 }
-function onlineAttackEnhancementState(PDO $connection,array &$records,array $pending,string $sceneId,?array $activity=null):array {
+function onlineAttackEnhancementState(PDO $connection,array &$records,array $pending,string $sceneId,?array $activity=null,?array $owners=null):array {
     $activity??=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     if(!array_filter($activity['attackEnhancements']??[],static fn($effect)=>(isset($effect['aura'])||isset($effect['fixedArea']))&&($effect['sceneId']??'')===$sceneId&&($effect['remainingTurns']??0)>0))return $activity;
     if(!isset($records['map:'.$sceneId]))$records=array_replace($records,applicationDomainRecords($connection,['map:'.$sceneId]));
     $map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);
     $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);
-    foreach($map['tokens'] as &$token)$token['controllerPlayerId']=onlineTokenControllerIdFromRecords($connection,$records,$token);unset($token);
+    foreach($map['tokens'] as &$token)$token['controllerPlayerId']=$owners===null
+        ? onlineTokenControllerIdFromRecords($connection,$records,$token)
+        : onlineEffectiveTokenControllerId($token,$owners);
+    unset($token);
     return [...$activity,'activeSceneId'=>$sceneId,'map'=>$map];
 }
 function applicationAttackResultBonus(array $source,array $state,string $sceneId):int {

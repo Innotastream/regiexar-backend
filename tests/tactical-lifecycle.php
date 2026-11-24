@@ -35,6 +35,8 @@ final class MemoryConnection extends PDO
     public array $healthOverlays = [];
     public array $accounts = [];
     public array $mediaObjects = [];
+    public array $resourceReceiptLedger = [];
+    public int $domainReads = 0;
     public int $revision = 1;
     private ?array $snapshot = null;
     public function __construct(array $domains)
@@ -52,12 +54,22 @@ final class MemoryConnection extends PDO
     }
     public function prepare(string $query, array $options = []): PDOStatement|false { return new MemoryStatement($this, $query); }
     public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): PDOStatement|false { $s = $this->prepare($query); $s->execute(); return $s; }
-    public function beginTransaction(): bool { $this->snapshot = [$this->domains, $this->revision, $this->mediaObjects]; return true; }
+    public function beginTransaction(): bool { $this->snapshot = [$this->domains, $this->revision, $this->mediaObjects, $this->resourceReceiptLedger]; return true; }
     public function inTransaction(): bool { return $this->snapshot !== null; }
     public function commit(): bool { $this->snapshot = null; return true; }
-    public function rollBack(): bool { [$this->domains, $this->revision, $this->mediaObjects] = $this->snapshot; $this->snapshot = null; return true; }
+    public function rollBack(): bool { [$this->domains, $this->revision, $this->mediaObjects, $this->resourceReceiptLedger] = $this->snapshot; $this->snapshot = null; return true; }
     public function executeSql(string $sql, array $params): array
     {
+        if ($sql === 'SELECT payload FROM application_resource_receipts WHERE request_id=? AND expires_at>?') {
+            $receipt = $this->resourceReceiptLedger[$params[0]] ?? null;
+            return ($receipt['expiresAt'] ?? 0) > $params[1] ? [[json_encode($receipt, JSON_THROW_ON_ERROR)]] : [];
+        }
+        if (str_starts_with($sql, 'INSERT INTO application_resource_receipts ')) {
+            foreach (array_chunk($params, 5) as [$id, $actionId, $guard, $expiry, $payload]) {
+                $this->resourceReceiptLedger[$id] = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+            }
+            return [];
+        }
         if($sql==='SELECT id FROM media_objects WHERE id = :id FOR UPDATE')return isset($this->mediaObjects[$params[':id']])?[['id'=>$params[':id']]]:[];
         if($sql==='UPDATE media_objects SET pending_delete_at = NULL WHERE id = :id AND pending_delete_at IS NOT NULL'){
             if(isset($this->mediaObjects[$params[':id']]))$this->mediaObjects[$params[':id']]['pending_delete_at']=null;
@@ -67,6 +79,7 @@ final class MemoryConnection extends PDO
             'global_revision' => $this->revision, 'state_schema_version' => XAR_SESSION_SCHEMA_VERSION, 'domain_schema_version' => 1, 'legacy_revision' => null, 'initialized_at' => 'done',
         ]];
         if (str_starts_with($sql, 'SELECT domain_key, schema_version')) {
+            $this->domainReads++;
             return array_values(array_filter($this->domains, static function (array $record) use ($sql, $params): bool {
                 if (isset($params[':character_id'])) return str_starts_with($record['domain_key'], 'token:') && ($record['payload']['characterId'] ?? '') === $params[':character_id'];
                 if (isset($params[':prefix'])) return str_starts_with($record['domain_key'], rtrim($params[':prefix'], '%'));
