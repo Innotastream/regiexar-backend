@@ -61,6 +61,14 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$attack=null;
     foreach($activity['attackReceipts']??[] as $receipt)if(($receipt['attack']['id']??'')===($arguments['attackId']??'')){$attack=$receipt['attack'];break;}
+    if ($attack === null && is_string($arguments['attackId'] ?? null)) {
+        foreach (applicationArchivedAttackFamily($connection, $arguments['attackId'], applicationResourceReceiptClock()) as $receipt) {
+            if (($receipt['attack']['id'] ?? '') === $arguments['attackId']) {
+                $attack = $receipt['attack'];
+                break;
+            }
+        }
+    }
     if ($attack === null && $arguments['decision'] === 'reject') {
         foreach ($activity['pendingAttacks'] ?? [] as $entry) {
             if (($entry['id'] ?? null) !== ($arguments['attackId'] ?? null) || !is_array($entry['areaGate'] ?? null)) continue;
@@ -84,7 +92,11 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     if(($attack['areaGate']['kind']??'')==='device-damage')return onlineResolveDeviceDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     if(!empty($attack['areaGate']['deferred']))return onlineResolveDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     $allowed=applicationApprovedAreaDefenseIds([...$attack['areaGate'],'targetTokenIds'=>$attack['areaGate']['defenseEligibleTokenIds']??$attack['areaGate']['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=onlineAreaDefenseSignature($arguments,$allowed);
-    if(isset($attack['areaGate']['resolutionSignature'])){if($attack['areaGate']['resolutionSignature']!==$signature)throw new RuntimeException('Cette zone a déjà été résolue avec un autre choix.',409);$children=[];foreach($activity['attackReceipts'] as $receipt)if(($receipt['attack']['areaGateParentId']??'')===$attack['id'])$children[]=$receipt['attack'];return ['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>true];}
+    if(isset($attack['areaGate']['resolutionSignature'])){
+        if($attack['areaGate']['resolutionSignature']!==$signature)throw new RuntimeException('Cette zone a déjà été résolue avec un autre choix.',409);
+        return ['attack'=>$attack,'areaAttacks'=>applicationAttackFamilyChildren($connection,$activity,$attack['id'],['areaGateParentId']),
+            'deduplicated'=>true];
+    }
     $sceneId=$attack['sceneId'];$children=[];$canFire=$arguments['decision']==='approve'&&($attack['areaGate']['chanceOutcome']['code']??'')!=='critical-failure';
     if($canFire){
         if(isset($attack['areaGate']['sourceParty']))onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);

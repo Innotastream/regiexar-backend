@@ -297,7 +297,8 @@ function onlineUseComplexAbility(
     $defenseApproval=$authority['defenseApproval']??$continuation['plan']['defenseApproval']??null;
     $records=array_replace($records,applicationDomainRecords($connection,['activity']));
     $deferredActivity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
-    foreach($deferredActivity['attackReceipts']??[]as$receipt)if(($receipt['requestId']??'')===$requestId&&($receipt['attack']['areaGate']['kind']??'')==='complex-start'){
+    $receipt=applicationAttackReceiptByRequest($connection,$deferredActivity,$requestId,applicationResourceReceiptClock());
+    if(($receipt['attack']['areaGate']['kind']??'')==='complex-start'){
         if(($receipt['accountId']??'')!==$accountId)rejectOnlineCommand($connection,403,'Cette demande appartient à un autre intervenant.','defense_receipt_forbidden');
         if($receipt['requestSignature']!==$signature)rejectOnlineCommand($connection,409,'Cette référence désigne une autre préparation.','defense_receipt_mismatch');
         $attack=$receipt['attack'];$execution=null;foreach($deferredActivity['abilityExecutions']??[]as$entry)if($entry['id']===($attack['areaGate']['executionId']??''))$execution=$entry;

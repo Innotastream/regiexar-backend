@@ -106,7 +106,13 @@ if (is_array($deduplicatedAttack)) {
         rejectOnlineCommand($connection, 403, 'Cette attaque a été créée en mode MJ.', 'attack_receipt_forbidden');
     }
     if (!isset($deduplicatedAttack['cast']) && is_array($abilityReceipt['cast'] ?? null)) $deduplicatedAttack['cast'] = $abilityReceipt['cast'];
-    $linkedTargets=[];foreach($receipts as $linkedReceipt)if(($isGm||empty($linkedReceipt['attack']['concealedAreaTarget']))&&(($linkedReceipt['attack']['weaponAttackParentId']??'')===$deduplicatedAttack['id']||($linkedReceipt['attack']['areaGateParentId']??'')===$deduplicatedAttack['id']))$linkedTargets[]=$isGm?$linkedReceipt['attack']:publicOnlineAttackResult($linkedReceipt['attack'],true,false);
+    $linkedTargets = [];
+    foreach (applicationAttackFamilyChildren($connection, ['attackReceipts'=>$receipts], $deduplicatedAttack['id'],
+        ['weaponAttackParentId', 'areaGateParentId']) as $child) {
+        if ($isGm || empty($child['concealedAreaTarget'])) {
+            $linkedTargets[] = $isGm ? $child : publicOnlineAttackResult($child, true, false);
+        }
+    }
     if($linkedTargets!==[])$result['areaAttacks']=$linkedTargets;
     $result['attack'] = $isGm ? $deduplicatedAttack : publicOnlineAttackResult($deduplicatedAttack, true, false);
     if (is_array($deduplicatedAttack['cast'] ?? null)) {

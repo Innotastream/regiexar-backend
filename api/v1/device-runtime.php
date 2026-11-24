@@ -130,7 +130,7 @@ function onlineDeviceRememberResult(array &$records,array &$pending,string $requ
 }
 function onlineRecordTimedDeviceEffect(PDO $db,array &$records,array &$pending,array $identity,array $before,array $attacks,array $device,string $requestId):void {
     $parents=array_values(array_filter($attacks,static fn($attack)=>($attack['areaGate']['kind']??'')==='device-damage'));if($parents===[])return;
-    $oldIds=array_column($before['activity']['attackReceipts']??[],'requestId');if(in_array($parents[0]['requestId'],$oldIds,true))return;
+    if(applicationAttackReceiptByRequest($db,$before['activity']??[],$parents[0]['requestId'],applicationResourceReceiptClock())!==null)return;
     onlineAppendPlayerAction($db,$records,$pending,$identity,$device['sceneId'],['kind'=>'attack','attackId'=>$parents[0]['id'],'characterName'=>$device['name'],'summary'=>$device['name'].' · Déclenchement','detail'=>'Défenses du dispositif à confirmer par le MJ']);
     $after=onlineContactZoneDomains($records,$pending);
     if(combatUndoRecord($before,$after,'mechanics.command',['sceneId'=>$device['sceneId'],'sourceTokenId'=>$device['id'],'requestId'=>$requestId],['attack'=>$parents[0],'attacks'=>$attacks])!==null)queueOnlineDomainUpsert($pending,$records,'activity',$after['activity']);
@@ -140,6 +140,13 @@ function onlineAdvanceDevicesOnChanges(PDO $db,array $records,array $changes,arr
     if ($clockChanges === []) return $changes;
     $pending=[];foreach($changes as $change)$pending[$change['key']]=$change;
     $records=array_replace(applicationDomainRecords($db),$records);
+    // A legacy activity import can precede a clock change. Free historical
+    // slots before any new automatic attack, inside the clock transaction.
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    if (count($activity['attackReceipts'] ?? []) >= XAR_ATTACK_RECEIPT_MAXIMUM - XAR_PENDING_ATTACK_MAXIMUM) {
+        $compacted = applicationArchiveClosedAttackGroups($db, $activity, applicationResourceReceiptClock());
+        if ($compacted !== $activity) queueOnlineDomainUpsert($pending, $records, 'activity', $compacted);
+    }
     foreach($clockChanges as $change){
         $sceneId=substr($change['key'],11);$previous=applicationDomainPayload($records,$change['key']);
         $state=onlineDeviceSelectScene(domainsToApplicationState(onlineDeviceOverlayRecords($records,$pending),0),$sceneId);

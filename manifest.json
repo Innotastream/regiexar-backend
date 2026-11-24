@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "backendVersion": "0.19.22",
+  "backendVersion": "0.19.23",
   "announcedApplicationVersion": "4.3.4",
   "allowedApplicationVersions": [
     "4.3.4"
@@ -10,7 +10,7 @@
   "documentRoot": "regie",
   "privateConfigDirectory": "regie-private",
   "applicationIntegration": "revisioned-domains",
-  "databaseSchemaVersion": 27,
+  "databaseSchemaVersion": 28,
   "minimumApplicationVersion": "4.3.4",
   "imageStudioMinimumApplicationVersion": "2.1.0",
   "abilityAssistantMinimumApplicationVersion": "3.3.5"

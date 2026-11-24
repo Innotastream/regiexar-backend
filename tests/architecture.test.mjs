@@ -102,8 +102,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.22'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-4-opposition-totale-20261124-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.23'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-3-4-archives-combat-20261124-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -140,9 +140,9 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
   assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.22");
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.23");
   assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.3.4");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 27);
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 28);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
@@ -395,7 +395,7 @@ test("un déploiement backend demande la sauvegarde puis révoque les anciennes 
   assert.match(index, /INSERT INTO auth_sessions[\s\S]*?backend_version[\s\S]*?:backend_version/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?takeover_requested_at = UTC_TIMESTAMP\(3\)/);
   assert.match(index, /function synchronizeBackendRelease[\s\S]*?DELETE FROM auth_sessions WHERE backend_version <> :backend_version/);
-  assert.match(index, /ensureCurrentSchema\(\$connection\);\s+applicationResourceReceiptLedgerEnabled\(\$connection, true\);\s+applicationDirectAttackLedgerEnabled\(\$connection, true\);\s+synchronizeBackendRelease\(\$connection\);/);
+  assert.match(index, /ensureCurrentSchema\(\$connection\);\s+applicationResourceReceiptLedgerEnabled\(\$connection, true\);\s+applicationDirectAttackLedgerEnabled\(\$connection, true\);\s+applicationGroupedAttackLedgerEnabled\(\$connection, true\);\s+synchronizeBackendRelease\(\$connection\);/);
   assert.match(online, /backendSessionNeedsHandoff\(\$identity\)[\s\S]*?'session-takeover'[\s\S]*?'backend-update'/);
 });
 

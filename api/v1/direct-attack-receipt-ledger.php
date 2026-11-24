@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/grouped-attack-receipt-ledger.php';
+
 function applicationDirectAttackLedgerEnabled(PDO $connection, bool $enable = false): bool
 {
     static $connections;
@@ -67,7 +69,8 @@ function applicationWriteDirectAttackReceipts(PDO $connection, array $receipts):
     $statement = $connection->prepare(
         'INSERT INTO application_direct_attack_receipts '
         . '(request_id,attack_id,opposition_request_id,expires_at,payload) VALUES (?,?,?,?,?) '
-        . 'ON DUPLICATE KEY UPDATE opposition_request_id=VALUES(opposition_request_id),expires_at=VALUES(expires_at),payload=VALUES(payload)'
+        . 'ON DUPLICATE KEY UPDATE opposition_request_id=VALUES(opposition_request_id),'
+        . 'expires_at=GREATEST(expires_at,VALUES(expires_at)),payload=VALUES(payload)'
     );
     foreach ($receipts as $receipt) {
         $attack = $receipt['attack'];
@@ -109,19 +112,28 @@ function applicationReadUndoDirectAttackReceipts(PDO $connection, array $action,
 {
     if (!applicationDirectAttackLedgerEnabled($connection)) return [];
     $ids = [];
+    $executions = [];
     foreach ($action['aliases'] ?? [] as $alias) {
-        if (!is_string($alias) || !str_starts_with($alias, 'attack:')) continue;
-        $id = substr($alias, 7);
-        if (applicationResourceReceiptKey($id, 120)) $ids[$id] = true;
+        if (!is_string($alias)) continue;
+        if (str_starts_with($alias, 'attack:')) {
+            $id = substr($alias, 7);
+            if (applicationResourceReceiptKey($id, 120)) $ids[$id] = true;
+        } elseif (str_starts_with($alias, 'execution:')) {
+            $id = substr($alias, 10);
+            if (applicationResourceReceiptKey($id, 80)) $executions[$id] = true;
+        }
     }
     $records = [];
-    foreach (array_chunk(array_keys($ids), 128) as $batch) {
-        $statement = $connection->prepare('SELECT payload FROM application_direct_attack_receipts WHERE attack_id IN ('
-            . implode(',', array_fill(0, count($batch), '?')) . ') AND expires_at>?');
-        $statement->execute([...$batch, $now]);
-        foreach ($statement->fetchAll(PDO::FETCH_COLUMN) as $payload) {
-            $receipt = json_decode((string) $payload, true, 512, JSON_THROW_ON_ERROR);
-            $records[$receipt['requestId']] = $receipt;
+    $indexes = ['attack_id' => $ids];
+    if (applicationGroupedAttackLedgerEnabled($connection) && $executions !== []) {
+        $indexes['complex_execution_id'] = $executions;
+        $indexes['origin_execution_id'] = $executions;
+    }
+    foreach ($indexes as $index => $keys) {
+        foreach (array_chunk(array_keys($keys), 128) as $batch) {
+            foreach (applicationSelectArchivedAttackReceipts($connection, $index, $batch, $now) as $receipt) {
+                $records[$receipt['requestId']] = $receipt;
+            }
         }
     }
     return $records;

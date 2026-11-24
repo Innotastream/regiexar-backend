@@ -470,7 +470,13 @@ function onlineUndoCombatAction(PDO $db,array &$records,array &$pending,array $i
              if(!combatUndoSame($archivedAttacks[$id],$receipt))$updated[]=$receipt;
          }else $retained[]=$receipt;
      }
-     if(!$result['deduplicated'])applicationWriteDirectAttackReceipts($db,$updated);
+     if(!$result['deduplicated']){
+         applicationWriteDirectAttackReceipts($db,$updated);
+         if($updated!==[]&&!empty($domains['activity']['abilityExecutions'])){
+             $domains['activity']['abilityExecutions']=applicationComplexAbilityResultsFromReceipts(
+                 $domains['activity']['abilityExecutions'],$updated);
+         }
+     }
      $domains['activity']['attackReceipts']=$retained;
  }
  if($archived!==[]){

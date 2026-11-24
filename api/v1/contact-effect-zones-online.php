@@ -29,8 +29,8 @@ function onlineRecordContactUndo(PDO $db,array &$records,array &$pending,array $
 function onlineApplyContactZoneEvents(PDO $db,array &$records,array &$pending,array $identity,array $events):array {
     $attacks=[];
     foreach($events as$event){
-        $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$existing=null;
-        foreach($activity['attackReceipts']??[]as$r)if(($r['requestId']??'')===$event['requestId']){$existing=$r['attack'];break;}
+        $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+        $existing=applicationAttackReceiptByRequest($db,$activity,$event['requestId'],applicationResourceReceiptClock())['attack']??null;
         if($existing!==null){$attacks[]=$existing;continue;}
         $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());$zone=null;foreach($store['contactZones']??[]as$z)if($z['id']===$event['zoneId']){$zone=$z;break;}if($zone===null)continue;
         $rolled=onlineRollFormula($event['damage']['formula']);

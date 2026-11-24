@@ -274,6 +274,8 @@ jobs:
           grep -Fq 'Local MySQL resource receipt integration passed.' mysql-resource-receipts.log
           php tests/mysql-direct-attack-receipts.php | tee mysql-direct-attack-receipts.log
           grep -Fq 'Local MySQL direct attack receipt integration passed.' mysql-direct-attack-receipts.log
+          php tests/mysql-grouped-attack-receipts.php | tee mysql-grouped-attack-receipts.log
+          grep -Fq 'Local MySQL grouped attack receipt integration passed.' mysql-grouped-attack-receipts.log
       - name: Architecture contracts
         run: node --test tests/*.test.mjs
 

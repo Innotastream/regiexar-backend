@@ -2616,6 +2616,9 @@ function prepareApplicationDomainUpsert(
                 unset($payload['playerActions'][$index][$field]);
                 if (array_key_exists($field,$previous)) $payload['playerActions'][$index][$field] = $previous[$field];
             }
+            if (str_starts_with((string) ($previous['groupId'] ?? ''), 'archived-attack-')) {
+                $payload['playerActions'][$index]['groupId'] = $previous['groupId'];
+            }
             if (is_array($previous['operation']['impactBleeding'] ?? null)) {
                 $payload['playerActions'][$index]['operation'] = $previous['operation'];
                 if (isset($previous['undo'])) $payload['playerActions'][$index]['undo'] = $previous['undo'];
@@ -3045,6 +3048,9 @@ function ensureDomainStoreInitialized(PDO $connection): void
                 continue;
             }
             $payload = validatedDomainPayload($key, removeLegacyInlineImages($payload));
+            if ($key === 'activity') {
+                $payload = applicationArchiveClosedAttackGroups($connection, $payload, applicationResourceReceiptClock());
+            }
             upsertApplicationDomain($connection, $key, $payload, 1, null);
             insertDomainChange($connection, $globalRevision, $key, 1, 'upsert');
         }
@@ -3237,7 +3243,9 @@ function persistDomainChangesInTransaction(PDO $connection, array $identity, arr
             if ($key === 'activity') {
                 $now = applicationResourceReceiptClock();
                 $payload = applicationArchiveFinalResourceReceipts($connection, $payload, $now);
-                $payload = applicationArchiveIndependentAttacks($connection, $payload, $now);
+                $payload = applicationGroupedAttackLedgerEnabled($connection)
+                    ? applicationArchiveClosedAttackGroups($connection, $payload, $now)
+                    : applicationArchiveIndependentAttacks($connection, $payload, $now);
             }
             upsertApplicationDomain($connection, $key, $payload, $nextRevision, $accountId !== '' ? $accountId : null);
         }

@@ -5910,6 +5910,12 @@ function onlinePerformAreaOppositions(
         $attack = $receipt['attack'] ?? [];
         if (!empty($attack['id'])) $receiptAttacks[$attack['id']] = $attack;
     }
+    if (!isset($receiptAttacks[$parentId])) {
+        foreach (applicationArchivedAttackFamily($connection, $parentId, applicationResourceReceiptClock()) as $receipt) {
+            $attack = $receipt['attack'];
+            $receiptAttacks[$attack['id']] ??= $attack;
+        }
+    }
     $parent = $receiptAttacks[$parentId] ?? [];
     if (($parent['status'] ?? '') !== 'resolved' || empty($parent['areaGate'])
         || (($parent['attackerRole'] ?? '') !== 'gm' && ($parent['sceneId'] ?? '') !== $sceneId)) {
@@ -7844,7 +7850,8 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $resolvedAttackId = (string) ($arguments['attackId'] ?? $result['attack']['id'] ?? '');
             $activityForLookup = is_array($pending['activity']['payload'] ?? null)
                 ? $pending['activity']['payload'] : applicationDomainPayload($records, 'activity');
-            foreach ($activityForLookup['attackReceipts'] ?? [] as $receipt) if (($receipt['attack']['id'] ?? '') === $resolvedAttackId) {
+            $complexExecutionId = (string) ($result['attack']['complexExecutionId'] ?? '');
+            foreach ($complexExecutionId === '' ? ($activityForLookup['attackReceipts'] ?? []) : [] as $receipt) if (($receipt['attack']['id'] ?? '') === $resolvedAttackId) {
                 $complexExecutionId = (string) ($receipt['attack']['complexExecutionId'] ?? '');
                 break;
             }
@@ -7859,7 +7866,14 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 if ($compactComplex) {
                     unset($result['discordContent']);
                     if (($execution['compactDiscordSent'] ?? false) !== true) {
-                        $report = onlineCompactComplexResult($execution, $activityForReport['attackReceipts'] ?? []);
+                        $reportReceipts = $activityForReport['attackReceipts'] ?? [];
+                        $report = onlineCompactComplexResult($execution, $reportReceipts);
+                        if ($report === null && ($execution['status'] ?? '') === 'completed'
+                            && applicationGroupedAttackLedgerEnabled($connection)) {
+                            $archived = applicationSelectArchivedAttackReceipts($connection, 'complex_execution_id',
+                                [$complexExecutionId], applicationResourceReceiptClock());
+                            if ($archived !== []) $report = onlineCompactComplexResult($execution, [...$archived, ...$reportReceipts]);
+                        }
                         if ($report !== null) {
                             $activityForReport['abilityExecutions'][$index]['compactDiscordSent'] = true;
                             queueOnlineDomainUpsert($pending, $records, 'activity', $activityForReport);

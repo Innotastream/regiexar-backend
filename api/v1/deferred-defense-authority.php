@@ -74,7 +74,13 @@ function onlineAssertDeferredDefenseParties(PDO $connection,array &$records,arra
 function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array &$pending,array $identity,array $arguments,array $attack):array{
     $gate=$attack['areaGate'];$allowed=applicationApprovedAreaDefenseIds([...$gate,'targetTokenIds'=>$gate['defenseEligibleTokenIds']??$gate['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=onlineAreaDefenseSignature($arguments,$allowed);
     $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
-    if(isset($gate['resolutionSignature'])){if($gate['resolutionSignature']!==$signature)throw new RuntimeException('Cette action a déjà reçu une autre décision.',409);$children=[];foreach($activity['attackReceipts']as$receipt)if(($receipt['attack']['areaGateParentId']??'')===$attack['id'])$children[]=$receipt['attack'];$result=['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>true];if(!empty($gate['executionId']))foreach($activity['abilityExecutions']??[]as$execution)if($execution['id']===$gate['executionId'])$result['execution']=$execution;return $result;}
+    if(isset($gate['resolutionSignature'])){
+        if($gate['resolutionSignature']!==$signature)throw new RuntimeException('Cette action a déjà reçu une autre décision.',409);
+        $result=['attack'=>$attack,'areaAttacks'=>applicationAttackFamilyChildren($connection,$activity,$attack['id'],['areaGateParentId']),
+            'deduplicated'=>true];
+        if(!empty($gate['executionId']))foreach($activity['abilityExecutions']??[]as$execution)if($execution['id']===$gate['executionId'])$result['execution']=$execution;
+        return $result;
+    }
     $released=null;
     if($arguments['decision']==='approve'){
         onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);

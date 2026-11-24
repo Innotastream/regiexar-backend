@@ -9,9 +9,10 @@ function onlineDeviceDefenseHealth(PDO $db,array &$records,array $pending,array 
 function onlineQueueDeviceDefenseGate(PDO $db,array &$records,array &$pending,array $identity,array $device,string $effectType,array $map,array $targets,string $requestId):?array{
  if(!in_array($effectType,['explosion','beam'],true)||($device['definition']['noDefensePossible']??false)===true&&!applicationIsTrassBeam($device))return null;
  $eventId='device-gate-'.hash('sha256',json_encode([$requestId,$device['id'],$effectType],JSON_THROW_ON_ERROR));$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
- foreach($activity['attackReceipts']??[]as$receipt)if(($receipt['requestId']??'')===$eventId)return $receipt['attack'];
+ $now=applicationResourceReceiptClock();
+ $existing=applicationAttackReceiptByRequest($db,$activity,$eventId,$now);
+ if($existing!==null)return $existing['attack'];
  $rows=[];foreach($targets as$row){if($row['damagePercent']<=0)continue;$token=null;foreach($map['tokens']as$entry)if($entry['id']===$row['tokenId'])$token=$entry;if($token===null)continue;$health=onlineDeviceDefenseHealth($db,$records,$pending,$token);if($health['maxHp']<=0||$health['dead'])continue;$rows[]=[...$row,'token'=>$token,'health'=>$health];}
- $now=(int)floor(microtime(true)*1000);
  $activity=onlinePruneExpiredAttackReceipts($records,$pending,$activity,$now);
  if(count($rows)>100||count($activity['pendingAttacks']??[])>=XAR_PENDING_ATTACK_MAXIMUM||count($activity['attackReceipts']??[])>=XAR_ATTACK_RECEIPT_MAXIMUM)throw new RuntimeException('La file des décisions de combat est pleine.',429);
  $rolled=$effectType==='beam'?['total'=>$device['mana']]:onlineRollFormula($device['definition']['damageFormula']);
@@ -27,7 +28,11 @@ function onlineResolveDeviceDefenseGate(PDO $db,array &$records,array &$pending,
  if(($identity['effective_mode']??$identity['permanent_role']??'')!=='gm')throw new RuntimeException('Seul le MJ choisit les défenses de ce dispositif.',403);
  if(!in_array($arguments['decision']??'',['approve','reject'],true)||($attack['areaGate']['kind']??'')!=='device-damage')throw new RuntimeException('Cette zone n’attend pas cette décision.',400);
  $gate=$attack['areaGate'];$allowed=applicationApprovedAreaDefenseIds([...$gate,'targetTokenIds'=>$gate['defenseEligibleTokenIds']],$arguments['defenseTokenIds']??[]);sort($allowed,SORT_STRING);$signature=onlineAreaDefenseSignature($arguments,$allowed);$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
- if(isset($gate['resolutionSignature'])){if($gate['resolutionSignature']!==$signature)throw new RuntimeException('Cette action a déjà reçu une autre décision.',409);return ['attack'=>$attack,'areaAttacks'=>array_values(array_map(static fn($entry)=>$entry['attack'],array_filter($activity['attackReceipts']??[],static fn($entry)=>($entry['attack']['areaGateParentId']??'')===$attack['id']))),'deduplicated'=>true];}
+ if(isset($gate['resolutionSignature'])){
+  if($gate['resolutionSignature']!==$signature)throw new RuntimeException('Cette action a déjà reçu une autre décision.',409);
+  return ['attack'=>$attack,'areaAttacks'=>applicationAttackFamilyChildren($db,$activity,$attack['id'],['areaGateParentId']),
+   'deduplicated'=>true];
+ }
  $children=[];$snapshot=$gate['deviceDamage'];
  if($arguments['decision']==='approve'){
   $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$attack['sceneId'],$attack['layerId']);$device=null;foreach($state['devices']['devices']as$entry)if($entry['id']===$snapshot['device']['id'])$device=$entry;
