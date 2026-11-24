@@ -25,7 +25,7 @@ test("le contrat backend borne les masques de brume, murs et vision par niveau",
   // exercised against the previous engine by vision-cache-geometry.php.
   assert.match(vision, /\$delta = \(\$column - \$centerX\) \/ \$radiusX;\s*\$ellipseXSquares\[\$column\] = \$delta \* \$delta/);
   assert.match(vision, /\$delta = \(\$row - \$centerY\) \/ \$radiusY;\s*\$ellipseYSquares\[\$row\] = \$delta \* \$delta/);
-  assert.match(vision, /if \(\$ellipseXSquares\[\$column\] \+ \$ellipseYSquares\[\$row\] > 1\.0 \+ 1\.0e-12\)[\s\S]*?break/);
+  assert.match(vision, /if \(\$step > \$safeSteps && \$ellipseXSquares\[\$column\] \+ \$ellipseYSquares\[\$row\] > 1\.0 \+ 1\.0e-12\)[\s\S]*?break/);
   assert.match(vision, /\$firstWallBodyReachesCell/);
   assert.match(vision, /foreach \(\$wallCellIndexes as \$cellIndex\)/);
   assert.match(vision, /if \(\$firstWallBodyReachesCell\(\$centerX, \$centerY, \$column, \$row\)\)/);
@@ -44,12 +44,15 @@ test("la projection masque les pions sous la brume tout en relayant les pings du
   assert.match(projection, /\$occlusion = applicationActiveMapOcclusionState/);
   assert.match(projection, /\$baseVisionMask = applicationComputeVisionRenderMask/);
   assert.match(projection, /\$visionMask=applicationApplyMistVisionMask\(\$baseVisionMask,\$mistVision\)/);
-  assert.match(projection, /\$baseStrictPointIsHidden = static fn[\s\S]*?applicationVisionCoversPoint\(\$baseVisionMask, \$x, \$y\)/);
+  assert.match(projection, /\$strictMask = \[\.\.\.\$baseVisionMask, 'version' => XAR_FOG_MASK_VERSION\]/);
+  assert.match(projection, /\$strictVisionCoversPoint = applicationMaskPointTester\(\$strictMask\)/);
+  assert.match(projection, /\$baseStrictPointIsHidden = static fn[^\n]*=> \$fogCoversPoint\(\$x, \$y\)\s*\|\| \$strictVisionCoversPoint\(\$x, \$y\)/);
   assert.match(projection, /\$viewerIsIsolated/);
   assert.match(projection, /\$vision\['shared'\]/);
   assert.match(projection, /\$isolatedPlayerIds\[\$controllerId\]/);
-  assert.match(projection, /\$pointIsHidden = static fn/);
-  assert.match(projection, /!\$owned && !applicationTerrainBarrierPointVisible\(\$token,\$map,static fn\(\$x,\$y\)=>!\$pointIsHidden\(\$x,\$y\)\)/);
+  assert.match(projection, /\$pointIsHidden = static fn[^\n]*=> \$fogCoversPoint\(\$x, \$y\)\s*\|\| \$tokenVisionCoversPoint\(\$x, \$y\)/);
+  assert.match(projection, /\$tokenInView = applicationTerrainBarrierPointVisible\(\$token,\$map,static fn\(\$x,\$y\)=>!\$pointIsHidden\(\$x,\$y\)\)/);
+  assert.match(projection, /if \(!\$owned && !\$tokenInView\) \{\s*continue;/);
   assert.match(projection, /unset\(\$map\['layers'\]\)/);
   assert.match(projection, /unset\(\$map\['walls'\]\)/);
   assert.match(projection, /\$map\['fog'\] = \$fog/);
