@@ -346,7 +346,7 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(projection, /playerApplicationStateRecord\(\$connection\)/);
   assert.match(projection, /publicPlayerState\(\$projectionState, \$identity, \[\]\)/);
   assert.match(projection, /\$result\['mapProjection'\]/);
-  assert.match(projection, /applicationPlayerMoveMapProjection\(\$visibleProjection/);
+  assert.match(projection, /applicationPlayerMoveMapProjection\(\s*\$visibleProjection/);
   assert.match(moveProjection, /'visionMask'/);
   assert.match(moveProjection, /'lights'/);
   assert.match(moveProjection, /'movementEffectZones'/);
