@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "guidance": [
+    "Repère chaque élément peint séparément. Pour plusieurs cascades ou flambeaux, précise les zones de chacun.",
+    "Réserve les effets de lumière aux halos et aux reflets. Pour des flammes qui crépitent, utilise le mouvement de la flamme.",
+    "Garde les quais, les murs et les plateformes immobiles. Une zone proposée sert à chercher l’élément dans l’image.",
+    "Dans une demande composée, conserve les effets distincts et donne la priorité aux couleurs, zones et exclusions de la consigne."
+  ],
+  "recipes": [
+    {
+      "id": "sanctuaire-vivant",
+      "label": "Sanctuaire vivant",
+      "aliases": ["sanctuaire vivant", "sanctuaire animé", "temple aux braseros", "temple aux brasiers"],
+      "layers": [
+        {"kind": "waterfall", "intensity": 0.7, "speed": 0.65, "direction": 90, "fish": 0},
+        {"kind": "flame", "intensity": 0.78, "speed": 0.68, "direction": 270, "fish": 0, "tint": "#b87aff"},
+        {"kind": "mist", "intensity": 0.25, "speed": 0.25, "direction": 0, "fish": 0, "tint": "#ab9bc9"}
+      ]
+    },
+    {
+      "id": "forge-volcanique",
+      "label": "Forge volcanique",
+      "aliases": ["forge volcanique", "caverne volcanique", "forge de lave"],
+      "layers": [
+        {"kind": "lava", "intensity": 0.64, "speed": 0.46, "direction": 90, "fish": 0},
+        {"kind": "flame", "intensity": 0.62, "speed": 0.6, "direction": 270, "fish": 0, "tint": "#ffa765"}
+      ]
+    },
+    {
+      "id": "ruelles-pluvieuses",
+      "label": "Ruelles pluvieuses",
+      "aliases": ["ruelles pluvieuses", "ruelle sous la pluie", "rues pluvieuses"],
+      "layers": [
+        {"kind": "rain", "intensity": 0.56, "speed": 0.52, "direction": 105, "fish": 0, "cycleSeconds": 60},
+        {"kind": "light", "intensity": 0.24, "speed": 0.24, "direction": 0, "fish": 0, "tint": "#e3b773"}
+      ]
+    }
+  ]
+}

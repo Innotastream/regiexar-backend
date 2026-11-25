@@ -2,7 +2,9 @@
 declare(strict_types=1);
 
 const XAR_ANIMATED_MAP_LAYERS = ['basement', 'ground', 'upper'];
-const XAR_ANIMATED_MAP_KINDS = ['water', 'lava', 'light', 'mist', 'cloud', 'sun', 'drift', 'particles', 'day-night', 'rain'];
+const XAR_ANIMATED_MAP_KINDS = [
+    'water', 'waterfall', 'lava', 'light', 'flame', 'mist', 'cloud', 'sun', 'drift', 'particles', 'day-night', 'rain',
+];
 const XAR_ANIMATED_MAP_MAX_MASK_LENGTH = 240000;
 
 function applicationMapAnimationId(mixed $value): bool
@@ -23,6 +25,30 @@ function applicationMapAnimationSource(mixed $value): bool
 function applicationMapAnimationNumber(mixed $value, int $maximum): bool
 {
     return (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= $maximum;
+}
+
+function applicationMapAnimationLayerSettings(array $layer): ?array
+{
+    $kind = $layer['kind'] ?? null;
+    if (!in_array($kind, XAR_ANIMATED_MAP_KINDS, true)
+        || !applicationMapAnimationNumber($layer['intensity'] ?? null, 1)
+        || !applicationMapAnimationNumber($layer['speed'] ?? null, 1)
+        || !applicationMapAnimationNumber($layer['direction'] ?? null, 360)
+        || !applicationMapAnimationNumber($layer['fish'] ?? null, 1)) return null;
+    $hasTint = array_key_exists('tint', $layer);
+    $hasCycle = array_key_exists('cycleSeconds', $layer);
+    if ($hasTint && (!is_string($layer['tint']) || preg_match('/^#[0-9a-f]{6}$/iD', $layer['tint']) !== 1)) return null;
+    if ($hasCycle && (!applicationMapAnimationNumber($layer['cycleSeconds'], 1800)
+        || $layer['cycleSeconds'] < 10 || floor((float) $layer['cycleSeconds']) !== (float) $layer['cycleSeconds'])) return null;
+    return [
+        'kind' => $kind,
+        'intensity' => $layer['intensity'],
+        'speed' => $layer['speed'],
+        'direction' => $layer['direction'],
+        'fish' => $kind === 'water' ? $layer['fish'] : 0,
+        ...($hasTint ? ['tint' => strtolower($layer['tint'])] : []),
+        ...($hasCycle ? ['cycleSeconds' => (int) $layer['cycleSeconds']] : []),
+    ];
 }
 
 function applicationMapAnimationMask(mixed $mask): ?array
@@ -70,32 +96,18 @@ function applicationMapAnimationPlan(mixed $raw): ?array
     $layers = [];
     $maskLength = 0;
     foreach ($input as $layer) {
-        $kind = $layer['kind'] ?? null;
-        if (!is_array($layer) || !in_array($kind, XAR_ANIMATED_MAP_KINDS, true) || isset($seen[$kind])
-            || !applicationMapAnimationNumber($layer['intensity'] ?? null, 1)
-            || !applicationMapAnimationNumber($layer['speed'] ?? null, 1)
-            || !applicationMapAnimationNumber($layer['direction'] ?? null, 360)
-            || !applicationMapAnimationNumber($layer['fish'] ?? null, 1)) return null;
+        $settings = is_array($layer) ? applicationMapAnimationLayerSettings($layer) : null;
+        if ($settings === null || isset($seen[$settings['kind']])) return null;
         if (array_key_exists('mask', $layer) === array_key_exists('polygons', $layer)) return null;
         $mask = applicationMapAnimationMask($layer['mask'] ?? null);
+        if ($mask === null && in_array($settings['kind'], ['waterfall', 'flame'], true)) return null;
         $polygons = $mask === null ? applicationMapAnimationPolygons($layer['polygons'] ?? null) : null;
         if ($mask === null && $polygons === null) return null;
         $maskLength += strlen($mask['rle'] ?? '');
-        $hasTint = array_key_exists('tint', $layer);
-        $hasCycle = array_key_exists('cycleSeconds', $layer);
-        if ($maskLength > XAR_ANIMATED_MAP_MAX_MASK_LENGTH || $hasTint && (
-            !is_string($layer['tint']) || preg_match('/^#[0-9a-f]{6}$/iD', $layer['tint']) !== 1)) return null;
-        if ($hasCycle && (!applicationMapAnimationNumber($layer['cycleSeconds'], 1800)
-            || $layer['cycleSeconds'] < 10 || floor((float) $layer['cycleSeconds']) !== (float) $layer['cycleSeconds'])) return null;
-        $seen[$kind] = true;
+        if ($maskLength > XAR_ANIMATED_MAP_MAX_MASK_LENGTH) return null;
+        $seen[$settings['kind']] = true;
         $layers[] = [
-            'kind' => $kind,
-            'intensity' => $layer['intensity'],
-            'speed' => $layer['speed'],
-            'direction' => $layer['direction'],
-            'fish' => $kind === 'water' ? $layer['fish'] : 0,
-            ...($hasTint ? ['tint' => strtolower($layer['tint'])] : []),
-            ...($hasCycle ? ['cycleSeconds' => (int) $layer['cycleSeconds']] : []),
+            ...$settings,
             ...($mask !== null ? ['mask' => $mask] : ['polygons' => $polygons]),
         ];
     }

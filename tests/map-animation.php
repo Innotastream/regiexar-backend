@@ -39,6 +39,10 @@ $animation = [
             'polygons' => [[[0, 0], [1, 0], [1, 1], [0, 1]]]],
         ['kind' => 'rain', 'intensity' => .7, 'speed' => .6, 'direction' => 105, 'fish' => 0, 'cycleSeconds' => 95,
             'polygons' => [[[0, 0], [1, 0], [1, 1], [0, 1]]]],
+        ['kind' => 'waterfall', 'intensity' => .55, 'speed' => .55, 'direction' => 90, 'fish' => 0,
+            'mask' => ['width' => 3, 'height' => 2, 'rle' => base64_encode("\x00\x01\xff\x01\x00\x02\xff\x01\x00\x01")]],
+        ['kind' => 'flame', 'intensity' => .65, 'speed' => .9, 'direction' => 270, 'fish' => 0, 'tint' => '#9651ff',
+            'mask' => ['width' => 3, 'height' => 2, 'rle' => base64_encode("\x00\x01\xc0\x02\x00\x03")]],
     ]],
 ];
 $apply = [
@@ -62,6 +66,13 @@ $badCycle = $animation;
 $badCycle['plan']['layers'][6]['cycleSeconds'] = 1801;
 requireTactical(runCommand($db, 'map.animation', [...$apply, 'animation' => $badCycle], true)->status === 400,
     'Une durée hors des bornes est refusée avant toute modification.');
+foreach ([8, 9] as $subjectIndex) {
+    $badSubject = $animation;
+    unset($badSubject['plan']['layers'][$subjectIndex]['mask']);
+    $badSubject['plan']['layers'][$subjectIndex]['polygons'] = [[[0, 0], [1, 0], [1, 1], [0, 1]]];
+    requireTactical(runCommand($db, 'map.animation', [...$apply, 'animation' => $badSubject], true)->status === 400,
+        'Les cascades et flammes doivent rester dans les silhouettes détectées.');
+}
 $saved = runCommand($db, 'map.animation', $apply, true);
 requireTactical($saved->status === 200 && $saved->body['animationId'] === $id,
     'Le MJ applique son aperçu sur le niveau : '.json_encode($saved->body));

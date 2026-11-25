@@ -9521,6 +9521,10 @@ function handleOnlineRoute(PDO $connection, array $configuration, string $route,
         }
         requireMethod($method, ['GET', 'HEAD', 'PUT']);
     }
+    if ($route === '/api/v1/map-animation/recipes') {
+        require_once __DIR__.'/map-animation-recipes.php';
+        serveMapAnimationRecipes($connection, $method, $headOnly);
+    }
     if ($route === '/api/v1/state/command') {
         requireMethod($method, ['POST']);
         commandOnlineState($connection, $configuration);
