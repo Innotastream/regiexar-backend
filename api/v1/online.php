@@ -8233,9 +8233,12 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $projectionRecord = playerApplicationStateRecord($connection);
             $projectionState = is_array($projectionRecord['state'] ?? null) ? $projectionRecord['state'] : [];
             if ($projectionState !== []) {
-                $projectionState['revision'] = (int) ($projectionRecord['revision'] ?? $revision);
+                $projectionState['revision'] = (int) ($projectionRecord['revision'] ?? -1);
                 $visibleProjection = publicPlayerState($projectionState, $identity, []);
-                $result['mapProjection'] = applicationPlayerMoveMapProjection($visibleProjection,trim((string)($arguments['sceneId']??'')));
+                $mapProjection = applicationPlayerMoveMapProjection(
+                    $visibleProjection, $moveSceneId, onlineTokenLayerId($result['token'], $map), $revision
+                );
+                if ($mapProjection !== null) $result['mapProjection'] = $mapProjection;
             }
         }
         $publicResultRolls = applicationPublicResultRolls($result);

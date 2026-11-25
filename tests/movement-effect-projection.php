@@ -31,8 +31,45 @@ $state['devices']['devices'][0]=[...$state['devices']['devices'][0],'mode'=>'pla
 $check(applicationEffectZonePolarity(['mode'=>'stats','bonuses'=>['force'=>10,'agility'=>-10]])==='mixed','Mixed polarity');$check(applicationEffectZonePolarity(['mode'=>'immunity'])==='positive','Immunity positive');$check(applicationEffectZonePolarity(['mode'=>'replace','formula'=>'0'])==='neutral','Replacement unknown neutral');
 $view=publicPlayerState($before,['id'=>'owner'],[]);$check(count($view['movementEffectZones'])===2,'Real PHP player projection connects the contract');
 $check(!isset(publicPlayerState($before,['id'=>'owner'],[],true)['movementEffectZones']),'Stream carries no drag-only metadata');
-$ack=applicationPlayerMoveMapProjection($view,'scene');$check($ack['movementEffectZones']===$view['movementEffectZones'],'Movement ACK carries current warning zones');
-$check(applicationPlayerMoveMapProjection(['map'=>[]],'scene')['movementEffectZones']===[],'Zero-zone movement ACK explicitly clears prior zones');
+$ack = applicationPlayerMoveMapProjection($view, 'scene', 'ground', $view['revision']);
+$check($ack['movementEffectZones'] === $view['movementEffectZones'], 'Movement ACK carries current warning zones');
+$check(!array_key_exists('tokens', $ack), 'An open map does not repeat the token list in the movement ACK');
+$emptyView = ['revision' => 7, 'activeScene' => ['id' => 'scene'], 'map' => ['activeLayerId' => 'ground']];
+$check(applicationPlayerMoveMapProjection($emptyView, 'scene', 'ground', 7)['movementEffectZones'] === [], 'Zero-zone movement ACK explicitly clears prior zones');
+$check(applicationPlayerMoveMapProjection($emptyView, 'scene', 'ground', 6) === null, 'A later public revision cannot be attached to an earlier movement ACK');
+$check(applicationPlayerMoveMapProjection($emptyView, 'scene', 'ground', 8) === null, 'An older public revision cannot replace the movement view');
+$check(applicationPlayerMoveMapProjection($emptyView, 'other', 'ground', 7) === null, 'A movement ACK cannot carry the public map of another scene');
+$check(applicationPlayerMoveMapProjection($emptyView, 'scene', 'upper', 7) === null, 'A movement ACK cannot carry the public map of another floor');
+$emptyView['map']['fog'] = ['enabled' => true];
+$emptyView['map']['tokens'] = [];
+$check(applicationPlayerMoveMapProjection($emptyView, 'scene', 'ground', 7)['tokens'] === [], 'Fog alone sends the authoritative list even when it is empty');
+
+define('XAR_TACTICAL_FIXTURE_ONLY', true);
+require_once __DIR__.'/tactical-lifecycle.php';
+$movementDb = fixture();
+$movementMap = [...$movementDb->payload('map:scene-one'), 'activeLayerId' => 'ground',
+    'vision' => ['enabled' => true, 'shared' => false, 'distance' => 4]];
+$movementDb->put('map:scene-one', $movementMap);
+$movementDb->put('initiative:scene-one', ['active' => false]);
+$movementDb->put('character:character-player', [...$movementDb->payload('character:character-player'), 'visionDistance' => 4]);
+$movementDb->put('token:scene-one:token-monster', [...$movementDb->payload('token:scene-one:token-monster'), 'x' => 43, 'y' => 50]);
+$movementDb->put('token:scene-one:token-monster-two', [...$movementDb->payload('token:scene-one:token-monster-two'), 'x' => 8, 'y' => 50]);
+$movementDb->put('token:scene-one:hidden-unit', ['id' => 'hidden-unit', 'name' => 'MJ only', 'hidden' => true, 'x' => 31, 'y' => 58]);
+$movementDb->put('token-index:scene-one', ['order' => ['token-player', 'token-monster', 'token-monster-two', 'hidden-unit']]);
+$viewer = ['id' => 'account-player', 'display_name' => 'Joueur test'];
+$previous = publicPlayerState(playerApplicationStateRecord($movementDb)['state'], $viewer, []);
+$check(!in_array('token-monster', array_column($previous['map']['tokens'], 'id'), true)
+    && in_array('token-monster-two', array_column($previous['map']['tokens'], 'id'), true), 'The initial view has one visible creature and hides the other');
+$response = runCommand($movementDb, 'token.move', ['tokenId' => 'token-player', 'sceneId' => 'scene-one', 'layerId' => 'ground', 'x' => 31, 'y' => 50]);
+$check($response->status === 200 && $response->body['positionChanged'] === true && isset($response->body['mapProjection']), 'The actual PHP movement command attaches a view from the committed position');
+$current = publicPlayerState(playerApplicationStateRecord($movementDb)['state'], $viewer, []);
+$movedView = $response->body['mapProjection'];
+$check($response->body['revision'] === $current['revision'] && $movedView['visionMask'] === $current['map']['visionMask']
+    && $movedView['visionMask'] !== $previous['map']['visionMask'], 'The movement ACK uses the new mask at the acknowledged revision');
+$check($movedView['tokens'] === $current['map']['tokens']
+    && array_column($movedView['tokens'], 'id') === ['token-player', 'token-monster']
+    && empty($movedView['tokens'][1]['dimSilhouette']), 'The movement ACK reveals the new creature, removes the old one and omits hidden tokens');
+
 foreach([null,'controlled','following','unowned-sheet'] as $case){$s=$before;if($case==='controlled'){$s['map']['tokens'][0]['controllerPlayerId']='obsolete';$s['map']['tokens'][0]['controlEffect']=['controllerId'=>'current'];}if($case==='following')$s['map']['tokens'][3]['followCharacter']=true;if($case==='unowned-sheet'){$s['characters'][0]['ownerPlayerId']='';$s['map']['tokens'][0]['controllerPlayerId']='obsolete';}
     $all=array_map(static fn($token)=>[...$token,'ownedByYou'=>true],$s['map']['tokens']);$zonesNow=applicationPublicMovementEffectZones($s,$s['map'],$all,'scene','ground',static fn($x,$y)=>true);$positive=null;foreach($zonesNow as $zoneNow)if($zoneNow['id']==='positive')$positive=$zoneNow;
     foreach($s['map']['tokens'] as $target){$moved=[...$target,'x'=>40,'y'=>50];$preview=$s;foreach($preview['map']['tokens']as &$entry)if($entry['id']===$target['id'])$entry=$moved;unset($entry);$check(applicationEnhancementAuraAffects($s['attackEnhancements'][0],$moved,$preview,'scene')===in_array($target['id'],$positive['recipientTokenIds']??[],true),'Actual aura agrees with preview effective ownership '.$case.' '.$target['id']);}}

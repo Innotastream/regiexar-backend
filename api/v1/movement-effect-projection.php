@@ -8,12 +8,26 @@ function applicationEffectZonePolarity(array $effect): string {
     return $positive&&$negative?'mixed':($negative?'negative':($positive?'positive':'neutral'));
 }
 
-function applicationPlayerMoveMapProjection(array $projection,string $sceneId): array {
-    $map=is_array($projection['map']??null)?$projection['map']:[];
-    return ['sceneId'=>$sceneId,'layerId'=>(string)($map['activeLayerId']??'ground'),
-        'visionMask'=>is_array($map['visionMask']??null)?$map['visionMask']:[],
-        'lights'=>is_array($map['lights']??null)?$map['lights']:[],'lightGlow'=>$map['lightGlow']??null,
-        'movementEffectZones'=>is_array($projection['movementEffectZones']??null)?$projection['movementEffectZones']:[]];
+function applicationPlayerMoveMapProjection(array $projection, string $sceneId, string $layerId, int $revision): ?array
+{
+    $map = $projection['map'] ?? null;
+    if (!is_array($map) || (int) ($projection['revision'] ?? -1) !== $revision
+        || ($projection['activeScene']['id'] ?? null) !== $sceneId
+        || ($map['activeLayerId'] ?? 'ground') !== $layerId) {
+        return null;
+    }
+    $visionMask = is_array($map['visionMask'] ?? null) ? $map['visionMask'] : [];
+    $visibilityLimited = ($visionMask['enabled'] ?? false) === true || ($map['fog']['enabled'] ?? false) === true;
+    return [
+        'sceneId' => $sceneId,
+        'layerId' => $layerId,
+        'visionMask' => $visionMask,
+        'lights' => is_array($map['lights'] ?? null) ? $map['lights'] : [],
+        'lightGlow' => $map['lightGlow'] ?? null,
+        'movementEffectZones' => is_array($projection['movementEffectZones'] ?? null) ? $projection['movementEffectZones'] : [],
+        // The visibility mask and the already-filtered token list must describe the same view.
+        ...($visibilityLimited && is_array($map['tokens'] ?? null) ? ['tokens' => array_values($map['tokens'])] : []),
+    ];
 }
 
 // The player receives geometry and eligibility for their own controllable
