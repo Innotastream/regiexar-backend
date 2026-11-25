@@ -439,6 +439,10 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
             foreach (['onHitConditions', 'effectsApplied', 'damageComponents', 'damageOverTime', 'dotApplied', 'areaRadiusCells', 'areaAnchorOnly', 'areaGate', 'areaGateParentId', 'oppositionAbility', 'reflection', 'damageModifier', 'validationKind', 'provisionalStatus'] as $field) {
                 if (!array_key_exists($field, $attack) && array_key_exists($field, $old)) $attack[$field] = $old[$field];
             }
+            foreach (['weaponDamageOverTime', 'weaponDotApplied'] as $field) {
+                if (array_key_exists($field, $old)) $attack[$field] = $old[$field];
+                else unset($attack[$field]);
+            }
             if (($old['attackKind'] ?? '') === 'custom') $attack['attackKind'] = 'custom';
             // A 3.2.16 activity snapshot knows the attack objects but not the
             // complete canonical roll presentation added in 3.2.17. Keep

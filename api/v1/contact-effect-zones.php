@@ -34,6 +34,15 @@ function applicationContactZones(mixed $value=[]):array {
             ||!is_string($z['createdCombatId']??null)||$z['createdCombatId']!==''&&!applicationContactZoneId($z['createdCombatId'])||!applicationContactZoneInt($z['createdTurnSerial']??null)||!applicationContactZoneInt($z['createdAt']??null)||!applicationContactZoneInt($z['createdRound']??0)
             ||array_key_exists('friendlyFire',$z)&&!is_bool($z['friendlyFire'])||!is_array($z['points']??null)||!array_is_list($z['points'])||count($z['points'])<1||count($z['points'])>256)throw new RuntimeException('Une zone de contact est invalide.',400);
         $definition=applicationContactZoneDefinition($z['definition']??null);if($definition===null)throw new RuntimeException('Une définition de zone manque.',400);
+        $visualOnlySince=null;
+        if(array_key_exists('visualOnlySince',$z)){
+            $marker=$z['visualOnlySince'];
+            if(($definition['style']??'')!=='silver-filament'||!is_array($marker)
+                ||!applicationContactZoneInt($marker['turnSerial']??null)
+                ||!applicationContactZoneInt($marker['round']??null)
+                ||!applicationContactZoneInt($marker['manualTurn']??null))throw new RuntimeException('La durée visuelle de la zone est invalide.',400);
+            $visualOnlySince=['turnSerial'=>$marker['turnSerial'],'round'=>$marker['round'],'manualTurn'=>$marker['manualTurn']];
+        }
         $points=[];foreach($z['points']as$p){$point=applicationContactZonePoint($p);if($point===null)throw new RuntimeException('Le trajet de zone est invalide.',400);$points[]=$point;}
         $contacts=$z['contacts']??[];if(!is_array($contacts)||!array_is_list($contacts)||count($contacts)>1000)throw new RuntimeException('Le registre de contacts est invalide.',400);
         $contactKeys=[];$normalized=[];foreach($contacts as$c){
@@ -42,7 +51,8 @@ function applicationContactZones(mixed $value=[]):array {
             $normalized[]=array_intersect_key($c,array_flip(['targetUnitId','combatId','turnSerial','requestId']));
         }
         $seen[$z['id']]=true;$out[]=['kind'=>'contact-zone','id'=>$z['id'],'sceneId'=>$z['sceneId'],'layerId'=>$z['layerId'],'sourceTokenId'=>$z['sourceTokenId'],'sourceUnitId'=>$z['sourceUnitId'],'sourceControllerId'=>$z['sourceControllerId'],
-            'originExecutionId'=>$z['originExecutionId'],'definition'=>$definition,'points'=>$points,'createdCombatId'=>$z['createdCombatId'],'createdTurnSerial'=>$z['createdTurnSerial'],'createdRound'=>$z['createdRound']??0,'createdAt'=>$z['createdAt'],'friendlyFire'=>($z['friendlyFire']??false)===true,'contacts'=>$normalized];
+            'originExecutionId'=>$z['originExecutionId'],'definition'=>$definition,'points'=>$points,'createdCombatId'=>$z['createdCombatId'],'createdTurnSerial'=>$z['createdTurnSerial'],'createdRound'=>$z['createdRound']??0,'createdAt'=>$z['createdAt'],'friendlyFire'=>($z['friendlyFire']??false)===true,'contacts'=>$normalized,
+            ...($visualOnlySince===null?[]:['visualOnlySince'=>$visualOnlySince])];
     }
     return $out;
 }
@@ -62,15 +72,54 @@ function applicationAppendContactZonePath(array $zone,array $points):array {
     return applicationContactZones([$zone])[0];
 }
 function applicationAdvanceContactZones(array $zones,string $sceneId,array $previous,array $initiative,array $context=[]):array {
-    return array_values(array_filter(applicationContactZones($zones),static function($zone)use($sceneId,$previous,$initiative,$context){
-        if($zone['sceneId']!==$sceneId)return true;
-        if(($previous['active']??false)&&!($initiative['active']??false))return false;
-        if(!($initiative['active']??false)||($initiative['combatId']??'')!==$zone['createdCombatId'])return !($initiative['active']??false);
-        $current=$initiative['order'][$initiative['currentIndex']??0]??'';$unitFor=$context['tokenUnitId']??static function($id)use($context){foreach($context['tokens']??[]as$t)if(($t['id']??'')===$id)return unitIdForToken($t);return '';};
-        if(($current===$zone['sourceTokenId']||$unitFor($current)===$zone['sourceUnitId'])&&($initiative['turnSerial']??0)>$zone['createdTurnSerial'])return false;
-        $present=false;foreach($initiative['order']??[]as$id)if($id===$zone['sourceTokenId']||$unitFor($id)===$zone['sourceUnitId']){$present=true;break;}
-        return $present||($initiative['round']??0)<=$zone['createdRound'];
-    }));
+    $active=($initiative['active']??false)===true;
+    $manual=($context['manual']??false)===true;
+    $manualTurn=$context['manualTurn']??0;
+    $turnSerial=$initiative['turnSerial']??0;
+    $round=$initiative['round']??0;
+    $forward=$turnSerial>($previous['turnSerial']??0);
+    $rewound=($initiative['rewoundTurnSerial']??null)===$turnSerial;
+    $order=$initiative['order']??[];
+    $current=$order[$initiative['currentIndex']??0]??'';
+    $unitFor=$context['tokenUnitId']??static function($id)use($context){
+        foreach($context['tokens']??[]as$token)if(($token['id']??'')===$id)return unitIdForToken($token);
+        return '';
+    };
+    $kept=[];
+    foreach(applicationContactZones($zones)as$zone){
+        if($zone['sceneId']!==$sceneId){$kept[]=$zone;continue;}
+        if((!$active&&($previous['active']??false))||($active&&($initiative['combatId']??'')!==$zone['createdCombatId']))continue;
+        $silver=($zone['definition']['style']??'')==='silver-filament';
+        $marker=$zone['visualOnlySince']??null;
+        if(!$active){
+            if(!$manual){$kept[]=$zone;continue;}
+            if(!$silver)continue;
+            if(!applicationContactZoneInt($manualTurn)||$manualTurn===0){$kept[]=$zone;continue;}
+            if($marker!==null){
+                if($manualTurn<=$marker['manualTurn'])$kept[]=$zone;
+                continue;
+            }
+        }else{
+            $isSource=static fn($id)=>$id===$zone['sourceTokenId']||$unitFor($id)===$zone['sourceUnitId'];
+            $sourceTurn=$isSource($current);
+            $present=false;
+            foreach($order as$id)if($isSource($id)){$present=true;break;}
+            if($silver&&$rewound){$kept[]=$zone;continue;}
+            if($marker!==null){
+                $nextSourceTurn=$sourceTurn&&$forward&&$turnSerial>$marker['turnSerial'];
+                $nextRoundWithoutSource=!$present&&$round>($previous['round']??0)&&$round>$marker['round'];
+                if(!$nextSourceTurn&&!$nextRoundWithoutSource)$kept[]=$zone;
+                continue;
+            }
+            $originalDeadline=($sourceTurn&&$turnSerial>$zone['createdTurnSerial']&&(!$silver||$forward))
+                ||(!$present&&$round>$zone['createdRound']);
+            if(!$originalDeadline){$kept[]=$zone;continue;}
+            if(!$silver)continue;
+        }
+        // Keep the drawing for one more local turn after contact damage expires.
+        $kept[]=[...$zone,'visualOnlySince'=>['turnSerial'=>$turnSerial,'round'=>$round,'manualTurn'=>$active?0:$manualTurn]];
+    }
+    return $kept;
 }
 function applicationContactZonePointDistance(array $p,array $a,array $b):float {
     $dx=$b['x']-$a['x'];$dy=$b['y']-$a['y'];$t=max(0,min(1,(($p['x']-$a['x'])*$dx+($p['y']-$a['y'])*$dy)/($dx*$dx+$dy*$dy?:1)));
@@ -95,11 +144,13 @@ function applicationContactZoneRequestId(string $zoneId,string $unitId,string $c
 function applicationCollectContactZoneMovement(array &$state,array $mover,array $start,array $destination,array $path=[],array $options=[]):array {
     $clock=$state['initiative']??[];$scene=$state['activeSceneId']??'';$map=$state['map']??[];
     if(!($clock['active']??false)||($clock['order'][$clock['currentIndex']??0]??'')!==($mover['id']??'')||!applicationContactZoneId($clock['combatId']??null)||!applicationContactZoneInt($clock['turnSerial']??null))return [];
+    if(($clock['rewoundTurnSerial']??null)===$clock['turnSerial'])return [];
     $unit=unitById($state,unitIdForToken($mover),false);$hp=$unit['resources']['hp']??$mover['hp']??0;$maximum=$unit['resources']['maxHp']??$mover['maxHp']??0;
     if($hp<=0||$maximum<=0||in_array($mover['healthOverride']??'', ['dead','down'],true))return [];
     $points=[];foreach([$start,...$path,$destination]as$p){$p=applicationContactZonePoint($p);if($p===null)throw new RuntimeException('Le trajet de contact est invalide.',400);if($points===[]||$points[array_key_last($points)]!==$p)$points[]=$p;}
     $zones=applicationContactZones($state['devices']['contactZones']??[]);$events=[];$unitId=unitIdForToken($mover);
     foreach($zones as$i=>$zone){
+        if(isset($zone['visualOnlySince']))continue;
         if(isset($options['zoneIds'])&&!in_array($zone['id'],$options['zoneIds'],true))continue;
         if($zone['sceneId']!==$scene||$zone['layerId']!==($mover['layerId']??'ground')||$zone['createdCombatId']!==$clock['combatId'])continue;
         if($unitId===$zone['sourceUnitId']&&!$zone['definition']['affectCaster'])continue;

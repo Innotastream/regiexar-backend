@@ -32,7 +32,7 @@ function onlineApplyContactZoneEvents(PDO $db,array &$records,array &$pending,ar
         $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
         $existing=applicationAttackReceiptByRequest($db,$activity,$event['requestId'],applicationResourceReceiptClock())['attack']??null;
         if($existing!==null){$attacks[]=$existing;continue;}
-        $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());$zone=null;foreach($store['contactZones']??[]as$z)if($z['id']===$event['zoneId']){$zone=$z;break;}if($zone===null)continue;
+        $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());$zone=null;foreach($store['contactZones']??[]as$z)if($z['id']===$event['zoneId']){$zone=$z;break;}if($zone===null||isset($zone['visualOnlySince']))continue;
         $rolled=onlineRollFormula($event['damage']['formula']);
         $device=['id'=>$zone['id'],'abilityId'=>'contact-effect-zone','name'=>'Zone de contact','sceneId'=>$event['sceneId'],'layerId'=>$event['layerId'],'definition'=>['radiusCells'=>$zone['definition']['radiusCells'],'damageType'=>$event['damage']['damageType'],...applicationOptionalDamageElement($event['damage'])]];
         $attack=onlineDeviceAutomaticAttack($db,$records,$pending,$identity,$device,$event['targetTokenId'],max(0,(int)$rolled['total']),false,$event['requestId']);if($attack===[])continue;
@@ -51,7 +51,9 @@ function onlineApplyContactZoneEvents(PDO $db,array &$records,array &$pending,ar
 function onlineContactZoneMovement(PDO $db,array &$records,array &$pending,array $identity,string $sceneId,array $mover,array $start,array $destination,array $path=[]):array {
     $store=$pending['devices']['payload']??applicationDomainPayload($records,'devices',dsEmpty());if(empty($store['contactZones']))return [];$attacks=[];
     // Keep each environmental origin in its own causal undo action.
-    foreach(array_column(applicationContactZones($store['contactZones']),'id')as$zoneId){
+    foreach(applicationContactZones($store['contactZones'])as$zone){
+        if(isset($zone['visualOnlySince']))continue;
+        $zoneId=$zone['id'];
         $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$sceneId);$before=onlineContactZoneDomains($records,$pending);
         $events=applicationCollectContactZoneMovement($state,$mover,$start,$destination,$path,['zoneIds'=>[$zoneId]]);
         if($events===[])continue;queueOnlineDomainUpsert($pending,$records,'devices',$state['devices']);
@@ -67,7 +69,9 @@ function onlineAdvanceContactZoneClock(PDO $db,array &$records,array &$pending,a
     if(($next['turnSerial']??0)<=($previous['turnSerial']??0)||!($next['active']??false))return [];
     $id=$next['order'][$next['currentIndex']??0]??'';$token=null;foreach($state['map']['tokens']??[]as$t)if($t['id']===$id){$token=$t;break;}if($token===null)return [];
     $body=applicationTokenSpatialFootprint($token,$state['map']);$point=['x'=>$body['x'],'y'=>$body['y']];$attacks=[];
-    foreach(array_column($state['devices']['contactZones'],'id')as$zoneId){
+    foreach($state['devices']['contactZones']as$zone){
+        if(isset($zone['visualOnlySince']))continue;
+        $zoneId=$zone['id'];
         // Expiry has already been persisted, before this effect's snapshot.
         $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),$sceneId);$state['initiative']=$next;$before=onlineContactZoneDomains($records,$pending);
         $events=applicationCollectContactZoneMovement($state,$token,$point,$point,[$point],['zoneIds'=>[$zoneId]]);if($events===[])continue;

@@ -2,12 +2,16 @@
 declare(strict_types=1);
 function applicationWeaponCatalogPresetsData():array{
  return [
-  'v370-template-d29417860cce105b93bb7f17'=>['revision'=>1,'formula'=>'2d20+10','legacyFormulas'=>['1d30+6']],
+  'v370-template-d29417860cce105b93bb7f17'=>['revision'=>1,'formula'=>'2d20+10','legacyFormulas'=>['1d30+6'],
+   'damageOverTime'=>['label'=>'Saignement · Fouet lacérant','formula'=>'1d5','turns'=>1,'damageType'=>'bleeding','family'=>'bleeding']],
   'v370-template-d810e782aa535bc6422e6ebf'=>['revision'=>1,'damageType'=>'fire'],
   'v370-template-6aacb2d60e4cfeec7227d9b6'=>['revision'=>1,'damageType'=>'fire'],
   'v370-template-82f161523d5dbfa66b734000'=>['revision'=>1,'damageType'=>'ice'],
   'v370-template-871109782031b043f4adb048'=>['revision'=>1,'damageType'=>'ice'],
  ];
+}
+function applicationWeaponCatalogDamageOverTime(string $templateId): ?array {
+ return applicationWeaponCatalogPresetsData()[$templateId]['damageOverTime']??null;
 }
 function applicationWeaponCatalogPresets(array $store):array{
  if(!is_array($store['templates']??null)||!is_array($store['instances']??null))return $store;

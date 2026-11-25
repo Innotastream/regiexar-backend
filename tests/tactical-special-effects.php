@@ -19,6 +19,35 @@ function specialMechanics(MemoryConnection $db,string $command,array $args,bool 
 function specialMove(MemoryConnection $db,float $x):TestResponse {return runCommand($db,'token.move',['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'token-player','x'=>$x,'y'=>50]);}
 if(defined('XAR_SPECIAL_FIXTURE_ONLY')&&XAR_SPECIAL_FIXTURE_ONLY)return;
 
+$mirrorId='ability-554b5991-235e-4acf-80c9-d24445f6b6a2';
+$db=specialFixture();$character=$db->payload('character:character-player');
+$mirror=array_column($character['abilities'],null,'id')['mirror'];
+$mirror=[...$mirror,'id'=>$mirrorId,'rulePreset'=>['id'=>'appearance-copy-melee','revision'=>1],
+    'castingStatId'=>'character-stat-spiritSocial','rangeCells'=>3,'reducedFailureCooldown'=>true];
+$character['abilities']=[$mirror];
+$character['stats']=['force'=>62,'agility'=>52,'spiritSocial'=>74,'intelligence'=>58];
+$character['temporaryStats']=['agility'=>83];
+$character['fatigue']['current']=60;
+$character['resources']['mentalResistance']=100;
+$character['specialSuccessStock']=2;
+$db->put('character:character-player',$character);
+$configured=normalizeOnlineAbilities([$mirror])[0];
+specialCheck($configured['castingStatId']==='best-stat'&&$configured['rangeCells']===3
+    &&$configured['reducedFailureCooldown']&&$configured['rulePreset']['revision']===2,'Mirror upgrade preserves its existing reach and failure rule');
+$mirrorRequest=['requestId'=>'mirror-best-stat-first','sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player',
+    'targetTokenId'=>'token-monster','abilityId'=>$mirrorId,'statId'=>'character-stat-force','useJoker'=>true];
+$copy=runCommand($db,'ability.use',$mirrorRequest);
+specialCheck($copy->status===200&&($copy->body['cast']['statId']??null)==='character-stat-agility'
+    &&($copy->body['cast']['outcome']['baseThreshold']??null)===73,'Native Mirror uses temporary Agility with a fatigue penalty, not the request or mental resistance: '.json_encode($copy->body));
+specialCheck(!empty($db->payload('token:scene-one:token-player')['appearanceState']['active']),'Native successful Mirror applies the appearance');
+$character=$db->payload('character:character-player');$character['temporaryStats']=['agility'=>36,'intelligence'=>90];$db->put('character:character-player',$character);
+$replay=runCommand($db,'ability.use',$mirrorRequest);
+specialCheck($replay->status===200&&!empty($replay->body['deduplicated'])&&$replay->body['cast']['statId']==='character-stat-agility'
+    &&$db->payload('character:character-player')['specialSuccessStock']===1,'Replay retains the first statistic and spends no new Joker');
+$copy=runCommand($db,'ability.use',[...$mirrorRequest,'requestId'=>'mirror-best-stat-second']);
+specialCheck($copy->status===200&&($copy->body['cast']['statId']??null)==='character-stat-intelligence'
+    &&($copy->body['cast']['outcome']['baseThreshold']??null)===80,'Native new launch re-evaluates its best statistic: '.json_encode($copy->body));
+
 $db=specialFixture();$m=$db->payload('token:scene-one:token-monster');$m['passiveAbilities']=[['version'=>1,'id'=>'boss','kind'=>'mental-control-resistance']];$db->put('token:scene-one:token-monster',$m);
 $r=specialUse($db,'eye');specialCheck($r->status===200,'Boss: '.json_encode($r->body));$m=$db->payload('token:scene-one:token-monster');specialCheck(in_array('Influencé',$m['conditions'],true)&&empty($m['controlEffect']),'Boss converts control to influence');specialCheck(($db->payload('devices')['timedConditions'][0]['remainingTurns']??0)===1,'Influence keeps replaced duration');
 
@@ -268,6 +297,13 @@ $state=domainsToApplicationState($db->domains,0);$applied=applicationApplyDevice
 $db->put('devices',$applied['state']['devices']);$id=$applied['result']['craftRequestId'];$r=specialMechanics($db,'craft.resolve',['craftRequestId'=>$id,'approve'=>true]);specialCheck($r->status===200&&count($r->body['itemIds'])===1,'Craft produces one vial on GM approval: '.json_encode($r->body));specialCheck($db->payload('character:character-player')['fatigue']['current']===0,'Craft costs no fatigue');
 $r=specialUse($db,'poison','token-player',['consumableItemId'=>$r->body['itemIds'][0]]);specialCheck($r->status===200,'Apply poison: '.json_encode($r->body));specialCheck($db->payload('character:character-player')['fatigue']['current']===5,'Application costs five fatigue');specialCheck($db->payload('items')['instances'][0]['location']['kind']==='consumed','Application consumes the vial');
 $r=runCommand($db,'token.attack',['requestId'=>'precision-'.randomToken(16),'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>'ability','attackId'=>'precision','weaponAttackId'=>'main','opposed'=>true]);specialCheck($r->status===200,'Guaranteed strike: '.json_encode($r->body));$hp=$db->payload('token:scene-one:token-monster')['hp'];specialCheck($hp>=465&&$hp<=485,'Maximum main weapon plus ordinary 5d5 poison');specialCheck(($r->body['attack']['status']??'')!=='awaiting-opposition','Guaranteed strike has no counter or opposition');
+$db=specialFixture();$c=$db->payload('character:character-player');$c['stats']['dexterity']=73;
+$legacyBrew=[...$poison,'id'=>'ability-d4fe4e60-f96e-4c0d-9f5a-280aead0846a','tacticalEffect'=>[...$poison['tacticalEffect'],'craftStatId'=>'character-stat-intelligence']];
+$c['abilities']=[$legacyBrew];$db->put('character:character-player',$c);
+$brew=specialMechanics($db,'consumable.request',['characterId'=>'character-player','sourceTokenId'=>'token-player','abilityId'=>$legacyBrew['id'],'statId'=>'character-stat-intelligence'],false);
+specialCheck($brew->status===200&&$brew->body['cast']['outcome']['threshold']===73&&$brew->body['pendingGmApproval']===true,'A saved Hira poison rolls Dexterity and waits for the GM: '.json_encode($brew->body));
+specialCheck($db->payload('character:character-player')['fatigue']['current']===0,'The native Dexterity roll costs no fatigue');
+specialCheck(applicationTacticalEffect(applicationConfiguredAbilityRules($poison)['tacticalEffect'])['craftStatId']==='character-stat-intelligence','Unrelated coatings still use their own standard craft stat');
 // A known binding exercises both real authority paths, including the crafted cue.
 $db=specialFixture();$c=$db->payload('character:character-player');$poison['id']='ability-d4fe4e60-f96e-4c0d-9f5a-280aead0846a';$c['abilities']=[$poison];
 $c['weaponAttacks']=[['id'=>'main','name'=>'Fouet de recette','formula'=>'2d20+10','damageType'=>'physical','equipmentBinding'=>['kind'=>'item','id'=>'fixture-whip']]];$c['weaponText']='Fouet de recette / 2d20+10';$db->put('character:character-player',$c);

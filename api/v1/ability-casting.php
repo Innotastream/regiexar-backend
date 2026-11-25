@@ -55,6 +55,16 @@ function applicationAbilityCastingOwner(array $source): array {
 
 function applicationAbilityCastingStat(array $stats, string $statId): ?array { return applicationResolveCharacterStat($stats,$statId); }
 
+function applicationBestAbilityCastingStat(array $stats): ?array {
+    $best = null;
+    foreach (applicationStatIds() as $id) {
+        $stat = applicationAbilityCastingStat($stats, $id);
+        if (!is_numeric($stat['value'] ?? null) || !is_finite((float) $stat['value'])) continue;
+        if ($best === null || (float) $stat['value'] > (float) $best['value']) $best = $stat;
+    }
+    return $best;
+}
+
 function applicationAbilitySourceDefeated(array $source): bool {
     return !is_numeric($source['hp'] ?? null) || !is_finite((float) $source['hp']) || $source['hp'] <= 0
         || onlineTokenIsDead($source, !empty($source['controllerPlayerId']));
@@ -170,7 +180,8 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     $statId = !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
     $stat = null;
     if ($statId !== '') {
-        $stat = applicationAbilityCastingStat($source['stats'] ?? [], $statId);
+        $stats = $source['stats'] ?? [];
+        $stat = $statId === 'best-stat' ? applicationBestAbilityCastingStat($stats) : applicationAbilityCastingStat($stats, $statId);
         if (!is_array($stat) || !is_numeric($stat['value'] ?? null)) throw new RuntimeException('ability_cast_stat_missing');
         $statId = (string) $stat['id'];
     }

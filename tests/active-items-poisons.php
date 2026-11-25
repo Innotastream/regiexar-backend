@@ -55,8 +55,13 @@ specialCheck($immuneStrike->status === 200 && $immuneTarget['hp'] < 500
     'At 100% poison the physical hit and unrelated states still apply, with no venom status or DOT.');
 $immuneTarget['elementalResistances']['poison'] = 99;
 $db->put($targetKey, $immuneTarget);
-specialCheck($pawStrike()->status === 200 && in_array(XAR_VENOM_PARALYSIS_LABEL, $db->payload($targetKey)['conditions'], true)
-    && $db->payload('activity')['damageOverTime'][0]['damageType'] === 'poison', 'At 99% the paw hit applies its distinct venom status and poison DOT.');
+$partialStrike=$pawStrike();
+$save=array_values(array_filter($db->payload('activity')['rolls'],static fn(array $roll):bool=>
+    ($roll['label']??'')==='Résistance · '.XAR_VENOM_PARALYSIS_LABEL));
+specialCheck($partialStrike->status === 200 && count($save)===1 && ($save[0]['outcome']['threshold']??null)===99
+    && in_array(XAR_VENOM_PARALYSIS_LABEL, $db->payload($targetKey)['conditions'], true)===($save[0]['total']===100)
+    && $db->payload('activity')['damageOverTime'][0]['damageType'] === 'poison',
+    'At 99% outside combat the user still rolls once against distinct venom paralysis and the poison DOT remains independent.');
 itemSeed($db, 'venom-antidote', itemActive([['kind'=>'cleanse','families'=>['poison']],['kind'=>'immunity','family'=>'poison','turns'=>5]]),
     'unit_token-monster');
 specialCheck(itemCommandTest($db, 'item.consume', ['itemId'=>'venom-antidote', 'characterId'=>'unit_token-monster',

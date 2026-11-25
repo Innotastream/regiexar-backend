@@ -1,4 +1,17 @@
 {
+  "ability-d4fe4e60-f96e-4c0d-9f5a-280aead0846a": {
+    "presetId": "poison-brew-dexterity",
+    "revision": 1,
+    "effect": "enhancement",
+    "values": {
+      "tacticalEffect": {
+        "version": 1,
+        "kind": "coating",
+        "craftStatId": "character-stat-dexterity"
+      },
+      "description": "La fabrication demande un jet de Dextérité et la validation du MJ, sans fatigue. Appliquer le poison consomme une fiole de l’inventaire et 5 fatigue, sans mana, sur son arme principale ou celle d’un allié. Chaque frappe réussie avec cette arme, y compris une compétence qui l’utilise, ajoute immédiatement 5d5 dégâts de poison. Actif dès l’application et jusqu’à la fin du prochain tour du bénéficiaire."
+    }
+  },
   "ability-28849018-287a-4ce4-b1fa-7ec786d00807": {
     "presetId": "rotatable-thorn-wall",
     "revision": 2,
@@ -131,18 +144,45 @@
       "minimumReach": null
     }
   },
+  "ability-554b5991-235e-4acf-80c9-d24445f6b6a2": {
+    "presetId": "appearance-copy-melee",
+    "revision": 2,
+    "effect": "movement",
+    "upgradeOnly": true,
+    "upgradeValues": {
+      "castingStatId": "best-stat",
+      "castingChoices": []
+    },
+    "values": {
+      "reach": "melee",
+      "rangeCells": 2,
+      "projectile": false,
+      "minimumReach": null,
+      "castingStatId": "best-stat",
+      "castingChoices": []
+    }
+  },
   "ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066": {
     "presetId": "weapon-targeted-precision",
-    "revision": 1,
+    "revision": 2,
     "effect": "damage",
+    "upgradeOnly": true,
+    "upgradeValues": {
+      "castingStatId": "character-stat-agility",
+      "castingChoices": ["character-stat-agility"],
+      "reducedFailureCooldown": true,
+      "description": "Visez une ou plusieurs unités distinctes à portée de l’arme principale, dans la limite de son nombre de cibles (jusqu’à deux avec le fouet). Un seul jet d’Agilité précède les frappes. En cas de réussite, chaque cible subit le maximum des dégâts de base de l’arme principale, sans opposition ni contre-attaque. Les effets supplémentaires gardent leurs jets normaux. En cas d’échec, aucune frappe, fatigue remboursée et recharge d’un round en combat."
+    },
     "values": {
       "useWeaponDamage": true,
       "mainWeaponOnly": true,
       "maximumWeaponDamage": true,
       "useWeaponTargetCount": true,
       "noDefensePossible": true,
-      "castingStatId": "",
-      "description": "Visez une ou plusieurs unités distinctes dans la portée de l’arme principale, sans dépasser son nombre de cibles autorisé (jusqu’à deux avec le fouet). Chaque cible est touchée automatiquement, sans jet de lancement, opposition ni contre-attaque. Inflige le maximum des dégâts de base de l’arme principale à chaque cible ; les effets supplémentaires gardent leurs jets normaux. Le coût et la recharge sont payés une seule fois pour l’action."
+      "castingStatId": "character-stat-agility",
+      "castingChoices": ["character-stat-agility"],
+      "reducedFailureCooldown": true,
+      "description": "Visez une ou plusieurs unités distinctes à portée de l’arme principale, dans la limite de son nombre de cibles (jusqu’à deux avec le fouet). Un seul jet d’Agilité précède les frappes. En cas de réussite, chaque cible subit le maximum des dégâts de base de l’arme principale, sans opposition ni contre-attaque. Les effets supplémentaires gardent leurs jets normaux. En cas d’échec, aucune frappe, fatigue remboursée et recharge d’un round en combat."
     }
   },
   "ability-db6a9697-2617-4ae0-880f-e8fba94066e1": {
@@ -607,11 +647,18 @@
   },
   "ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b": {
     "presetId": "sacred-circle-includes-caster",
-    "revision": 1,
+    "revision": 3,
     "effect": "enhancement",
     "enhancementMode": "bonus",
     "enhancementAuraUpgrade": {
       "affectCaster": true
+    },
+    "enhancementBonusRevision": 2,
+    "enhancementBonusUpgrade": {
+      "fireResistance": 10,
+      "iceResistance": 10,
+      "poisonResistance": 10,
+      "bleedingResistance": 10
     },
     "descriptionReplacements": [
       [
@@ -622,6 +669,7 @@
         "Le lanceur n’en bénéficie pas.",
         "Le lanceur bénéficie lui aussi de ces bonus."
       ]
-    ]
+    ],
+    "enhancementLegacyDescriptionNote": "Dans le cercle, chacun gagne aussi 10 points de résistance au feu, à la glace, au poison et au saignement."
   }
 }

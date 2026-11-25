@@ -10,6 +10,7 @@ $db=specialFixture();$c=$db->payload('character:character-player');$c['abilities
 $source=synchronizeOnlineCharacterToken($db->payload('token:scene-one:token-player'),$c);$source['x']=20;$db->put('token:scene-one:token-player',$source);
 $map=$db->payload('map:scene-one');$map['naturalWidth']=1000;$map['naturalHeight']=600;$db->put('map:scene-one',$map);
 foreach([['token-monster',30],['token-monster-two',40]]as[$tokenId,$x]){$target=$db->payload('token:scene-one:'.$tokenId);$target=[...$target,'x'=>$x,'y'=>50,'size'=>40,'hp'=>500,'maxHp'=>500,'magicArmor'=>100,'magicArmorCategory'=>'special','stats'=>[['id'=>'character-stat-agility','label'=>'Agilité','value'=>'100']]];$db->put('token:scene-one:'.$tokenId,$target);}
+$db->put('token:scene-one:token-monster-two',[...$db->payload('token:scene-one:token-monster-two'),'elementalResistances'=>['fire'=>50]]);
 $args=['action'=>'start','requestId'=>'path-strike-start-'.randomToken(16),'sceneId'=>'scene-one','layerId'=>'ground','sourceTokenId'=>'token-player','abilityId'=>$id,'initialSelection'=>['allocations'=>[['tokenId'=>'token-monster-two','count'=>1],['tokenId'=>'token-monster','count'=>1]]],'movementSelection'=>['destination'=>['x'=>50,'y'=>50],'path'=>[['x'=>20,'y'=>50],['x'=>50,'y'=>50]]]];
 $before=$db->payload('character:character-player');$start=runCommand($db,'ability.complex',$args);
 specialCheck($start->status===200&&!empty($start->body['pendingAreaGate'])&&$start->body['execution']===null,'Route is prepared for the MJ before any execution: '.json_encode($start->body));
@@ -32,7 +33,11 @@ foreach(['token-monster','token-monster-two']as$index=>$targetId){
  $request='path-hit-'.randomToken(20);$r=runCommand($db,'token.attack',['requestId'=>$request,'sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>$targetId,'attackKind'=>'ability','attackId'=>$id,'statId'=>'character-stat-agility','opposed'=>false,'complexExecutionId'=>$execution['id']]);
  specialCheck($r->status===200,'Existing configured strike accepted: '.json_encode($r->body));$attack=$r->body['attack'];
  if($index===0){specialCheck($attack['status']==='awaiting-opposition','Player cannot remove the defense allowed by the MJ');$stored=array_values(array_filter($db->payload('activity')['attackReceipts'],static fn($receipt)=>$receipt['requestId']===$request))[0]['attack'];specialCheck($stored['defenseStatId']==='character-stat-agility'&&$stored['defenseRollMode']==='disadvantage','Original Agility defense with disadvantage is preserved');$r=runCommand($db,'token.attack.oppose',['attackId'=>$attack['id'],'requestId'=>'path-defense-'.randomToken(16),'decision'=>'skip'],true);specialCheck($r->status===200,'MJ can skip the offered defense: '.json_encode($r->body));}
- $stored=array_values(array_filter($db->payload('activity')['attackReceipts'],static fn($receipt)=>$receipt['requestId']===$request))[0]['attack'];specialCheck($stored['appliedDamage']>=7&&$stored['appliedDamage']<=36&&$stored['damage']['components'][0]['armorPercent']===0,'Original 1d30+6 ignore-armor strike is unchanged');
+ $stored=array_values(array_filter($db->payload('activity')['attackReceipts'],static fn($receipt)=>$receipt['requestId']===$request))[0]['attack'];
+ $part=$stored['damage']['components'][0];$resistance=$index===0?0:50;
+ specialCheck($part['damageElement']==='fire'&&$part['rawDamage']>=7&&$part['rawDamage']<=36&&$part['armorPercent']===0
+    &&($part['elementalResistancePercent']??0)===$resistance&&$stored['appliedDamage']===(int)round($part['rawDamage']*(100-$resistance)/100),
+    'The 1d30+6 strike bypasses armor and respects fire resistance');
  specialCheck(($db->payload('token:scene-one:'.$targetId)['x'])===($index===0?30:40),'Dash does not push its victim');
  $confirmed=$command(['action'=>'confirm-attack','attackRequestId'=>$request]);specialCheck($confirmed->status===200,'Attack confirmation advances the actual route: '.json_encode($confirmed->body));
 }
@@ -52,10 +57,99 @@ $foreignAfter=$db->payload('token:scene-one:token-monster-two');specialCheck($fo
 specialCheck(empty($db->payload('devices')['contactZones'])&&empty($db->payload('activity')['abilityMovementLeases']),'Undo removes filament and movement locks');
 
 $fresh=static function()use($ability,$map):MemoryConnection{$d=specialFixture();$c=$d->payload('character:character-player');$c['abilities']=[$ability];$d->put('character:character-player',$c);$s=synchronizeOnlineCharacterToken($d->payload('token:scene-one:token-player'),$c);$s['x']=20;$d->put('token:scene-one:token-player',$s);$d->put('map:scene-one',$map);foreach([['token-monster',30],['token-monster-two',40]]as[$id,$x]){$t=$d->payload('token:scene-one:'.$id);$d->put('token:scene-one:'.$id,[...$t,'x'=>$x,'y'=>50,'size'=>40,'hp'=>500,'maxHp'=>500]);}return $d;};
+
+$frozen=$fresh();
+$sheet=$frozen->payload('character:character-player');
+$sheet['elementalResistances']=['ice'=>90];
+$frozen->put('character:character-player',$sheet);
+$tokenKey='token:scene-one:token-player';
+$pawn=synchronizeOnlineCharacterToken($frozen->payload($tokenKey),$sheet);
+$frozen->put($tokenKey,$pawn);
+$store=dsEmpty();
+$store['timedConditions']=[['id'=>'frozen-path','label'=>'Glacé','sceneId'=>'scene-one','targetTokenId'=>'token-player',
+    'targetCharacterId'=>'character-player','remainingTurns'=>3,'blocksMovement'=>true]];
+$frozen->put('devices',$store);
+$frozenRequest=[...$args,'requestId'=>'path-frozen-'.randomToken(16)];
+$blocked=runCommand($frozen,'ability.complex',$frozenRequest);
+specialCheck($blocked->status===409&&str_contains($blocked->body['message']??$blocked->body['error']??'','immobilisé'),
+    '90 ice resistance does not unlock the frozen path');
+$caster=[...$frozen->payload('token:scene-one:token-monster'),'id'=>'emblem-caster','x'=>20,'y'=>30,'controllerPlayerId'=>'account-ally'];
+$frozen->put('token:scene-one:emblem-caster',$caster);
+$activity=$frozen->payload('activity');
+$activity['attackEnhancements']=[['id'=>'path-emblem','abilityId'=>'ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b',
+    'label'=>'Emblème','mode'=>'bonus','formula'=>'10','damageType'=>'inherit','trigger'=>'all-attacks',
+    'aura'=>['radiusCells'=>4,'affectCaster'=>true,'affectAllies'=>true,'affectEnemies'=>false],'sceneId'=>'scene-one',
+    'holder'=>'token:emblem-caster','casterTokenId'=>'emblem-caster','targetTokenId'=>'emblem-caster','remainingTurns'=>5,'turns'=>5]];
+$frozen->put('activity',$activity);
+$unblocked=runCommand($frozen,'ability.complex',[...$frozenRequest,'requestId'=>'path-with-emblem-'.randomToken(16)]);
+specialCheck($unblocked->status===200&&!empty($unblocked->body['pendingAreaGate']),
+    'A friendly active Emblem raises ice resistance from 90 to 100 and unlocks the real path: '.json_encode($unblocked->body));
+$unblockedDecision=runCommand($frozen,'token.attack.area.resolve',['attackId'=>$unblocked->body['attack']['id'],
+    'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>[],'requestId'=>'path-with-emblem-approve-'.randomToken(16)],true);
+specialCheck($unblockedDecision->status===200&&is_array($unblockedDecision->body['execution']??null),
+    'The immunity holds on real GM approval of the planned route');
+$unblockedExecution=$unblockedDecision->body['execution'];
+$firstHop=runCommand($frozen,'ability.complex',['action'=>'command','requestId'=>'path-with-emblem-hop-'.randomToken(16),
+    'executionId'=>$unblockedExecution['id'],'expectedRevision'=>$unblockedExecution['revision'],
+    'command'=>['action'=>'prepare-target','targetTokenId'=>'token-monster']]);
+specialCheck($firstHop->status===200&&$frozen->payload($tokenKey)['x']!==20,
+    'The player takes the real hop without the suppressed freeze: '.json_encode($firstHop->body));
+specialCheck($frozen->payload('character:character-player')['elementalResistances']['ice']===90
+    &&!isset($frozen->payload($tokenKey)['elementalResistanceOverrides'])
+    &&($frozen->payload('devices')['timedConditions'][0]['id']??null)==='frozen-path',
+    'The command preserves the base resistance and existing freeze, without persisting a computed override');
+
 $zero=$fresh();foreach(['token-monster','token-monster-two']as$i=>$id){$t=$zero->payload('token:scene-one:'.$id);$zero->put('token:scene-one:'.$id,[...$t,'x'=>80+$i*10,'y'=>80]);}
 $emptyArgs=[...$args,'requestId'=>'path-zero-'.randomToken(20),'initialSelection'=>['allocations'=>[]]];$empty=runCommand($zero,'ability.complex',$emptyArgs);
 specialCheck($empty->status===200&&empty($empty->body['pendingAreaGate'])&&($empty->body['initialSelectionApplied']??false)&&$empty->body['execution']['status']==='completed','Zero chosen victims does not create an empty MJ table: '.json_encode($empty->body));
 specialCheck(abs($zero->payload('token:scene-one:token-player')['x']-50)<1e-7&&count($zero->payload('devices')['contactZones'])===1,'Zero-target route still moves to its endpoint and leaves its accepted filament');
+
+$changeClock=static function(MemoryConnection $fixture,array $updates):void {
+    $records=applicationDomainRecords($fixture);
+    $pending=[];
+    $identity=['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
+    queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$fixture->payload('initiative:scene-one'),...$updates]);
+    foreach(onlineAdvanceDevicesOnChanges($fixture,$records,array_values($pending),$identity) as $entry){
+        $fixture->put($entry['key'],$entry['payload']);
+    }
+};
+$changeClock($zero,['currentIndex'=>1,'turnSerial'=>11]);
+specialCheck(count($zero->payload('devices')['contactZones'])===1&&!isset($zero->payload('devices')['contactZones'][0]['visualOnlySince']),'A different actor starting their turn leaves the filament armed');
+$changeClock($zero,['currentIndex'=>0,'turnSerial'=>12,'round'=>2]);
+$decorative=$zero->payload('devices')['contactZones'];
+specialCheck(($decorative[0]['visualOnlySince']??null)===['turnSerial'=>12,'round'=>2,'manualTurn'=>0],'The next caster turn keeps the filament as a drawing without contact damage');
+$changeClock($zero,['currentIndex'=>0,'turnSerial'=>12,'round'=>2]);
+specialCheck($zero->payload('devices')['contactZones']===$decorative,'A replayed initiative revision keeps the decorative filament');
+$changeClock($zero,['currentIndex'=>1,'turnSerial'=>13]);
+specialCheck($zero->payload('devices')['contactZones']===$decorative,'Other actors do not consume the second display turn');
+$changeClock($zero,['currentIndex'=>0,'turnSerial'=>14,'round'=>3]);
+specialCheck($zero->payload('devices')['contactZones']===[],'The second caster turn expires the drawing');
+
+$free=$fresh();
+$clock=$free->payload('initiative:scene-one');
+$clock['active']=false;
+$free->put('initiative:scene-one',$clock);
+$cast=runCommand($free,'ability.complex',[...$emptyArgs,'requestId'=>'path-free-'.randomToken(20)]);
+specialCheck($cast->status===200&&$cast->body['execution']['status']==='completed','Path can be used in free play: '.json_encode($cast->body));
+$freeStore=$free->payload('devices');
+$zone=$freeStore['contactZones'][0];
+specialCheck($zone['definition']['style']==='silver-filament','The path makes its actual silver filament visible');
+$freeStore['contactZones'][]=[...$zone,'id'=>'filament-other-scene','sceneId'=>'scene-two'];
+$free->put('devices',$freeStore);
+$beforeHp=$free->payload('token:scene-one:token-monster')['hp'];
+$advanceArgs=['requestId'=>'path-free-advance-'.randomToken(20)];
+$advanced=specialMechanics($free,'scene.advance',$advanceArgs);
+specialCheck($advanced->status===200,'The GM can advance the next turn in free play');
+$after=$free->payload('devices');
+specialCheck(array_column($after['contactZones'],'id')===[$zone['id'],'filament-other-scene']
+    &&($after['contactZones'][0]['visualOnlySince']['manualTurn']??null)===1
+    &&!isset($after['contactZones'][1]['visualOnlySince']),'The first free turn makes only this scene’s filament decorative');
+specialCheck($beforeHp===$free->payload('token:scene-one:token-monster')['hp'],'A decorative free play filament deals no damage');
+specialMechanics($free,'scene.advance',$advanceArgs);
+specialCheck($free->payload('devices')['manualTurns']['scene-one']===1&&$free->payload('devices')['contactZones']===$after['contactZones'],'Replaying a turn preserves the clock and filament');
+$advanced=specialMechanics($free,'scene.advance',['requestId'=>'path-free-second-'.randomToken(20)]);
+$after=$free->payload('devices');
+specialCheck($advanced->status===200&&$after['manualTurns']['scene-one']===2&&array_column($after['contactZones'],'id')===['filament-other-scene'],'The second free turn clears the filament only from the active scene');
 
 $crowded=$fresh();
 $crowdedTokens=[];

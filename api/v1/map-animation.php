@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 const XAR_ANIMATED_MAP_LAYERS = ['basement', 'ground', 'upper'];
-const XAR_ANIMATED_MAP_KINDS = ['water', 'lava', 'light'];
+const XAR_ANIMATED_MAP_KINDS = ['water', 'lava', 'light', 'mist', 'cloud', 'sun', 'drift', 'particles', 'day-night', 'rain'];
 const XAR_ANIMATED_MAP_MAX_MASK_LENGTH = 240000;
 
 function applicationMapAnimationId(mixed $value): bool
@@ -82,8 +82,11 @@ function applicationMapAnimationPlan(mixed $raw): ?array
         if ($mask === null && $polygons === null) return null;
         $maskLength += strlen($mask['rle'] ?? '');
         $hasTint = array_key_exists('tint', $layer);
+        $hasCycle = array_key_exists('cycleSeconds', $layer);
         if ($maskLength > XAR_ANIMATED_MAP_MAX_MASK_LENGTH || $hasTint && (
             !is_string($layer['tint']) || preg_match('/^#[0-9a-f]{6}$/iD', $layer['tint']) !== 1)) return null;
+        if ($hasCycle && (!applicationMapAnimationNumber($layer['cycleSeconds'], 1800)
+            || $layer['cycleSeconds'] < 10 || floor((float) $layer['cycleSeconds']) !== (float) $layer['cycleSeconds'])) return null;
         $seen[$kind] = true;
         $layers[] = [
             'kind' => $kind,
@@ -92,6 +95,7 @@ function applicationMapAnimationPlan(mixed $raw): ?array
             'direction' => $layer['direction'],
             'fish' => $kind === 'water' ? $layer['fish'] : 0,
             ...($hasTint ? ['tint' => strtolower($layer['tint'])] : []),
+            ...($hasCycle ? ['cycleSeconds' => (int) $layer['cycleSeconds']] : []),
             ...($mask !== null ? ['mask' => $mask] : ['polygons' => $polygons]),
         ];
     }

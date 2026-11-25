@@ -9,6 +9,7 @@ require_once __DIR__ . '/unit-authority.php';
 
 require_once __DIR__.'/active-items.php';
 require_once __DIR__.'/ability-rule-presets.php';
+require_once __DIR__.'/elemental-resistances.php';
 function applicationAttackEnhancementDefinition(mixed $value): ?array {
     if(is_array($value)&&($value['mode']??'')==='overdrive')return applicationOverdrive($value);
     if(is_array($value)&&($value['mode']??'')==='arbitration-zone'){try{$d=applicationSpecialItemEffect([...$value,'kind'=>'arbitration-zone']);}catch(RuntimeException){return null;}$area=applicationFixedEffectArea($value['fixedArea']??null);return $d&&$area?['mode'=>'arbitration-zone','label'=>$d['label'],'turns'=>$d['turns'],'color'=>$d['color'],'fixedArea'=>$area]:null;}
@@ -24,8 +25,9 @@ function applicationAttackEnhancementDefinition(mixed $value): ?array {
     }
     if(is_array($value)&&($value['mode']??'')==='stats'){
         if(!is_int($value['turns']??null)||$value['turns']<1||$value['turns']>999||!is_array($value['bonuses']??null))return null;
+        $fields=[...array_keys(applicationStatLabels()),'mentalResistance','initiativeBonus','physicalResistance','magicalResistance','attackResultBonus',...array_map(static fn(string $element):string=>$element.'Resistance',XAR_ELEMENTAL_RESISTANCE_TYPES)];
         $bonuses=[];foreach($value['bonuses'] as $key=>$amount){
-            if(!in_array($key,[...array_keys(applicationStatLabels()),'mentalResistance','initiativeBonus','physicalResistance','magicalResistance','attackResultBonus'],true)||!is_int($amount)||$amount < -100||$amount>100)return null;
+            if(!in_array($key,$fields,true)||!is_int($amount)||$amount < -100||$amount>100)return null;
             if($amount!==0)$bonuses[$key]=$amount;
         }
         return $bonuses!==[]?['mode'=>'stats','turns'=>$value['turns'],'bonuses'=>$bonuses]:null;
@@ -80,7 +82,7 @@ function applicationEnhancementVisualSkin(array $effect): array {
     return ['skin'=>$skin,...(is_int($start)&&$start>0&&$start<=9007199254740991?['startedAt'=>$start]:[])];
 }
 
-function applicationTokenBuffVisuals(array $token, array $state, string $sceneId): array {
+function applicationTokenBuffVisuals(array $token, array $state, string $sceneId, ?callable $resistanceTargetForToken=null): array {
     if (($token['dimSilhouette'] ?? false) === true) return [];
     $holder = applicationEnhancementHolder($token); $result = [];
     $tokens = ($state['activeSceneId'] ?? $state['activeScene']['id'] ?? '') === $sceneId ? ($state['map']['tokens'] ?? []) : [];
@@ -99,9 +101,20 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
         $result[] = ['id' => (string) $effect['id'], 'label' => $fixed?'Zone d’affaiblissement d’armure':(string) ($effect['label'] ?? 'Effet actif'),
             'remainingTurns' => max(1, min(999, (int) $effect['remainingTurns'])),...applicationEnhancementVisualSkin($effect),...(($effect['mode']??'')==='next-item-use'?['remainingUses'=>1,'durationLabel'=>($effect['expiry']??'')==='combat-or-rest'?'Prochaine potion · fin du combat ou repos court/long':'Prochaine potion · jusqu’au repos long','symbol'=>'⚗']:[]),...(($effect['mode']??'')==='on-attack-dot'&&(applicationAttackEnhancement($effect)['trigger']??'')==='melee-weapon'&&($effect['targetTokenId']??'')===($token['id']??'')?['skin'=>'venom-source']:[]),...(isset($effect['aura'])&&($effect['casterTokenId']??'')===$token['id']&&($map['gridSize']??0)>0?['auraScale'=>min(10000,1+2*$effect['aura']['radiusCells']*$map['gridSize']/max(1,$token['size']??40))]:[]),...(($effect['expiry']??'')==='rests'?['durationLabel'=>'Prochain repos long ou '.(int)$effect['remainingShortRests'].' repos court(s)','remainingShortRests'=>(int)$effect['remainingShortRests']]:[]), 'image' => normalizePersistedImageReference($image)];
     }
-    $poisonTurns=0;foreach($state['damageOverTime']??[] as $dot)if(($dot['family']??'')==='poison'&&($dot['sceneId']??'')===$sceneId&&($dot['targetTokenId']??'')===($token['id']??'')&&($dot['remainingTurns']??0)>0)$poisonTurns=max($poisonTurns,(int)$dot['remainingTurns']);
+    $resistanceTarget=null;
+    $turnsByFamily=['poison'=>0,'bleeding'=>0];
+    foreach($state['damageOverTime']??[] as $dot){
+        $family=$dot['family']??'';
+        if(!is_string($family)||!isset($turnsByFamily[$family])||($dot['sceneId']??'')!==$sceneId||($dot['targetTokenId']??'')!==($token['id']??'')
+            ||($dot['remainingTurns']??0)<=$turnsByFamily[$family])continue;
+        $resistanceTarget??=$resistanceTargetForToken===null
+            ? applicationElementalResistanceTarget($token,$state,$sceneId)
+            : $resistanceTargetForToken($token);
+        if(!applicationElementalPeriodicDamageSuppressed($resistanceTarget,$dot))$turnsByFamily[$family]=(int)$dot['remainingTurns'];
+    }
+    $poisonTurns=$turnsByFamily['poison'];
+    $bleedingTurns=$turnsByFamily['bleeding'];
     if($poisonTurns>0)$result[]=['id'=>'status-poison-'.$token['id'],'label'=>'Empoisonné','remainingTurns'=>min(999,$poisonTurns),'skin'=>'venom-target','symbol'=>'☠','image'=>null];
-    $bleedingTurns=0;foreach($state['damageOverTime']??[] as $dot)if(($dot['family']??'')==='bleeding'&&($dot['sceneId']??'')===$sceneId&&($dot['targetTokenId']??'')===($token['id']??'')&&($dot['remainingTurns']??0)>0&&!applicationElementalPeriodicDamageSuppressed($token,$dot,array_column($state['characters']??[],null,'id')))$bleedingTurns=max($bleedingTurns,(int)$dot['remainingTurns']);
     if($bleedingTurns>0)$result[]=['id'=>'status-bleeding-'.$token['id'],'label'=>'Saignement','remainingTurns'=>min(999,$bleedingTurns),'skin'=>'bleeding','symbol'=>'🩸','image'=>null];
     $protection=0;foreach($state['nextAttackGuards']??[] as $guard)if(($guard['effectId']??'')==='protection'&&($guard['sceneId']??'')===$sceneId&&($guard['targetTokenId']??'')===($token['id']??''))$protection+=(int)$guard['percent'];
     if($protection>0){$attacks=(int)ceil($protection/100);$result[]=['id'=>'status-protection-'.$token['id'],'label'=>'Protection · réserve '.$protection.' %','remainingTurns'=>$attacks,'remainingAttacks'=>$attacks,'symbol'=>'🛡','image'=>null];}
@@ -117,7 +130,8 @@ function applicationTransferAttackEnhancements(array $effects, array $source, st
 }
 
 function applicationAttackEnhancement(mixed $value): ?array {
-    $definition=applicationAttackEnhancementDefinition(is_array($value)?applicationConfiguredAttackEnhancement((string)($value['abilityId']??''),$value):$value);if($definition===null)return null;
+    if(is_array($value))$value=applicationConfiguredAttackEnhancement((string)($value['abilityId']??''),$value);
+    $definition=applicationAttackEnhancementDefinition($value);if($definition===null)return null;
     if(isset($value['bonuses'])&&($definition['mode']??'')!=='stats'){
         $stats=applicationAttackEnhancementDefinition(['mode'=>'stats','turns'=>$definition['turns'],'bonuses'=>$value['bonuses']]);
         if($stats===null)return null;$definition['bonuses']=$stats['bonuses'];
@@ -145,6 +159,7 @@ function applicationActiveAttackEnhancements(array $source,array $state,string $
         &&(!isset($effect['fixedArea'])||applicationFixedAreaAffects($effect,$source,$state,$sceneId))));
 }
 function applicationEnhancementAuraAffects(array $effect,array $source,array $state,string $sceneId):bool {
+    $effect=applicationConfiguredAttackEnhancement((string)($effect['abilityId']??''),$effect);
     $map=($state['activeSceneId']??$state['activeScene']['id']??'')===$sceneId?($state['map']??[]):[];
     if($map===[])foreach($state['scenes']??[] as $scene)if(($scene['id']??'')===$sceneId)$map=$scene['combat']['map']??[];
     $tokens=$map['tokens']??[];$caster=null;foreach($tokens as $token)if($token['id']===($effect['casterTokenId']??''))$caster=$token;
@@ -171,14 +186,63 @@ function applicationAttackResultBonus(array $source,array $state,string $sceneId
     return array_sum(array_map(static fn($effect)=>(int)($effect['bonuses']['attackResultBonus']??0),applicationActiveAttackEnhancements($source,$state,$sceneId)));
 }
 function applicationEnhancedResistanceTarget(array $source,array $state,string $sceneId):array {
-    $bonus=['physical'=>0,'magical'=>0];foreach(applicationActiveAttackEnhancements($source,$state,$sceneId) as $effect){$bonus['physical']+=(int)($effect['bonuses']['physicalResistance']??0);$bonus['magical']+=(int)($effect['bonuses']['magicalResistance']??0);}
-    return [...$source,'resistanceBonuses'=>$bonus,'elementalResistances'=>applicationEffectiveElementalResistances($source,$state,$sceneId)];
+    $effects=applicationActiveAttackEnhancements($source,$state,$sceneId);
+    $bonus=['physical'=>0,'magical'=>0];foreach($effects as $effect){$bonus['physical']+=(int)($effect['bonuses']['physicalResistance']??0);$bonus['magical']+=(int)($effect['bonuses']['magicalResistance']??0);}
+    $overrides=applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId,$effects);
+    return [...$source,'resistanceBonuses'=>$bonus,...($overrides===[]?[]:['elementalResistanceOverrides'=>$overrides])];
+}
+
+function applicationEffectiveElementalResistanceOverrides(array $source, array $state, string $sceneId, ?array $activeEffects=null): array {
+    $overrides=applicationHasEffectImmunity($source,$state,$sceneId,'poison')?['poison'=>100]:[];
+    $bonuses=static fn(array $effect):mixed=>applicationConfiguredAttackEnhancement((string)($effect['abilityId']??''),$effect)['bonuses']??[];
+    if($activeEffects===null){
+        $relevant=[];
+        foreach($state['attackEnhancements']??[] as $effect){
+            if(($effect['remainingTurns']??0)<=0)continue;
+            $values=$bonuses($effect);
+            foreach(XAR_ELEMENTAL_RESISTANCE_TYPES as $element){
+                if(empty($values[$element.'Resistance']))continue;
+                $relevant[]=$effect;
+                break;
+            }
+        }
+        if($relevant===[])return $overrides;
+        $activeEffects=applicationActiveAttackEnhancements($source,[...$state,'attackEnhancements'=>$relevant],$sceneId);
+    }
+    $totals=[];
+    foreach($activeEffects as $effect){
+        $values=$bonuses($effect);
+        foreach(XAR_ELEMENTAL_RESISTANCE_TYPES as $element){
+            $amount=$values[$element.'Resistance']??0;
+            if($amount)$totals[$element]=($totals[$element]??0)+$amount;
+        }
+    }
+    $result=[];
+    if($totals!==[]){
+        $base=normalizeApplicationElementalResistances($source['elementalResistances']??null);
+        foreach($totals as $element=>$amount){
+            $effective=max(XAR_ELEMENTAL_RESISTANCE_MINIMUM,min(100,$base[$element]+$amount));
+            if($effective!==$base[$element])$result[$element]=$effective;
+        }
+    }
+    return [...$result,...$overrides];
 }
 
 function applicationEffectiveElementalResistances(array $source, array $state, string $sceneId): array {
-    $resistances = normalizeApplicationElementalResistances($source['elementalResistances'] ?? null);
-    if (applicationHasEffectImmunity($source,$state,$sceneId,'poison')) $resistances['poison'] = 100;
-    return $resistances;
+    return [...normalizeApplicationElementalResistances($source['elementalResistances']??null),
+        ...(is_array($source['elementalResistanceOverrides']??null)?$source['elementalResistanceOverrides']:[]),
+        ...applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId)];
+}
+
+function applicationElementalResistanceTarget(array $source,array $state,string $sceneId,?array $sheet=null):array {
+    if($sheet===null&&unitUsesCharacterSheet($source))foreach($state['characters']??[] as $candidate){
+        if(($candidate['id']??null)!==$source['characterId'])continue;
+        $sheet=$candidate;
+        break;
+    }
+    if($sheet!==null&&$sheet!==[])$source['elementalResistances']=$sheet['elementalResistances']??[];
+    $overrides=applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId);
+    return $overrides===[]?$source:[...$source,'elementalResistanceOverrides'=>$overrides];
 }
 
 function applicationRollCriticalFailureProtected(array $source,array $activity,string $sceneId): bool {
@@ -200,6 +264,7 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
         (($definition['trigger']??'')==='enchanted-weapon' ? ($effect['abilityId']!==$ability['id']||($effect['holder']??'')!==$holder&&($effect['enchantedItemId']??'')!==($enchantment['enchantedItemId']??'')) : ($effect['holder'] !== $holder || !($effect['abilityId'] === $ability['id'] || $definition['mode']==='next-item-use'&&($effect['mode']??'')==='next-item-use'&&($effect['itemKind']??'')===$definition['itemKind'])))));
     if (count($effects) >= 100) throw new RuntimeException('Trop d’effets sur les attaques sont déjà actifs.', 409);
     $effects[] = [...$definition, 'id' => $id, 'holder' => $holder, 'abilityId' => $ability['id'], 'label' => $ability['name'].(!empty($enchantment['enchantedItemName'])?' — '.$enchantment['enchantedItemName']:''), 'sceneId' => $sceneId, ...$enchantment,
+        ...(isset($definition['aura'],$ability['rulePreset'])?['rulePreset'=>$ability['rulePreset']]:[]),
         ...(in_array($ability['id']??'',['ability-inho-metabolic-acceleration','ability-2e0bbf2b-ba81-4af6-b377-017615292509','ability-6a6d080e-96b7-4d12-b25b-d179d5e17766','ability-5f30d8c5-4efc-47d5-bf03-ea5cb192222b'],true)?['visualStartedAt'=>(int)floor(microtime(true)*1000)]:[]),
         ...(!empty($ability['image']) ? ['abilityImage' => $ability['image']] : []),
         ...(($definition['trigger']??'')==='main-weapon'?['weaponId'=>$recipient['weaponAttacks'][0]['id']??'']:[]),...(($definition['expiry']??'')==='after-next-turn'?['hasStarted'=>false]:[]),

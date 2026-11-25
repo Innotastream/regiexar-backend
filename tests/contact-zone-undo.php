@@ -36,8 +36,14 @@ specialCheck($journal!==[]&&array_filter($journal,static fn($entry)=>($entry['co
 specialCheck(contactUndoAction($db,$parent['actionId'])->status===200,'Hira can undo her damage during an enemy charge');$restored=$db->payload('token:scene-one:token-monster');specialCheck($restored['hp']===100&&$restored['x']===$moved['x']&&$restored['y']===$moved['y']&&$restored['fatigue']===$moved['fatigue'],'Undo Hira preserves victim charge position and fatigue');
 specialCheck(contactUndoAction($db,$chargeAction['actionIds'][0])->status===200,'Enemy charge can be undone separately');$restored=$db->payload('token:scene-one:token-monster');specialCheck($restored['hp']===100&&($restored['fatigue']['current']??0)===0&&$restored['x']===$enemy['x']&&$restored['y']===$enemy['y'],'Second undo never credits the contact HP twice');
 
-// An expiry preceding another zone tick does not become part of its undo.
+// A change to a different filament's lifetime does not become part of a contact's undo.
 $db=contactUndoFixture();$retired=contactUndoParent($db,'expiring-monster','token-monster','unit_token-monster');$active=contactUndoParent($db,'remaining-player');$enemy=$db->payload('token:scene-one:token-monster');$enemy['y']=50;$db->put('token:scene-one:token-monster',$enemy);$records=$db->domains;$pending=[];$previous=$db->payload('initiative:scene-one');$next=[...$previous,'turnSerial'=>11,'currentIndex'=>1];queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',$next);
-$attacks=onlineAdvanceContactZoneClock($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ test','effective_mode'=>'gm','permanent_role'=>'gm'],'scene-one',$previous,$next);foreach($pending as$key=>$record)$db->put($key,$record['payload']);specialCheck(count($attacks)===1&&array_column($db->payload('devices')['contactZones'],'id')===[$active['zone']['id']],'Expired zone is removed before an already-inside target receives another zone tick');
-specialCheck(contactUndoAction($db,$active['actionId'])->status===200,'Remaining source tick can be undone');specialCheck(($db->payload('devices')['contactZones']??[])===[],'Undo of the active source cannot revive a different expired zone');
+$attacks=onlineAdvanceContactZoneClock($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ test','effective_mode'=>'gm','permanent_role'=>'gm'],'scene-one',$previous,$next);
+foreach($pending as$key=>$record)$db->put($key,$record['payload']);
+$remaining=$db->payload('devices')['contactZones'];
+specialCheck(count($attacks)===1&&array_column($remaining,'id')===[$retired['zone']['id'],$active['zone']['id']]
+    &&($remaining[0]['visualOnlySince']['turnSerial']??null)===11&&$attacks[0]['contactZoneId']===$active['zone']['id'],'An overlap keeps the retired drawing while only the armed filament ticks');
+specialCheck(contactUndoAction($db,$active['actionId'])->status===200,'Remaining source tick can be undone');
+specialCheck($db->payload('devices')['contactZones']===[$remaining[0]]&&$db->payload('token:scene-one:token-monster')['hp']===100,'Undo of the active source preserves the other drawing without rearming it');
+specialCheck(contactUndoAction($db,$retired['actionId'])->status===200&&$db->payload('devices')['contactZones']===[],'Undo of the original decorative source still removes its own drawing');
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

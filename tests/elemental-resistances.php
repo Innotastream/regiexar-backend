@@ -164,7 +164,7 @@ applyOnlineAttackConditions($db, $records, $pending, [
 requireTactical(($pending[$monsterKey]['payload']['conditions'] ?? []) === ['Empoisonné', 'Étourdi']
     && empty($pending['activity']['payload']['damageOverTime']), 'An impact keeps unrelated afflictions and refuses an immune elemental DOT.');
 
-$deviceState = ['map'=>['tokens'=>[$monster]], 'characters'=>[], 'devices'=>dsEmpty(), 'initiative'=>[]];
+$deviceState = ['map'=>['tokens'=>[$monster]], 'characters'=>[], 'devices'=>dsEmpty(), 'initiative'=>['active'=>true]];
 $timed = ['sceneId'=>'scene-one','targetTokenId'=>'token-monster','sourceTokenId'=>'token-player','resisted'=>false,
     'rider'=>dsRider(['version'=>1,'label'=>'Glacé','turns'=>2,'blocksMovement'=>true,'blocksActions'=>true,'attackPenalty'=>20])];
 onlineDeviceTimedCondition($deviceState, $timed);
@@ -175,7 +175,7 @@ $conditions = $deviceState['devices']['timedConditions'];
 $withIce = $deviceState['map']['tokens'][0];
 requireTactical(count($conditions) === 1 && applicationAbilityMovementIsBlocked($withIce,$deviceState['map'],$conditions,'scene-one')
     && applicationTimedAttackPenalty($deviceState,$withIce,'token-player','scene-one') === 20,
-    'At 99%, a timed condition applies its movement block and attack penalty.');
+    'In combat, a timed condition applies its movement block and attack penalty until the 99% save on the target’s turn.');
 $deviceState['map']['tokens'][0]['elementalResistances']['ice'] = 100;
 $withIce = $deviceState['map']['tokens'][0];
 dsAssertActions($deviceState,$withIce,'scene-one');
@@ -358,5 +358,216 @@ requireTactical($directTarget['hp'] === 26 && ($directTarget['resourcePulse']['i
     'A confirmed attack uses actual damage, persists the enemy injury and publishes the graphic with the token. '
         . json_encode(['status'=>$hit->status,'attackStatus'=>$hit->body['attack']['status']??null,'hp'=>$directTarget['hp'],
             'pulse'=>$directTarget['resourcePulse']??null,'dots'=>$db->payload('activity')['damageOverTime']??null]));
+
+$whip='v370-template-d29417860cce105b93bb7f17';
+$whipFixture=static function(?string $templateId=null,bool $combat=true,int $bleedingResistance=0)use($whip,$monsterKey,$sheetKey):MemoryConnection{
+    $db=fixture();
+    $templateId??=$whip;
+    $db->put('initiative:scene-one',['active'=>$combat,'combatId'=>$combat?'whip-combat':'','order'=>['token-player','token-monster'],'currentIndex'=>0,'round'=>1,'turnSerial'=>1]);
+    $db->put($monsterKey,[...$db->payload($monsterKey),'hp'=>500,'maxHp'=>500,'elementalResistances'=>['bleeding'=>$bleedingResistance]]);
+    $character=$db->payload($sheetKey);$character['stats']['force']=100;$character['specialSuccessStock']=1;
+    $character['weaponText']='Arme équipée / 1d30+6';
+    $character['weaponAttacks']=[['id'=>'whip-cut','name'=>'Arme équipée','formula'=>'1d30+6','damageType'=>'physical','equipmentBinding'=>['kind'=>'item','id'=>'whip-copy']]];
+    $character['abilities']=[['id'=>'whip-with-burn','name'=>'Frappe avec effet','effect'=>'damage','formula'=>'0','damageType'=>'physical',
+        'castingStatId'=>'character-stat-force','useWeaponDamage'=>true,'damageOverTime'=>['label'=>'Brûlure de recette','formula'=>'1d4','turns'=>2,'damageType'=>'fire']]];
+    $db->put($sheetKey,$character);
+    $db->put('items',['version'=>1,'templates'=>[['id'=>$templateId,'name'=>$templateId===$whip?'Exemplaire renommé':'Fouet lacérant','kind'=>'object',
+        'equipment'=>['version'=>1,'kind'=>'weapon','hands'=>1,'formula'=>'1d30+6','damageType'=>'physical','reach'=>'reach']]],
+        'instances'=>[['id'=>'whip-copy','templateId'=>$templateId,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']]],
+        'equipmentLoadouts'=>['character-player'=>['sets'=>[],'activeSetId'=>'','equippedItemIds'=>['whip-copy']]]]);
+    return $db;
+};
+$whipAttack=['requestId'=>'whip-cut-request-0001','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster',
+    'attackId'=>'whip-cut','attackKind'=>'weapon','statId'=>'character-stat-force','useJoker'=>true,'opposed'=>false];
+$db=$whipFixture();
+$hit=fixtureApproveDefenseGate($db,runCommand($db,'token.attack',$whipAttack));
+$initialHp=$db->payload($monsterKey)['hp'];$dots=$db->payload('activity')['damageOverTime']??[];
+requireTactical($hit->status===200&&$hit->body['attack']['status']==='applied'&&$initialHp<500
+    &&$dots===[['id'=>'weapon-dot-'.$hit->body['attack']['id'],'sceneId'=>'scene-one','combatId'=>'whip-combat','sourceName'=>'Personnage',
+        'targetTokenId'=>'token-monster','label'=>'Saignement · Fouet lacérant','formula'=>'1d5','damageType'=>'bleeding','family'=>'bleeding',
+        'remainingTurns'=>1,'lastTurnSerial'=>1,'targetIdentity'=>'token:token-monster','lastManualTurn'=>0]],
+    'An equipped, renamed instance of the known whip adds one 1d5 bleed without an immediate tick. '.json_encode($hit->body));
+$replay=runCommand($db,'token.attack',$whipAttack);
+requireTactical($replay->status===200&&!empty($replay->body['deduplicated'])&&($db->payload('activity')['damageOverTime']??[])===$dots
+    &&$db->payload($monsterKey)['hp']===$initialHp,'Replaying the whipping strike changes neither the bleed nor the target HP.');
+$clock=$db->payload('initiative:scene-one');$records=applicationDomainRecords($db);$pending=[];
+queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$clock,'currentIndex'=>1,'turnSerial'=>2]);
+applyApplicationDamageOverTimeOnTurn($db,$records,$pending,$gm);
+$after=$pending[$monsterKey]['payload']['hp']??$initialHp;
+requireTactical(($pending['activity']['payload']['damageOverTime']??[])===[]&&$initialHp-$after>=1&&$initialHp-$after<=5,
+    'On the target turn the whip rolls 1d5 once and expires.');
+$parked=applicationFinishCombatRounds($db->payload('activity'),'scene-one',$clock);
+requireTactical(($parked['damageOverTime'][0]['combatId']??null)===''&&$parked['damageOverTime'][0]['remainingTurns']===1,
+    'A combat ending mid-bleed lets the remaining tick run in free play.');
+$db->put('initiative:scene-one',[...$clock,'active'=>false,'combatId'=>'']);
+$db->put('activity',$parked);
+$manual=runCommand($db,'mechanics.command',['command'=>'scene.advance','arguments'=>['sceneId'=>'scene-one','requestId'=>'whip-bleeding-manual-0001']],true,'account-gm');
+$after=$db->payload($monsterKey)['hp'];
+requireTactical($manual->status===200&&$initialHp-$after>=1&&$initialHp-$after<=5&&empty($db->payload('activity')['damageOverTime']),
+    'The next free-play turn really consumes the parked bleed once. '.json_encode($manual->body));
+
+$db=$whipFixture();
+$clock=[...$db->payload('initiative:scene-one'),'turnsStarted'=>true,'currentIndex'=>1,'turnSerial'=>2];
+$db->put('initiative:scene-one',$clock);
+$hit=fixtureApproveDefenseGate($db,runCommand($db,'token.attack',$whipAttack,true,'account-gm'));
+$hp=$db->payload($monsterKey)['hp'];
+$dots=$db->payload('activity')['damageOverTime']??[];
+requireTactical($hit->status===200&&($dots[0]['lastTargetRound']??null)===$clock['round'],
+    'The whip records that the target already started its turn before receiving the bleed. '.json_encode($hit->body));
+$records=applicationDomainRecords($db);$pending=[];
+queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$clock,'turnSerial'=>3,'order'=>['token-monster','token-player'],'currentIndex'=>0]);
+applyApplicationDamageOverTimeOnTurn($db,$records,$pending,$gm);
+requireTactical(!isset($pending[$monsterKey])&&($pending['activity']['payload']['damageOverTime']??$dots)===$dots,
+    'Moving the target back into the turn order cannot trigger the same round again.');
+$pending=[];
+queueOnlineDomainUpsert($pending,$records,'initiative:scene-one',[...$clock,'turnSerial'=>4,'round'=>$clock['round']+1]);
+applyApplicationDamageOverTimeOnTurn($db,$records,$pending,$gm);
+$after=$pending[$monsterKey]['payload']['hp']??$hp;
+requireTactical(($pending['activity']['payload']['damageOverTime']??null)===[]&&$hp-$after>=1&&$hp-$after<=5,
+    'Once the next round really starts for that target, the bleed ticks and expires.');
+
+$db=$whipFixture();
+$hit=fixtureApproveDefenseGate($db,runCommand($db,'token.attack',[...$whipAttack,'attackId'=>'whip-with-burn','attackKind'=>'ability','weaponAttackId'=>'whip-cut']));
+requireTactical($hit->status===200&&array_column($db->payload('activity')['damageOverTime']??[],'damageType')===['fire','bleeding'],
+    'An actual whip ability retains its other ongoing damage as well as the weapon bleed. '.json_encode($hit->body));
+foreach([['counterfeit-whip',0],[null,100]] as [$templateId,$resistance]){
+    $db=$whipFixture($templateId,true,$resistance);
+    $hit=fixtureApproveDefenseGate($db,runCommand($db,'token.attack',$whipAttack));
+    requireTactical($hit->status===200&&$hit->body['attack']['status']==='applied'&&empty($db->payload('activity')['damageOverTime']),
+        'A same-named unrelated weapon or bleeding immunity leaves the immediate hit alone. '.json_encode($hit->body));
+}
+$db=$whipFixture(null,false);
+$attack=runCommand($db,'token.attack',$whipAttack);
+requireTactical($attack->status===200&&$attack->body['attack']['status']==='pending'&&empty($db->payload('activity')['damageOverTime']),
+    'Outside combat, the pending hit has not yet applied the bleed. '.json_encode($attack->body));
+$rejected=runCommand($db,'token.attack.area.resolve',['attackId'=>$attack->body['attack']['id'],'decision'=>'reject','confirmed'=>true,'defenseTokenIds'=>[]],true,'account-gm');
+requireTactical($rejected->status===200&&$rejected->body['attack']['status']==='rejected'&&empty($db->payload('activity')['damageOverTime']),
+    'A refused pending attack can never bleed. '.json_encode($rejected->body));
+$opposed=null;
+for($attempt=0;$attempt<24;$attempt++){
+    $db=$whipFixture();
+    $db->put($monsterKey,[...$db->payload($monsterKey),'specialSuccessStock'=>1]);
+    $candidate=fixtureApproveDefenseGate($db,runCommand($db,'token.attack',[...$whipAttack,'useJoker'=>false,'opposed'=>true]),true);
+    $attackId=$candidate->body['attack']['id']??'';
+    $pendingAttacks=array_column($db->payload('activity')['pendingAttacks']??[],null,'id');
+    if(($pendingAttacks[$attackId]['status']??null)==='awaiting-opposition'&&($pendingAttacks[$attackId]['hit']['outcome']['raw']??0)>1){
+        $opposed=$pendingAttacks[$attackId];break;
+    }
+}
+requireTactical($opposed!==null&&empty($db->payload('activity')['damageOverTime']),
+    'The selected defense waits without applying bleeding. '.json_encode(['result'=>$candidate->body,'ids'=>array_keys($pendingAttacks),
+        'pending'=>array_map(static fn($p)=>[$p['status']??null,$p['hit']['outcome']??null],$pendingAttacks)]));
+$defended=runCommand($db,'token.attack.oppose',['attackId'=>$opposed['id'],'requestId'=>'whip-defense-joker-0001','decision'=>'roll',
+    'statId'=>'monster-force','useJoker'=>true],true,'account-gm');
+requireTactical($defended->status===200&&$defended->body['attack']['status']==='defended'
+    &&$db->payload($monsterKey)['hp']===500&&empty($db->payload('activity')['damageOverTime']),
+    'A successful opposition via the real defense route prevents the immediate strike and the bleed. '.json_encode($defended->body));
+
+$saveProfile=['elementalResistances'=>['fire'=>10,'ice'=>-20,'poison'=>50,'bleeding'=>50]];
+$unusedDie=static function():never { throw new RuntimeException('An immunity or an unrelated status must not roll.'); };
+requireTactical(applicationElementalConditionSave($saveProfile,'Enflamé',static fn()=>10)===['element'=>'fire','threshold'=>10,'rolled'=>10,'success'=>true]
+    && !applicationElementalConditionSave($saveProfile,'Brûlure',static fn()=>11)['success'],
+    'The elemental save is inclusive and a remarkable die cannot bypass the percentage.');
+requireTactical(applicationElementalConditionSave($saveProfile,'Glacé',$unusedDie)===null
+    && applicationElementalConditionSave($saveProfile,'Empoisonné',$unusedDie)===null
+    && applicationElementalConditionSave($saveProfile,'Paralysé',$unusedDie)===null
+    && applicationElementalConditionSave($saveProfile,'Saignement',$unusedDie)===null,
+    'Vulnerability, generic poison, plain paralysis and bleed have no elemental die.');
+requireTactical(applicationElementalConditionSave($saveProfile,'Poison paralysant',static fn()=>50)['success']
+    && applicationElementalConditionSave([...$saveProfile,'elementalResistanceOverrides'=>['poison'=>100]],'Poison paralysant',$unusedDie)['rolled']===null,
+    'Poison paralysis uses the effective resistance, including deterministic immunity.');
+
+$db=fixture();
+$db->put($monsterKey,[...$db->payload($monsterKey),...$saveProfile]);
+$apply=['sceneId'=>'scene-one','tokenId'=>'token-monster','active'=>true,'condition'=>'Enflamé'];
+$applied=runCommand($db,'token.conditions.update',$apply,true,'account-gm');
+requireTactical($applied->status===200 && in_array('Enflammé',$db->payload($monsterKey)['conditions'],true)
+    && empty($db->payload('activity')['rolls']), 'In combat the manual application saves nothing and waits for the actual start.');
+$db->put('initiative:scene-one',['active'=>false,'order'=>[],'turnSerial'=>0]);
+runCommand($db,'token.conditions.update',[...$apply,'active'=>false],true,'account-gm');
+$applied=runCommand($db,'token.conditions.update',$apply,true,'account-gm');
+$roll=$db->payload('activity')['rolls'][0]??[];
+requireTactical($applied->status===200 && ($roll['outcome']['threshold']??null)===10 && ($roll['visibility']??'')==='gm'
+    && ($applied->body['elementalSave']['rolled']??null)===$roll['total'] && ($roll['outcome']['success']??null)===($roll['total']<=10)
+    && in_array('Enflammé',$db->payload($monsterKey)['conditions']??[],true)===($roll['total']>10),
+    'Out of combat the real command records one private normal die with the exact threshold and applies only on failure.');
+
+$db=fixture();
+$db->put($monsterKey,[...$db->payload($monsterKey),...$saveProfile,'conditions'=>['Empoisonné']]);
+$records=applicationDomainRecords($db);$pending=[];
+$attack=applyOnlineAttackConditions($db,$records,$pending,[
+    'id'=>'save-attack','status'=>'applied','sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-monster',
+    'conditionRider'=>['version'=>1,'label'=>'Poison paralysant','turns'=>3,'blocksActions'=>true,'resistance'=>true],
+    'onHitConditions'=>['Paralysé · venin'],'damageOverTime'=>['label'=>'Poison ordinaire','formula'=>'3','damageType'=>'poison','turns'=>2],
+]);
+requireTactical(!empty($attack['riderApplied']) && count($pending['devices']['payload']['timedConditions']??[])===1
+    && empty($pending['devices']['payload']['pendingRolls']) && empty($pending['activity']['payload']['rolls'])
+    && count($pending['activity']['payload']['damageOverTime']??[])===1,
+    'An elemental rider never launches an extra generic stat test in combat or suppresses its independent DOT.');
+
+$clock=['active'=>true,'turnsStarted'=>true,'combatId'=>'save-test','order'=>['token-player','token-monster'],'currentIndex'=>1,'round'=>2,'turnSerial'=>4];
+$storedToken=[...$pending[$monsterKey]['payload'],'conditions'=>['Paralysé · venin','Venin paralysant','Empoisonné','Paralysé']];
+$state=['activeSceneId'=>'scene-one','initiative'=>$clock,'characters'=>[],'map'=>['tokens'=>[$storedToken]],'devices'=>$pending['devices']['payload'],
+    'damageOverTime'=>$pending['activity']['payload']['damageOverTime']];
+$previous=[...$clock,'currentIndex'=>0,'turnSerial'=>3];
+$rollCount=0;
+$context=['elementalSaveDie'=>static function()use(&$rollCount):int {$rollCount++;return 51;}];
+$failed=applicationAdvanceDevices($state,$previous,$context)['state'];
+requireTactical($rollCount===1 && count($failed['rolls'])===1 && count($failed['devices']['timedConditions'])===1
+    && $failed['map']['tokens'][0]['conditions']===$storedToken['conditions'],
+    'Aliases, plain badge and timed rider produce one die; failure retains all original conditions.');
+$rewound=[...$failed,'initiative'=>[...$clock,'currentIndex'=>0,'turnSerial'=>5,'rewoundTurnSerial'=>5]];
+$rewound=applicationAdvanceDevices($rewound,$clock,$context)['state'];
+$forward=[...$rewound,'initiative'=>[...$clock,'turnSerial'=>6,'rewoundTurnSerial'=>5]];
+$forward=applicationAdvanceDevices($forward,$rewound['initiative'],$context)['state'];
+requireTactical($rollCount===1 && count($forward['rolls'])===1,
+    'Rewinding and re-entering the same actual turn cannot reroll a failed save.');
+$previouslyHealthy=[...$state,'devices'=>dsEmpty()];
+$previouslyHealthy['map']['tokens'][0]['conditions']=[];
+$late=applicationAdvanceDevices($previouslyHealthy,$previous,$context)['state'];
+$late['initiative']=[...$clock,'currentIndex'=>0,'turnSerial'=>5,'rewoundTurnSerial'=>5];
+$late=applicationAdvanceDevices($late,$clock,$context)['state'];
+$late['map']['tokens'][0]['conditions']=['Paralysé · venin'];
+$late['initiative']=[...$clock,'turnSerial'=>6];
+$late=applicationAdvanceDevices($late,[...$clock,'currentIndex'=>0,'turnSerial'=>5,'rewoundTurnSerial'=>5],$context)['state'];
+requireTactical($rollCount===1 && empty($late['rolls']) && $late['map']['tokens'][0]['conditions']===['Paralysé · venin'],
+    'An already-started turn cannot be used for a new status acquired after its start, even without a previous die.');
+$nextTurn=[...$forward,'initiative'=>[...$clock,'round'=>3,'turnSerial'=>8]];
+$recovered=applicationAdvanceDevices($nextTurn,[...$clock,'round'=>3,'currentIndex'=>0,'turnSerial'=>7],['elementalSaveDie'=>static fn()=>50])['state'];
+requireTactical($recovered['map']['tokens'][0]['conditions']===['Empoisonné','Paralysé']
+    && $recovered['devices']['timedConditions']===[] && $recovered['damageOverTime']===$state['damageOverTime']
+    && (($recovered['rolls'][0]['outcome']['success']??false)===true),
+    'The next true turn renews the save; success clears the exact incapacity but preserves ordinary poison, unrelated paralysis and the DOT.');
+$manual=[...$failed,'initiative'=>['active'=>false,'order'=>[],'turnSerial'=>0]];
+$manual=applicationAdvanceDevices($manual,$manual['initiative'],[...$context,'manual'=>true])['state'];
+requireTactical($rollCount===1 && count($manual['rolls'])===1,
+    'The scene-wide manual advance outside combat does not roll another save.');
+
+function requireGmIdentity(PDO $connection): array { return $GLOBALS['testIdentity']; }
+function saveClockPatch(MemoryConnection $db,array $initiative): TestResponse
+{
+    $key='initiative:scene-one';
+    $GLOBALS['testIdentity']=['id'=>'account-gm','display_name'=>'MJ test','effective_mode'=>'gm','permanent_role'=>'gm'];
+    $GLOBALS['testBody']=['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,'changes'=>[
+        ['key'=>$key,'operation'=>'upsert','expectedRevision'=>$db->domains[$key]['revision'],'payload'=>$initiative],
+    ]];
+    try { patchApplicationDomains($db); } catch (TestResponse $response) { return $response; }
+    throw new RuntimeException('No initiative response.');
+}
+$db=fixture();
+$db->put('initiative:scene-one',$previous);
+$db->put($monsterKey,[...$db->payload($monsterKey),...$saveProfile,'conditions'=>['Enflammé']]);
+$begin=saveClockPatch($db,$clock);
+$roll=$db->payload('activity')['rolls'][0]??[];
+requireTactical($begin->status===200 && ($roll['outcome']['threshold']??null)===10
+    && in_array('Enflammé',$db->payload($monsterKey)['conditions']??[],true)===($roll['total']>10)
+    && ($db->payload('devices')['elementalSaveTurns']['scene-one']['roundByHolder']['token:token-monster']??null)===2,
+    'The actual domain command commits the status, normal roll and turn deduplication together. '.$begin->getMessage());
+$repeat=saveClockPatch($db,$clock);
+requireTactical($repeat->status===200 && $db->payload('activity')['rolls']===[$roll],
+    'The same initiative domain update cannot roll again.');
+$stop=saveClockPatch($db,[...$clock,'active'=>false,'turnsStarted'=>false]);
+requireTactical($stop->status===200 && empty($db->payload('devices')['elementalSaveTurns']),
+    'Finishing combat frees its deduplication records.');
 
 echo "Elemental resistance, weapon catalog, periodic damage and antidote contracts passed.\n";

@@ -90,19 +90,62 @@ function applicationElementalStatusType(mixed $label): ?string
 {
     if (!is_string($label)) return null;
     return match (onlineConditionKey($label)) {
-        'brulure', 'brulures', 'brule', 'brulee', 'enflamme', 'enflammee', 'en feu', 'burning', 'burn' => 'fire',
+        'brulure', 'brulures', 'brule', 'brulee', 'enflamme', 'enflammee', 'enflame', 'enflamee', 'en feu', 'burning', 'burn' => 'fire',
         'glace', 'glacee', 'gele', 'gelee', 'congele', 'congelee', 'gel', 'frozen', 'freezing', 'chilled' => 'ice',
         'saignement', 'saigne', 'bleeding', 'hemorragie', 'hemorrhage', 'haemorrhage' => 'bleeding',
-        onlineConditionKey(XAR_VENOM_PARALYSIS_LABEL) => 'poison',
+        onlineConditionKey(XAR_VENOM_PARALYSIS_LABEL), 'poison paralysant', 'venin paralysant', 'empoisonnement paralysant',
+        'paralysie due au poison', 'paralysie due au venin', 'paralyse venin', 'paralyzing poison', 'paralyzing venom' => 'poison',
         default => null,
     };
+}
+
+function applicationElementalSavingConditionLabel(mixed $label): ?string
+{
+    return match (applicationElementalStatusType($label)) {
+        'fire' => 'Enflammé',
+        'ice' => 'Glacé',
+        'poison' => XAR_VENOM_PARALYSIS_LABEL,
+        default => null,
+    };
+}
+
+function applicationElementalConditionSave(array $entity, mixed $label, ?callable $rollDie = null): ?array
+{
+    if (applicationElementalSavingConditionLabel($label) === null) return null;
+    $element = applicationElementalStatusType($label);
+    $percent=$entity['elementalResistanceOverrides'][$element]??$entity['elementalResistances'][$element]??0;
+    $threshold=is_numeric($percent)&&is_finite((float)$percent)?(int)max(0,min(100,$percent)):0;
+    if ($threshold === 0) return null;
+    $rolled = $threshold === 100 ? null : ($rollDie ? $rollDie() : random_int(1,100));
+    return ['element'=>$element,'threshold'=>$threshold,'rolled'=>$rolled,'success'=>$rolled === null || $rolled <= $threshold];
+}
+
+function applicationRecordElementalConditionSave(array &$state,array $unit,string $sceneId,string $label,array $save,?array $token=null): void
+{
+    $rolled=$save['rolled'];
+    if ($rolled===null) return;
+    $label=applicationElementalSavingConditionLabel($label);
+    $name=(string)($unit['name']??$token['name']??'Unité');
+    $outcome=classifyOnlineD100Outcome($rolled,$save['threshold'],0,0,false);
+    $entry=onlineRollEntry(['display_name'=>$name],['formula'=>'1d100','total'=>$rolled,'breakdown'=>"[$rolled]"],'Résistance · '.$label,$name,$outcome);
+    if ($token!==null) {
+        $entry['sourceTokenId']=$token['id'];
+        $entry['sourceSceneId']=$sceneId;
+    }
+    if (!empty($token['hidden'])||empty($unit['ownerPlayerId'])&&empty($token['controllerPlayerId'])) {
+        $entry['visibility']='gm';
+        $entry['revealed']=false;
+        $entry['rollerRole']='gm';
+    }
+    $state['rolls']=array_slice([$entry,...($state['rolls']??[])],0,100);
 }
 
 function applicationElementalStatusImmune(array $entity, ?string $element, array $charactersById = []): bool
 {
     if (!in_array($element, XAR_ELEMENTAL_RESISTANCE_TYPES, true)) return false;
+    $override=$entity['elementalResistanceOverrides'][$element]??null;
     if ($charactersById !== [] && unitUsesCharacterSheet($entity)) $entity = $charactersById[$entity['characterId']] ?? $entity;
-    $percent = $entity['elementalResistances'][$element] ?? 0;
+    $percent = $override ?? $entity['elementalResistances'][$element] ?? 0;
     return is_numeric($percent) && is_finite((float) $percent) && $percent >= 100;
 }
 

@@ -17,5 +17,21 @@ $visual=applicationTokenBuffVisuals($hero,$state,'scene-one')[0];emblemVisualChe
 emblemVisualCheck(applicationTokenBuffVisuals([...$hero,'dimSilhouette'=>true],$state,'scene-one')===[],'Silhouette excluded');emblemVisualCheck(applicationTokenBuffVisuals($hero,$state,'other')===[],'Scene isolated');
 unset($state['attackEnhancements'][0]['visualStartedAt']);$old=applicationTokenBuffVisuals($hero,$state,'scene-one')[0];emblemVisualCheck($old['skin']==='sacred-circle'&&!isset($old['startedAt']),'Old effect has persistent area without new cinematic');
 emblemVisualCheck(applicationEnhancementVisualSkin(['abilityId'=>'other'])===[],'Unknown effect unchanged');emblemVisualCheck(applicationEnhancementVisualSkin(['abilityId'=>'ability-6a6d080e-96b7-4d12-b25b-d179d5e17766','visualStartedAt'=>123])===['skin'=>'stigma-awakening','startedAt'=>123],'Stigmate signal preserved');
+$ally=['id'=>'ally','name'=>'Allié','controllerPlayerId'=>'account-ally','x'=>51,'y'=>74,'hp'=>60,'maxHp'=>100,
+    'layerId'=>'ground','elementalResistances'=>['poison'=>90,'bleeding'=>90]];
+$state['map']['tokens'][]=$ally;
+foreach(['poison','bleeding'] as $family)$state['damageOverTime'][]=['id'=>$family,'sceneId'=>'scene-one','targetTokenId'=>'ally',
+    'family'=>$family,'damageType'=>$family,'remainingTurns'=>2];
+foreach([true,false] as $stream){
+    foreach([51,98] as $x){
+        $state['map']['tokens'][1]['x']=$x;
+        $projection=publicPlayerState($state,['id'=>'account-ally'],[],$stream);
+        $projected=array_column($projection['map']['tokens'],null,'id')['ally'];
+        $skins=array_values(array_intersect(array_column($projected['buffVisuals'],'skin'),['venom-target','bleeding']));
+        emblemVisualCheck($skins===($x===51?[]:['venom-target','bleeding']),'Periodic badges only hide while the ally has immunity');
+        if($stream)emblemVisualCheck(!isset($projected['elementalResistances'])&&!isset($projected['elementalResistanceOverrides']),
+            'Stream does not expose either resistance field');
+    }
+}
 for($i=0;$i<5;$i++)$state['attackEnhancements']=applicationAdvanceAttackEnhancements($state['attackEnhancements'],'scene-one',[],[],true);emblemVisualCheck(applicationTokenBuffVisuals($hero,$state,'scene-one')===[],'Five turns remove skin and area');
 echo json_encode(['ok'=>true,'checks'=>$checks,'productionAccess'=>false],JSON_THROW_ON_ERROR);

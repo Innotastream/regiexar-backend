@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/ability-rule-presets.php';
 function applicationCoatingVials(array $items,array $source,array $ability):array {
     $templates=[];foreach($items['templates']??[] as $t)if((($t['kind']==='object'&&($t['sourceAbilityId']??'')===$ability['id'])||($t['active']['ingredientTag']??'')==='poison-vial'))$templates[$t['id']]=true;
     return array_values(array_filter($items['instances']??[],static fn($i)=>isset($templates[$i['templateId']])&&$i['location']['kind']==='inventory'&&$i['location']['characterId']===unitIdForToken($source)));
@@ -9,10 +10,12 @@ function applicationConsumeCoatingVial(array &$state,array $source,array $abilit
     $i=dsIndex($state['items']['instances'],$id);$state['items']['instances'][$i]['location']=['kind'=>'consumed','characterId'=>unitIdForToken($source)];$state['items']['instances'][$i]['revision']++;
 }
 function applicationRequestConsumableCraft(array &$state,array &$store,array $owner,array $token,array $ability,array $context):array {
-    if((applicationTacticalEffect($ability['tacticalEffect']??null)['kind']??'')!=='coating')dsError('Cette compétence ne fabrique pas de fiole.',400);
+    $ability=applicationConfiguredAbilityRules($ability);
+    $definition=applicationTacticalEffect($ability['tacticalEffect']??null);
+    if(($definition['kind']??'')!=='coating')dsError('Cette compétence ne fabrique pas de fiole.',400);
     foreach($store['craftRequests'] as $r)if(($r['kind']??'')==='consumable'&&$r['characterId']===$owner['id']&&$r['ability']['id']===$ability['id']&&$r['status']==='pending')dsError('Une tentative de fabrication attend déjà le MJ.');
     if(count($store['craftRequests'])>=1000)dsError('La liste des fabrications est pleine.');
-    $cast=($context['roll'])($state,$owner,$token,applicationTacticalEffect($ability['tacticalEffect']??null)['craftStatId']??'character-stat-intelligence',0,$ability['name'].' · Création d’une fiole');
+    $cast=($context['roll'])($state,$owner,$token,$definition['craftStatId'],0,$ability['name'].' · Création d’une fiole');
     $request=['id'=>($context['id'])('craft'),'kind'=>'consumable','status'=>'pending','characterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']??'',
         'ability'=>$ability,'sourceTokenId'=>$token['id'],'sceneId'=>$state['activeSceneId'],'quantity'=>1,'cost'=>0,'cast'=>$cast,'requestedAt'=>$context['now']];
     $store['craftRequests'][]=$request;return ['craftRequestId'=>$request['id'],'pendingGmApproval'=>true,'cast'=>$cast,'quantity'=>1,'manaCost'=>0,'fatigueCost'=>0];

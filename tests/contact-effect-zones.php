@@ -24,19 +24,47 @@ specialCheck(applicationCollectContactZoneMovement($state,$enemy,['x'=>40,'y'=>6
 specialCheck($events[0]['requestId']===applicationContactZoneRequestId($zone['id'],'unit_token-monster',$clock['combatId'],11),'Deterministic receipt uses canonical unit and turn');
 $inside=[...$enemy,'y'=>50];$insideState=domainsToApplicationState($db->domains,0);$insideState['initiative']=[...$clock,'turnSerial'=>12,'currentIndex'=>1];$insideState['devices']['contactZones']=[$zone];
 specialCheck(count(applicationCollectContactZoneMovement($insideState,$inside,['x'=>40,'y'=>50],['x'=>40,'y'=>50]))===1,'Already inside at turn start is a contact');
+$rewoundContact=$insideState;
+$rewoundContact['initiative']=[...$insideState['initiative'],'turnSerial'=>13,'rewoundTurnSerial'=>13];
+specialCheck(applicationCollectContactZoneMovement($rewoundContact,$inside,['x'=>40,'y'=>50],['x'=>40,'y'=>50])===[]
+    &&$rewoundContact['devices']['contactZones']===$insideState['devices']['contactZones'],'A rewound initiative cannot hit a victim already standing on the filament again');
 $ally=[...$enemy,'id'=>'ally-token','controllerPlayerId'=>'account-player'];$allied=$insideState;$allied['map']['tokens'][]=$ally;$allied['initiative']['order'][1]='ally-token';$allied['devices']['contactZones']=[$zone];
 specialCheck(applicationCollectContactZoneMovement($allied,$ally,['x'=>40,'y'=>40],['x'=>40,'y'=>60])===[],'Allies are excluded by default');
 $allied['devices']['contactZones'][0]['friendlyFire']=true;specialCheck(count(applicationCollectContactZoneMovement($allied,$ally,['x'=>40,'y'=>40],['x'=>40,'y'=>60]))===1,'Authoritative Friendly Fire opens allied contact through the common relation rule');
 $allied['initiative']=[...$clock,'turnSerial'=>13];specialCheck(applicationCollectContactZoneMovement($allied,$source,['x'=>20,'y'=>50],['x'=>30,'y'=>50])===[],'Friendly Fire does not invent affectCaster');
 $alias=[...$source,'id'=>'linked-caster-alias'];$aliasState=$insideState;$aliasState['map']['tokens'][]=$alias;$aliasState['initiative']['order'][1]=$alias['id'];$aliasState['devices']['contactZones'][0]['friendlyFire']=true;specialCheck(applicationCollectContactZoneMovement($aliasState,$alias,['x'=>20,'y'=>50],['x'=>30,'y'=>50])===[],'Friendly Fire never bypasses affectCaster through another linked occurrence of the same source unit');
-$next=[...$clock,'turnSerial'=>12,'currentIndex'=>0];specialCheck(applicationAdvanceContactZones([$zone],$scene,$clock,$next,['tokens'=>[$source,$enemy]])===[],'Flames expire exactly at the next source turn start');
-$linked=[...$source,'id'=>'other-linked-source'];$next['order'][0]=$linked['id'];specialCheck(applicationAdvanceContactZones([$zone],$scene,$clock,$next,['tokens'=>[$linked,$enemy]])===[],'Linked source identity uses the canonical unit');
-specialCheck(applicationAdvanceContactZones([$zone],$scene,$clock,['active'=>false])===[],'Combat end clears a transient zone');
-$missing=[...$clock,'turnSerial'=>12,'round'=>3,'order'=>['token-monster']];specialCheck(applicationAdvanceContactZones([$zone],$scene,$clock,$missing,['tokens'=>[$enemy]])===[],'An absent source cannot leave an eternal zone');
+$next=[...$clock,'turnSerial'=>12,'currentIndex'=>0];
+$context=['tokens'=>[$source,$enemy]];
+$visual=applicationAdvanceContactZones([$zone],$scene,$clock,$next,$context);
+specialCheck(($visual[0]['visualOnlySince']??null)===['turnSerial'=>12,'round'=>2,'manualTurn'=>0],'Damage expires exactly at the next source turn start');
+$otherTurn=[...$next,'turnSerial'=>13,'currentIndex'=>1];
+$decorativeState=$insideState;
+$decorativeState['initiative']=$otherTurn;
+$decorativeState['devices']['contactZones']=$visual;
+specialCheck(applicationCollectContactZoneMovement($decorativeState,$enemy,['x'=>40,'y'=>40],['x'=>40,'y'=>60])===[]&&$decorativeState['devices']['contactZones']===$visual,'A real crossing of the decorative filament cannot hurt or consume a contact');
+$second=[...$next,'turnSerial'=>14,'round'=>3];
+$rewound=[...$otherTurn,'currentIndex'=>0,'turnSerial'=>14,'rewoundTurnSerial'=>14];
+specialCheck(applicationAdvanceContactZones($visual,$scene,$otherTurn,$rewound,$context)===$visual,'Revisiting the source turn preserves the decorative filament');
+specialCheck(applicationAdvanceContactZones($visual,$scene,$otherTurn,$second,$context)===[],'The drawing ends at the second source turn start');
+$linked=[...$source,'id'=>'other-linked-source'];
+$nextLinked=$next;$nextLinked['order'][0]=$linked['id'];
+$secondLinked=$second;$secondLinked['order'][0]=$linked['id'];
+$linkedContext=['tokens'=>[$linked,$enemy]];
+$linkedVisual=applicationAdvanceContactZones([$zone],$scene,$clock,$nextLinked,$linkedContext);
+specialCheck($linkedVisual===$visual&&applicationAdvanceContactZones($linkedVisual,$scene,$nextLinked,$secondLinked,$linkedContext)===[],'Linked source identity uses the canonical unit for both deadlines');
+specialCheck(applicationAdvanceContactZones($visual,$scene,$next,['active'=>false])===[],'Combat end clears a decorative transient zone');
+$missing=[...$clock,'turnSerial'=>12,'round'=>3,'order'=>['token-monster']];
+$missingContext=['tokens'=>[$enemy]];
+$missingVisual=applicationAdvanceContactZones([$zone],$scene,$clock,$missing,$missingContext);
+$sameRound=[...$missing,'turnSerial'=>13];$followingRound=[...$sameRound,'turnSerial'=>14,'round'=>4];
+specialCheck(($missingVisual[0]['visualOnlySince']['round']??null)===3
+    &&applicationAdvanceContactZones($missingVisual,$scene,$missing,$sameRound,$missingContext)===$missingVisual
+    &&applicationAdvanceContactZones($missingVisual,$scene,$sameRound,$followingRound,$missingContext)===[],'An absent source gets the remaining display round and cannot leave an eternal zone');
 foreach([['radiusCells'=>'0.08'],['radiusCells'=>true],['version'=>2],['style'=>'fire'],['maximumPerTargetTurn'=>2]]as$invalid){try{applicationContactZoneDefinition([...$definition,...$invalid]);specialCheck(false,'Invalid definition accepted');}catch(RuntimeException){specialCheck(true,'Strict contact definition rejects forged or future fields');}}
 $public=applicationPublicContactZones([$zone],['sceneId'=>$scene,'layerId'=>'ground','map'=>$state['map'],'visible'=>static fn($x,$y)=>$x<35]);
 specialCheck(count($public)===1&&$public[0]['style']==='silver-filament','Only whitelisted public geometry is projected');
 specialCheck(array_diff(array_keys($public[0]),['id','kind','sceneId','layerId','paths','radiusCells','style'])===[],'No controller, source, ledger, clock or execution leaks');
+specialCheck(applicationPublicContactZones($visual,['sceneId'=>$scene,'layerId'=>'ground','map'=>$state['map'],'visible'=>static fn($x,$y)=>$x<35])===$public,'Decorative geometry retains the same filtered public drawing without leaking its clock');
 specialCheck(array_filter(array_merge(...$public[0]['paths']),static fn($p)=>$p['x']>=35)===[],'No hidden path point is disclosed');
 specialCheck(applicationPublicContactZones([$zone],['sceneId'=>$scene,'layerId'=>'ground','paused'=>true,'visible'=>static fn()=>true])===[],'Pause hides environmental cues');
 
@@ -58,4 +86,12 @@ $undo=runCommand($db,'action.undo',['actionId'=>'action-contact-source-fixture',
 specialCheck($undo->status===200,'Whole originating action can be undone: '.json_encode($undo->body));$restored=$db->payload('token:scene-one:token-monster');
 specialCheck($restored['hp']===100&&$restored['x']===$position['x']&&$restored['y']===$position['y'],'Undo restores only causal damage and preserves the later victim position');
 specialCheck(($db->payload('devices')['contactZones']??[])===[],'Undo also removes the actual filament and contact ledger');
+$store=$db->payload('devices');
+$store['contactZones']=$visual;
+$db->put('devices',$store);
+$db->put('initiative:scene-one',$otherTurn);
+$move=runCommand($db,'token.move',['sceneId'=>$scene,'layerId'=>'ground','tokenId'=>'token-monster','x'=>40,'y'=>40],true);
+$decorativeEnemy=$db->payload('token:scene-one:token-monster');
+specialCheck($move->status===200&&$decorativeEnemy['y']===40&&$decorativeEnemy['hp']===100
+    &&$db->payload('devices')['contactZones']===$visual,'The real movement command crosses the decorative trail without adding damage or a contact receipt');
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

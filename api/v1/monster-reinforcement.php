@@ -5,7 +5,8 @@ declare(strict_types=1);
 function applicationMonsterReinforcementBaseName(string $name): string
 {
     $name = trim($name);
-    return trim(preg_replace('/(?:\s*·\s*Renfort\s+\d+)+$/iu', '', $name) ?? $name) ?: 'Créature';
+    $base = trim(preg_replace('/(?:\s*·\s*Renfort\s+\d+)+$/iu', '', $name) ?? $name);
+    return $base === '' ? 'Créature' : $base;
 }
 
 function applicationMonsterReinforcementIsGoblin(string $name, string $templateName): bool
@@ -174,14 +175,7 @@ function applyOnlineMonsterReinforcementCommand(PDO $connection, array &$records
     $templateName = (string) ($template['name'] ?? '');
     $renamedGoblin = !applicationMonsterReinforcementIsGoblin($sourceName, '') && applicationMonsterReinforcementIsGoblin($sourceName, $templateName);
     $base = applicationMonsterReinforcementBaseName($renamedGoblin ? $templateName : $sourceName);
-    $usedNames = array_fill_keys(array_column($sameLayer, 'name'), true);
-    for ($number = 1; ; ++$number) {
-        $suffix = ' · Renfort '.$number;
-        $prefix = substr($base, 0, 120 - strlen($suffix));
-        while (preg_match('//u', $prefix) !== 1) $prefix = substr($prefix, 0, -1);
-        $name = rtrim($prefix).$suffix;
-        if (!isset($usedNames[$name])) break;
-    }
+    $name = rtrim(onlineUtf8ByteSlice($base, 120));
     $now = (int) floor(microtime(true) * 1000);
     $maxMana = max(0, min(1000000000, (float) ($source['maxMana'] ?? 0)));
     $token = [

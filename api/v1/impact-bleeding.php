@@ -110,6 +110,9 @@ function onlineApplyImpactBleeding(
     $missing = array_diff(['activity', $clockKey, 'devices'], array_keys($records), array_keys($pending));
     if ($missing !== []) $records = array_replace($records, applicationDomainRecords($connection, array_values($missing)));
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $resistanceTarget = applicationElementalResistanceTarget($token,
+        onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity), $sceneId, $character);
+    if (applicationElementalStatusImmune($resistanceTarget, 'bleeding')) return null;
     $clock = $pending[$clockKey]['payload'] ?? applicationDomainPayload($records, $clockKey);
     $devices = $pending['devices']['payload'] ?? applicationDomainPayload($records, 'devices');
     $change = applicationApplyImpactBleeding($activity, $token, $sceneId, $clock, (int) ($devices['manualTurns'][$sceneId] ?? 0), $impactPulseId);

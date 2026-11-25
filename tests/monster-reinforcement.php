@@ -51,7 +51,7 @@ $response = runCommand($db, 'token.reinforce', $request, true, 'account-gm');
 specialCheck($response->status === 200, 'The GM creates a reinforcement: '.json_encode($response->body));
 $token = $response->body['token'];
 $key = 'token:scene-one:'.$token['id'];
-specialCheck($token['name'] === 'Gobelin 2 · Renfort 1' && $token['id'] !== $goblin['id']
+specialCheck($token['name'] === 'Gobelin 2' && $token['id'] !== $goblin['id']
     && $token['layerId'] === 'ground' && hypot($token['x']-50,$token['y']-50) >= 4, 'The arriving creature is independent and clear of the source.');
 specialCheck($token['hp'] === $token['maxHp'] && $token['maxHp'] >= 35 && $token['maxHp'] <= 50
     && preg_match('/^1d(?:2[0-9]|30)\+5$/', $token['damageDice']) === 1 && $token['weaponAttacks'][0]['formula'] === $token['damageDice'],
@@ -78,15 +78,21 @@ specialCheck($again->status === 200 && $again->body['deduplicated'] === true && 
 $wrongReplay = runCommand($db, 'token.reinforce', [...$request,'tokenId'=>'token-player'], true, 'account-gm');
 specialCheck($wrongReplay->status === 409, 'A request reference cannot be reused for a different source.');
 $second = runCommand($db, 'token.reinforce', [...$request,'tokenId'=>$token['id'],'requestId'=>'reinforcement-fixture-0002'], true, 'account-gm');
-specialCheck($second->status === 200 && $second->body['token']['name'] === 'Gobelin 2 · Renfort 2', 'Another reinforcement keeps the base name without nesting suffixes.');
+specialCheck($second->status === 200 && $second->body['token']['name'] === 'Gobelin 2'
+    && $second->body['token']['id'] !== $token['id'], 'Two reinforcements can share a creature name and keep independent identities.');
 $preserved = preserveApplicationAbilityExtensions('activity', ['resourceReceipts'=>[]], $db->payload('activity'));
 specialCheck(count($preserved['resourceReceipts']) === 2, 'A stale activity update preserves the server receipts.');
 $renamed = [...$goblin, 'name'=>'Glab'];
 $db->put($sourceKey, $renamed);
 $db->put('library', ['tokenLibrary'=>[[...$goblin, 'id'=>'old-goblin', 'name'=>'Gobelin']]]);
 $third = runCommand($db, 'token.reinforce', [...$request,'requestId'=>'reinforcement-fixture-0003'], true, 'account-gm');
-specialCheck($third->status === 200 && $third->body['token']['name'] === 'Gobelin · Renfort 1'
+specialCheck($third->status === 200 && $third->body['token']['name'] === 'Gobelin'
     && $db->payload($sourceKey) === $renamed, 'A renamed Gobelin keeps the original untouched and gives its reinforcement a stable species name.');
+$legacy = [...$goblin, 'name'=>'Loup gris 2 · Renfort 55 · Renfort 1', 'libraryTemplateId'=>null];
+$db->put($sourceKey, $legacy);
+$fourth = runCommand($db, 'token.reinforce', [...$request,'requestId'=>'reinforcement-fixture-0004'], true, 'account-gm');
+specialCheck($fourth->status === 200 && $fourth->body['token']['name'] === 'Loup gris 2'
+    && $db->payload($sourceKey) === $legacy, 'Only the new token drops legacy generated suffixes.');
 
 $db = specialFixture();
 $neutral = [...$goblin, 'bestiaryRole'=>'peaceful', 'bestiaryRank'=>'weak', 'bestiaryProfile'=>'ordinary'];

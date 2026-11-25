@@ -562,8 +562,9 @@ if (is_array($deduplicatedAttack)) {
     }
     if ($castingPlan === null && $chainGate === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
     if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
+    $sharedWeaponCast=($abilityForAttack['id']??'')===XAR_PRECISION_SERPENTAIRE_ID;
     $weaponOutcomes=[];
-    foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$joker||!empty($hitOutcome['automatic'])||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty($passiveState,$source,$id,$sceneId)-$targetPassivePenalty($recipient),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
+    foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$sharedWeaponCast||$joker||!empty($hitOutcome['automatic'])||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty($passiveState,$source,$id,$sceneId)-$targetPassivePenalty($recipient),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
     if($prepareDefenseOnly){$outcomes=[];foreach($liveAreaTargets as$recipient)$outcomes[$recipient['id']]=$weaponOutcomes[$recipient['id']]??$hitOutcome;return ['rolled'=>$hitRolled,'hasStatCheck'=>$hasCastingCheck,'hit'=>['raw'=>$hitRolled['rawD100']??null,'total'=>$hitRolled['total'],'formula'=>$hitRolled['formula']??$hitFormula,'statId'=>$hasCastingCheck?($stats[$statIndex]['id']??''):'','statLabel'=>$hasCastingCheck?($stats[$statIndex]['label']??'Statistique'):'Sans jet','outcome'=>$hitOutcome],'outcomes'=>$outcomes,...($weaponDraw!==null?['drawnItemId'=>$drawnItemId]:[])];}
     $infusionMissed=$weaponOutcomes!==[]?!array_filter($weaponOutcomes,static fn($o)=>!empty($o['success'])):!($hitOutcome['success']??false);
     if(!empty($infusion['payment'])&&$infusion['refundOnMiss']&&$infusionMissed)onlineDeviceRefund($connection,$records,$pending,$infusion['payment']);
@@ -609,6 +610,8 @@ if (is_array($deduplicatedAttack)) {
     }
     if ($damageComponents !== [] && $damageModifier !== 0) $damageComponents[0]['formula'] .= ($damageModifier > 0 ? '+' : '') . $damageModifier;
     $damageSpecification = [...(isset($isolatedFields['damageRepetitions'])?['damageRepetitions'=>$isolatedFields['damageRepetitions']]:[]),'onHitConditions' => $chainDefinition !== null ? [] : ($attackKind === 'ability' ? normalizeOnlineConditions($abilities[$abilityIndex]['onHitConditions'] ?? []) : $weaponConditions), 'damageFormula' => $damageFormulaWithModifier, 'damageType' => $damageType, 'damageRollMode' => 'normal', 'damagePercent' => $damagePercent, ...($damageComponents !== [] ? ['damageComponents' => $damageComponents] : []), ...($chainDefinition === null && $attackKind === 'ability' && validApplicationDamageOverTime($abilities[$abilityIndex]['damageOverTime'] ?? null) ? ['damageOverTime' => $abilities[$abilityIndex]['damageOverTime']] : [])];
+    $weaponDot=$attackKind==='weapon'?($weapons[$weaponIndex]['weaponDamageOverTime']??null):($selectedWeapon['weaponDamageOverTime']??null);
+    if($weaponDot!==null)$damageSpecification['weaponDamageOverTime']=$weaponDot;
     if ($damageElement !== null) $damageSpecification['damageElement'] = $damageElement;
     if(!empty($isolatedFields['conditionRider'])||!empty($chargeStrike['conditionRider'])||!empty($mechanicsDefinition['conditionRider']))$damageSpecification['conditionRider']=$isolatedFields['conditionRider']??$chargeStrike['conditionRider']??$mechanicsDefinition['conditionRider'];
     if(!empty($mechanicsDefinition['knockback']))$damageSpecification['knockback']=$mechanicsDefinition['knockback'];
@@ -787,7 +790,8 @@ if (is_array($deduplicatedAttack)) {
         }
     }
     $areaAttackResults = []; $areaVisualAttacks = [];
-    if (count($weaponTargets)>1 || $areaTargetCandidates !== [] && ($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0) {
+    if (count($weaponTargets)>1 && (!$sharedWeaponCast || !empty($hitOutcome['success']))
+        || $areaTargetCandidates !== [] && ($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0) {
         queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
         foreach ($areaTargetCandidates as $areaCandidate) {
             $areaId = (string) ($areaCandidate['id'] ?? '');
@@ -807,7 +811,7 @@ if (is_array($deduplicatedAttack)) {
             }
             if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
             $areaAttack = $attack;
-            foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'passivePercent', 'passivePreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
+            foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'weaponDotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'passivePercent', 'passivePreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
             $areaAttack['id'] = 'attack-' . randomToken(12);
             $areaAttack['requestId'] = 'area-' . randomToken(12);
             $areaAttack['targetTokenId'] = $areaId;

@@ -129,8 +129,9 @@ function dsToken(array $state,array $owner,array $args): array {
     dsError('Placez votre personnage sur le niveau courant avant cette action.');
 }
 function dsAssertActions(array $state,array $token,string $sceneId):void {
+    $resistanceTarget=null;
     foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['remainingTurns']>0&&($condition['blocksActions']??false)&&($condition['targetTokenId']===($token['id']??'')||unitUsesCharacterSheet($token)&&!empty($condition['targetCharacterId'])&&$condition['targetCharacterId']===($token['characterId']??''))) {
-        if (applicationElementalConditionSuppressed($token, $condition['label'] ?? null, array_column($state['characters'] ?? [], null, 'id'))) continue;
+        if (applicationElementalConditionSuppressed($resistanceTarget??=applicationElementalResistanceTarget($token,$state,$sceneId), $condition['label'] ?? null)) continue;
         dsError('Ce personnage est '.strtolower($condition['label']).' et ne peut pas agir jusqu’à la fin de cet effet.',423);
     }
 }
@@ -585,6 +586,70 @@ function applicationAdvanceDevices(array $state,array $previous,array $context):
     $advanced['state']['initiative']=$state['initiative'];
     return $advanced;
 }
+function applicationAdvanceElementalConditionSaves(array &$state,array $previous,array $current,array $context,array $effects): void
+{
+    if (!empty($context['manual']) || empty($current['active']) || ($current['turnsStarted']??true)!==true) return;
+    $combatId=(string)($current['combatId']??'');
+    if ($combatId==='' || (($previous['combatId']??'')===$combatId && ($previous['turnsStarted']??true)===true
+        && ($current['turnSerial']??0)<=($previous['turnSerial']??0))) return;
+    $sceneId=$state['activeSceneId'];
+    $store=&$state['devices'];
+    $round=max(1,(int)($current['round']??1));
+    $clock=$store['elementalSaveTurns'][$sceneId]??[];
+    if (($clock['combatId']??'')!==$combatId) $clock=['combatId'=>$combatId,'roundByHolder'=>[]];
+    if (($current['rewoundTurnSerial']??null)===($current['turnSerial']??0)) {
+        $previousRound=max(1,(int)($previous['round']??1));
+        $reached=$round<$previousRound ? array_fill_keys($current['order']??[],$round) : [];
+        foreach (array_slice($previous['order']??[],0,max(0,(int)($previous['currentIndex']??0)+1)) as $playedId)
+            $reached[$playedId]=$previousRound;
+        foreach ($state['map']['tokens'] as $played) if (isset($reached[$played['id']])) {
+            $holder=applicationEnhancementHolder($played);
+            $clock['roundByHolder'][$holder]=max($clock['roundByHolder'][$holder]??0,$reached[$played['id']]);
+        }
+        if ($clock['roundByHolder']!==[]) $store['elementalSaveTurns'][$sceneId]=$clock;
+        return;
+    }
+    $tokenId=$current['order'][$current['currentIndex']??0]??'';
+    $token=$tokenId!=='' ? ($state['map']['tokens'][dsIndex($state['map']['tokens'],$tokenId)]??null) : null;
+    if ($token===null || applicationIsNonCombatant($token) || onlineManualDeath($token)) return;
+    $holder=applicationEnhancementHolder($token);
+    if (($clock['roundByHolder'][$holder]??0)>=$round) return;
+    $characterId=applicationAbilityCastingOwner($token)['characterId'];
+    $owner=$state['characters'][dsIndex($state['characters'],$characterId)]??$token;
+    if (onlineManualDeath($owner)) return;
+    $labels=normalizeOnlineConditions($owner['conditions']??[],$owner['condition']??'');
+    $sameUnit=static fn(array $condition):bool=>($condition['sceneId']??'')===$sceneId
+        && (($condition['targetTokenId']??'')===$tokenId || ($characterId!=='' && ($condition['targetCharacterId']??'')===$characterId));
+    $timedLabels=[];
+    foreach ($store['timedConditions'] as $condition)
+        if ($sameUnit($condition) && ($condition['remainingTurns']??0)>0) $timedLabels[]=normalizeOnlineCondition($condition['label']??null);
+    foreach ($effects as $effect) {
+        $condition=$effect['condition']??[];
+        if (($effect['type']??'')==='condition.expire' && !empty($condition['introduced']) && $sameUnit($condition)
+            && !in_array($condition['label'],$timedLabels,true)) $labels=array_diff($labels,[$condition['label']]);
+    }
+    $groups=[];
+    foreach ([...$labels,...$timedLabels] as $label) {
+        $canonical=applicationElementalSavingConditionLabel($label);
+        if ($canonical!==null) $groups[$canonical][$label]=true;
+    }
+    if ($groups===[]) return;
+    $clock['roundByHolder']=array_intersect_key($clock['roundByHolder'],array_fill_keys(array_map('applicationEnhancementHolder',$state['map']['tokens']),true));
+    $clock['roundByHolder'][$holder]=$round;
+    $store['elementalSaveTurns'][$sceneId]=$clock;
+    $resistanceTarget=applicationElementalResistanceTarget($token,$state,$sceneId,$owner);
+    $recovered=[];
+    foreach ($groups as $canonical=>$variants) {
+        $save=applicationElementalConditionSave($resistanceTarget,$canonical,$context['elementalSaveDie']??null);
+        if ($save===null) continue;
+        applicationRecordElementalConditionSave($state,$owner,$sceneId,$canonical,$save,$token);
+        if (!$save['success']) continue;
+        $recovered[$canonical]=true;
+        foreach (array_keys($variants) as $label) onlineDeviceCondition($state,$tokenId,$label,false);
+    }
+    if ($recovered!==[]) $store['timedConditions']=array_values(array_filter($store['timedConditions'],
+        static fn(array $condition):bool=>!$sameUnit($condition)||!isset($recovered[applicationElementalSavingConditionLabel($condition['label']??null)])));
+}
 function applicationAdvanceDevicesForClock(array $state,array $previous,array $context): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
     applicationAdvanceSpellFields($state,$previous,$context,$effects);
@@ -592,6 +657,8 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
     $state['map']['tokens']=applicationAdvanceTacticalTokens($state['map']['tokens']??[],$previous,$current,($context['manual']??false)===true);
     if(($previous['active']??false)===true&&($current['active']??false)!==true){
         $state=applicationFinishCombatRounds($state,$sceneId,$previous);$store=&$state['devices'];
+        unset($store['elementalSaveTurns'][$sceneId]);
+        if (empty($store['elementalSaveTurns'])) unset($store['elementalSaveTurns']);
         foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId)$effects[]=['type'=>'condition.expire','condition'=>$condition];
         $store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($c)=>$c['sceneId']!==$sceneId));
         $store['pendingRolls']=array_values(array_filter($store['pendingRolls'],static fn($p)=>($p['sceneId']??'')!==$sceneId||!in_array($p['type']??'',['condition','escape','opportunity'],true)));
@@ -599,15 +666,23 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
         return ['state'=>$state,'effects'=>$effects];
     }
     $manual=($context['manual']??false)===true;
-    if($manual){$store['manualTurns'][$sceneId]=($store['manualTurns'][$sceneId]??0)+1;$state['attackEnhancements']=applicationAdvanceAttackEnhancements($state['attackEnhancements']??[],$sceneId,$previous,$current,true);}
+    if($manual){
+        $store['manualTurns'][$sceneId]=($store['manualTurns'][$sceneId]??0)+1;
+        $state['attackEnhancements']=applicationAdvanceAttackEnhancements($state['attackEnhancements']??[],$sceneId,$previous,$current,true);
+        if(!empty($store['contactZones']))$store['contactZones']=applicationAdvanceContactZones($store['contactZones'],$sceneId,$previous,$current,['manual'=>true,'manualTurn'=>$store['manualTurns'][$sceneId]]);
+    }
     if(empty($current['active']))applicationAdvanceFixedStructures($state,$previous,$effects,$context,$manual);
-    if(!$manual&&(!($current['active']??false)||!($previous['active']??false)||($current['combatId']??'')!==($previous['combatId']??'')||($current['turnSerial']??0)<=($previous['turnSerial']??0)))return ['state'=>$state,'effects'=>$effects];
+    if(!$manual&&(!($current['active']??false)||!($previous['active']??false)||($current['combatId']??'')!==($previous['combatId']??'')||($current['turnSerial']??0)<=($previous['turnSerial']??0))){
+        applicationAdvanceElementalConditionSaves($state,$previous,$current,$context,$effects);
+        return ['state'=>$state,'effects'=>$effects];
+    }
     foreach($store['timedConditions'] as &$condition) {
         if($condition['sceneId']===$sceneId&&($condition['clockCombatId']??'')!==($current['combatId']??'')){$condition['clockCombatId']=$current['combatId']??'';$condition['lastTurnSerial']=-1;}
         if($condition['sceneId']===$sceneId&&($condition['expiry']??'')==='end-next-turn'&&!$manual){$wasStarted=($condition['hasStarted']??false)===true;if(($current['order'][$current['currentIndex']??0]??'')===$condition['targetTokenId']&&($current['turnSerial']??0)>($condition['createdTurnSerial']??0)){$condition['hasStarted']=true;$condition['escapeWindowClosed']=false;}if(!$wasStarted)continue;}
         if($condition['sceneId']!==$sceneId||!$manual&&($condition['targetTokenId']!==($previous['order'][$previous['currentIndex']??0]??'')||$condition['lastTurnSerial']>=($current['turnSerial']??0)))continue;
         $condition['remainingTurns']--;$condition['lastTurnSerial']=$current['turnSerial']??0;if($condition['remainingTurns']<=0)$effects[]=['type'=>'condition.expire','condition'=>$condition];
     }unset($condition);$store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($entry)=>$entry['remainingTurns']>0));
+    applicationAdvanceElementalConditionSaves($state,$previous,$current,$context,$effects);
     if(!empty($current['active']))applicationAdvanceFixedStructures($state,$previous,$effects,$context,$manual);
     foreach($store['devices'] as &$device) {
         if($device['status']!=='active'||$device['sceneId']!==$sceneId)continue;

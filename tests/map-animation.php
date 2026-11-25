@@ -31,6 +31,14 @@ $animation = [
     'plan' => ['version' => 1, 'layers' => [
         ['kind' => 'water', 'intensity' => .45, 'speed' => .32, 'direction' => 25, 'fish' => .35,
             'mask' => ['width' => 4, 'height' => 4, 'rle' => base64_encode(chr(0).chr(8).chr(255).chr(8))]],
+        ...array_map(static fn (string $kind): array => [
+            'kind' => $kind, 'intensity' => .3, 'speed' => .2, 'direction' => 45, 'fish' => 0,
+            'polygons' => [[[.20, .25], [.40, .25], [.40, .45], [.20, .45]]],
+        ], ['mist', 'cloud', 'sun', 'drift', 'particles']),
+        ['kind' => 'day-night', 'intensity' => .8, 'speed' => 1, 'direction' => 0, 'fish' => 0, 'cycleSeconds' => 1800,
+            'polygons' => [[[0, 0], [1, 0], [1, 1], [0, 1]]]],
+        ['kind' => 'rain', 'intensity' => .7, 'speed' => .6, 'direction' => 105, 'fish' => 0, 'cycleSeconds' => 95,
+            'polygons' => [[[0, 0], [1, 0], [1, 1], [0, 1]]]],
     ]],
 ];
 $apply = [
@@ -50,6 +58,10 @@ $badAnimation = $animation;
 $badAnimation['plan']['layers'][0]['mask']['rle'] = base64_encode(chr(255).chr(17));
 requireTactical(runCommand($db, 'map.animation', [...$apply, 'animation' => $badAnimation], true)->status === 400,
     'Le masque doit couvrir la taille déclarée avec des longueurs valides.');
+$badCycle = $animation;
+$badCycle['plan']['layers'][6]['cycleSeconds'] = 1801;
+requireTactical(runCommand($db, 'map.animation', [...$apply, 'animation' => $badCycle], true)->status === 400,
+    'Une durée hors des bornes est refusée avant toute modification.');
 $saved = runCommand($db, 'map.animation', $apply, true);
 requireTactical($saved->status === 200 && $saved->body['animationId'] === $id,
     'Le MJ applique son aperçu sur le niveau : '.json_encode($saved->body));
@@ -71,6 +83,7 @@ $identity = ['id' => 'account-player', 'effective_mode' => 'player', 'permanent_
 foreach ([false, true] as $streamPov) {
     $projection = publicPlayerState($stored, $identity, [], $streamPov)['map'];
     requireTactical(($projection['mapAnimation']['id'] ?? '') === $id
+        && $projection['mapAnimation']['plan'] === $animation['plan']
         && !array_key_exists('comment', $projection['mapAnimation'])
         && !isset($projection['layers'], $projection['mapAnimationRevision']),
         'Chaque projection publique contient seulement le rendu du niveau diffusé.');

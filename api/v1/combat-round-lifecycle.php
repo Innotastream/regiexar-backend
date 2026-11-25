@@ -40,8 +40,11 @@ function applicationDamageOverTimeAfterCombat(array $dot): ?array {
     $stackedVenom = ($dot['family'] ?? '') === 'poison' && !empty($dot['sourceEffectId']);
     $impactBleeding = ($dot['family'] ?? '') === 'bleeding'
         && preg_match('/^impact-bleed-[a-f0-9]{32}$/D', (string)($dot['id'] ?? '')) === 1;
-    return ($dot['remainingTurns'] ?? 0) > 0 && ($stackedVenom || $impactBleeding)
+    return ($dot['remainingTurns'] ?? 0) > 0 && ($stackedVenom || $impactBleeding || applicationIsWeaponBleeding($dot))
         ? [...$dot, 'combatId'=>'', 'lastTurnSerial'=>0] : null;
+}
+function applicationIsWeaponBleeding(array $dot):bool {
+    return ($dot['family']??'')==='bleeding'&&str_starts_with((string)($dot['id']??''),'weapon-dot-');
 }
 
 function applicationFinishCombatRounds(array $state,string $sceneId,array $previous,?string $now=null):array {

@@ -66,7 +66,16 @@ function equipmentLoadoutMatches(mixed $expected,array $current):bool {
 function equipmentInventory(array $items,string $unitId):array {
     $items=applicationWeaponCatalogPresets($items);
     $templates=array_column($items['templates']??[],null,'id');$result=[];
-    foreach($items['instances']??[] as $item)if(($item['location']['kind']??'')==='inventory'&&($item['location']['characterId']??'')===$unitId){$template=$templates[$item['templateId']]??[];$equipment=$item['equipment']??$template['equipment']??null;if($equipment!==null){$normalized=normalizeEquipment($equipment);$targetCount=equipmentWeaponTargetCount($normalized,$template['equipment']??null,$item['templateId']);$result[]=['id'=>$item['id'],'name'=>$item['name']??$template['name'],...$normalized,...($targetCount!==null?['targetCount'=>$targetCount]:[])];}}
+    foreach($items['instances']??[] as $item)if(($item['location']['kind']??'')==='inventory'&&($item['location']['characterId']??'')===$unitId){
+        $template=$templates[$item['templateId']]??[];
+        $equipment=$item['equipment']??$template['equipment']??null;
+        if($equipment===null)continue;
+        $normalized=normalizeEquipment($equipment);
+        $targetCount=equipmentWeaponTargetCount($normalized,$template['equipment']??null,$item['templateId']);
+        $dot=$normalized['kind']==='weapon'?applicationWeaponCatalogDamageOverTime($item['templateId']):null;
+        $result[]=['id'=>$item['id'],'name'=>$item['name']??$template['name'],...$normalized,
+            ...($targetCount!==null?['targetCount'=>$targetCount]:[]),...($dot!==null?['weaponDamageOverTime'=>$dot]:[])];
+    }
     return $result;
 }
 function carriedTorch(array $state,array $source):?array {
@@ -113,7 +122,8 @@ function resolveEquipmentAttack(array $attack,array $source,array $state,bool $s
     if(!validEffectFormula($formula))equipmentFailure('Les dégâts cumulés de ce set dépassent la formule autorisée.');
     $reach='ranged';foreach(['melee','reach','ranged'] as $kind)if(in_array($kind,array_column($selected,'reach'),true)){$reach=$kind;break;}
     $targetCount=!array_key_exists('targetCount',$attack)&&$binding['kind']==='item'&&count($selected)===1?($selected[0]['targetCount']??null):null;
-    return [...$attack,'formula'=>$formula,'damageType'=>$parts[0]['type'],'damageComponents'=>$parts,'reach'=>$reach,'projectile'=>in_array(true,array_column($selected,'projectile'),true),'finesse'=>($selected[0]['finesse']??false)===true,'equipmentItemIds'=>array_column($selected,'id'),'equipmentNames'=>array_column($selected,'name'),'naturalWeapon'=>false,...($targetCount!==null?['targetCount'=>$targetCount]:[])];
+    $dot=array_column($selected,'weaponDamageOverTime')[0]??null;
+    return [...$attack,'formula'=>$formula,'damageType'=>$parts[0]['type'],'damageComponents'=>$parts,'reach'=>$reach,'projectile'=>in_array(true,array_column($selected,'projectile'),true),'finesse'=>($selected[0]['finesse']??false)===true,'equipmentItemIds'=>array_column($selected,'id'),'equipmentNames'=>array_column($selected,'name'),'naturalWeapon'=>false,...($targetCount!==null?['targetCount'=>$targetCount]:[]),...($dot!==null?['weaponDamageOverTime'=>$dot]:[])];
 }
 function equipmentTorchAttack(array $state,array $source):?array {
     $light=carriedTorch($state,$source);return $light===null?null:['id'=>'torch-'.$light['id'],'name'=>$light['name']??'Torche','formula'=>'1d10+3','damageType'=>'magical','damageElement'=>'fire','reach'=>'melee','projectile'=>false,'targetCount'=>1,'onHitConditions'=>[],'torchLightId'=>$light['id'],'equipmentItemIds'=>[],'naturalWeapon'=>false];
@@ -177,8 +187,10 @@ function applicationInventoryWeaponForAbilityDraw(array $rule, array $weapons, a
     $templateId = array_key_first($options);
     if ($templateId === null) return null;
     $name = $templates[$templateId]['name'] ?? $rule['name'];
+    $dot=applicationWeaponCatalogDamageOverTime($templateId);
     return [...normalizeEquipment($options[$templateId]), 'id'=>'ability-draw-'.$templateId, 'name'=>$name,
-        'equipmentItemIds'=>[], 'equipmentTemplateIds'=>[$templateId], 'equipmentNames'=>[$name], 'naturalWeapon'=>false];
+        'equipmentItemIds'=>[], 'equipmentTemplateIds'=>[$templateId], 'equipmentNames'=>[$name], 'naturalWeapon'=>false,
+        ...($dot!==null?['weaponDamageOverTime'=>$dot]:[])];
 }
 function requireEnchantedWeapon(array $state,array $recipient,?callable $pickIndex=null):array {
     $weapons = enchantableWeapons($state,$recipient);

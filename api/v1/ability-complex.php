@@ -90,23 +90,27 @@ function onlineComplexAbilitySceneTokens(
     string $sceneId,
     array $map,
     string $accountId,
-    bool $isGm
+    bool $isGm,
+    array $pending = []
 ): array {
     $records = array_replace($records, applicationDomainRecords($connection));
+    $enhancementState = onlineAttackEnhancementState($connection, $records, $pending, $sceneId);
     $tokens = [];
     foreach ($records as $key => $_record) {
         if (!str_starts_with($key, 'token:' . $sceneId . ':')) continue;
-        $token = applicationDomainPayload($records, $key);
+        $token = onlineLightPendingDomainPayload($records, $pending, $key);
         if ($token === [] || !onlineTokenOnActiveLayer($token, $map)) continue;
         $characterId = (string) ($token['characterId'] ?? '');
-        $character = $characterId !== '' ? applicationDomainPayload($records, 'character:' . $characterId) : [];
+        $character = $characterId !== '' ? onlineLightPendingDomainPayload($records, $pending, 'character:' . $characterId) : [];
         if ($character !== []) $token = synchronizeOnlineCharacterToken($token, $character);
         if (!$isGm && ($token['hidden'] ?? false) === true
             && onlineTokenControllerIdFromRecords($connection, $records, $token) !== $accountId) continue;
         if (!$isGm && onlineTokenControllerIdFromRecords($connection, $records, $token) !== $accountId
             && !onlineAttackTargetVisible($connection, $records, $map, $token, $accountId, $sceneId)) continue;
         $token['controllerAccountId'] = onlineTokenControllerIdFromRecords($connection, $records, $token);
-        $token['stats']=onlineEnhancedStatRows($connection,$records,[],$token,$sceneId);
+        $sheet = unitUsesCharacterSheet($token) && $character !== [] ? $character : null;
+        $token['stats'] = applicationEnhancedStatRows($token, $enhancementState, $sceneId, $sheet);
+        $token = applicationElementalResistanceTarget($token, $enhancementState, $sceneId, $sheet);
         $token['weaponAttacks']=abilityEquipmentAttackRows($token['weaponAttacks']??[],$token,onlineEquipmentState($connection,$records,[],$sceneId,$map));
         $tokens[] = $token;
     }
@@ -489,7 +493,7 @@ function onlineUseComplexAbility(
             rejectOnlineCommand($connection, 423, 'La table est verrouillée.', 'table_locked');
         }
     }
-    $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, $isGm);
+    $tokens = onlineComplexAbilitySceneTokens($connection, $records, $sceneId, $map, $accountId, $isGm, $pending);
     $staged=count(array_filter($current['workflow']['steps'],static fn($s)=>!empty($s['charge']['staged'])||!empty($s['pathStrike']['staged'])))>0;
     if($staged){
         $visibleIds=array_column($tokens,'id');foreach(onlineSceneTokensForLights($connection,$records,$pending,$sceneId)as$t)if(!in_array($t['id'],$visibleIds,true))$tokens[]=[...$t,'hidden'=>true];

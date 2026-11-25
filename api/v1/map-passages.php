@@ -190,8 +190,9 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         foreach($travelers as $traveler)if(($traveler['layerId']??'ground')!==($token['layerId']??'ground'))passageFailure('Les cavaliers de cette monture ont changé. Actualisez son menu.');
         foreach($map['tokens'] as $other)if(!empty($other['mountedOnTokenId'])&&$other['mountedOnTokenId']!==$token['id']&&in_array($other['mountedOnTokenId'],$travelerIds,true))passageFailure('Les cavaliers de cette monture ont changé. Actualisez son menu.');
         foreach(array_slice($travelers,1) as $traveler)if(!empty($traveler['immovable']))passageFailure('Un cavalier est inamovible : la traversée de la monture est bloquée.');
+        $resistanceTarget=null;
         if(!$isGm)foreach($state['devices']['timedConditions']??[] as $condition)if($condition['sceneId']===$sceneId&&$condition['blocksMovement']&&($condition['remainingTurns']??1)>0&&($condition['targetTokenId']===$token['id']||unitUsesCharacterSheet($token)&&($condition['targetCharacterId']??'')===$token['characterId'])
-            && !applicationElementalConditionSuppressed($token, $condition['label'] ?? null, array_column($state['characters'] ?? [], null, 'id')))
+            && !applicationElementalConditionSuppressed($resistanceTarget??=applicationElementalResistanceTarget($token,$state,$sceneId), $condition['label'] ?? null))
                 passageFailure('Ce pion est immobilisé jusqu’à la fin de son effet.',423);
         if(!empty($token['immovable'])||($token['healthOverride']??'')==='dead'||($token['maxHp']??0)>0&&($token['hp']??0)<=0)passageFailure('Ce pion ne peut pas emprunter le passage.');
         if((float)$token['x']!==(float)($args['expectedX']??-1)||(float)$token['y']!==(float)($args['expectedY']??-1))passageFailure('Ce pion s’est déplacé. Actualisez son menu.');

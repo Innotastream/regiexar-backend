@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__.'/fixed-structure-size.php';
 require_once __DIR__.'/ability-description-presets.php';
 require_once __DIR__.'/path-strike-presets.php';
+const XAR_PRECISION_SERPENTAIRE_ID='ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066';
 function applicationSimpleAbilityPresets(): array
 {
     static $presets = null;
@@ -46,6 +47,33 @@ function applicationConfiguredActiveAbilityWorkflow(array $execution, array $wor
     }
     return [$workflow, $rulePreset];
 }
+function applicationSacredCircleDescription(array $effect): string
+{
+    $aura = $effect['aura'];
+    $bonuses = $effect['bonuses'] ?? [];
+    $turns = (int)($effect['turns'] ?? 0);
+    $duration = $turns === 1 ? '1 tour' : "$turns tours";
+    $recipients = [];
+    foreach (['affectCaster'=>'au lanceur','affectAllies'=>'aux alliés','affectEnemies'=>'aux ennemis'] as $key=>$label) {
+        if (!empty($aura[$key])) $recipients[] = $label;
+    }
+    $points = [];
+    foreach (['physicalResistance'=>'physique','magicalResistance'=>'magique','fireResistance'=>'feu',
+        'iceResistance'=>'glace','poisonResistance'=>'poison','bleedingResistance'=>'saignement'] as $key=>$label) {
+        $amount = $bonuses[$key] ?? 0;
+        if ($amount) $points[] = $label.' '.($amount > 0 ? '+' : '').$amount;
+    }
+    $attacks = ($effect['trigger'] ?? '') === 'all-attacks' ? 'les attaques et les compétences offensives' : 'les attaques concernées';
+    $resultBonus = (int)($bonuses['attackResultBonus'] ?? 0);
+    $damage = (int)($effect['formula'] ?? 0);
+    return implode("\n\n", array_filter([
+        "Pendant $duration du lanceur, un cercle de {$aura['radiusCells']} cases de rayon suit ses déplacements.",
+        $recipients ? 'Les bonus profitent '.implode(' et ', $recipients).' dans le cercle, sur le même étage. Sortir du cercle suspend les bonus. Y revenir les réactive.' : '',
+        $resultBonus !== 0 ? 'Le résultat du d100 est '.($resultBonus > 0 ? 'réduit' : 'augmenté').' de '.abs($resultBonus)." pour $attacks." : '',
+        $damage > 0 ? '+'.$damage.' dégâts'.(($effect['damageType'] ?? '') === 'inherit' ? ' du même type que l’attaque' : '').' sur une touche.' : '',
+        $points ? 'Résistances en points de pourcentage — '.implode(', ', $points).'.' : '',
+    ]));
+}
 function applicationConfiguredAbilityRules(array $source): array {
     $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
@@ -71,10 +99,17 @@ function applicationConfiguredAbilityRules(array $source): array {
     if(($preset['retired']??false)===true)return $configured;
     if(isset($preset['enhancementAuraUpgrade'])&&($source['effect']??null)===($preset['effect']??null)&&($configured['attackEnhancement']['mode']??null)===($preset['enhancementMode']??null)&&is_array($configured['attackEnhancement']['aura']??null)){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
-        if($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])return $configured;
-        $description=$configured['description']??null;
-        if(is_string($description))foreach($preset['descriptionReplacements']??[] as [$from,$to])$description=str_replace($from,$to,$description);
-        return [...$configured,'attackEnhancement'=>[...$configured['attackEnhancement'],'aura'=>[...$configured['attackEnhancement']['aura'],...$preset['enhancementAuraUpgrade']]],...(is_string($description)?['description'=>$description]:[]),'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
+        $includedCaster=($applied['id']??null)===$preset['presetId'];
+        if($includedCaster&&$applied['revision']>=$preset['revision'])return $configured;
+        $enhancement=$configured['attackEnhancement'];
+        $upgraded=$includedCaster&&$applied['revision']>=$preset['enhancementBonusRevision']?$enhancement:[...$enhancement,
+            ...($includedCaster?[]:['aura'=>[...$enhancement['aura'],...$preset['enhancementAuraUpgrade']]]),
+            'bonuses'=>[...$preset['enhancementBonusUpgrade'],...(is_array($enhancement['bonuses']??null)?$enhancement['bonuses']:[])]];
+        $previous=(string)($configured['description']??'');
+        if(!$includedCaster)foreach($preset['descriptionReplacements'] as [$from,$to])$previous=str_replace($from,$to,$previous);
+        $previous=trim(str_replace([$preset['enhancementLegacyDescriptionNote'],'Le lanceur et les alliés présents dans le cercle gagnent les bonus.','Le lanceur bénéficie lui aussi de ces bonus.'],'',$previous));
+        $description=implode("\n\n",array_filter([applicationSacredCircleDescription($upgraded),$previous]));
+        return [...$configured,'attackEnhancement'=>$upgraded,'description'=>$description,'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
     }
     if(isset($preset['workflowUpgrade'])&&($source['effect']??null)===($preset['effect']??null)){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
@@ -112,6 +147,11 @@ function applicationAbilityRulePreset(mixed $value): ?array {
 
 function applicationConfiguredAttackEnhancement(string $abilityId,array $enhancement):array {
     $preset = applicationSimpleAbilityPresets()[$abilityId] ?? null;
+    if(isset($preset['enhancementBonusUpgrade'],$enhancement['aura'])&&($enhancement['mode']??'')===$preset['enhancementMode']
+        &&!(($enhancement['rulePreset']['id']??null)===$preset['presetId']&&($enhancement['rulePreset']['revision']??0)>=$preset['enhancementBonusRevision']))
+        return [...$enhancement,
+            ...(($enhancement['rulePreset']['id']??null)===$preset['presetId']||!is_array($enhancement['aura'])?[]:['aura'=>[...$enhancement['aura'],...$preset['enhancementAuraUpgrade']]]),
+            'bonuses'=>[...$preset['enhancementBonusUpgrade'],...(is_array($enhancement['bonuses']??null)?$enhancement['bonuses']:[])]];
     if(!isset($preset['attackEnhancementTrigger'])||($enhancement['mode']??'')!=='on-attack-dot')return $enhancement;
     $patch=[];if(!array_key_exists('trigger',$enhancement))$patch['trigger']=$preset['attackEnhancementTrigger'];if(!array_key_exists('weaponIds',$enhancement)&&isset($preset['attackEnhancementWeaponIds']))$patch['weaponIds']=$preset['attackEnhancementWeaponIds'];
     return $patch!==[]?[...$enhancement,...$patch]:$enhancement;
