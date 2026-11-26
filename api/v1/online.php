@@ -2970,6 +2970,15 @@ function onlineCharacterLuckThreshold(PDO $connection, array &$records, array $p
     return is_array($record) ? ($record['rollCount'] === 0 ? 50 : (int) round(round($record['rawTotal'] / $record['rollCount'], 2))) : null;
 }
 
+function onlineIndependentCloneLuckThreshold(PDO $connection, array &$records, array $pending, array $token): ?int
+{
+    $isClone = ($token['independentClone'] ?? false) === true
+        || validApplicationDomainIdentifier($token['cloneSourceTokenId'] ?? null, 80);
+    if (!$isClone || unitUsesCharacterSheet($token)) return null;
+    $unitId = unitIdForToken($token);
+    return $unitId === '' ? null : (onlineCharacterLuckThreshold($connection, $records, $pending, $unitId) ?? 50);
+}
+
 function onlineRecordCharacterLuckD100(
     PDO $connection,
     array &$records,
@@ -7616,7 +7625,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
             $rollLayerId = $tokenKey !== ''
                 ? onlineTokenLayerId($token, applicationDomainPayload($records, 'map:' . $sceneId))
                 : '';
-            $rollCharacterId = trim((string) ($token['characterId'] ?? $characterId));
+            $cloneLuckThreshold = $kind === 'luck' && $tokenKey !== ''
+                ? onlineIndependentCloneLuckThreshold($connection, $records, $pending, $token) : null;
+            $rollCharacterId = $cloneLuckThreshold === null ? trim((string) ($token['characterId'] ?? $characterId)) : '';
             $authoritySignature = $requestId !== '' ? onlinePlayerTokenRollAuthoritySignature(
                 $sceneId,
                 $rollLayerId,
@@ -7645,7 +7656,9 @@ function commandOnlineState(PDO $connection, array $configuration): never
                 }
                 $outcome = in_array($kind, ['stat', 'hit'], true)
                     ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $threshold, $modifier, $resultModifier, $kind === 'stat', $kind === 'stat',applicationRollCriticalFailureProtected($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))
-                    : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, onlineCharacterLuckThreshold($connection, $records, $pending, $rollCharacterId),0,0,true,false,applicationRollCriticalFailureProtected($token,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)) : null);
+                    : ($kind === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null,
+                        $cloneLuckThreshold ?? onlineCharacterLuckThreshold($connection, $records, $pending, $rollCharacterId),
+                        0, 0, true, false, applicationRollCriticalFailureProtected($token, $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity'), $sceneId)) : null);
                 if ($outcome !== null && in_array($kind, ['stat', 'hit'], true)) {
                     $outcome['resultCustomized'] = $modifierMode === 'result';
                 }
