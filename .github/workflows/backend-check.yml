@@ -114,7 +114,6 @@ jobs:
           php tests/audit-device-authority.php
           php tests/cosmetic-forms.php
           php tests/active-items-poisons.php
-          php tests/poison-runtime.php
           php tests/metamorphosis-duration.php
       - name: Unit inventories, independent clones and linked passages
         run: |

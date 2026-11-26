@@ -105,8 +105,6 @@ function validApplicationAbilityEffects(array $entry): bool {
     if(isset($entry['singleEnemy'])){if(($entry['effect']??'damage')!=='damage'||!is_array($entry['singleEnemy'])||!is_int($entry['singleEnemy']['damageRepetitions']??null)||$entry['singleEnemy']['damageRepetitions']<1||$entry['singleEnemy']['damageRepetitions']>10)return false;try{if(isset($entry['singleEnemy']['conditionRider'])&&dsRider($entry['singleEnemy']['conditionRider'])===null)return false;}catch(RuntimeException){return false;}}
     if(isset($entry['weaponDamageMultiplier'])&&(!is_int($entry['weaponDamageMultiplier'])||$entry['weaponDamageMultiplier']<1||$entry['weaponDamageMultiplier']>10||empty($entry['useWeaponDamage'])))return false;
     if(isset($entry['manualD100'])&&(!is_bool($entry['manualD100'])||$entry['manualD100']&&!in_array($entry['effect']??'',['movement','healing','enhancement','summoning','metamorphosis'],true)))return false;
-    if(isset($entry['visualD75'])&&(!is_bool($entry['visualD75'])||$entry['visualD75']
-        && (($entry['effect']??'')!=='movement'||!empty($entry['manualD100'])||!empty($entry['castingStatId']))))return false;
     try{applicationOutcomeMessages($entry['outcomeMessages']??null);}catch(RuntimeException){return false;}
     if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement', 'enhancement'], true)
         || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
@@ -188,7 +186,6 @@ function applicationAbilityEffectFields(array $entry): array {
     if($effect==='damage'&&applicationAttackApproach($entry['attackApproach']??null)!==null)$conditions['attackApproach']=applicationAttackApproach($entry['attackApproach']);
     if(in_array($entry['reach']??'', ['melee','reach','ranged'],true))$conditions['reach']=$entry['reach'];
     if(!empty($entry['manualD100']))$conditions['manualD100']=true;
-    if(($entry['visualD75']??false)===true&&$effect==='movement')$conditions['visualD75']=true;
     if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
     if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMultiplier']??1)>1)$conditions['weaponDamageMultiplier']=$entry['weaponDamageMultiplier'];if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
     if(!empty($entry['requiredWeaponAttackId']))$conditions['requiredWeaponAttackId']=$entry['requiredWeaponAttackId'];
@@ -290,14 +287,12 @@ function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFor
     $raw = array_sum(array_column($damageRows, 'rawDamage'));
     $final = array_sum(array_column($damageRows, 'finalDamage'));
     $elemental = array_sum(array_column($damageRows, 'elementalPreventedDamage'));
-    $poisonHealing = array_sum(array_column($damageRows, 'poisonHealing'));
     $components = [];
     foreach ($damageRows as $row) {
         array_push($components, ...($row['components'] ?? (isset($row['damageElement']) ? [['type'=>$attack['damageType'], ...$row]] : [])));
     }
     return ['rolled'=>[...$strikes[0]['rolled'],'total'=>$raw,'strikes'=>array_column($strikes,'rolled'),'breakdown'=>implode(' ; ',array_map(static fn($strike,$index)=>'Frappe '.($index+1).' : '.$strike['rolled']['breakdown'],$strikes,array_keys($strikes)))],
-        'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final-$elemental)/$raw):0,'strikes'=>$damageRows,'components'=>$components,...(array_column($damageRows,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]),
-            ...($poisonHealing>0?['poisonHealing'=>$poisonHealing]:[])]];
+        'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final-$elemental)/$raw):0,'strikes'=>$damageRows,'components'=>$components,...(array_column($damageRows,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[])]];
 }
 function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
     $knockbackRoll=null;
@@ -361,8 +356,7 @@ function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $r
             'selectedIndex' => $selectedIndex,
             'attempts' => $attempts,
         ],
-        'damage' => ['rawDamage' => $raw, 'finalDamage' => $final, 'preventedDamage' => $raw - $final, 'armorPercent' => count($results) === 1 ? $results[0]['armorPercent'] : ($raw ? (int) round(100 * ($raw - $final - $elemental) / $raw) : 0), 'components' => $results, ...(array_column($results,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[]),
-            ...(($poisonHealing=array_sum(array_column($results,'poisonHealing')))>0?['poisonHealing'=>$poisonHealing]:[])]];
+        'damage' => ['rawDamage' => $raw, 'finalDamage' => $final, 'preventedDamage' => $raw - $final, 'armorPercent' => count($results) === 1 ? $results[0]['armorPercent'] : ($raw ? (int) round(100 * ($raw - $final - $elemental) / $raw) : 0), 'components' => $results, ...(array_column($results,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[])]];
 }
 
 // Clients 3.2.2 may still send the former five-field ability. Preserve the new
@@ -372,14 +366,6 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
-        $prayer = applicationConfiguredPrayerAbility($old);
-        if (($prayer['visualD75'] ?? false) === true && ($entry['effect'] ?? $prayer['effect'] ?? '') === 'movement'
-            && empty($entry['manualD100']) && empty($entry['castingStatId']) && ($entry['visualD75'] ?? true) === true) {
-            $entry['visualD75'] = true;
-            if (!array_key_exists('outcomeMessages', $entry) && array_key_exists('outcomeMessages', $prayer)) {
-                $entry['outcomeMessages'] = $prayer['outcomeMessages'];
-            }
-        }
         if (($entry['effect'] ?? $old['effect'] ?? '') === 'metamorphosis') foreach (['formDurationTurns', 'formBonusHp'] as $field)
             if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         foreach (['manaCost', 'hpCost', 'fatigueCost','fatigueCostIncludesPassive','mountedMovement','rulePreset', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];

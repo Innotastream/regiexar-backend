@@ -115,14 +115,10 @@ function normalizeItemStore(?array $value): array {
     if (($value['version'] ?? 1) !== 1) itemFailure('Ces objets proviennent d’une version plus récente. Ils ont été conservés.', 409);
     if (!is_array($value['templates'] ?? null) || !is_array($value['instances'] ?? null) || count($value['templates']) > 200 || count($value['instances']) > 2000) itemFailure('La collection d’objets dépasse les limites.');
     $value=applicationWeaponCatalogPresets(applicationPotionCatalogPresets(mergeKnownItemTemplateAliases($value)));
-    $pendingItems=array_fill_keys(array_column(is_array($value['pendingUses']??null)?$value['pendingUses']:[],'itemId'),true);
-    $activeTemplateIds=[];
-    foreach ($value['instances'] as $instance) if (isset($pendingItems[$instance['id']??''])) $activeTemplateIds[$instance['templateId']]=true;
     $categories=normalizeItemCategories($value['categories']??[]);
     $templates = []; $ids = [];
     foreach ($value['templates'] as $template) {
         if (!is_array($template)) itemFailure('Le modèle d’objet est invalide.');
-        if (!isset($activeTemplateIds[$template['id']??''])) $template=applicationPoisonPotionTemplate(applicationGenericExplosivePotion($template));
         $template = normalizeItemTemplate($template);
         if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($categories,'id'),true))itemFailure('Cette catégorie n’existe plus.');
         if (isset($ids[$template['id']])) itemFailure('Deux modèles portent le même identifiant.');

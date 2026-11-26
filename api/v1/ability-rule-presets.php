@@ -2,9 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/fixed-structure-size.php';
 require_once __DIR__.'/ability-description-presets.php';
-require_once __DIR__.'/ability-messages.php';
 require_once __DIR__.'/path-strike-presets.php';
-require_once __DIR__.'/item-template-aliases.php';
 const XAR_PRECISION_SERPENTAIRE_ID='ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066';
 function applicationSimpleAbilityPresets(): array
 {
@@ -76,20 +74,7 @@ function applicationSacredCircleDescription(array $effect): string
         $points ? 'Résistances en points de pourcentage — '.implode(', ', $points).'.' : '',
     ]));
 }
-function applicationConfiguredElementalBreath(array $source): array {
-    if (($source['id']??'')!=='ability-mania-elemental-breath' || ($source['effect']??'')!=='damage') return $source;
-    if (in_array($source['itemRequirement']['templateId']??'', ['',XAR_ELEMENTAL_POTION_ALIAS_ID,'potion-catalog-elemental-component'],true)) {
-        $source['itemRequirement']=['templateId'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'quantity'=>1,'consumeOn'=>'attempt'];
-        if(is_string($source['description']??null))$source['description']=preg_replace('/Potion infus[ée]e/iu','Potion élémentaire',$source['description']);
-    }
-    if(is_string($source['description']??null))$source['description']=str_replace(
-        'Le jet de Chance est résolu avant le souffle : seul un échec critique le bloque, sans rendre les coûts, la potion ni l’utilisation. Le MJ arbitre les réussites critiques et autres effets de Chance.',
-        'Seuls les critiques de Chance sont affichés. Un échec critique annule le souffle et rend la Potion élémentaire. Le mana, la fatigue et l’utilisation restent dépensés. Le MJ arbitre les réussites critiques.',
-        $source['description']);
-    return $source;
-}
 function applicationConfiguredAbilityRules(array $source): array {
-    $source = applicationConfiguredElementalBreath(applicationConfiguredPrayerAbility($source));
     $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
     if (($preset['presetId'] ?? '') === 'rotatable-thorn-wall' && ($configured['effect'] ?? 'damage') === 'damage') {
@@ -169,11 +154,6 @@ function applicationConfiguredAttackEnhancement(string $abilityId,array $enhance
             'bonuses'=>[...$preset['enhancementBonusUpgrade'],...(is_array($enhancement['bonuses']??null)?$enhancement['bonuses']:[])]];
     if(!isset($preset['attackEnhancementTrigger'])||($enhancement['mode']??'')!=='on-attack-dot')return $enhancement;
     $patch=[];if(!array_key_exists('trigger',$enhancement))$patch['trigger']=$preset['attackEnhancementTrigger'];if(!array_key_exists('weaponIds',$enhancement)&&isset($preset['attackEnhancementWeaponIds']))$patch['weaponIds']=$preset['attackEnhancementWeaponIds'];
-    $formula = $enhancement['dot']['formula'] ?? null;
-    if (isset($preset['attackEnhancementDotFormulaUpgrade']) && is_string($formula)) {
-        [$oldFormula, $newFormula] = $preset['attackEnhancementDotFormulaUpgrade'];
-        if (strtolower(preg_replace('/\s+/','',$formula)) === $oldFormula) $patch['dot'] = [...$enhancement['dot'], 'formula'=>$newFormula];
-    }
     return $patch!==[]?[...$enhancement,...$patch]:$enhancement;
 }
 

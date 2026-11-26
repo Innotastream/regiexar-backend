@@ -5,8 +5,6 @@ function applicationPassivePresets():array {static $presets=null;return $presets
 function applicationPassiveKinds():array {return [
  'stat-roll-option'=>['name'=>'Option de jet de caractéristique','description'=>'Propose un jet particulier sur la caractéristique configurée, avec amélioration de résultat ou avantage.'],
  'manual'=>['name'=>'Passif à arbitrer','description'=>'Connaissance ou particularité à arbitrer par le MJ, sans bonus chiffré automatique.'],
- 'poison-damage-healing'=>['name'=>'Corps toxique','description'=>'Les dégâts de poison reçus restaurent autant de PV. Le passif ne confère pas de résistance au poison.'],
- 'poison-resilience'=>['name'=>'Manipulatrice de poison','description'=>'Ajoute 25 points de résistance au poison. Les poisons reçus durent un tour de moins, pour une durée minimale d’un tour.'],
  'effect-resistance'=>['name'=>'Résistance aux effets reçus','description'=>'Réduit les dégâts et la durée des familles d’effets ou des consommables configurés.'],
  'ranged-target-evasion'=>['name'=>'Malus des attaques à distance reçues','description'=>'Réduit le seuil des attaques à distance dirigées contre cette unité.'],
  'infusion-efficiency'=>['name'=>'Efficacité des infusions','description'=>'Améliore le ratio des infusions déjà autorisées par les attaques et compétences.'],
@@ -44,9 +42,7 @@ function applicationPassiveAbilities(mixed $v):array {
  return $result;
 }
 function applicationConfiguredPassiveAbilities(array $source):array {
- $values=applicationPassiveAbilities($source['passiveAbilities']??null);$origin=($source['characterId']??'')?:((($source['cloneSourceCharacterId']??'')?:($source['id']??'')));
- if(in_array($origin,['token-P-CK3ZtFhBidBd0rf3mlyA','unit_token-P-CK3ZtFhBidBd0rf3mlyA'],true))$origin='character-X4kmpvnbF9rQgNGc';
- $entries=applicationPassivePresets()[$origin]??[];
+ $values=applicationPassiveAbilities($source['passiveAbilities']??null);$origin=($source['characterId']??'')?:((($source['cloneSourceCharacterId']??'')?:($source['id']??'')));$entries=applicationPassivePresets()[$origin]??[];
  $independent=($source['followCharacter']??true)===false||!empty($source['linkedTokenId'])||($source['independent']??false)===true||($source['independentClone']??false)===true||!empty($source['cloneSourceCharacterId'])&&($source['id']??'')!==$origin;
  foreach(array_is_list($entries)?$entries:[$entries] as $preset){if($independent&&($preset['existingCloneDefault']??false)!==true)continue;$found=false;foreach($values as $value)if($value['id']===$preset['id']||!in_array($preset['kind'],['manual','stat-roll-option'],true)&&$value['kind']===$preset['kind']){$found=true;break;}if(!$found)$values[]=$preset;}
  return applicationPassiveAbilities($values);

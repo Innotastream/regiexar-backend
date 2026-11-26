@@ -43,7 +43,7 @@ function onlineAssertAbilityValidationAvailable(PDO $connection, array $activity
     }
     // Reserve both the attempt receipt and its terminal decision before any
     // random outcome can distinguish ordinary and remarkable attempts.
-    if (!$forAttack && (trim((string) ($ability['castingStatId'] ?? '')) !== '' || !empty($ability['manualD100']) || !empty($ability['visualD75']))) {
+    if (!$forAttack && (trim((string) ($ability['castingStatId'] ?? '')) !== ''||!empty($ability['manualD100']))) {
         onlineAssertAbilityValidationCapacity($connection, $activity);
     }
 
@@ -69,21 +69,11 @@ function onlineResumedAbilityPlan(array $saved, array $initiative, array $activi
 function onlineDeferAbilityCasting(PDO $connection, array &$records, array &$pending, string $route, array $identity, array $body, bool $isGm, array $ability, array $source, array $plan, array $cast, string $signature, array $target = [], array $receiptContext = []): array {
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     onlineAssertAbilityValidationCapacity($connection, $activity);
-    $visualD75 = ($cast['visualD75'] ?? false) === true;
-    $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity, $visualD75, true, false);
-    $activity = $pending['activity']['payload'] ?? $activity;
-    $layerId = $cast['roll']['mapEvent']['layerId'] ?? ($body['layerId'] ?? 'ground');
-    if ($visualD75) {
-        $layerId = onlineTokenLayerId($source, applicationDomainPayload($records, 'map:' . $plan['sceneId']));
-        $cue = applicationPrayerRollCue($cast['roll']['total']);
-        $visibility = ($source['hidden'] ?? false) || ($cast['roll']['visibility'] ?? '') === 'gm' ? 'gm' : 'public';
-        $cast['completionCue'] = $cue;
-        $cast['completionCueEventId'] = appendApplicationAbilityCueEvent($activity, $cue, $plan['sceneId'], $layerId, $source['id'], $visibility);
-    }
+    $cast = onlineCommitAbilityCasting($connection, $records, $pending, $plan, $cast, $source, $identity, false, true, false);
     $actor = array_intersect_key($identity, array_flip(['id', 'display_name', 'permanent_role', 'effective_mode']));
     $entry = [
         'id' => 'validation-' . randomToken(16), 'requestId' => $body['requestId'], 'status' => 'pending', 'route' => $route,
-        'sceneId' => $plan['sceneId'], 'layerId' => $layerId,
+        'sceneId' => $plan['sceneId'], 'layerId' => $cast['roll']['mapEvent']['layerId'] ?? ($body['layerId'] ?? 'ground'),
         'sourceTokenId' => $source['id'] ?? '', 'characterId' => $plan['characterId'], 'targetTokenId' => $route === 'ability.use' ? ($target['id'] ?? '') : '',
         'abilityId' => $ability['id'], 'abilityName' => $ability['name'], 'sourceName' => $source['name'] ?? 'Personnage',
         'effect' => $ability['effect'] ?? 'damage', 'cast' => $cast, 'createdAt' => gmdate('c'),
@@ -92,11 +82,11 @@ function onlineDeferAbilityCasting(PDO $connection, array &$records, array &$pen
             'controllerAccountId' => !empty($source['id']) ? onlineTokenControllerIdFromRecords($connection, $records, $source)
                 : (applicationDomainPayload($records, 'character:' . $plan['characterId'])['ownerPlayerId'] ?? '')],
     ];
+    $activity = $pending['activity']['payload'] ?? $activity;
     $activity['pendingAbilityCasts'][] = $entry;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    if ($visualD75) onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $plan['sceneId'], [$cast['roll']]);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $plan['sceneId'], [
-        'kind' => 'ability', 'characterName' => $entry['sourceName'], 'summary' => $ability['name'] . ($visualD75 ? ' · effet visuel à choisir par le MJ' : ' · validation MJ requise'),
+        'kind' => 'ability', 'characterName' => $entry['sourceName'], 'summary' => $ability['name'] . ' · validation MJ requise',
         'detail' => $cast['manaSpent'] . ' mana · ' . $cast['hpSpent'] . ' PV · +' . $cast['fatigueGained'] . ' fatigue',
     ]);
     $result = ['pendingValidation' => true, 'validation' => publicOnlineAbilityValidation($entry, (string) $identity['id']),
@@ -181,11 +171,8 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
     $requestId = (string) ($arguments['requestId'] ?? ''); $validationId = (string) ($arguments['validationId'] ?? '');
     $decision = $arguments['decision'] ?? '';
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1 || !in_array($decision, ['approve', 'reject'], true)) rejectOnlineCommand($connection, 400, 'Référence ou décision de validation invalide.', 'invalid_ability_validation_request');
-    if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) rejectOnlineCommand($connection, 400, 'Confirmez explicitement la décision.', 'ability_validation_confirmation_required');
-    $visualChoice = $arguments['visualChoice'] ?? null;
-    $signature = json_encode([$validationId, $decision, ($arguments['confirmed'] ?? false) === true,
-        ...(isset($arguments['outcomeCode']) ? [$arguments['outcomeCode']] : []),
-        ...($visualChoice !== null ? [['visualChoice' => $visualChoice]] : [])], JSON_THROW_ON_ERROR);
+    if ($decision === 'approve' && ($arguments['confirmed'] ?? false) !== true) rejectOnlineCommand($connection, 400, 'Confirmez explicitement le résultat remarquable.', 'ability_validation_confirmation_required');
+    $signature = json_encode([$validationId, $decision, ($arguments['confirmed'] ?? false) === true,...(isset($arguments['outcomeCode'])?[$arguments['outcomeCode']]:[])], JSON_THROW_ON_ERROR);
     $context = onlinePersistentCommandReceipt($connection, $records, 'ability-validation', $requestId, $identity['id'], $signature, 'ability_validation');
     if (is_array($context['receipt'] ?? null)) return [...$context['receipt']['result'], 'deduplicated' => true];
     $records = array_replace($records, applicationDomainRecords($connection));
@@ -193,33 +180,18 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
     $entries = array_values($activity['pendingAbilityCasts'] ?? []); $index = findEntryIndex($entries, $validationId);
     if ($index < 0) rejectOnlineCommand($connection, 409, 'Ce lancement n’est plus en attente.', 'ability_validation_missing');
     $entry = $entries[$index]; $private = $entry['_private'];
-    $visualD75 = ($entry['cast']['visualD75'] ?? false) === true;
-    $prayerRollCueEventId = $visualD75 ? ($entry['cast']['completionCueEventId'] ?? null) : null;
-    if ($visualD75) unset($entry['cast']['completionCue'], $entry['cast']['completionCueEventId']);
     if ($decision === 'approve') {
-        if (!$visualD75 && (applicationConfiguredPrayerAbility($private['ability'])['visualD75'] ?? false) === true) {
-            rejectOnlineCommand($connection, 409, 'La règle de la Prière a changé. Annulez cette validation puis relancez la Prière.', 'prayer_legacy_validation');
-        }
-        if ($visualD75 && (!is_string($visualChoice) || !isset(applicationVisualD75Choices()[$visualChoice]))) {
-            rejectOnlineCommand($connection, 400, 'Choisissez l’effet visuel Fantastique, Bon ou Mauvais.', 'visual_choice_required');
-        }
         onlineValidateAbilityContinuation($connection, $records, $table, $entry);
-        if ($visualD75) {
-            $entry['cast']['visualChoice'] = $visualChoice;
-            $entry['cast']['prayerRollCueEventId'] = $prayerRollCueEventId;
-        }
-        elseif(!empty($entry['cast']['manualOutcome'])){if(!isset(applicationMessageOutcomes()[$arguments['outcomeCode']??'']))rejectOnlineCommand($connection,400,'Choisissez le résultat arbitré par le MJ.','manual_outcome_required');$entry['cast']['outcome']=applicationManualD100Outcome((int)$entry['cast']['outcome']['raw'],$arguments['outcomeCode'],!empty($entry['cast']['outcome']['criticalFailureAsFailure']));$entry['cast']['success']=$entry['cast']['outcome']['success'];if(isset($entry['cast']['roll']))$entry['cast']['roll']['outcome']=$entry['cast']['outcome'];}
+        if(!empty($entry['cast']['manualOutcome'])){if(!isset(applicationMessageOutcomes()[$arguments['outcomeCode']??'']))rejectOnlineCommand($connection,400,'Choisissez le résultat arbitré par le MJ.','manual_outcome_required');$entry['cast']['outcome']=applicationManualD100Outcome((int)$entry['cast']['outcome']['raw'],$arguments['outcomeCode'],!empty($entry['cast']['outcome']['criticalFailureAsFailure']));$entry['cast']['success']=$entry['cast']['outcome']['success'];if(isset($entry['cast']['roll']))$entry['cast']['roll']['outcome']=$entry['cast']['outcome'];}
         $continuation = ['cast' => $entry['cast'], 'plan' => onlineResumedAbilityPlan($private['plan'], applicationDomainPayload($records, 'initiative:' . $entry['sceneId']), $activity)];
         $result = match ($entry['route']) {
             'ability.use' => onlineUseAbility($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),
             'token.roll' => onlineSimpleAbilityRoll($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),
             'ability.complex' => onlineUseComplexAbility($connection, $records, $pending, $table, $private['identity'], $private['body'], $private['isGm'], $continuation),
         };
-        if ($visualD75) $entry['cast'] = $result['cast'];
     } else {
-        if ($visualD75) unset($entry['cast']['pendingValidation']);
         $refundedCosts = onlineRefundAbilityValidation($connection, $records, $pending, $entry, $identity);
-        $result = ['effect' => $entry['effect'], 'cast' => $entry['cast'], 'castSucceeded' => $visualD75 ? null : false, 'validationRejected' => true,
+        $result = ['effect' => $entry['effect'], 'cast' => $entry['cast'], 'castSucceeded' => false, 'validationRejected' => true,
             'refundedCosts' => $refundedCosts, 'roll' => null, 'castRoll' => null, 'effectRoll' => null, 'rolls' => [], 'execution' => null, 'appliedDelta' => 0];
     }
     $entry['status'] = $decision === 'approve' ? 'approved' : 'rejected'; $entry['resolvedAt'] = gmdate('c');
@@ -233,10 +205,7 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
         }
     }
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    $summary = $visualD75
-        ? ($decision === 'approve' ? ' · effet visuel choisi par le MJ' : ' · lancement annulé par le MJ')
-        : ($decision === 'approve' ? ' · résultat validé par le MJ' : ' · résultat refusé par le MJ');
-    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $entry['sceneId'], ['kind' => 'ability', 'characterName' => $entry['sourceName'], 'summary' => $entry['abilityName'] . $summary]);
+    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $entry['sceneId'], ['kind' => 'ability', 'characterName' => $entry['sourceName'], 'summary' => $entry['abilityName'] . ($decision === 'approve' ? ' · résultat validé par le MJ' : ' · résultat refusé par le MJ')]);
     $context['receipts'] = $pending['activity']['payload']['resourceReceipts'];
     onlineStorePersistentCommandReceipt($records, $pending, $context, 'ability-validation', $requestId, $identity['id'], $action['id'], $entry['sourceTokenId'], $signature, $result);
     return $result;

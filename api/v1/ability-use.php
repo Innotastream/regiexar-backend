@@ -137,8 +137,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $cast['roll']['visibility'] = 'gm'; $cast['roll']['revealed'] = false;
     }
     $signature = applicationAbilityRequestSignature('ability.use', $sceneId, $arguments, trim((string) ($cast['statId'] ?? '')) !== '');
-    $visualD75 = ($cast['visualD75'] ?? false) === true;
-    if ($continuation === null && (($cast['outcome']['requiresGmValidation'] ?? false) === true || $visualD75)) {
+    if ($continuation === null && ($cast['outcome']['requiresGmValidation'] ?? false) === true) {
         return onlineDeferAbilityCasting($connection, $records, $pending, 'ability.use', $identity, $arguments, $isGm, $ability, $rules, $plan, $cast, $signature, $target);
     }
     if ($infusion !== null && $infusion['refundOnMiss'] && !$cast['success']) {
@@ -253,7 +252,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
             onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'resource', 'characterName' => $source['name'] ?? 'Personnage', 'targetName' => $target['name'] ?? 'Cible', 'summary' => $ability['name'] . ' : ' . $adjustment['appliedDelta'] . ' PV rendus', 'operation' => $operation]);
         }
     }
-    if ($plan !== null && !$visualD75) {
+    if ($plan !== null) {
         // Keep cast then effect in history even though costs preceded effects.
         if (is_array($cast['roll'] ?? null)) onlineAppendAbilityEffectRoll($records, $pending, $cast['roll']);
         onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'ability', 'characterName' => $source['name'] ?? 'Personnage', 'summary' => $ability['name'] . ($cast['success'] ? ' · lancement réussi' : ' · lancement échoué'), 'detail' => $cast['manaSpent'] . ' mana consommé' . applicationAbilityRechargeActivityDetail($cast)]);
@@ -261,6 +260,6 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $bundle = onlineAbilityRollBundle($cast, $effectRoll);
     $stored = [...$result, ...$bundle, 'cast' => $cast, 'castSucceeded' => $cast['success']];
     if ($continuation === null) $stored = onlineStoreAbilityReceipt($records, $pending, $requestId, $accountId, $signature, $stored);
-    if (!$visualD75) onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
+    onlineAppendAbilityRollActions($connection, $records, $pending, $identity, $sceneId, $bundle['rolls']);
     return $stored;
 }

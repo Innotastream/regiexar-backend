@@ -9,9 +9,7 @@ function onlineDefenseParty(PDO $connection,array $records,array $token,array $m
     return ['unitId'=>unitIdForToken($token),'controllerId'=>onlineTokenControllerIdFromRecords($connection,$records,$token),'layerId'=>onlineTokenLayerId($token,$map),'x'=>$point['x'],'y'=>$point['y'],'size'=>$point['size']??$token['size']??40];
 }
 function onlineWeaponTurnState(array $records,array $pending,string $sceneId,array $map=[]):array{
-    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records,'activity');
-    return ['activeSceneId'=>$sceneId,'map'=>$map,'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),
-        'actionTimers'=>$activity['actionTimers']??[], 'attackEnhancements'=>$activity['attackEnhancements']??[]];
+    return ['activeSceneId'=>$sceneId,'map'=>$map,'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),'actionTimers'=>$pending['activity']['payload']['actionTimers']??applicationDomainPayload($records,'activity')['actionTimers']??[]];
 }
 function onlineComplexDefensePreview(PDO $connection,array &$records,array $pending,array $identity,array $arguments,array $ability,array $source,string $sceneId,array $map,bool $isGm):?array{
     $first=$ability['workflow']['steps'][0]??[];$pathStrike=!empty($first['pathStrike']['staged']);$charge=null;$allocated=false;foreach($ability['workflow']['steps']as$step){if(!empty($step['charge']['staged']))$charge=$step;if($step['type']==='allocated-attacks')$allocated=true;}

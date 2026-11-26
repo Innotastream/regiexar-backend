@@ -50,7 +50,7 @@ function onlineTotalOppositionStat(array $stats, array $attack): string
 function onlineResolveTotalOppositionResults(PDO $connection, array &$records, array &$pending,
     array $result, bool $isGm, bool $requested = false): array
 {
-    if (!empty($result['deduplicated']) || !empty($result['pendingAreaGate']) || !empty($result['chanceCastCriticalFailure'])) return $result;
+    if (!empty($result['deduplicated']) || !empty($result['pendingAreaGate'])) return $result;
     $ids = [];
     foreach ([$result['attack'] ?? null, ...($result['areaAttacks'] ?? [])] as $attack) {
         if (is_string($attack['id'] ?? null)) $ids[$attack['id']] = true;

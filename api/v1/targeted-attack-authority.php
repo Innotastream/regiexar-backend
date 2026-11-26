@@ -123,10 +123,6 @@ if (is_array($deduplicatedAttack)) {
     if (onlineWantsTotalOpposition($deduplicatedAttack['areaGate'] ?? [])) {
         $result['pendingAreaGate'] = ($deduplicatedAttack['status'] ?? '') === 'pending';
     }
-    if (!empty($deduplicatedAttack['chanceCastCriticalFailure'])) {
-        $result['chanceCastCriticalFailure'] = true;
-        $result['pendingAreaGate'] = false;
-    }
     $result['deduplicated'] = true;
 } else {
     if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) {
@@ -700,9 +696,6 @@ if (is_array($deduplicatedAttack)) {
         'damageRollMode' => 'normal',
         'createdAt' => $now,
     ];
-    $drowWeapon = $selectedWeapon !== [] ? $selectedWeapon : ($attackKind==='weapon' ? $mechanicsDefinition : []);
-    if (($drowCoating=onlineConsumeDrowCoating($connection,$records,$pending,$source,$drowWeapon))!==null)
-        $attack['drowCoating']=$drowCoating;
     $initiative = applicationDomainPayload($records, $initiativeKey);
     $combatActive = ($initiative['active'] ?? false) === true;
     if (($hitOutcome['requiresGmValidation'] ?? false) === true || $projectileGate['pending']) {
@@ -818,7 +811,6 @@ if (is_array($deduplicatedAttack)) {
             }
             if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
             $areaAttack = $attack;
-            unset($areaAttack['drowCoating']);
             foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'weaponDotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'passivePercent', 'passivePreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
             $areaAttack['id'] = 'attack-' . randomToken(12);
             $areaAttack['requestId'] = 'area-' . randomToken(12);

@@ -25,29 +25,6 @@ function applicationMarkConfiguredPotionTemplate(array $template): array
     return $template;
 }
 
-function applicationGenericExplosivePotion(array $template): array
-{
-    $fulgurant = 'ability-9d9973fa-0555-4807-bbd6-af6f1adf640d';
-    $active = $template['active'] ?? [];
-    if (!is_array($active) || !in_array($template['kind'] ?? '', ['object','potion'], true)
-        || !empty($template['equipment']) || !empty($template['potionVessel'])) return $template;
-    if (($template['id'] ?? '') !== 'preset-explosive-potion'
-        && (applicationPotionCatalogueKey($template['name'] ?? '') !== 'potion explosive'
-            || ($active['ingredientTag'] ?? '') !== 'explosive-potion' && ($template['sourceAbilityId'] ?? '') !== $fulgurant)) return $template;
-    $template['kind'] = 'potion';
-    $template['potion'] ??= ['hp'=>0,'mana'=>0,'fatigue'=>0];
-    if (($active['ingredientTag'] ?? '') === 'explosive-potion') unset($active['ingredientTag']);
-    if (($template['sourceAbilityId'] ?? '') === $fulgurant) unset($template['sourceAbilityId'], $template['creatorCharacterId']);
-    if (($template['category'] ?? '') === 'ability') $template['category'] = 'usable';
-    if (($active['useLabel'] ?? '') === 'Réservée aux compétences' || !isset($active['useLabel'])) $active['useLabel'] = 'Lancer';
-    if (($template['description']??'')==='') $template['description']='Potion à lancer. Le MJ arbitre l’explosion.';
-    if (empty($active['effects']) && is_array($template['potion']) && !array_filter($template['potion'])) $active['effects'] = [[
-        'kind'=>'message','text'=>'Potion explosive','theme'=>'neutral','durationMs'=>1500,
-    ]];
-    if (!empty($active['effects'])) $template['active'] = ['version'=>1,'authority'=>'owner',...$active];
-    return $template;
-}
-
 function applicationPotionCatalogPresets(array $store): array
 {
     if (!is_array($store['templates'] ?? null) || !is_array($store['instances'] ?? null)) return $store;

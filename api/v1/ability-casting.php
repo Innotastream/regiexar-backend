@@ -177,8 +177,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     if (normalizeApplicationFatigue($source['fatigue'] ?? null)['current'] + ($source['_reservedFatigue']??0) + $fatigueCost > 150) throw new RuntimeException('ability_fatigue_insufficient');
     // Absence preserves the old attack-dialogue statistic; an explicit empty
     // string means no casting check. Legacy simple rolls had no check.
-    $visualD75 = ($ability['visualD75'] ?? false) === true;
-    $statId = $visualD75 || !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
+    $statId = !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
     $stat = null;
     if ($statId !== '') {
         $stats = $source['stats'] ?? [];
@@ -188,7 +187,7 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     }
     return [...$owner, 'sceneId' => $sceneId, 'abilityId' => (string) ($ability['id'] ?? ''), 'label' => (string) ($ability['name'] ?? 'Capacité'),
         'fixedResultModifier'=>($ability['effect']??'')==='check'?(applicationStatCheckDefinition($ability['statCheck']??null)['resultModifier']??0):0,
-        'manualD100'=>!empty($ability['manualD100']),'visualD75'=>$visualD75,'outcomeMessages'=>applicationOutcomeMessages($ability['outcomeMessages']??null),
+        'manualD100'=>!empty($ability['manualD100']),'outcomeMessages'=>applicationOutcomeMessages($ability['outcomeMessages']??null),
         'attackEnhancement' => applicationAttackEnhancement($ability['attackEnhancement'] ?? null),
         ...(!empty($ability['persistentArea'])?['persistentArea'=>applicationPersistentArea($ability['persistentArea']),'damageTargeting'=>$ability['damageTargeting']]:[]),
         'enhancementInitiative' => ['active' => ($initiative['active'] ?? false) === true, 'combatId' => $combatId, 'turnSerial' => (int) ($initiative['turnSerial'] ?? 0)],
@@ -245,14 +244,6 @@ function onlinePrepareAbilityCasting(PDO $connection, array $ability, array $sou
 function onlineAbilityCastingRoll(array $plan, array $source, array $identity, array $arguments = [], ?string $layerId = null, ?array $character = null, bool $sourceVisibleToPlayers = false, string $sourceTokenId = ''): array {
     $joker=applicationRequestsSpecialSuccess($arguments);
     if($joker&&$plan['statId']==='')throw new RuntimeException('Cette capacité ne demande aucun jet à remplacer par un Joker.',409);
-    if (($plan['visualD75'] ?? false) === true) {
-        $rolled = onlineRollFormulaWithMode('1d75', 'normal');
-        $roll = onlineRollEntry($identity, $rolled, $plan['label'], (string) ($source['name'] ?? 'Personnage'));
-        $roll = onlineAbilityRollVisibility($roll, $source, $identity, $sourceVisibleToPlayers, (string) $plan['sceneId'], $sourceTokenId);
-        $roll['sourceTokenId'] = $sourceTokenId;
-        $roll['sourceSceneId'] = $plan['sceneId'];
-        return ['visualD75'=>true,'success'=>null,'statId'=>'','statLabel'=>'','outcome'=>null,'roll'=>$roll];
-    }
     if ($plan['statId'] === ''&&empty($plan['manualD100'])) return ['success' => true, 'statId' => '', 'statLabel' => '', 'outcome' => null, 'roll' => null];
     $modifierValue = normalizeOnlineD100Modifier($arguments['hitModifier'] ?? $arguments['castingModifier'] ?? $arguments['modifier'] ?? 0);
     $modifierMode = ($arguments['hitModifierMode'] ?? $arguments['castingModifierMode'] ?? $arguments['modifierMode'] ?? '') === 'result' ? 'result' : 'threshold';
@@ -562,8 +553,7 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
             'difficultyPenalty' => $plan['difficultyPenalty'] ?? 0, 'cooldownRounds' => (int) $plan['cooldownRounds'], 'remainingRounds' => 0, 'pendingValidation' => true];
     }
     unset($cast['pendingValidation']);
-    $countsUse=($cast['success']??false)||!empty($plan['manualD100'])&&($cast['outcome']['code']??'pending')!=='pending'
-        ||($cast['visualD75']??false)===true&&isset($cast['visualChoice']);
+    $countsUse=($cast['success']??false)||!empty($plan['manualD100'])&&($cast['outcome']['code']??'pending')!=='pending';
     if (($cast['success'] ?? false) && ($plan['attackEnhancement'] ?? null) !== null) {
         $enchantment = $plan['enchantment'] ?? [];
         $equipmentState = null;
@@ -613,7 +603,6 @@ function onlineCommitAbilityCasting(PDO $connection, array &$records, array &$pe
         $field=applicationCreateSpellField($store,['ability'=>['id'=>$plan['abilityId'],'name'=>$plan['label'],'persistentArea'=>$plan['persistentArea'],'damageTargeting'=>$plan['damageTargeting']],'source'=>applicationTokenSpatialFootprint($source,$map),'sceneId'=>$plan['sceneId'],'map'=>$map,'targetPoint'=>$plan['persistentTargetPoint']??$plan['spellVisual']['targetPoint']??null,'initiative'=>$clock,'now'=>$now,'castId'=>$fieldId,'fieldId'=>$fieldId]);$cast['spellFieldId']=$field['id'];queueOnlineDomainUpsert($pending,$records,'devices',$store);
     }
     $completionCue=applicationOutcomeCompletionCue($plan,$cast);
-    unset($cast['prayerRollCueEventId']);
     if(($cast['success']??false)===true&&empty($plan['deferCue'])&&empty($plan['persistentArea'])&&applicationSpellVisual($plan['spellVisual']??null)!==null)$completionCue['spell']=applicationSpellVisual($plan['spellVisual']);
     $cueEventId = empty($plan['deferCue'])&&(is_array($completionCue['sound']??null)||($completionCue['visual']['kind']??'')==='message'||applicationAbilityIcon($completionCue['icon']??null)!==null||applicationSpellVisual($completionCue['spell']??null)!==null)
         ? appendApplicationAbilityCueEvent($activity, $completionCue, (string) $plan['sceneId'],

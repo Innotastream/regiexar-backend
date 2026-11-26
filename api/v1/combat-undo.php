@@ -262,24 +262,7 @@ function combatUndoMark(array &$activity,array $action,string $tokenId='',string
  $selected=static fn($a)=>is_array($a)&&(in_array('attack:'.($a['id']??''),$action['aliases'],true)||in_array('execution:'.($a['complexExecutionId']??''),$action['aliases'],true)||in_array('execution:'.($a['originExecutionId']??''),$action['aliases'],true))&&($tokenId===''||($a['targetTokenId']??'')===$tokenId&&($sceneId===''||($a['sceneId']??'')===$sceneId));
  if($tokenId===''){$activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($a)=>!$selected($a)));$activity['pendingAbilityCasts']=array_values(array_filter($activity['pendingAbilityCasts']??[],static fn($v)=>!in_array('validation:'.$v['id'],$action['aliases'],true)&&!in_array('request:'.($v['requestId']??''),$action['aliases'],true)));}
  foreach($activity['attackReceipts']??[]as$i=>$receipt)if($selected($receipt['attack']??null))$activity['attackReceipts'][$i]['attack']=[...$receipt['attack'],...($tokenId===''?['status'=>'cancelled','actionUndone'=>true]:['damageUndone'=>true]),'appliedDamage'=>0];
- if($tokenId==='')foreach($activity['resourceReceipts']??[]as$i=>$r){
-  if(!isset($r['result'])||!in_array('request:'.($r['requestId']??''),$action['aliases'],true)&&!in_array($r['actionId']??'',$action['actionIds'],true))continue;
-  $result=$r['result'];
-  $visualD75=($result['cast']['visualD75']??false)===true;
-  $result=[...$result,'actionUndone'=>true,'castSucceeded'=>$visualD75?null:false,'execution'=>null,'pendingUse'=>null,'pendingOpposition'=>false,'pendingValidation'=>false];
-  if($visualD75){
-   unset($result['cast']['completionCue'],$result['cast']['completionCueEventId'],$result['cast']['pendingValidation']);
-   if(isset($result['validation'])){
-    $result['validation']['status']='rejected';
-    $result['validation']['cast']=$result['cast'];
-   }
-  }
-  if(isset($result['attack']))$result['attack']=[...$result['attack'],'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];
-  foreach($result['attacks']??[]as$j=>$a)$result['attacks'][$j]=[...$a,'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];
-  unset($result['roll']['mapEvent']);
-  foreach($result['rolls']??[]as$j=>$v)unset($result['rolls'][$j]['mapEvent']);
-  $activity['resourceReceipts'][$i]=[...$r,'result'=>$result];
- }
+ if($tokenId==='')foreach($activity['resourceReceipts']??[]as$i=>$r)if(in_array('request:'.($r['requestId']??''),$action['aliases'],true)||in_array($r['actionId']??'',$action['actionIds'],true))if(isset($r['result'])){$r['result']=[...$r['result'],'actionUndone'=>true,'castSucceeded'=>false,'execution'=>null,'pendingUse'=>null,'pendingOpposition'=>false,'pendingValidation'=>false];if(isset($r['result']['attack']))$r['result']['attack']=[...$r['result']['attack'],'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];if(isset($r['result']['attacks']))foreach($r['result']['attacks']as$j=>$a)$r['result']['attacks'][$j]=[...$a,'status'=>'cancelled','appliedDamage'=>0,'actionUndone'=>true];unset($r['result']['roll']['mapEvent']);foreach($r['result']['rolls']??[]as$j=>$v)unset($r['result']['rolls'][$j]['mapEvent']);$activity['resourceReceipts'][$i]=$r;}
  foreach($activity['rolls']??[]as$i=>$roll)if($selected(['id'=>$roll['mapEvent']['attackId']??'','complexExecutionId'=>$roll['mapEvent']['complexExecutionId']??'','targetTokenId'=>$roll['mapEvent']['targetTokenId']??'','sceneId'=>$roll['mapEvent']['sceneId']??'']))unset($activity['rolls'][$i]['mapEvent']);
  foreach($activity['playerActions']??[]as$i=>$entry)if(in_array($entry['id'],$action['actionIds'],true)){$activity['playerActions'][$i]['combatActionId']=$action['id'];if($tokenId==='')$activity['playerActions'][$i]['combatUndone']=true;}
 }
