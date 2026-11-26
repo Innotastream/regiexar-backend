@@ -376,6 +376,7 @@
   "ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189": {
     "effect": "enhancement",
     "attackEnhancementTrigger": "melee-weapon",
+    "attackEnhancementDotFormulaUpgrade": ["1d20", "1d20+2"],
     "attackEnhancementWeaponIds": [
       "weapon-2"
     ]

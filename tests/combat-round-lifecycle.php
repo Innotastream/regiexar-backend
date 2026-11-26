@@ -65,4 +65,78 @@ $full=domainsToApplicationState(applicationDomainRecords($db),0);$full['actionTi
 $view=publicPlayerState($full,['id'=>'account-player','effective_mode'=>'player','permanent_role'=>'player'],[]);$timer=array_values(array_filter($view['actionTimers'],static fn($t)=>$t['id']==='projection-quota'))[0];
 specialCheck($timer['restUseCount']===3&&$timer['restUseLimit']===3&&$timer['combatUseCount']===2&&$timer['combatUseLimit']===2,'Native Player projection retains the exact private usage quotas');
 $otherView=publicPlayerState($full,['id'=>'unrelated','effective_mode'=>'player','permanent_role'=>'player'],[]);specialCheck(!in_array('projection-quota',array_column($otherView['actionTimers'],'id'),true),'Unrelated accounts receive no private quota');
+
+$adjust = static function (MemoryConnection $db, string $id, int $delta): TestResponse {
+    return runCommand($db, 'token.resource.adjust', ['requestId'=>'initiative-hp-'.randomToken(16),
+        'sceneId'=>'scene-one','tokenId'=>$id,'resource'=>'hp','delta'=>$delta], true, 'account-gm');
+};
+$db = roundsFixture();
+$monsterKey = 'token:scene-one:token-monster';
+$db->put($monsterKey, [...$db->payload($monsterKey), 'initiative'=>7, 'hp'=>10]);
+$clock = ['active'=>true,'turnsStarted'=>true,'combatId'=>'initiative-death','turnSerial'=>11,'round'=>2,'currentIndex'=>1,
+    'order'=>['token-player','token-monster'],
+    'roundBaseOrder'=>['token-monster','token-player'],'delayedTurnIds'=>['token-monster'],'movementOverrides'=>['token-player'=>true],
+    'previousRoundOrder'=>['order'=>['token-monster','token-player'],'delayedTurnIds'=>['token-monster']]];
+$db->put('initiative:scene-one', $clock);
+$db->put('initiative:scene-two', [...$clock, 'order'=>['unrelated-token']]);
+specialCheck($adjust($db, 'token-monster', -10)->status === 200 && $db->payload('initiative:scene-one') === $clock,
+    'An NPC at zero HP is KO and stays in initiative');
+$result = $adjust($db, 'token-monster', -1);
+$initiative = $db->payload('initiative:scene-one');
+specialCheck($result->status === 200 && $initiative['active'] && $initiative['order'] === ['token-player'] && $initiative['currentIndex'] === 0
+    && $initiative['turnSerial'] === 11 && $initiative['round'] === 2
+    && $initiative['movementOverrides'] === [] && $initiative['delayedTurnIds'] === [] && $initiative['roundBaseOrder'] === ['token-player']
+    && $initiative['previousRoundOrder'] === ['order'=>['token-player'],'delayedTurnIds'=>[]]
+    && $db->payload($monsterKey)['initiative'] === null, 'Death prunes all roster snapshots and selects the next living turn without replaying it');
+specialCheck($db->payload('initiative:scene-two')['order'] === ['unrelated-token'], 'Initiative changes stay on the affected scene');
+$batch = runCommand($db, 'token.initiative.batch', ['requestId'=>'dead-initiative-'.randomToken(16),
+    'sceneId'=>'scene-one','layerId'=>'ground','tokenIds'=>['token-monster']], true, 'account-gm');
+specialCheck($batch->status === 409 && $batch->body['code'] === 'dead_initiative', 'Batch initiative explicitly refuses the dead unit');
+specialCheck($adjust($db, 'token-monster', 50)->status === 200 && $db->payload('initiative:scene-one')['order'] === ['token-player'],
+    'Restoring HP does not silently enroll the unit again');
+$batch = runCommand($db, 'token.initiative.batch', ['requestId'=>'alive-initiative-'.randomToken(16),
+    'sceneId'=>'scene-one','layerId'=>'ground','tokenIds'=>['token-monster']], true, 'account-gm');
+specialCheck($batch->status === 200 && ($db->payload('initiative:scene-one')['order'][$db->payload('initiative:scene-one')['currentIndex']] ?? '') === 'token-player',
+    'A revived unit can roll initiative without changing the active survivor');
+specialCheck($adjust($db, 'token-player', -125)->status === 200 && in_array('token-player',$db->payload('initiative:scene-one')['order'],true),
+    'An owned character at minus one quarter of maximum HP remains KO');
+specialCheck($adjust($db, 'token-player', -1)->status === 200 && $db->payload('initiative:scene-one')['order'] === ['token-monster']
+    && $db->payload('character:character-player')['resources']['hp'] === -26, 'Shared-sheet HP death uses the players’ real threshold');
+specialCheck($adjust($db, 'token-monster', -80)->status === 200 && $db->payload('initiative:scene-one')['order'] === []
+    && $db->payload('initiative:scene-one')['active'] === false && $db->payload('initiative:scene-one')['turnSerial'] === 11,
+    'Losing the last participant ends combat without an extra round or turn');
+
+$db = roundsFixture();
+$db->put($monsterKey, [...$db->payload($monsterKey), 'initiative'=>21,'hp'=>1]);
+$periodic = runCommand($db, 'combat.effect.periodic-hp', ['requestId'=>'initiative-dot-'.randomToken(16),
+    'sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'token-monster','label'=>'Poison mortel',
+    'direction'=>-1,'formula'=>'1d2+3','turns'=>1,'startNextTurn'=>true], true, 'account-gm');
+specialCheck($periodic->status === 200, 'The GM sets a scheduled wound: ' . json_encode($periodic->body));
+$advance = roundClockPatch($db, ['currentIndex'=>1,'turnSerial'=>11]);
+specialCheck($advance->status === 200 && $db->payload($monsterKey)['hp'] >= -4 && $db->payload($monsterKey)['hp'] <= -3
+    && $db->payload('initiative:scene-one')['order'] === ['token-player'] && $db->payload('initiative:scene-one')['turnSerial'] === 11,
+    'A lethal turn-start effect prunes the roster in the same patch without repeating its roll');
+$db = roundsFixture();
+$creature = [...$db->payload($monsterKey), 'hp'=>1,'initiative'=>10];
+$db->put($monsterKey, $creature);
+$sheet = $db->payload('character:character-player');
+$sheet['specialSuccessStock'] = 1;
+$db->put('character:character-player', $sheet);
+$strike = runCommand($db, 'token.attack', ['requestId'=>'initiative-strike-'.randomToken(16),'sceneId'=>'scene-one',
+    'sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','attackKind'=>'weapon','attackId'=>'main',
+    'statId'=>'character-stat-force','opposed'=>false,'useJoker'=>true], true, 'account-gm');
+specialCheck($strike->status === 200 && $db->payload($monsterKey)['hp'] < 0
+    && $db->payload('initiative:scene-one')['order'] === ['token-player'], 'A lethal attack updates initiative without requiring a separate GM edit');
+$sheetKey = 'character:character-player';
+$sourceKey = 'token:scene-one:token-player';
+$db->put($sourceKey, [...$db->payload($sourceKey), 'initiative'=>12]);
+$GLOBALS['testIdentity'] = ['id'=>'account-gm','display_name'=>'MJ fictif','effective_mode'=>'gm','permanent_role'=>'gm'];
+$GLOBALS['testBody'] = ['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,
+    'changes'=>[['key'=>$sheetKey,'operation'=>'upsert','expectedRevision'=>$db->domains[$sheetKey]['revision'],
+        'payload'=>[...$db->payload($sheetKey),'healthOverride'=>'dead']]]];
+try { patchApplicationDomains($db); } catch(TestResponse $response) {
+    specialCheck($response->status === 200 && $db->payload($sourceKey)['hp'] > 0
+        && $db->payload($sourceKey)['initiative'] === null && $db->payload('initiative:scene-one')['order'] === [],
+        'Manual mortality on a followed sheet removes its token despite positive HP');
+}
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

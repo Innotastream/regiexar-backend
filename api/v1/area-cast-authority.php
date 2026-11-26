@@ -16,37 +16,61 @@ function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending
         $damageComponents = applicationInfusedDamageComponents($damageComponents, $damageFormula, $damageType, $infusion['damage']);
         $damageFormula = applicationCombinedDamageFormula($damageComponents);
     }
-    // Commit the attempt and its rest quota before Chance. Neither a critical
-    // failure nor a later refusal restores a component or resource.
+    $threshold=onlineUnitLuckThreshold($connection,$records,$pending,$source);
+    $rolled=$rollChance!==null?$rollChance():onlineRollFormulaWithMode('1d100',normalizeOnlineRollMode($arguments['rollMode']??'normal'),$threshold,0,true);
+    $raw=onlineSelectedRawD100($rolled);
+    if ($raw===null) throw new LogicException('Le jet de Chance n’a pas produit de résultat de 1 à 100.');
+    $outcome=classifyOnlineD100Outcome($raw,$threshold,0,0,true,true,!empty($castingPlan['criticalFailureAsFailure']));
+    applyOnlineD100ResultToRoll($rolled,$outcome);
+    if ($outcome!==null) $outcome['result']??=$raw;
+    $allowsEffect=($outcome['code']??'')!=='critical-failure';
+    $elementalBreath=($ability['id']??'')==='ability-mania-elemental-breath';
+    $criticalFailure=$elementalBreath&&!$allowsEffect;
+    if ($criticalFailure) $outcome['requiresGmValidation']=false;
+    $showChanceRoll=!$elementalBreath||in_array($outcome['code']??'',['critical-success','critical-failure'],true);
+    $requirement=$castingPlan['itemRequirement']??null;
+    $refundedItems=[];
+    if ($criticalFailure && ($requirement['templateId']??'')===XAR_ELEMENTAL_POTION_TEMPLATE_ID) {
+        $records=array_replace(applicationDomainRecords($connection,['items']),$records);
+        $store=$pending['items']['payload']??applicationDomainPayload($records,'items');
+        $refundedItems=applicationRequiredAbilityItems($store,$source,$requirement);
+        // The transaction leaves the validated potion untouched on this branch.
+        unset($castingPlan['itemRequirement']);
+    }
     $cast=onlineCommitAbilityCasting($connection,$records,$pending,$castingPlan,['success'=>true,'statId'=>'','statLabel'=>'','roll'=>null,'outcome'=>null],$source,$identity,false);
     if ($infusion !== null) $cast['manaSpent'] += $infusion['mana'];
-    $luckId=(string)($castingPlan['characterId']?:unitIdForToken($source));
-    $threshold=onlineCharacterLuckThreshold($connection,$records,$pending,$luckId);
-    $rolled=$rollChance!==null?$rollChance():onlineRollFormulaWithMode('1d100',normalizeOnlineRollMode($arguments['rollMode']??'normal'),$threshold,0,true);
-    $outcome=classifyOnlineD100Outcome($rolled['rawD100']??null,$threshold,0,0,true,true,!empty($castingPlan['criticalFailureAsFailure']))??['raw'=>$rolled['rawD100'],'result'=>$rolled['rawD100'],'baseThreshold'=>null,'threshold'=>null,'modifier'=>0,'resultModifier'=>0,'code'=>'failure','label'=>'CHANCE · SANS SEUIL','success'=>false,'effect'=>false];
-    applyOnlineD100ResultToRoll($rolled,$outcome);
-    $outcome['result']??=$rolled['rawD100']??$rolled['total'];
     $roll=onlineRollEntry($identity,$rolled,$ability['name'].' · Chance',(string)$source['name'],$outcome);
     onlineAwardNaturalJoker($connection,$records,$pending,$source,$roll,$outcome,$sceneId);
     $roll=onlineAbilityRollVisibility($roll,$source,$identity,$visible,$sceneId,$source['id']);
-    $roll['mapEvent']=['kind'=>'roll','label'=>'Chance','value'=>$outcome['result'],'sceneId'=>$sceneId,'layerId'=>$layerId,'tokenId'=>$source['id'],'sourceTokenId'=>$source['id'],'anchorTokenId'=>$source['id']];
-    onlineRecordCharacterLuckD100($connection,$records,$pending,$identity,$luckId,$rolled);
-    onlineAppendAbilityEffectRoll($records,$pending,$roll);
-    $cast=[...$cast,'statId'=>'luck','statLabel'=>'Chance','outcome'=>$outcome,'roll'=>$roll,'success'=>$outcome['code']!=='critical-failure','gateAllowsEffect'=>$outcome['code']!=='critical-failure'];
+    $roll['mapEvent']=['kind'=>'roll','label'=>'Chance','value'=>$outcome['result']??$raw,'sceneId'=>$sceneId,'layerId'=>$layerId,'tokenId'=>$source['id'],'sourceTokenId'=>$source['id'],'anchorTokenId'=>$source['id']];
+    onlineRecordCharacterLuckD100($connection,$records,$pending,$identity,$castingPlan['characterId'],$rolled);
+    if ($showChanceRoll) onlineAppendAbilityEffectRoll($records,$pending,$roll);
+    $cast=[...$cast,'statId'=>'luck','statLabel'=>'Chance','outcome'=>$showChanceRoll?$outcome:null,'roll'=>$showChanceRoll?$roll:null,
+        'success'=>$allowsEffect,'gateAllowsEffect'=>$allowsEffect,
+        ...($refundedItems!==[]?['consumedItemIds'=>[],'refundedItemIds'=>$refundedItems]:[])];
     $modifier=normalizeOnlineD100Modifier($arguments['damageModifier']??0);
     if($modifier!==0){$damageFormula.=($modifier>0?'+':'').$modifier;if($damageComponents!==[])$damageComponents[0]['formula'].=($modifier>0?'+':'').$modifier;}
     $now=(int)floor(microtime(true)*1000);
-    $attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>$layerId,'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Zone du souffle','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!$visible?'gm':'public','attackId'=>$ability['id'],'attackName'=>$ability['name'],'attackKind'=>'ability','status'=>'pending','validationKind'=>'area-gate','areaAnchorOnly'=>true,'areaRadiusCells'=>$ability['damageTargeting']['lengthCells'],'targetPoint'=>$targetPoint,'damageType'=>$damageType,'damageFormula'=>$damageFormula,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[]),'damagePercent'=>100,'damageRollMode'=>'normal','damage'=>[],'finalDamage'=>0,'opposed'=>false,'hit'=>['raw'=>$rolled['rawD100'],'total'=>$rolled['total'],'formula'=>'1d100','statId'=>'luck','statLabel'=>'Chance','outcome'=>$outcome,'rollId'=>$roll['id']],'hitRoll'=>$roll,'cast'=>$cast,'createdAt'=>$now,'areaGate'=>['version'=>1,'ability'=>$ability,'variantId'=>$arguments['variantId']??'','sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$targetPoint,'targetTokenIds'=>array_column($targets,'id'),'chanceOutcome'=>$outcome]];
+    $attack=['id'=>'attack-'.randomToken(12),'requestId'=>$arguments['requestId'],'sceneId'=>$sceneId,'layerId'=>$layerId,'sourceTokenId'=>$source['id'],'sourceName'=>$source['name'],'targetTokenId'=>$source['id'],'targetName'=>'Zone du souffle','accountId'=>$identity['id'],'attackerRole'=>$isGm?'gm':'player','playerName'=>$identity['display_name']??'Joueur','visibility'=>$isGm&&!$visible?'gm':'public','attackId'=>$ability['id'],'attackName'=>$ability['name'],'attackKind'=>'ability',
+        ...($criticalFailure?['status'=>'missed','resolvedAt'=>$now,'chanceCastCriticalFailure'=>true]:['status'=>'pending','validationKind'=>'area-gate']),
+        'areaAnchorOnly'=>true,'areaRadiusCells'=>$ability['damageTargeting']['lengthCells'],'targetPoint'=>$targetPoint,'damageType'=>$damageType,'damageFormula'=>$damageFormula,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[]),'damagePercent'=>100,'damageRollMode'=>'normal','damage'=>[],'finalDamage'=>0,'opposed'=>false,
+        'hit'=>$showChanceRoll?['raw'=>$raw,'total'=>$rolled['total'],'formula'=>'1d100','statId'=>'luck','statLabel'=>'Chance','outcome'=>$outcome,'rollId'=>$roll['id']]:[],
+        ...($showChanceRoll?['hitRoll'=>$roll]:[]),'cast'=>$cast,'createdAt'=>$now,'areaGate'=>['version'=>1,'ability'=>$ability,'variantId'=>$arguments['variantId']??'','sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$targetPoint,'targetTokenIds'=>array_column($targets,'id'),'chanceOutcome'=>$showChanceRoll?$outcome:null]];
     $attack['areaGate']['sourceUnitId']=unitIdForToken($source);$attack['areaGate']['sourceControllerId']=onlineTokenControllerIdFromRecords($connection,$records,$source);
     $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$attack['areaGate']['kind']='chance';$attack['areaGate']['defenseStatId']='character-stat-agility';$attack['areaGate']['defenseEligibleTokenIds']=[];$attack['areaGate']['sourceParty']=onlineDefenseParty($connection,$records,$source,$map);$attack['areaGate']['targetParties']=[];
     foreach($targets as$target){$attack['areaGate']['targetParties'][$target['id']]=onlineDefenseParty($connection,$records,$target,$map);if(($ability['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0)$attack['areaGate']['defenseEligibleTokenIds'][]=$target['id'];}
     $attack['areaGate']['targetUnitIds']=[];foreach($targets as $target)$attack['areaGate']['targetUnitIds'][$target['id']]=unitIdForToken($target);
     if (onlineWantsTotalOpposition($arguments)) $attack['areaGate']['oppositionMode'] = 'total';
-    $activity=$pending['activity']['payload']??$activity;$activity['pendingAttacks'][]=$attack;
+    $activity=$pending['activity']['payload']??$activity;
+    if (!$criticalFailure) $activity['pendingAttacks'][]=$attack;
     $receipts[]=['requestId'=>$arguments['requestId'],'accountId'=>$identity['id'],'requestSignature'=>onlineAttackRequestSignature($sceneId,$arguments,true),'expiresAt'=>$now+XAR_ATTACK_RECEIPT_TTL_MILLISECONDS,'attack'=>$attack];$activity['attackReceipts']=$receipts;
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
-    $action=onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$source['name'],'targetName'=>'Cône visé','summary'=>$source['name'].' prépare '.$ability['name'],'detail'=>'Chance résolue · choix des esquives et validation MJ en attente']);
-    $result=['attack'=>$isGm?$attack:publicOnlineAttackResult($attack,true,false),'cast'=>$cast,'castSucceeded'=>$cast['success'],'pendingAreaGate'=>true,...onlineAbilityRollBundle($cast),'effectRoll'=>null,'damageRoll'=>null,'discordContent'=>''];
+    $detail=$criticalFailure
+        ? ($refundedItems!==[]?'Échec critique · souffle annulé, Potion élémentaire rendue':'Échec critique · souffle annulé')
+        : 'Choix des esquives et validation MJ en attente';
+    $action=onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$source['name'],'targetName'=>'Cône visé','summary'=>$source['name'].' · '.$ability['name'],'detail'=>$detail]);
+    $result=['attack'=>$isGm?$attack:publicOnlineAttackResult($attack,true,false),'cast'=>$cast,'castSucceeded'=>$cast['success'],
+        'pendingAreaGate'=>!$criticalFailure,...($criticalFailure?['chanceCastCriticalFailure'=>true]:[]),...onlineAbilityRollBundle($cast),'effectRoll'=>null,'damageRoll'=>null,'discordContent'=>''];
     onlineStoreAbilityReceipt($records,$pending,$arguments['requestId'],$identity['id'],applicationAbilityRequestSignature('token.attack',$sceneId,$arguments,true),[...$result,'attackId'=>$attack['id']],$action['id']);
     return $result;
 }
@@ -79,7 +103,11 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
         }
     }
     if(!is_array($attack['areaGate']??null))throw new RuntimeException('Cette zone n’attend pas de décision.',404);
-    if ($arguments['decision']==='approve'
+    if (!empty($attack['chanceCastCriticalFailure'])) return ['attack'=>$attack,'areaAttacks'=>[],'deduplicated'=>true,'chanceCastCriticalFailure'=>true];
+    $legacyCriticalFailure=($attack['attackId']??'')==='ability-mania-elemental-breath'
+        && ($attack['areaGate']['chanceOutcome']['code']??'')==='critical-failure' && ($attack['status']??'')==='pending'
+        && !isset($attack['areaGate']['resolutionSignature']);
+    if (!$legacyCriticalFailure && $arguments['decision']==='approve'
         && (onlineWantsTotalOpposition($arguments) || onlineWantsTotalOpposition($attack['areaGate']))) {
         if (($arguments['defenseTokenIds'] ?? []) !== []) throw new RuntimeException('La Régie choisit les défenseurs de cette zone.',400);
         $arguments['oppositionMode']='total';
@@ -91,13 +119,28 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     }
     if(($attack['areaGate']['kind']??'')==='device-damage')return onlineResolveDeviceDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
     if(!empty($attack['areaGate']['deferred']))return onlineResolveDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,$attack);
-    $allowed=applicationApprovedAreaDefenseIds([...$attack['areaGate'],'targetTokenIds'=>$attack['areaGate']['defenseEligibleTokenIds']??$attack['areaGate']['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=onlineAreaDefenseSignature($arguments,$allowed);
+    $allowed=$legacyCriticalFailure?[]:applicationApprovedAreaDefenseIds([...$attack['areaGate'],'targetTokenIds'=>$attack['areaGate']['defenseEligibleTokenIds']??$attack['areaGate']['targetTokenIds']],$arguments['defenseTokenIds']??[]);
+    $signature=onlineAreaDefenseSignature($arguments,$allowed);
     if(isset($attack['areaGate']['resolutionSignature'])){
         if($attack['areaGate']['resolutionSignature']!==$signature)throw new RuntimeException('Cette zone a déjà été résolue avec un autre choix.',409);
         return ['attack'=>$attack,'areaAttacks'=>applicationAttackFamilyChildren($connection,$activity,$attack['id'],['areaGateParentId']),
             'deduplicated'=>true];
     }
     $sceneId=$attack['sceneId'];$children=[];$canFire=$arguments['decision']==='approve'&&($attack['areaGate']['chanceOutcome']['code']??'')!=='critical-failure';
+    $restored=[];
+    if ($legacyCriticalFailure) {
+        $restored=onlineRestoreConsumedElementalBreathPotion($connection,$records,$pending,$attack);
+        $attack['chanceCastCriticalFailure']=true;
+        foreach (['cast','hit','hitRoll','areaGate'] as $key) {
+            $outcomeKey=$key==='areaGate'?'chanceOutcome':'outcome';
+            if (is_array($attack[$key][$outcomeKey]??null)) $attack[$key][$outcomeKey]['requiresGmValidation']=false;
+        }
+        if (is_array($attack['cast']['roll']['outcome']??null)) $attack['cast']['roll']['outcome']['requiresGmValidation']=false;
+        if ($restored!==[]) {
+            $attack['cast']['consumedItemIds']=array_values(array_diff($attack['cast']['consumedItemIds'],$restored));
+            $attack['cast']['refundedItemIds']=$restored;
+        }
+    }
     if($canFire){
         if(isset($attack['areaGate']['sourceParty']))onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);
         $records=array_replace($records,applicationDomainRecords($connection,['map:'.$sceneId,'initiative:'.$sceneId]));$map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);
@@ -105,7 +148,8 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
         if(!$source)throw new RuntimeException('Le lanceur n’existe plus. Refusez cette tentative.',409);
         if(unitUsesCharacterSheet($source)){$key='character:'.$source['characterId'];$records=array_replace($records,applicationDomainRecords($connection,[$key]));$source=synchronizeOnlineCharacterToken($source,$pending[$key]['payload']??applicationDomainPayload($records,$key));}
         $ability=null;foreach(normalizeOnlineAbilities($source['abilities']??[]) as $row)if($row['id']===$attack['attackId'])$ability=$row;
-        if(!$ability||canonicalApplicationDomainValue($ability)!==canonicalApplicationDomainValue($attack['areaGate']['ability']))throw new RuntimeException('La compétence du lanceur a changé. Refusez cette tentative.',409);
+        $snapshot=applicationConfiguredElementalBreath($attack['areaGate']['ability']);
+        if(!$ability||canonicalApplicationDomainValue($ability)!==canonicalApplicationDomainValue($snapshot))throw new RuntimeException('La compétence du lanceur a changé. Refusez cette tentative.',409);
         if(onlineTokenLayerId($source)!==$attack['layerId']||unitIdForToken($source)!==$attack['areaGate']['sourceUnitId']||onlineTokenControllerIdFromRecords($connection,$records,$source)!==$attack['areaGate']['sourceControllerId']||(float)($source['hp']??0)<=0)throw new RuntimeException('Le porteur du souffle a changé ou ne peut plus agir. Refusez cette tentative.',409);
         $targets=[];foreach($attack['areaGate']['targetTokenIds'] as $id){$target=null;foreach($tokens as $token)if($token['id']===$id)$target=$token;if(!$target||onlineTokenLayerId($target)!==$attack['layerId'])throw new RuntimeException('Une unité du cône a quitté ce niveau. Refusez cette tentative.',409);$targets[]=$target;}
         foreach($targets as $target)if(unitIdForToken($target)!==($attack['areaGate']['targetUnitIds'][$target['id']]??null))throw new RuntimeException('Une cible du cône a changé de fiche. Refusez cette tentative.',409);
@@ -139,7 +183,7 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
         if($spell=applicationTrustedSpellVisual($ability,['sceneId'=>$sceneId,'source'=>$attack['areaGate']['sourcePoint'],'targetPoint'=>$attack['areaGate']['targetPoint'],'variantId'=>$attack['areaGate']['variantId'],'map'=>$map]))$cue['spell']=$spell;
         $attack['areaGate']['visualCueEventId']=appendApplicationAbilityCueEvent($activity,$cue,$sceneId,$attack['layerId'],$source['id'],$attack['visibility']);
     }
-    $attack['areaGate']['resolutionSignature']=$signature;$attack['areaGate']['defenseTokenIds']=$allowed;$attack['status']=$canFire?'resolved':($arguments['decision']==='reject'?'rejected':'missed');$attack['resolvedAt']=(int)floor(microtime(true)*1000);
+    $attack['areaGate']['resolutionSignature']=$signature;$attack['areaGate']['defenseTokenIds']=$allowed;$attack['status']=$canFire?'resolved':($arguments['decision']==='reject'&&!$legacyCriticalFailure?'rejected':'missed');$attack['resolvedAt']=(int)floor(microtime(true)*1000);
     $activity['pendingAttacks']=array_values(array_filter($activity['pendingAttacks']??[],static fn($entry)=>($entry['id']??'')!==$attack['id']));
     foreach ($activity['attackReceipts'] as &$receipt) {
         if (($receipt['attack']['id'] ?? '') !== $attack['id']) continue;
@@ -149,7 +193,9 @@ function onlineResolveAreaCastGate(PDO $connection,array &$records,array &$pendi
     }
     unset($receipt);
     queueOnlineDomainUpsert($pending,$records,'activity',$activity);
-    onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$attack['sourceName'],'summary'=>$attack['sourceName'].' · '.$attack['attackName'],'detail'=>$canFire?'Cône confirmé · esquive individuelle selon le tableau MJ':'Souffle annulé · coûts conservés']);
+    $detail=$canFire?'Cône confirmé · esquive individuelle selon le tableau MJ'
+        : ($restored!==[]?'Échec critique · souffle annulé, Potion élémentaire rendue':'Souffle annulé · coûts conservés');
+    onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'attack','attackId'=>$attack['id'],'characterName'=>$attack['sourceName'],'summary'=>$attack['sourceName'].' · '.$attack['attackName'],'detail'=>$detail]);
     foreach($children as $child)if($child['status']==='applied')onlineAppendAppliedDamageAction($connection,$records,$pending,$identity,$child);
-    return ['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>false];
+    return ['attack'=>$attack,'areaAttacks'=>$children,'deduplicated'=>false,...($legacyCriticalFailure?['chanceCastCriticalFailure'=>true]:[])];
 }

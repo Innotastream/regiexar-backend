@@ -3433,6 +3433,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     if($manual!==null)$turns=[[(string)$manual['sceneId'],'',applicationDomainPayload($records,'initiative:'.$manual['sceneId']),(int)$manual['turn']]];
     if ($turns === [] && $endedScenes === [] && $startedScenes === [] && !$advancedInitiative) return;
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    onlinePoisonTurnSaves($connection,$records,$pending,$turns);
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     if ($startedScenes !== [] && !empty($activity['abilityExecutions'])) {
         $now = (int) floor(microtime(true) * 1000);
@@ -3529,18 +3530,20 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $summary = onlineTypedDamageSummary(max(0, (int) $rolled['total']),
                 $resistanceTarget,
                 (string) ($dot['damageType'] ?? 'physical'), applicationPeriodicDamageElement($dot));
-            $applied = 0;
+            $applied = 0; $healed = 0; $absorbed = 0;
             if ($summary['finalDamage'] > 0) {
                 $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical','family'=>applicationEffectFamily($dot),'sourceItemKind'=>$dot['sourceItemKind']??''], false);
                 $applied = (int) ($health['appliedDamage'] ?? 0);
+                $healed = (int) ($health['appliedHealing'] ?? 0);
+                $absorbed = (int) ($health['poisonConvertedDamage'] ?? 0);
                 $updatedTarget = $pending[$key]['payload'] ?? $target;
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
             }
             $roll = onlineRollEntry($identity, $rolled, 'DOT · ' . (string) ($dot['label'] ?? 'Effet'), (string) ($target['name'] ?? 'Cible'));
-            $roll['damageMitigation'] = $summary;
+            $roll['damageMitigation'] = $absorbed > 0 ? [...$summary, 'finalDamage'=>$applied, 'appliedHealing'=>$healed] : $summary;
             if (($target['hidden'] ?? false) === true) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
-            $roll['mapEvent'] = ['kind' => 'damage', 'applied' => true, 'value' => $applied,
-                'label' => (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId, 'tokenId' => $tokenId,
+            $roll['mapEvent'] = ['kind' => $absorbed > 0 ? 'roll' : 'damage', 'applied' => $applied > 0, 'value' => $absorbed > 0 ? $healed : $applied,
+                'label' => $absorbed > 0 ? 'Corps toxique' : (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId, 'tokenId' => $tokenId,
                 'targetName' => (string) ($target['name'] ?? 'Cible'), 'attackId' => (string) $dot['id'],
                 'sourceTokenId' => $tokenId, 'anchorTokenId' => $tokenId,
                 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
@@ -3606,14 +3609,16 @@ function reconcileApplicationSceneDomains(PDO $connection, array &$records, arra
         }
     }
     $devices=$byKey['devices']['payload']??applicationDomainPayload($records,'devices');
-    if (!empty($devices['elementalSaveTurns'])) {
-        $remaining=array_diff_key($devices['elementalSaveTurns'],$deleted);
-        if ($remaining!==$devices['elementalSaveTurns']) {
-            if ($remaining===[]) unset($devices['elementalSaveTurns']);
-            else $devices['elementalSaveTurns']=$remaining;
-            queueOnlineDomainUpsert($byKey,$records,'devices',$devices);
-        }
+    $deviceClockChanged=false;
+    foreach (['elementalSaveTurns','poisonSaveTurns'] as $clockKey) {
+        if (empty($devices[$clockKey])) continue;
+        $remaining=array_diff_key($devices[$clockKey],$deleted);
+        if ($remaining===$devices[$clockKey]) continue;
+        if ($remaining===[]) unset($devices[$clockKey]);
+        else $devices[$clockKey]=$remaining;
+        $deviceClockChanged=true;
     }
+    if($deviceClockChanged) queueOnlineDomainUpsert($byKey,$records,'devices',$devices);
     return array_values($byKey);
 }
 
@@ -3733,9 +3738,14 @@ function patchApplicationDomains(PDO $connection): never
             }
         }
         reconcileApplicationMountedTokenDomains($connection, $records, $pendingByKey, array_keys($mountedScenes));
+        onlinePruneDeadInitiative($connection, $records, $pendingByKey);
         applyApplicationDamageOverTimeOnTurn($connection, $records, $pendingByKey, $identity);
         $pending = array_values($pendingByKey);
         $pending = onlineAdvanceDevicesOnChanges($connection, $records, $pending, $identity);
+        $pendingByKey = array_column($pending, null, 'key');
+        $endedByDeath = onlinePruneDeadInitiative($connection, $records, $pendingByKey, false);
+        onlineFinishPrunedCombat($connection, $records, $pendingByKey, $identity, $endedByDeath);
+        $pending = array_values($pendingByKey);
         $pending = applicationCancelAttacksForDeletedTokens($connection, $pending);
         if ($pending === []) {
             $connection->commit();

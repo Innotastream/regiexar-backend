@@ -15,6 +15,7 @@ require_once __DIR__.'/metamorphosis.php';
 require_once __DIR__.'/attack-enhancements.php';
 require_once __DIR__.'/device-items.php';
 require_once __DIR__.'/contact-effect-zones.php';
+require_once __DIR__.'/poison-runtime.php';
 
 // Native PHP counterpart of public/device-state.js. Storage and dice are
 // supplied by the authority inside its existing transaction/clock lock.
@@ -97,6 +98,7 @@ function dsStore(mixed $value): array {
     foreach (['devices','craftRequests','pendingRolls','timedConditions','receipts'] as $key) if (!is_array($value[$key]??null) || !array_is_list($value[$key]) || count($value[$key])>($key==='receipts'?2048:1000)) dsError('Le registre des dispositifs est invalide.');
     if(array_key_exists('spellFields',$value))$value['spellFields']=applicationSpellFields($value['spellFields']);
     if(array_key_exists('contactZones',$value))$value['contactZones']=applicationContactZones($value['contactZones']);
+    if(array_key_exists('drowCoatings',$value))$value['drowCoatings']=applicationDrowCoatings($value['drowCoatings']);
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1
@@ -270,7 +272,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(($state['tacticalSync']['paused']??false) && $actor['role']!=='gm') dsError('La table est verrouillée.',423);
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
-    $maintainsDeviceItems=!in_array($command,['device.mana.set','structure.web.place'],true);
+    $maintainsDeviceItems=!in_array($command,['device.mana.set','structure.web.place','varska.drow-coat'],true);
     if($maintainsDeviceItems)ensureDeviceItems($state,$id);
     if($command==='structure.web.place'){
         if($actor['role']!=='gm')dsError('Seul le MJ peut poser une toile depuis les obstacles.',403);
@@ -281,6 +283,8 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         $web=applicationPlaceSilkWeb($state,$args,$id('structure-web'),(int)round(strtotime($now)*1000));
         $result=['tokenId'=>$web['id']];
         $effects[]=['type'=>'structure.created','tokenId'=>$web['id'],'sceneId'=>$sceneId,'layerId'=>$layerId];
+    } elseif($command==='varska.drow-coat'){
+        $result=applicationDrowCoatWeapon($state,$actor,$args,$context);
     } elseif($command==='appearance.change'){
         $ti=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
         $owner=ownedUnit($state,$actor,unitIdForToken($token));
@@ -658,9 +662,10 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
     if(($previous['active']??false)===true&&($current['active']??false)!==true){
         $state=applicationFinishCombatRounds($state,$sceneId,$previous);$store=&$state['devices'];
         unset($store['elementalSaveTurns'][$sceneId]);
+        unset($store['poisonSaveTurns'][$sceneId]);
         if (empty($store['elementalSaveTurns'])) unset($store['elementalSaveTurns']);
-        foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId)$effects[]=['type'=>'condition.expire','condition'=>$condition];
-        $store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($c)=>$c['sceneId']!==$sceneId));
+        foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId&&empty($condition['drowPoisonStacks']))$effects[]=['type'=>'condition.expire','condition'=>$condition];
+        $store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($c)=>$c['sceneId']!==$sceneId||!empty($c['drowPoisonStacks'])));
         $store['pendingRolls']=array_values(array_filter($store['pendingRolls'],static fn($p)=>($p['sceneId']??'')!==$sceneId||!in_array($p['type']??'',['condition','escape','opportunity'],true)));
         applicationAdvanceFixedStructures($state,$previous,$effects,$context);
         return ['state'=>$state,'effects'=>$effects];

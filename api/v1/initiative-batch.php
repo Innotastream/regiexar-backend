@@ -130,6 +130,10 @@ function onlineGmInitiativeBatch(
     }
     $characters = onlineSceneCharacterIndex($connection, $records, $tokens);
     $owners = onlineCharacterOwnerIndex($characters);
+    foreach ($ids as $id) {
+        if (onlineInitiativeTokenIsDead($connection, $records, $tokens[$id], $pending))
+            rejectOnlineCommand($connection, 409, 'Un pion sélectionné est mort. Relancez l’initiative des unités encore en jeu.', 'dead_initiative');
+    }
     $activity = applicationDomainPayload($records, 'activity');
     foreach ($activity['resourceReceipts'] ?? [] as $pendingReceipt) {
         if (($pendingReceipt['requestId'] ?? '') === $requestId && ($pendingReceipt['expiresAt'] ?? 0) > $now) {

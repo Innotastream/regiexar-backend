@@ -92,7 +92,10 @@ $records = applicationDomainRecords($db);
 $pending = [];
 $identity = ['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
 applyApplicationDamageOverTimeOnTurn($db, $records, $pending, $identity, ['sceneId'=>'scene-one', 'turn'=>1]);
-requireTactical($pending[$monsterKey]['payload']['hp'] === 35, 'A legacy poison DOT applies one 50% reduction through the manual turn path.');
+$saves = array_values(array_filter($pending['activity']['payload']['rolls']??[],static fn($roll)=>($roll['label']??'')==='Résistance · Poison mortel'));
+requireTactical(count($saves)===1 && $saves[0]['outcome']['threshold']===50
+    && ($pending[$monsterKey]['payload']['hp']??40)===($saves[0]['total']<=50?40:35),
+    'A legacy poison receives one free-turn save before its remaining damage is reduced by 50%.');
 
 $db->put('items', ['version'=>1,'templates'=>[['id'=>'antidote-template','name'=>'Antidote','kind'=>'object',
     'active'=>['version'=>1,'useLabel'=>'Boire','authority'=>'owner','effects'=>[

@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/attack-enhancements.php';
+
+const XAR_PERFIDIOUS_POISON_ABILITY_ID = 'ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189';
 function isVarskaPawAttack(array $weapon, array $source): bool {
  if (($weapon['id'] ?? '') !== 'weapon-2') return false;
  $identities = [$source['id']??'', 'unit_'.($source['id']??''), $source['characterId']??'',
@@ -22,8 +25,20 @@ function weaponTurnContext(array $state,array $source,array $options):array {
  $turnKey=$active?json_encode([$initiative['combatId']??'',max(0,(int)($initiative['turnSerial']??0)),max(1,(int)($initiative['round']??1))],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):'';
  return ['sceneId'=>$sceneId,'unitId'=>$unitId,'active'=>$active,'turnKey'=>$turnKey,'combatId'=>$initiative['combatId']??''];
 }
+function perfidiousPoisonSuspendsPawTurnLimit(array $state, array $source, array $weapon, string $sceneId): bool {
+ if (($weapon['id'] ?? '') !== 'weapon-2') return false;
+ $holder = applicationEnhancementHolder($source);
+ foreach ($state['attackEnhancements'] ?? [] as $effect) {
+  if (($effect['abilityId'] ?? '') !== XAR_PERFIDIOUS_POISON_ABILITY_ID || ($effect['mode'] ?? '') !== 'on-attack-dot'
+    || ($effect['remainingTurns'] ?? 0) <= 0 || ($effect['sceneId'] ?? '') !== $sceneId || ($effect['holder'] ?? '') !== $holder) continue;
+  $configured = applicationConfiguredAttackEnhancement(XAR_PERFIDIOUS_POISON_ABILITY_ID, $effect);
+  if (in_array($weapon['id'], $configured['weaponIds'] ?? [], true)) return true;
+ }
+ return false;
+}
 function weaponTurnUsage(array $state,array $source,array $weapon,array $options=[]):array {
  $clock=weaponTurnContext($state,$source,$options);$limit=weaponAttackTurnLimit($weapon,$source);$timer=null;
+ if($limit&&$clock['active']&&perfidiousPoisonSuspendsPawTurnLimit($state,$source,$weapon,$clock['sceneId']))$limit=0;
  foreach($state['actionTimers']??[]as$entry)if(($entry['kind']??'')==='weapon-turn-limit'&&($entry['unitId']??'')===$clock['unitId']&&($entry['weaponId']??'')===($weapon['id']??null)&&($entry['sceneId']??'')===$clock['sceneId']){$timer=$entry;break;}
  $current=$clock['active']&&($timer['turnKey']??null)===$clock['turnKey'];$used=$current?max(0,(int)($timer['useCount']??0)):0;
  return [...$clock,'limit'=>$limit,'used'=>$used,'remaining'=>$limit?max(0,$limit-$used):null,'timerId'=>$timer['id']??'','requestIds'=>$current?array_values($timer['requestIds']??[]):[]];

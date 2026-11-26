@@ -124,7 +124,7 @@ function applicationRecordElementalConditionSave(array &$state,array $unit,strin
 {
     $rolled=$save['rolled'];
     if ($rolled===null) return;
-    $label=applicationElementalSavingConditionLabel($label);
+    $label=applicationElementalSavingConditionLabel($label) ?? $label;
     $name=(string)($unit['name']??$token['name']??'Unité');
     $outcome=classifyOnlineD100Outcome($rolled,$save['threshold'],0,0,false);
     $entry=onlineRollEntry(['display_name'=>$name],['formula'=>'1d100','total'=>$rolled,'breakdown'=>"[$rolled]"],'Résistance · '.$label,$name,$outcome);

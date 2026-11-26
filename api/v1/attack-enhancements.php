@@ -219,7 +219,7 @@ function applicationEffectiveElementalResistanceOverrides(array $source, array $
     }
     $result=[];
     if($totals!==[]){
-        $base=normalizeApplicationElementalResistances($source['elementalResistances']??null);
+        $base=applicationBaseElementalResistances($source);
         foreach($totals as $element=>$amount){
             $effective=max(XAR_ELEMENTAL_RESISTANCE_MINIMUM,min(100,$base[$element]+$amount));
             if($effective!==$base[$element])$result[$element]=$effective;
@@ -228,8 +228,15 @@ function applicationEffectiveElementalResistanceOverrides(array $source, array $
     return [...$result,...$overrides];
 }
 
+function applicationBaseElementalResistances(array $source): array {
+    $resistances=normalizeApplicationElementalResistances($source['elementalResistances']??null);
+    if(applicationPoisonHeals($source))$resistances['poison']=0;
+    if(applicationHasPassive($source,'poison-resilience'))$resistances['poison']=min(100,$resistances['poison']+25);
+    return $resistances;
+}
+
 function applicationEffectiveElementalResistances(array $source, array $state, string $sceneId): array {
-    return [...normalizeApplicationElementalResistances($source['elementalResistances']??null),
+    return [...applicationBaseElementalResistances($source),
         ...(is_array($source['elementalResistanceOverrides']??null)?$source['elementalResistanceOverrides']:[]),
         ...applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId)];
 }
@@ -242,6 +249,8 @@ function applicationElementalResistanceTarget(array $source,array $state,string 
     }
     if($sheet!==null&&$sheet!==[])$source['elementalResistances']=$sheet['elementalResistances']??[];
     $overrides=applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId);
+    if(applicationPoisonHeals($source)||applicationHasPassive($source,'poison-resilience'))
+        $overrides['poison']??=applicationBaseElementalResistances($source)['poison'];
     return $overrides===[]?$source:[...$source,'elementalResistanceOverrides'=>$overrides];
 }
 
@@ -476,6 +485,9 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
         if(empty($effect['bonuses']))continue;
         foreach($effect['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;
     }
+    if (($drowPenalty=applicationDrowStatPenalty($source,$activity['devices']??[],$sceneId))>0) {
+        foreach (['force','agility','dexterity'] as $stat) $bonuses[$stat]=($bonuses[$stat]??0)-$drowPenalty;
+    }
     if($character!==null){
         $rows=applicationEffectiveCharacterStats($character,$bonuses);$ids=array_column($rows,'id');
         // An attack may add an already resolved weapon-skill row. Keep these
@@ -495,11 +507,12 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
     unset($row);return $rows;
 }
 function onlineEnhancedStatRows(PDO $connection,array &$records,array $pending,array $source,string $sceneId,?array $activity=null): array {
-    $keys=['activity'];$holder=applicationEnhancementHolder($source);if(str_starts_with($holder,'character:'))$keys[]=$holder;
+    $keys=['activity'];if(!isset($pending['devices'])&&!isset($records['devices']))$keys[]='devices';$holder=applicationEnhancementHolder($source);if(str_starts_with($holder,'character:'))$keys[]=$holder;
     $records=array_replace($records,applicationDomainRecords($connection,$keys));
     $activity??=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $character=str_starts_with($holder,'character:')?($pending[$holder]['payload']??applicationDomainPayload($records,$holder)):null;
-    return applicationEnhancedStatRows($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId,$character);
+    return applicationEnhancedStatRows($source,[...onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),
+        'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices')],$sceneId,$character);
 }
 
 function applicationEffectiveInitiativeBonus(array $source,array $state,string $sceneId):int { $bonus=(int)($source['initiativeBonus']??0);foreach(applicationActiveAttackEnhancements($source,$state,$sceneId) as $effect)$bonus+=(int)($effect['bonuses']['initiativeBonus']??0);return $bonus; }
