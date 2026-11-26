@@ -29,7 +29,7 @@ function checkPolicy(bool $condition, string $message): void
     $GLOBALS['checks'] = ($GLOBALS['checks'] ?? 0) + 1;
 }
 
-$currentVersion = '4.4.4';
+$currentVersion = '4.4.5';
 $policy = clientPolicy(['client' => ['enforce' => false, 'minimumVersion' => '1.0.0', 'latestVersion' => '99.0.0']]);
 checkPolicy($policy['enforce'] === true && $policy['exactVersion'] === true, 'La connexion impose la version courante exacte.');
 checkPolicy($policy['allowedVersions'] === [$currentVersion], 'Seule la version courante est admise.');
@@ -55,7 +55,7 @@ foreach (['gm', 'player'] as $mode) {
         requireSupportedClient($connection, []);
         checkPolicy(true, "$mode $version atteint la vérification des identifiants.");
     }
-    foreach (['4.3.4', '4.4.0', '4.4.1', '4.4.2', '4.4.3', '4.4.5'] as $version) {
+    foreach (['4.3.4', '4.4.0', '4.4.1', '4.4.2', '4.4.3', '4.4.4', '4.4.6'] as $version) {
         $_SERVER['HTTP_X_XAR_CLIENT_VERSION'] = $version;
         try { requireSupportedClient($connection, []); throw new RuntimeException("Version admise à tort : $version"); }
         catch (PolicyResponse $response) { checkPolicy($response->status === 426, "$mode $version doit être refusé."); }
