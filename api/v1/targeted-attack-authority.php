@@ -20,10 +20,7 @@ if ($isGm) {
     rejectOnlineCommand($connection, 409, 'La scène diffusée a changé. Actualisez la carte avant d’attaquer.', 'stale_scene');
 }
 if ($sceneId === '') rejectOnlineCommand($connection, 409, 'Aucune scène active.', 'combat_scene_required');
-$customArbitration = ($arguments['attackKind'] ?? null) === 'custom';
-if ($customArbitration && !$isGm) {
-    rejectOnlineCommand($connection,403,'L’attaque entièrement personnalisée est réservée au MJ.','gm_required');
-}
+$customArbitration = $isGm && ($arguments['attackKind'] ?? null) === 'custom';
 $requestId = trim((string) ($arguments['requestId'] ?? ''));
 if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
     rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack_request');
@@ -694,7 +691,7 @@ if (is_array($deduplicatedAttack)) {
         'attackName' => substr($attackName, 0, 120),
         'attackKind' => $attackKind,
         ...(onlineWantsTotalOpposition($arguments) ? ['oppositionMode'=>'total'] : []),
-        ...($sourceSight && ($approachContext !== null || $attackKind === 'ability' && $mechanicsApplied === null
+        ...($sourceSight && ($approachContext !== null || in_array($attackKind,['ability','custom'],true)
             && !$isWallCast && empty($mechanicsDefinition['persistentArea']))
             ? ['sourceSight'=>true] : []),
         ...($approachContext!==null?['attackApproach'=>$approachContext['attackApproach'],...(!empty($approachContext['mountedMovement'])?['mountedMovement'=>true]:[]),'approachPoint'=>['x'=>$arguments['approachPoint']['x'],'y'=>$arguments['approachPoint']['y']]]:[]),

@@ -129,12 +129,17 @@ foreach ([false,true] as $gm) {
         $custom=['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>$target['id'],'requestId'=>'custom-door-'.randomToken(16),
             'attackKind'=>'custom','opposed'=>false,'customAttack'=>['name'=>'Arbitrage de recette','customStat'=>true,'threshold'=>100,
                 'statLabel'=>'Force','damageComponents'=>[['type'=>'physical','formula'=>'8']]]];
-        $before=$db->domains;
         $playerCustom=runCommand($db,'token.attack',$custom);
-        specialCheck($playerCustom->status===403&&($playerCustom->body['code']??'')==='gm_required'&&$db->domains===$before,
-            'A player cannot use custom arbitration, even with the door open: '.json_encode($playerCustom->body));
+        $storedCustom=array_column($db->payload('activity')['attackReceipts'],'attack','requestId')[$custom['requestId']]??[];
+        specialCheck($playerCustom->status===200&&($storedCustom['attackKind']??'')==='custom'&&($storedCustom['sourceSight']??false)===true,
+            'The player can launch a custom attack when the caster can see the target: '.json_encode($playerCustom->body));
         $closed=runCommand($db,'door.interact',[...$doorRequest,'action'=>'close'],true,'account-gm');
         specialCheck($closed->status===200&&!$closed->body['open'],'Door closed before the custom-arbitration comparison');
+        $custom['requestId']='custom-door-closed-'.randomToken(16);
+        $before=$db->domains;
+        $hiddenCustom=runCommand($db,'token.attack',$custom);
+        specialCheck($hiddenCustom->status===403&&($hiddenCustom->body['code']??'')==='attack_target_hidden'&&$db->domains===$before,
+            'A player cannot use a custom attack through the closed door: '.json_encode($hiddenCustom->body));
         $normal=runCommand($db,'token.attack',[...$custom,'requestId'=>'normal-closed-door-'.randomToken(16),
             'attackKind'=>'ability','attackId'=>$ability['id']],true,'account-gm');
         specialCheck($normal->status===403&&($normal->body['code']??'')==='attack_target_hidden',
