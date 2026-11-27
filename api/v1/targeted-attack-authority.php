@@ -225,7 +225,7 @@ if (is_array($deduplicatedAttack)) {
     $source['weaponAttacks']=equipmentAttackRows($source['weaponAttacks']??[],$source,$equipmentState);
     if($hadWeaponDefinitions)$source['damageDice']=$source['weaponAttacks'][0]['formula']??'';
     $complexExecutionId = trim((string) ($arguments['complexExecutionId'] ?? ''));
-    $sourceSight = !$customArbitration && $complexExecutionId === '' && ($defenseApproval === null || ($defenseApproval['gate']['sourceSight'] ?? false) === true);
+    $sourceSight = !$customArbitration && $mechanicsApplied === null && $mechanicsAbility === null && $complexExecutionId === '' && ($defenseApproval === null || ($defenseApproval['gate']['sourceSight'] ?? false) === true);
     $sourceVision = $sourceSight ? onlineAbilitySourceVisibility($map,$source,$sourceCharacter ?: null,$sceneId) : null;
     $targetVisibility = !$sourceSight && !$isGm ? onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId,$sceneTokens) : null;
     $targetVisible = $sourceVision['token'] ?? static function (array $candidate) use ($connection,&$records,$map,$accountId,$sceneId,$isGm,$targetVisibility): bool {

@@ -65,6 +65,21 @@ function fillActivityNearLegacyBudget(MemoryConnection $connection, array $resol
         $activity['attackReceipts'][] = $receipt;
         $nodes += $receiptNodes;
     }
+
+    // The detailed receipt size can change with the workflow schema. Fill the
+    // remainder with completed single-hit receipts so this test stays near
+    // the old limit even when the detailed receipt size changes by one node.
+    $compactReceipt = ['requestId'=>'', 'accountId'=>$resolvedReceipt['accountId'],
+        'expiresAt'=>$resolvedReceipt['expiresAt'], 'attack'=>['id'=>'','requestId'=>'','status'=>'applied']];
+    $compactNodes = activityShapeNodes($compactReceipt);
+    for ($index = 0; $nodes + $compactNodes <= 49990; $index++) {
+        $receipt = $compactReceipt;
+        $receipt['requestId'] = 'activity-shape-compact-request-' . $index;
+        $receipt['attack']['id'] = 'activity-shape-compact-attack-' . $index;
+        $receipt['attack']['requestId'] = $receipt['requestId'];
+        $activity['attackReceipts'][] = $receipt;
+        $nodes += $compactNodes;
+    }
     $connection->put('activity', validatedDomainPayload('activity', $activity));
     return activityShapeNodes($activity);
 }
