@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 const XAR_API_HOST = 'regie-xar-tsaroth.fr';
-const XAR_BACKEND_VERSION = '0.19.29';
-const XAR_BACKEND_BUILD = 'client-4-4-5-stream-veille-20261126-1';
-const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.4.5';
-// La santé et les informations Store restent publiques, mais seule la version courante peut ouvrir une session.
-const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.4.5'];
+const XAR_BACKEND_VERSION = '0.19.30';
+const XAR_BACKEND_BUILD = 'client-4-4-6-pluie-priere-inventaire-20261126-1';
+const XAR_RELEASE_ANNOUNCEMENT_VERSION = '4.4.6';
+// La 4.4.5 reste autorisée pendant la distribution de la 4.4.6 sur le Store.
+const XAR_RELEASE_ALLOWED_CLIENT_VERSIONS = ['4.4.5', '4.4.6'];
 const XAR_BACKEND_SESSION_DRAIN_SECONDS = 30;
-const XAR_DATABASE_SCHEMA_VERSION = 28;
+const XAR_DATABASE_SCHEMA_VERSION = 29;
 const XAR_MAINTENANCE_BATCH_SIZE = 200;
 const XAR_SESSION_SECONDS = 43200;
 const XAR_SESSION_TOUCH_INTERVAL_SECONDS = 30;
@@ -1151,6 +1151,10 @@ function ensureCurrentSchema(PDO $connection): void
         }
         if ($version < 28) {
             migrateApplicationGroupedAttackReceiptLedger($connection);
+            $version = 28;
+        }
+        if ($version < 29) {
+            migrateApplicationPresetGridSizes($connection);
         }
     } finally {
         try {

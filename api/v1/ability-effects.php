@@ -105,6 +105,8 @@ function validApplicationAbilityEffects(array $entry): bool {
     if(isset($entry['singleEnemy'])){if(($entry['effect']??'damage')!=='damage'||!is_array($entry['singleEnemy'])||!is_int($entry['singleEnemy']['damageRepetitions']??null)||$entry['singleEnemy']['damageRepetitions']<1||$entry['singleEnemy']['damageRepetitions']>10)return false;try{if(isset($entry['singleEnemy']['conditionRider'])&&dsRider($entry['singleEnemy']['conditionRider'])===null)return false;}catch(RuntimeException){return false;}}
     if(isset($entry['weaponDamageMultiplier'])&&(!is_int($entry['weaponDamageMultiplier'])||$entry['weaponDamageMultiplier']<1||$entry['weaponDamageMultiplier']>10||empty($entry['useWeaponDamage'])))return false;
     if(isset($entry['manualD100'])&&(!is_bool($entry['manualD100'])||$entry['manualD100']&&!in_array($entry['effect']??'',['movement','healing','enhancement','summoning','metamorphosis'],true)))return false;
+    if(isset($entry['visualD75'])&&(!is_bool($entry['visualD75'])||$entry['visualD75']
+        && (($entry['effect']??'')!=='movement'||!empty($entry['manualD100'])||!empty($entry['castingStatId']))))return false;
     try{applicationOutcomeMessages($entry['outcomeMessages']??null);}catch(RuntimeException){return false;}
     if (array_key_exists('attackEnhancement', $entry) && (!in_array($entry['effect'] ?? 'damage', ['damage', 'healing', 'movement', 'enhancement'], true)
         || applicationAttackEnhancement($entry['attackEnhancement']) === null)) return false;
@@ -186,6 +188,7 @@ function applicationAbilityEffectFields(array $entry): array {
     if($effect==='damage'&&applicationAttackApproach($entry['attackApproach']??null)!==null)$conditions['attackApproach']=applicationAttackApproach($entry['attackApproach']);
     if(in_array($entry['reach']??'', ['melee','reach','ranged'],true))$conditions['reach']=$entry['reach'];
     if(!empty($entry['manualD100']))$conditions['manualD100']=true;
+    if(($entry['visualD75']??false)===true&&$effect==='movement')$conditions['visualD75']=true;
     if($messages=applicationOutcomeMessages($entry['outcomeMessages']??null))$conditions['outcomeMessages']=$messages;
     if(($entry['useWeaponDamage']??false)===true){$conditions['useWeaponDamage']=true;if(($entry['weaponDamageMultiplier']??1)>1)$conditions['weaponDamageMultiplier']=$entry['weaponDamageMultiplier'];if(($entry['weaponDamageMode']??'')==='add')$conditions['weaponDamageMode']='add';}
     if(!empty($entry['requiredWeaponAttackId']))$conditions['requiredWeaponAttackId']=$entry['requiredWeaponAttackId'];
@@ -273,28 +276,34 @@ function applicationInfusedDamageComponents(array $parts, string $formula, strin
     return $parts;
 }
 
-function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null,array $state=[]): array {
-    if($state!==[])$target=applicationEnhancedResistanceTarget($target,$state,(string)($attack['sceneId']??$state['activeSceneId']??''));
-    $count=max(1,min(10,(int)($attack['damageRepetitions']??1)));if($count===1)return onlineRollSingleAttackDamage($attack,$target,$rollFormula);
+function onlineRollAttackDamage(array $attack, array $target, ?callable $rollFormula = null,array $state=[],?array $source=null): array {
+    $sceneId = (string)($attack['sceneId'] ?? $state['activeSceneId'] ?? '');
+    if($state!==[])$target=applicationEnhancedResistanceTarget($target,$state,$sceneId);
+    $acid = $source !== null && applicationHasMolecularAcid($source,$state,$sceneId);
+    $count=max(1,min(10,(int)($attack['damageRepetitions']??1)));if($count===1)return onlineRollSingleAttackDamage($attack,$target,$rollFormula,$acid);
     $once = $attack['infusion']['bonusOnFirstStrike'] ?? 0;
     $strikes = [];
     for ($i=0; $i<$count; $i++) {
         $strike = $i === 0 && $once ? [...$attack, 'damageComponents'=>applicationInfusedDamageComponents(
             $attack['damageComponents'] ?? [], $attack['damageFormula'], $attack['damageType'], $once, applicationDamageElement($attack['damageElement'] ?? null))] : $attack;
-        $strikes[] = onlineRollSingleAttackDamage($strike, $target, $rollFormula);
+        $strikes[] = onlineRollSingleAttackDamage($strike, $target, $rollFormula, $acid);
     }
     $damageRows = array_column($strikes, 'damage');
     $raw = array_sum(array_column($damageRows, 'rawDamage'));
     $final = array_sum(array_column($damageRows, 'finalDamage'));
     $elemental = array_sum(array_column($damageRows, 'elementalPreventedDamage'));
+    $poisonHealing = array_sum(array_column($damageRows, 'poisonHealing'));
     $components = [];
+    $preservePhysicalArmor = ($attack['damageType'] ?? 'physical') === 'physical' && !empty($target['mixturePetrified']);
     foreach ($damageRows as $row) {
-        array_push($components, ...($row['components'] ?? (isset($row['damageElement']) ? [['type'=>$attack['damageType'], ...$row]] : [])));
+        array_push($components, ...($row['components'] ?? ($preservePhysicalArmor || isset($row['damageElement']) || isset($row['baseDamageBeforeMixture'])
+            ? [['type'=>$attack['damageType'] ?? 'physical', ...$row]] : [])));
     }
     return ['rolled'=>[...$strikes[0]['rolled'],'total'=>$raw,'strikes'=>array_column($strikes,'rolled'),'breakdown'=>implode(' ; ',array_map(static fn($strike,$index)=>'Frappe '.($index+1).' : '.$strike['rolled']['breakdown'],$strikes,array_keys($strikes)))],
-        'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final-$elemental)/$raw):0,'strikes'=>$damageRows,'components'=>$components,...(array_column($damageRows,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[])]];
+        'damage'=>['rawDamage'=>$raw,'finalDamage'=>$final,'preventedDamage'=>$raw-$final,'armorPercent'=>$raw?(int)round(100*($raw-$final-$elemental)/$raw):0,'strikes'=>$damageRows,'components'=>$components,...(array_column($damageRows,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]),
+            ...($poisonHealing>0?['poisonHealing'=>$poisonHealing]:[])]];
 }
-function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $rollFormula = null): array {
+function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $rollFormula = null, bool $acid = false): array {
     $knockbackRoll=null;
     if($rollFormula===null&&applicationKnockback($attack['knockback']??null)!==null)$rollFormula=static fn(string $formula):array=>evaluateEffectFormula($formula);
     $parts = applicationDamageComponents($attack['damageComponents'] ?? []);
@@ -302,8 +311,10 @@ function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $r
     if ($parts === []) {
         $rolled = $rollFormula!==null?$rollFormula($attack['damageFormula']):onlineRollFormulaWithMode($attack['damageFormula'], 'normal');
         $knockbackRoll=applicationDamageKnockbackRoll($attack['knockback']??null,$rolled);
-        return ['rolled' => $rolled, 'damage' => [...onlineTypedDamageSummary((int) round(max(0, (int) $rolled['total']) * $percent / 100), $target,
-            $attack['damageType'] ?? 'physical', $attack['damageElement'] ?? null), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[])]];
+        $type = $attack['damageType'] ?? 'physical';
+        $rawDamage = applicationMolecularAttackDamage((int) round(max(0, (int) $rolled['total']) * $percent / 100), $type, $acid);
+        return ['rolled' => $rolled, 'damage' => [...onlineTypedDamageSummary($rawDamage, $target,
+            $type, $attack['damageElement'] ?? null), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[])]];
     }
     $rollFormula ??= static fn (string $formula): array => onlineRollFormula($formula);
     $rollMode = 'normal';
@@ -335,7 +346,8 @@ function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $r
     $selected = $attempts[$selectedIndex];
     $results = []; $raw = 0; $final = 0; $elemental = 0;
     foreach ($selected['components'] as $component) {
-        $summary = onlineTypedDamageSummary((int) round(max(0, (int) $component['total']) * $percent / 100), $target,
+        $rawDamage = applicationMolecularAttackDamage((int) round(max(0, (int) $component['total']) * $percent / 100), $component['type'], $acid);
+        $summary = onlineTypedDamageSummary($rawDamage, $target,
             $component['type'], $component['element'] ?? null, ($component['ignoreArmor'] ?? false) === true);
         $results[] = [
             'type' => $component['type'],
@@ -356,7 +368,8 @@ function onlineRollSingleAttackDamage(array $attack, array $target, ?callable $r
             'selectedIndex' => $selectedIndex,
             'attempts' => $attempts,
         ],
-        'damage' => ['rawDamage' => $raw, 'finalDamage' => $final, 'preventedDamage' => $raw - $final, 'armorPercent' => count($results) === 1 ? $results[0]['armorPercent'] : ($raw ? (int) round(100 * ($raw - $final - $elemental) / $raw) : 0), 'components' => $results, ...(array_column($results,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[])]];
+        'damage' => ['rawDamage' => $raw, 'finalDamage' => $final, 'preventedDamage' => $raw - $final, 'armorPercent' => count($results) === 1 ? $results[0]['armorPercent'] : ($raw ? (int) round(100 * ($raw - $final - $elemental) / $raw) : 0), 'components' => $results, ...(array_column($results,'elementalPreventedDamage')!==[]?['elementalPreventedDamage'=>$elemental]:[]), ...($knockbackRoll!==null?['knockbackRoll'=>$knockbackRoll]:[]),
+            ...(($poisonHealing=array_sum(array_column($results,'poisonHealing')))>0?['poisonHealing'=>$poisonHealing]:[])]];
 }
 
 // Clients 3.2.2 may still send the former five-field ability. Preserve the new
@@ -366,6 +379,14 @@ function preserveApplicationAbilityRows(array $incoming, array $previous): array
     return array_map(static function ($entry) use ($byId) {
         if (!is_array($entry)) return $entry;
         $old = $byId[$entry['id'] ?? ''] ?? [];
+        $prayer = applicationConfiguredPrayerAbility($old);
+        if (($prayer['visualD75'] ?? false) === true && ($entry['effect'] ?? $prayer['effect'] ?? '') === 'movement'
+            && empty($entry['manualD100']) && empty($entry['castingStatId']) && ($entry['visualD75'] ?? true) === true) {
+            $entry['visualD75'] = true;
+            if (!array_key_exists('outcomeMessages', $entry) && array_key_exists('outcomeMessages', $prayer)) {
+                $entry['outcomeMessages'] = $prayer['outcomeMessages'];
+            }
+        }
         if (($entry['effect'] ?? $old['effect'] ?? '') === 'metamorphosis') foreach (['formDurationTurns', 'formBonusHp'] as $field)
             if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
         foreach (['manaCost', 'hpCost', 'fatigueCost','fatigueCostIncludesPassive','mountedMovement','rulePreset', 'restRecharge', 'usesPerRest', 'reusableInTurn', 'difficultyIncrement', 'cooldownRounds', 'castingStatId', 'reducedFailureCooldown', 'image'] as $field) if (!array_key_exists($field, $entry) && array_key_exists($field, $old)) $entry[$field] = $old[$field];
@@ -394,6 +415,13 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         $payload['attackEnhancements'] = is_array($previous['attackEnhancements'] ?? null) ? $previous['attackEnhancements'] : [];
         $payload['pendingDotResolutions'] = $previous['pendingDotResolutions'] ?? [];
         $payload['rollRevelations'] = $previous['rollRevelations'] ?? [];
+        $privateConcealmentRolls = [];
+        foreach ($previous['rolls'] ?? [] as $roll) {
+            if (($roll['rollOptionId'] ?? '') === 'concealment' && is_string($roll['id'] ?? null)) $privateConcealmentRolls[$roll['id']] = $roll;
+        }
+        foreach ($payload['rolls'] ?? [] as $index => $roll) {
+            if (isset($privateConcealmentRolls[$roll['id'] ?? ''])) $payload['rolls'][$index] = $privateConcealmentRolls[$roll['id']];
+        }
         $removedGuards = [];
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (($receipt['kind'] ?? '') === 'combat-effect' && ($receipt['result']['kind'] ?? '') === 'guard' && ($receipt['result']['decision'] ?? '') === 'remove') $removedGuards[$receipt['result']['effectId']] = true;
         if (is_array($payload['nextAttackGuards'] ?? null)) $payload['nextAttackGuards'] = array_values(array_filter($payload['nextAttackGuards'], static fn ($guard): bool => !isset($removedGuards[$guard['id'] ?? ''])));
@@ -401,7 +429,7 @@ function preserveApplicationAbilityExtensions(string $key, array $payload, array
         // Older client normalizers cannot represent casting receipts. Preserve
         // immutable, unexpired authority receipts across their activity writes.
         $now = (int) floor(microtime(true) * 1000);
-        $serverReceiptKinds = ['ability-check', 'ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'effect-stack', 'manual-hp-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'token-reinforcement', 'studio-conversation-create', 'map-time-weather', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens'];
+        $serverReceiptKinds = ['ability-check', 'ability-cast', 'ability-workflow', 'ability-validation', 'token-roll', 'combat-effect', 'effect-stack', 'manual-hp-effect', 'shortcut-roll', 'character-create', 'timer-create', 'token-clone', 'token-reinforcement', 'studio-conversation-create', 'map-time-weather', 'item-command', 'passage-command', 'luck-reset', 'strategy-break', 'table-tokens', 'experimental-mixture'];
         $receipts = [];
         foreach ($payload['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && !in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;
         foreach ($previous['resourceReceipts'] ?? [] as $receipt) if (is_array($receipt) && in_array($receipt['kind'] ?? '', $serverReceiptKinds, true) && ($receipt['expiresAt'] ?? 0) > $now) $receipts[$receipt['requestId'] ?? ''] = $receipt;

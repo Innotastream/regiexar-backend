@@ -140,6 +140,24 @@ try {
         && (int) $db->query('SELECT COUNT(*) FROM application_domain_changes WHERE global_revision = 74')->fetchColumn() === 2
         && (int) $db->query('SELECT COUNT(*) FROM schema_migrations WHERE version = 25')->fetchColumn() === 1,
         'Both historical backups, synchronization receipts and the migration are committed together.');
+    $token = ['id'=>'original-token','x'=>21,'y'=>57,'size'=>40,'layerId'=>'ground'];
+    upsertApplicationDomain($db, 'token:ordinary-fixture:original-token', $token, 1, null);
+    migrateApplicationPresetGridSizes($db);
+    $converted = applicationDomainRecords($db, ['map:lobby-fixture','map:route-fixture','map:ordinary-fixture','token:ordinary-fixture:original-token']);
+    domainSchemaCheck($converted['map:lobby-fixture']['revision'] === 1 && $converted['map:lobby-fixture']['payload'] == $map,
+        'The 29 migration retains the full Lobby document.');
+    domainSchemaCheck($converted['map:route-fixture']['payload']['gridSize'] === 60
+        && $converted['map:route-fixture']['payload']['layers']['upper']['gridSize'] === 60
+        && $converted['map:route-fixture']['payload']['layers']['ground']['gridSize'] === 40
+        && $converted['map:ordinary-fixture']['payload']['gridSize'] === 40,
+        'The 29 migration changes the named grids at the root and on their respective floors.');
+    domainSchemaCheck($converted['token:ordinary-fixture:original-token']['revision'] === 1
+        && $converted['token:ordinary-fixture:original-token']['payload'] == $token,
+        'The existing token dimensions and coordinates do not change.');
+    domainSchemaCheck((int) $db->query('SELECT COUNT(*) FROM application_domain_history')->fetchColumn() === 4
+        && (int) $db->query('SELECT COUNT(*) FROM application_domain_changes WHERE global_revision = 75')->fetchColumn() === 2
+        && (int) $db->query('SELECT COUNT(*) FROM schema_migrations WHERE version = 29')->fetchColumn() === 1,
+        'Migration 29 records its changes and backups in one global revision.');
     echo "Local MySQL domain schema integration passed.\n";
 } finally {
     if (preg_match('/^regie_domain_schema_[a-f0-9]{16}$/D', $schema) !== 1) throw new RuntimeException('Unsafe fixture cleanup target.');

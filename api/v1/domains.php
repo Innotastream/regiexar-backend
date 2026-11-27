@@ -5,6 +5,7 @@ require_once __DIR__ . '/resource-receipt-ledger.php';
 require_once __DIR__ . '/direct-attack-receipt-ledger.php';
 require_once __DIR__.'/effect-formula.php';
 require_once __DIR__.'/map-time-weather.php';
+require_once __DIR__.'/experimental-mixture.php';
 require_once __DIR__.'/map-animation.php';
 require_once __DIR__.'/terrain-effects.php';
 require_once __DIR__ . '/character-statistics.php';
@@ -959,6 +960,22 @@ function applicationComputeBaseVisionMask(array $occlusion, array $origins, mixe
     return $metadata;
 }
 
+function applicationFirstVisionDoorIntersection(array $doors, float $dx, float $dy, float $farthest): ?array
+{
+    $crossing = null;
+    foreach ($doors as $door) {
+        $cross = $dx * $door['dy'] - $dy * $door['dx'];
+        if (abs($cross) < 1.0e-10) continue;
+        $progress = $door['originSide'] / $cross;
+        if ($progress < 0.0 || $progress >= $farthest) continue;
+        $along = ($door['offsetX'] * $dy - $door['offsetY'] * $dx) / $cross;
+        if ($along < -1.0e-10 || $along > 1.0 + 1.0e-10) continue;
+        $farthest = $progress;
+        $crossing = ['door'=>$door, 'progress'=>$progress];
+    }
+    return $crossing;
+}
+
 function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mixed $gridSize, int $distanceExtension = 0): array
 {
     $walls = $occlusion['walls'];
@@ -998,6 +1015,15 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
     $naturalWidth = max(1.0, (float) ($occlusion['naturalWidth'] ?? 1600));
     $naturalHeight = max(1.0, (float) ($occlusion['naturalHeight'] ?? 900));
     $safeGridSize = max(12.0, min(240.0, is_numeric($gridSize) ? (float) $gridSize : 50.0));
+    $closedDoors = [];
+    foreach ($walls['closedDoorSegments'] ?? [] as [$x1, $y1, $x2, $y2]) {
+        $ax = $x1 / 100 * ($width - 1);
+        $ay = $y1 / 100 * ($height - 1);
+        $bx = $x2 / 100 * ($width - 1);
+        $by = $y2 / 100 * ($height - 1);
+        $closedDoors[] = ['ax'=>$ax, 'ay'=>$ay, 'dx'=>$bx-$ax, 'dy'=>$by-$ay,
+            'minX'=>min($ax, $bx), 'maxX'=>max($ax, $bx), 'minY'=>min($ay, $by), 'maxY'=>max($ay, $by)];
+    }
     $firstWallBodyReachesCell = static function (
         float $centerX,
         float $centerY,
@@ -1057,6 +1083,15 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
         if ($wallCells[$originRow * $width + $originColumn] !== "\0") {
             continue;
         }
+        $nearbyDoors = [];
+        foreach ($closedDoors as $door) {
+            if ($door['minX'] > $centerX + $radiusX || $door['maxX'] < $centerX - $radiusX
+                || $door['minY'] > $centerY + $radiusY || $door['maxY'] < $centerY - $radiusY) continue;
+            $offsetX = $door['ax'] - $centerX;
+            $offsetY = $door['ay'] - $centerY;
+            $nearbyDoors[] = [...$door, 'offsetX'=>$offsetX, 'offsetY'=>$offsetY,
+                'originSide'=>$offsetX * $door['dy'] - $offsetY * $door['dx']];
+        }
         $ellipseXSquares = $ellipseYSquares = [];
         for ($column = 0; $column < $width; ++$column) {
             $delta = ($column - $centerX) / $radiusX;
@@ -1066,7 +1101,7 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
             $delta = ($row - $centerY) / $radiusY;
             $ellipseYSquares[$row] = $delta * $delta;
         }
-        if (($walls['mask'] ?? '') === '') {
+        if (($walls['mask'] ?? '') === '' && $nearbyDoors === []) {
             $minimumX = max(0, (int) floor($centerX - $radiusX));
             $maximumX = min($width - 1, (int) ceil($centerX + $radiusX));
             $minimumY = max(0, (int) floor($centerY - $radiusY));
@@ -1104,6 +1139,9 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
                 $visibleProgress = min($visibleProgress, $centerY / -$fullDeltaY);
             }
             $visibleProgress = max(0.0, min(1.0, $visibleProgress));
+            $crossing = $nearbyDoors === [] ? null
+                : applicationFirstVisionDoorIntersection($nearbyDoors, $fullDeltaX, $fullDeltaY, $visibleProgress);
+            if ($crossing !== null) $visibleProgress = $crossing['progress'];
             $deltaX = $fullDeltaX * $visibleProgress;
             $deltaY = $fullDeltaY * $visibleProgress;
             $raySteps = max(1, (int) ceil(max(abs($deltaX), abs($deltaY)) * 2));
@@ -1116,6 +1154,11 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
                 $row = (int) round($centerY + $deltaY * $progress);
                 if ($column < 0 || $column >= $width || $row < 0 || $row >= $height) {
                     break;
+                }
+                if ($crossing !== null) {
+                    $door = $crossing['door'];
+                    $cellSide = ($column - $door['ax']) * $door['dy'] - ($row - $door['ay']) * $door['dx'];
+                    if ($door['originSide'] * $cellSide > 0.0) break;
                 }
                 $cellIndex = $row * $width + $column;
                 if ($cellIndex === $previousIndex) {
@@ -1148,6 +1191,8 @@ function applicationCalculateBaseVisionMask(array $occlusion, array $origins, mi
             if ($ellipseXSquares[$column] + $ellipseYSquares[$row] > 1.0 + 1.0e-12) {
                 continue;
             }
+            if ($nearbyDoors !== []
+                && applicationFirstVisionDoorIntersection($nearbyDoors, $column - $centerX, $row - $centerY, 1.0) !== null) continue;
             if ($firstWallBodyReachesCell($centerX, $centerY, $column, $row)) {
                 $hiddenCells[$cellIndex] = "\0";
             }
@@ -1513,6 +1558,11 @@ function validApplicationWeaponAttacks(mixed $value): bool
 
 function validApplicationTokenDomain(array $payload): bool
 {
+    if (array_key_exists('experimentalMixture', $payload) && !validApplicationExperimentalMixture($payload['experimentalMixture'])) return false;
+    if (array_key_exists('experimentalMixtureCharges', $payload) && !validApplicationExperimentalMixtureCharges($payload['experimentalMixtureCharges'])) return false;
+    if (array_key_exists('concealment', $payload) && (!is_array($payload['concealment'])
+        || array_keys($payload['concealment']) !== ['result'] || !is_int($payload['concealment']['result'])
+        || $payload['concealment']['result'] < -99 || $payload['concealment']['result'] > 200)) return false;
     foreach ([
         'bestiaryRole' => ['peaceful', 'neutral', 'enemy'],
         'bestiaryRank' => ['weak', 'medium', 'strong', 'major'],
@@ -2563,14 +2613,28 @@ function applicationDomainEntityTimestamp(array $payload, string $field): int
     return max(0, (int) $value);
 }
 
+function preserveApplicationTokenPrivateState(array $payload, array $current): array
+{
+    unset($payload['concealed'], $payload['_allHarmImmunity'], $payload['mixturePetrified'], $payload['mixtureLightning'], $payload['mixtureAcid']);
+    unset($payload['concealment'], $payload['experimentalMixture'], $payload['experimentalMixtureCharges']);
+    if (isset($current['concealment'])) $payload['concealment'] = $current['concealment'];
+    $charges = applicationExperimentalMixtureCharges($current);
+    if ($charges !== []) $payload['experimentalMixtureCharges'] = $charges;
+    return $payload;
+}
+
 function protectApplicationDomainAgainstStaleEntityWrite(string $key, array $payload, ?array $current): array
 {
+    if (str_starts_with($key, 'token:')) $payload = preserveApplicationTokenPrivateState($payload, $current['payload'] ?? []);
     if (!is_array($current) || !is_array($current['payload'] ?? null)) {
         return $payload;
     }
     $currentPayload = $current['payload'];
     if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$currentPayload);
     if (str_starts_with($key, 'map:')) $payload = preserveApplicationMapAnimation($payload, $currentPayload);
+    if (str_starts_with($key, 'map:') && trim((string) ($_SERVER['HTTP_X_XAR_CLIENT_VERSION'] ?? '')) === '4.4.5') {
+        $payload = preserveApplicationLegacyMapScaleSettings($payload, $currentPayload);
+    }
     $payload = preserveApplicationAbilityExtensions($key, $payload, $currentPayload);
     $incomingUpdatedAt = applicationDomainEntityTimestamp($payload, '_updatedAt');
     $currentUpdatedAt = applicationDomainEntityTimestamp($currentPayload, '_updatedAt');
@@ -3433,6 +3497,7 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     if($manual!==null)$turns=[[(string)$manual['sceneId'],'',applicationDomainPayload($records,'initiative:'.$manual['sceneId']),(int)$manual['turn']]];
     if ($turns === [] && $endedScenes === [] && $startedScenes === [] && !$advancedInitiative) return;
     $records = array_replace($records, applicationDomainRecords($connection, ['activity']));
+    onlinePoisonTurnSaves($connection,$records,$pending,$turns);
     $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
     if ($startedScenes !== [] && !empty($activity['abilityExecutions'])) {
         $now = (int) floor(microtime(true) * 1000);
@@ -3464,7 +3529,6 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
         if (!is_array($dot)) continue;
         $manualHp = ($dot['manualHp'] ?? false) === true;
         $trackedBleeding = applicationIsImpactBleeding($dot) || applicationIsWeaponBleeding($dot);
-        $hasTargetRound = $manualHp || $trackedBleeding;
         if (isset($endedScenes[(string) ($dot['sceneId'] ?? '')])) {
             $dot = applicationDamageOverTimeAfterCombat($dot);
             if ($dot === null) continue;
@@ -3474,10 +3538,10 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             if($manualTurn>0)$tokenId=(string)($dot['targetTokenId']??'');
             $sameCombat = ($dot['combatId'] ?? '') === ($initiative['combatId'] ?? '');
             $alreadyTicked = $manualTurn > 0 ? (int) ($dot['lastManualTurn'] ?? 0) >= $manualTurn
-                : (!$hasTargetRound && ($dot['combatId'] ?? '') !== '' && !$sameCombat)
-                    || ((!$hasTargetRound || $sameCombat) && (int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial'])
-                    || ($hasTargetRound && (($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']
-                        || ($sameCombat && (int) ($dot['lastTargetRound'] ?? 0) >= (int) ($initiative['round'] ?? 1))));
+                : ($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']
+                    || (!$manualHp && !$trackedBleeding && ($dot['combatId'] ?? '') !== '' && !$sameCombat)
+                    || ($sameCombat && ((int) ($dot['lastTurnSerial'] ?? 0) >= (int) $initiative['turnSerial']
+                        || (int) ($dot['lastTargetRound'] ?? 0) >= (int) ($initiative['round'] ?? 1)));
             if (($dot['sceneId'] ?? '') !== $sceneId || ($dot['targetTokenId'] ?? '') !== $tokenId || $alreadyTicked) continue;
             $key = onlineTokenDomainKey($sceneId, $tokenId);
             $records = array_replace($records, applicationDomainRecords($connection, [$key]));
@@ -3496,6 +3560,12 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
                 break;
             }
             if (!validApplicationAbilityFormula($dot['formula'] ?? null)) { $keep = false; break; }
+            if ($manualTurn > 0) $dot['lastManualTurn'] = $manualTurn;
+            else {
+                $dot['combatId'] = $initiative['combatId'] ?? '';
+                $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
+                $dot['lastTargetRound'] = (int) ($initiative['round'] ?? 1);
+            }
             if ($manualHp) {
                 $tick = onlineTickManualHpEffect($connection, $records, $pending, $identity, $dot, $target);
                 if ($tick === null) { $keep = false; break; }
@@ -3503,25 +3573,13 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
                 $activity['rolls'] = array_slice([$tick['roll'], ...($activity['rolls'] ?? [])], 0, 100);
                 queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
                 $dot['remainingTurns']--;
-                if ($manualTurn > 0) $dot['lastManualTurn'] = $manualTurn;
-                else {
-                    $dot['combatId'] = $initiative['combatId'] ?? '';
-                    $dot['lastTurnSerial'] = $initiative['turnSerial'];
-                    $dot['lastTargetRound'] = (int) ($initiative['round'] ?? 1);
-                }
                 $keep = $dot['remainingTurns'] > 0;
                 break;
-            }
-            if ($trackedBleeding && $manualTurn <= 0) {
-                $dot['combatId'] = $initiative['combatId'] ?? '';
-                $dot['lastTargetRound'] = (int) ($initiative['round'] ?? 1);
             }
             $resistanceTarget = applicationEnhancedResistanceTarget($target, onlineAttackEnhancementState($connection, $records, $pending, $sceneId), $sceneId);
             if (applicationElementalPeriodicDamageSuppressed($resistanceTarget, $dot)
                 || ($trackedBleeding && applicationHasEffectImmunity($target, $activity, $sceneId, 'bleeding'))) {
                 $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);
-                if ($manualTurn > 0) $dot['lastManualTurn'] = $manualTurn;
-                else $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
                 $keep = $dot['remainingTurns'] > 0;
                 break;
             }
@@ -3529,18 +3587,20 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $summary = onlineTypedDamageSummary(max(0, (int) $rolled['total']),
                 $resistanceTarget,
                 (string) ($dot['damageType'] ?? 'physical'), applicationPeriodicDamageElement($dot));
-            $applied = 0;
+            $applied = 0; $healed = 0; $absorbed = 0;
             if ($summary['finalDamage'] > 0) {
                 $health = applyOnlineAttackDamage($connection, $records, $pending, $key, $target, $summary['finalDamage'], false, [...$summary,'damageType'=>$dot['damageType'] ?? 'physical','family'=>applicationEffectFamily($dot),'sourceItemKind'=>$dot['sourceItemKind']??''], false);
                 $applied = (int) ($health['appliedDamage'] ?? 0);
+                $healed = (int) ($health['appliedHealing'] ?? 0);
+                $absorbed = (int) ($health['poisonConvertedDamage'] ?? 0);
                 $updatedTarget = $pending[$key]['payload'] ?? $target;
                 if ($applied > 0) onlineGainBleedingCharges($connection, $records, $pending, $sceneId, $updatedTarget, $applied);
             }
             $roll = onlineRollEntry($identity, $rolled, 'DOT · ' . (string) ($dot['label'] ?? 'Effet'), (string) ($target['name'] ?? 'Cible'));
-            $roll['damageMitigation'] = $summary;
+            $roll['damageMitigation'] = $absorbed > 0 ? [...$summary, 'finalDamage'=>$applied, 'appliedHealing'=>$healed] : $summary;
             if (($target['hidden'] ?? false) === true) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
-            $roll['mapEvent'] = ['kind' => 'damage', 'applied' => true, 'value' => $applied,
-                'label' => (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId, 'tokenId' => $tokenId,
+            $roll['mapEvent'] = ['kind' => $absorbed > 0 ? 'roll' : 'damage', 'applied' => $applied > 0, 'value' => $absorbed > 0 ? $healed : $applied,
+                'label' => $absorbed > 0 ? 'Corps toxique' : (string) ($dot['label'] ?? 'DOT'), 'targetTokenId' => $tokenId, 'tokenId' => $tokenId,
                 'targetName' => (string) ($target['name'] ?? 'Cible'), 'attackId' => (string) $dot['id'],
                 'sourceTokenId' => $tokenId, 'anchorTokenId' => $tokenId,
                 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
@@ -3555,7 +3615,6 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
             $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
             queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
             $dot['remainingTurns'] = max(0, (int) ($dot['remainingTurns'] ?? 0) - 1);
-            if($manualTurn>0)$dot['lastManualTurn']=$manualTurn;else $dot['lastTurnSerial'] = (int) $initiative['turnSerial'];
             if ($dot['remainingTurns'] === 0) $keep = false;
             break;
         }
@@ -3564,6 +3623,46 @@ function applyApplicationDamageOverTimeOnTurn(PDO $connection, array &$records, 
     if ($remaining !== $dots) $activity['damageOverTime'] = $remaining;
     if ($endedScenes !== [] || $remaining !== $dots || isset($roll) || isset($liveGuards) && $liveGuards !== $guards)
         queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+}
+
+function unlinkApplicationDeletedScenePassages(PDO $connection, array &$records, array &$pending, array $deleted): void
+{
+    $backlinks = [];
+    foreach ($deleted as $sceneId=>$_deleted) {
+        $scene = applicationDomainPayload($records,'scene:'.$sceneId);
+        $map = $scene['combat']['map'] ?? applicationDomainPayload($records,'map:'.$sceneId);
+        foreach ($map['passages'] ?? [] as $passage) {
+            $target = $passage['destination'] ?? null;
+            if (!is_array($target) || !passageId($target['sceneId'] ?? null) || !passageId($target['passageId'] ?? null)
+                || !passageId($passage['id'] ?? null) || isset($deleted[$target['sceneId']])) continue;
+            $backlinks[$target['sceneId']][$target['passageId']][$sceneId] = $passage['id'];
+        }
+    }
+    if ($backlinks === []) return;
+    $keys = [];
+    foreach (array_keys($backlinks) as $sceneId) array_push($keys,'scene:'.$sceneId,'map:'.$sceneId);
+    $records += applicationDomainRecords($connection,array_values(array_diff($keys,array_keys($records))));
+    foreach ($backlinks as $sceneId=>$expected) {
+        $sceneKey = 'scene:'.$sceneId;
+        $mapKey = 'map:'.$sceneId;
+        $scene = $pending[$sceneKey]['payload'] ?? applicationDomainPayload($records,$sceneKey);
+        if ($scene === []) continue;
+        $embedded = isset($scene['combat']['map']);
+        $map = $embedded ? $scene['combat']['map'] : ($pending[$mapKey]['payload'] ?? applicationDomainPayload($records,$mapKey));
+        $changed = false;
+        foreach ($map['passages'] ?? [] as $index=>$passage) {
+            $source = $passage['destination'] ?? [];
+            $former = $expected[$passage['id'] ?? ''][$source['sceneId'] ?? ''] ?? null;
+            if ($former === null || ($source['passageId'] ?? '') !== $former) continue;
+            $map['passages'][$index] = [...$passage,'destination'=>null,'revision'=>$passage['revision']+1];
+            $changed = true;
+        }
+        if (!$changed) continue;
+        if ($embedded) {
+            $scene['combat']['map'] = $map;
+            queueOnlineDomainUpsert($pending,$records,$sceneKey,$scene);
+        } else queueOnlineDomainUpsert($pending,$records,$mapKey,$map);
+    }
 }
 
 function reconcileApplicationSceneDomains(PDO $connection, array &$records, array $pending): array
@@ -3586,7 +3685,7 @@ function reconcileApplicationSceneDomains(PDO $connection, array &$records, arra
     }
     if ($deleted === []) return $pending;
 
-    $refs = ['table','scene-index','devices'];
+    $refs = ['table','scene-index','devices','items'];
     foreach (array_keys($deleted) as $id) array_push($refs, 'map:'.$id, 'initiative:'.$id, 'presentation:'.$id, 'token-index:'.$id);
     $records += applicationDomainRecords($connection, array_values(array_diff($refs, array_keys($records))));
     $table = $byKey['table']['payload'] ?? applicationDomainPayload($records,'table');
@@ -3605,15 +3704,26 @@ function reconcileApplicationSceneDomains(PDO $connection, array &$records, arra
             queueOnlineDomainDelete($byKey,$records,$key);
         }
     }
-    $devices=$byKey['devices']['payload']??applicationDomainPayload($records,'devices');
-    if (!empty($devices['elementalSaveTurns'])) {
-        $remaining=array_diff_key($devices['elementalSaveTurns'],$deleted);
-        if ($remaining!==$devices['elementalSaveTurns']) {
-            if ($remaining===[]) unset($devices['elementalSaveTurns']);
-            else $devices['elementalSaveTurns']=$remaining;
-            queueOnlineDomainUpsert($byKey,$records,'devices',$devices);
+    unlinkApplicationDeletedScenePassages($connection,$records,$byKey,$deleted);
+    $items = applicationDomainPayload($records,'items');
+    if (!empty($items['pendingUses'])) {
+        $remaining = array_values(array_filter($items['pendingUses'],static fn(array $use): bool => !isset($deleted[$use['sceneId'] ?? ''])));
+        if ($remaining !== $items['pendingUses']) {
+            $items['pendingUses'] = $remaining;
+            queueOnlineDomainUpsert($byKey,$records,'items',$items);
         }
     }
+    $devices=$byKey['devices']['payload']??applicationDomainPayload($records,'devices');
+    $deviceClockChanged=false;
+    foreach (['manualTurns','elementalSaveTurns','poisonSaveTurns'] as $clockKey) {
+        if (empty($devices[$clockKey])) continue;
+        $remaining=array_diff_key($devices[$clockKey],$deleted);
+        if ($remaining===$devices[$clockKey]) continue;
+        if ($remaining===[]) unset($devices[$clockKey]);
+        else $devices[$clockKey]=$remaining;
+        $deviceClockChanged=true;
+    }
+    if($deviceClockChanged) queueOnlineDomainUpsert($byKey,$records,'devices',$devices);
     return array_values($byKey);
 }
 
@@ -3733,9 +3843,17 @@ function patchApplicationDomains(PDO $connection): never
             }
         }
         reconcileApplicationMountedTokenDomains($connection, $records, $pendingByKey, array_keys($mountedScenes));
+        onlinePruneDeadInitiative($connection, $records, $pendingByKey);
+        if (onlineAdvanceIrradiationOnChanges($connection, $records, $pendingByKey, $identity)) {
+            onlinePruneDeadInitiative($connection, $records, $pendingByKey, false);
+        }
         applyApplicationDamageOverTimeOnTurn($connection, $records, $pendingByKey, $identity);
         $pending = array_values($pendingByKey);
         $pending = onlineAdvanceDevicesOnChanges($connection, $records, $pending, $identity);
+        $pendingByKey = array_column($pending, null, 'key');
+        $endedByDeath = onlinePruneDeadInitiative($connection, $records, $pendingByKey, false);
+        onlineFinishPrunedCombat($connection, $records, $pendingByKey, $identity, $endedByDeath);
+        $pending = array_values($pendingByKey);
         $pending = applicationCancelAttacksForDeletedTokens($connection, $pending);
         if ($pending === []) {
             $connection->commit();
@@ -3915,6 +4033,7 @@ function restoreApplicationDomainHistory(PDO $connection): never
         }
         if(str_starts_with($key,'map:'))$payload=preserveApplicationMapTimeWeather($payload,$current['payload']??[]);
         if (str_starts_with($key, 'map:')) $payload = preserveApplicationMapAnimation($payload, $current['payload'] ?? []);
+        if (str_starts_with($key, 'token:')) $payload = preserveApplicationTokenPrivateState($payload, $current['payload'] ?? []);
         $payload = validatedDomainPayload($key, $payload);
         $pending = [['key' => $key, 'operation' => 'upsert', 'payload' => $payload, 'current' => $current]];
         $revision = persistDomainChangesInTransaction($connection, $identity, $clock, $pending);

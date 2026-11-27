@@ -27,7 +27,7 @@ function applicationChainAttackGate(array $step, array $state): ?array
         'success' => true, 'automatic' => true, 'effect' => false, 'requiresGmValidation' => false]];
 }
 
-function applicationSettleRejectedChainCritical(array &$execution, int $now): void
+function applicationSettleRejectedChainCritical(array &$execution, int $now, bool $firstStrikeRefused = false): void
 {
     $step = $execution['workflow']['steps'][$execution['currentStepIndex']] ?? null;
     if (($execution['status'] ?? '') !== 'active' || $step === null) return;
@@ -37,7 +37,7 @@ function applicationSettleRejectedChainCritical(array &$execution, int $now): vo
     $stopped = ($first['status'] ?? '') === 'defended';
     $interrupted = in_array($first['status'] ?? '', ['cancelled','rejected'], true);
     $criticalRejected = applicationChainCritical($step, $state)['rejected'] ?? false;
-    if (!$criticalRejected && !$stopped && !$interrupted) return;
+    if (!$firstStrikeRefused && !$criticalRejected && !$stopped && !$interrupted) return;
     if ($criticalRejected) $state['criticalRejected'] = true;
     if ($stopped) { $state['oppositionStopped'] = true; $execution['endedByOpposition'] = true; }
     $state['skippedAttackCount'] = max(0, ($state['queuedAttackCount'] ?? 0) - count($state['attacks'] ?? []));
@@ -45,6 +45,82 @@ function applicationSettleRejectedChainCritical(array &$execution, int $now): vo
     $state['status'] = 'completed'; $state['completedAt'] = $now;
     $execution['currentStepIndex'] = count($execution['workflow']['steps']);
     $execution['status'] = 'completed'; $execution['completedAt'] = $now; $execution['endedByFailure'] = true;
+}
+
+function applicationInhoFirstStrikeRefusalIndex(array $activity, array $attack): ?int
+{
+    if (empty($attack['complexExecutionId']) || empty($attack['requestId'])) return null;
+    foreach ($activity['abilityExecutions'] ?? [] as $index => $execution) {
+        if (($execution['id'] ?? '') !== $attack['complexExecutionId']
+            || ($execution['sceneId'] ?? '') !== ($attack['sceneId'] ?? '')
+            || ($execution['sourceTokenId'] ?? '') !== ($attack['sourceTokenId'] ?? '')) continue;
+        $atFirstStep = ($execution['status'] ?? '') === 'active' && ($execution['currentStepIndex'] ?? null) === 0;
+        $singleStepCompleted = ($execution['status'] ?? '') === 'completed' && ($execution['currentStepIndex'] ?? null) === 1
+            && count($execution['workflow']['steps'] ?? []) === 1;
+        if ((!$atFirstStep && !$singleStepCompleted) || (($execution['rulePreset']['id'] ?? '') !== 'inho-final-chain'
+                && ($execution['abilityId'] ?? '') !== 'ability-c2d11a48-40e5-46a6-b43a-05405d1a5362')) return null;
+        $step = $execution['workflow']['steps'][0] ?? [];
+        if (($step['type'] ?? '') !== 'attack-chain' || ($step['firstGateAtCast'] ?? false) !== true) return null;
+        $state = $execution['stepStates'][$step['id']] ?? [];
+        $strikes = $state['attacks'] ?? [];
+        if ($strikes === []) return $atFirstStep && ($state['attackRequestId'] ?? '') === $attack['requestId'] ? $index : null;
+        return count($strikes) === 1 && empty($state['attackRequestId']) && ($strikes[0]['id'] ?? '') === $attack['id']
+            && ($strikes[0]['requestId'] ?? '') === $attack['requestId']
+            && (!$singleStepCompleted || ($strikes[0]['status'] ?? '') === 'pending') ? $index : null;
+    }
+    return null;
+}
+
+function applicationInhoChainCastReceipt(array $receipts, string $executionId): ?array
+{
+    foreach ($receipts as $receipt) {
+        if (!in_array($receipt['kind'] ?? '', ['ability-workflow', 'ability-validation'], true)
+            || ($receipt['result']['execution']['id'] ?? '') !== $executionId
+            || ($receipt['result']['cast']['success'] ?? false) !== true) continue;
+        return $receipt['result']['cast'];
+    }
+    return null;
+}
+
+function onlineSettleInhoFirstStrikeRefusal(PDO $connection, array &$records, array &$pending, array $attack): int|float|null
+{
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity');
+    $index = applicationInhoFirstStrikeRefusalIndex($activity, $attack);
+    if ($index === null) return null;
+    $execution = $activity['abilityExecutions'][$index];
+    $cast = $execution['castGate']['openingStrikeCost'] ?? applicationInhoChainCastReceipt($activity['resourceReceipts'] ?? [], $execution['id']);
+    if ($cast === null) {
+        $alias = 'execution:' . $execution['id'];
+        foreach ($activity['combatActions'] ?? [] as $action) {
+            if (!in_array($alias, $action['aliases'] ?? [], true)) continue;
+            $receipts = applicationReadUndoResourceReceipts($connection, $action, applicationResourceReceiptClock());
+            $cast = applicationInhoChainCastReceipt($receipts, $execution['id']);
+            break;
+        }
+    }
+    $refunded = 0;
+    $fatigue = max(0, onlineResourceNumber($cast['fatigueGained'] ?? 0));
+    if ($fatigue > 0) {
+        $characterId = (string) ($execution['characterId'] ?? '');
+        $key = $characterId !== '' ? 'character:' . $characterId : onlineTokenDomainKey($execution['sceneId'], $execution['sourceTokenId']);
+        $records = array_replace($records, applicationDomainRecords($connection, [$key]));
+        $owner = $pending[$key]['payload'] ?? applicationDomainPayload($records, $key);
+        if ($owner !== [] && ($characterId !== '' || !unitUsesCharacterSheet($owner))) {
+            $refunded = onlineRefundAbilityFatigue($connection, $records, $pending, $execution['sceneId'],
+                $execution['sourceTokenId'], $characterId, $fatigue, (string) ($cast['deferredFatigueEffectId'] ?? ''));
+        }
+    }
+    $now = applicationResourceReceiptClock();
+    $stepId = $execution['workflow']['steps'][0]['id'];
+    $execution['stepStates'][$stepId]['attacks'] = [applicationComplexAbilityAttackResult($attack)];
+    applicationSettleRejectedChainCritical($execution, $now, true);
+    $execution['endedByFailure'] = true;
+    $execution['revision']++;
+    $execution['updatedAt'] = $now;
+    $activity = $pending['activity']['payload'] ?? $activity;
+    $activity['abilityExecutions'][$index] = $execution;
+    queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
+    return $refunded;
 }
 
 function applicationChainAttackOpposed(array $step,array $state):bool {

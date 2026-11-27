@@ -22,6 +22,8 @@ function applicationRecognizedLargeHealingCanonical(array $template):bool{
 }
 const APPLICATION_POISON_ALIAS_ID='v370-template-8e0a02fe1713a545f9d1aba3';
 const APPLICATION_POISON_TEMPLATE_ID='v370-template-fad0fbf7691b2b40a2a9a7dc';
+const XAR_ELEMENTAL_POTION_TEMPLATE_ID='item-template-036af6e5-51fd-421b-a7a0-21142bdb05ec';
+const XAR_ELEMENTAL_POTION_ALIAS_ID='potion-infused-elemental';
 function applicationRecognizedPoisonTemplate(array $template,bool $alias):bool{
     $permissions=['read'=>true,'pickup'=>true,'destroy'=>false,'transfer'=>true,'boundToCarrier'=>false];
     if(($template['id']??'')!==($alias?APPLICATION_POISON_ALIAS_ID:APPLICATION_POISON_TEMPLATE_ID)
@@ -35,7 +37,13 @@ function applicationRecognizedPoisonTemplate(array $template,bool $alias):bool{
         if(!is_array($template['permissions']))return false;
         foreach($template['permissions']as$key=>$value)if(!array_key_exists($key,$permissions)||$permissions[$key]!==$value)return false;
     }
-    $active=$template['active']??null;$effects=$active['effects']??null;$effect=is_array($effects)?($effects[0]??null):null;
+    $active=$template['active']??null;$effects=$active['effects']??null;
+    if (is_array($effects)) $effects=array_values(array_filter($effects,static function($effect):bool{
+        if(!is_array($effect))return true;
+        ksort($effect);
+        return $effect!==['damageType'=>'poison','family'=>'poison','formula'=>'1d20','kind'=>'dot','label'=>'Poison','turns'=>5];
+    }));
+    $effect=is_array($effects)?($effects[0]??null):null;
     return is_array($active)&&($active['version']??null)===1&&($active['authority']??'')==='gm'
         &&($active['useLabel']??'')==='Utiliser · arbitrage MJ'&&($active['ingredientTag']??'')==='poison-vial'
         &&!array_diff(array_keys($active),['version','effects','useLabel','authority','ingredientTag'])
@@ -79,9 +87,18 @@ function applicationMergeKnownItemTemplateAlias(array $value,string $aliasId,str
     }
     return $value;
 }
+function applicationRecognizedElementalPotionAlias(array $template):bool{
+    return ($template['id']??'')===XAR_ELEMENTAL_POTION_ALIAS_ID
+        && onlineConditionKey($template['name']??'')==='potion infusee' && ($template['kind']??'')==='object'
+        && empty($template['image']) && empty($template['equipment']) && empty($template['active']['effects'])
+        && empty($template['potionVessel']) && empty($template['document']) && empty($template['sourceAbilityId']) && empty($template['stockBindings']);
+}
 function mergeKnownItemTemplateAliases(?array $value):?array{
     if($value===null||($value['version']??1)!==1||!is_array($value['templates']??null)||!is_array($value['instances']??null))return $value;
     $value=applicationMergeKnownItemTemplateAlias($value,APPLICATION_LARGE_HEALING_ALIAS_ID,APPLICATION_LARGE_HEALING_TEMPLATE_ID,'applicationRecognizedLargeHealingAlias','applicationRecognizedLargeHealingCanonical');
-    return applicationMergeKnownItemTemplateAlias($value,APPLICATION_POISON_ALIAS_ID,APPLICATION_POISON_TEMPLATE_ID,
+    $value=applicationMergeKnownItemTemplateAlias($value,APPLICATION_POISON_ALIAS_ID,APPLICATION_POISON_TEMPLATE_ID,
         static fn(array $t):bool=>applicationRecognizedPoisonTemplate($t,true),static fn(array $t):bool=>applicationRecognizedPoisonTemplate($t,false));
+    return applicationMergeKnownItemTemplateAlias($value,XAR_ELEMENTAL_POTION_ALIAS_ID,XAR_ELEMENTAL_POTION_TEMPLATE_ID,
+        'applicationRecognizedElementalPotionAlias',
+        static fn(array $t):bool=>onlineConditionKey($t['name']??'')==='potion elementaire' && ($t['kind']??'')==='object');
 }

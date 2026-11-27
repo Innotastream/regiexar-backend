@@ -3,6 +3,34 @@ declare(strict_types=1);
 
 const XAR_UNIT_SIZE_CATEGORIES = ['small', 'normal', 'large', 'huge', 'custom'];
 const XAR_UNIT_SIZE_MAXIMUM = 1000;
+const XAR_MAP_SCALE_PRESETS = ['outdoor' => 40, 'indoor' => 60, 'wide' => 25];
+
+function applicationMapScalePresetValid(mixed $value): bool {
+    return is_string($value) && ($value === 'custom' || isset(XAR_MAP_SCALE_PRESETS[$value]));
+}
+
+function preserveApplicationLegacyMapScaleSettings(array $incoming, array $previous): array {
+    // 4.4.5 sends a fully normalized map after any MJ edit. It only recognizes
+    // the former 50/75 px presets and does not serialize the new sizing fields.
+    $preserve = static function (array $level, array $current): array {
+        if (!isset($level['gridSize'], $current['gridSize']) || $level['gridSize'] != $current['gridSize']) return $level;
+        $preset = $level['unitScalePreset'] ?? null;
+        if ($preset !== null && $preset !== 'custom' && $preset !== ($current['unitScalePreset'] ?? null)) return $level;
+        foreach (['unitScalePreset', 'unitScaleAuto', 'unitScaleProfile'] as $field) {
+            if (array_key_exists($field, $current)) $level[$field] = $current[$field];
+        }
+        return $level;
+    };
+    $active = $incoming['activeLayerId'] ?? 'ground';
+    $activeBefore = $previous['activeLayerId'] ?? 'ground';
+    $currentRoot = $active === $activeBefore ? $previous : ($previous['layers'][$active] ?? null);
+    if (is_array($currentRoot)) $incoming = $preserve($incoming, $currentRoot);
+    foreach ($incoming['layers'] ?? [] as $id => $level) {
+        $current = $previous['layers'][$id] ?? null;
+        if (is_array($level) && is_array($current)) $incoming['layers'][$id] = $preserve($level, $current);
+    }
+    return $incoming;
+}
 
 function applicationUnitSizeCategoryValid(mixed $value): bool {
     return is_string($value) && in_array($value, XAR_UNIT_SIZE_CATEGORIES, true);
@@ -26,20 +54,34 @@ function applicationUnitSizeCategory(array $token): string {
 
 function applicationMapScaleSettings(array $map, ?string $layerId = null): array {
     $layerId ??= (string)($map['activeLayerId'] ?? 'ground');
-    $layer = is_array($map['layers'][$layerId] ?? null) ? $map['layers'][$layerId] : [];
+    $layer = is_array($map['layers'][$layerId] ?? null) ? $map['layers'][$layerId] : $map;
     $number = static fn(mixed $value): bool => (is_int($value) || is_float($value)) && is_finite((float)$value);
-    $preset = $layer['unitScalePreset'] ?? $map['unitScalePreset'] ?? 'outdoor';
-    $grid = $number($layer['gridSize'] ?? null) && $layer['gridSize'] > 0 ? $layer['gridSize'] : ($number($map['gridSize'] ?? null) && $map['gridSize'] > 0 ? $map['gridSize'] : ($preset === 'indoor' ? 75 : 50));
-    $settings = ['gridSize' => max(12, min(240, $grid))];
-    foreach (['gridOffsetX', 'gridOffsetY'] as $key) $settings[$key] = max(-240, min(240, $number($layer[$key] ?? null) ? $layer[$key] : ($number($map[$key] ?? null) ? $map[$key] : 0)));
-    $settings['gridSize']=round($settings['gridSize'],3);
-    $settings['unitScalePreset'] = $preset==='custom' ? 'custom' : ($settings['gridSize']===50||$settings['gridSize']===50.0?'outdoor':($settings['gridSize']===75||$settings['gridSize']===75.0?'indoor':'custom'));
+    $layerGrid = $number($layer['gridSize'] ?? null) && $layer['gridSize'] > 0 ? $layer['gridSize'] : null;
+    $mapGrid = $number($map['gridSize'] ?? null) && $map['gridSize'] > 0 ? $map['gridSize'] : null;
+    $ownPreset = applicationMapScalePresetValid($layer['unitScalePreset'] ?? null) ? $layer['unitScalePreset'] : null;
+    $mapPreset = applicationMapScalePresetValid($map['unitScalePreset'] ?? null) ? $map['unitScalePreset'] : null;
+    $preset = $ownPreset ?? ($layerGrid === null ? $mapPreset : null);
+    $grid = $layerGrid ?? XAR_MAP_SCALE_PRESETS[$ownPreset] ?? $mapGrid ?? XAR_MAP_SCALE_PRESETS[$preset] ?? XAR_MAP_SCALE_PRESETS['outdoor'];
+    $grid = round(max(12, min(240, $grid)), 3);
+    if ($preset === null) {
+        $preset = array_search((int)$grid, XAR_MAP_SCALE_PRESETS, true) ?: 'custom';
+    }
+    if ($preset !== 'custom' && $grid != XAR_MAP_SCALE_PRESETS[$preset]) $preset = 'custom';
+    $settings = ['gridSize' => $grid];
+    foreach (['gridOffsetX', 'gridOffsetY'] as $key) $settings[$key] = round(max(-240, min(240, $number($layer[$key] ?? null) ? $layer[$key] : ($number($map[$key] ?? null) ? $map[$key] : 0))), 3);
+    $settings['unitScalePreset'] = $preset;
+    $settings['unitScaleAuto'] = ($layer['unitScaleAuto'] ?? false) === true;
+    $profile = $layer['unitScaleProfile'] ?? null;
+    if ($preset === 'custom' && $profile === 'wide') $settings['unitScaleProfile'] = 'wide';
     return $settings;
 }
 
 function applicationMapForUnitLayer(array $map, ?string $layerId = null): array {
     $layerId ??= (string)($map['activeLayerId'] ?? 'ground');
-    return array_replace($map, is_array($map['layers'][$layerId] ?? null) ? $map['layers'][$layerId] : [], applicationMapScaleSettings($map, $layerId), ['activeLayerId' => $layerId]);
+    $settings = applicationMapScaleSettings($map, $layerId);
+    $level = array_replace($map, is_array($map['layers'][$layerId] ?? null) ? $map['layers'][$layerId] : [], $settings, ['activeLayerId' => $layerId]);
+    if (!isset($settings['unitScaleProfile'])) unset($level['unitScaleProfile']);
+    return $level;
 }
 
 // Only creation and arrival call this; ordinary reads and movements keep stored size.
@@ -51,13 +93,18 @@ function applicationScaleUnitForMap(array $token, array $map, ?string $layerId =
         $token['size'] = max(10, min(XAR_UNIT_SIZE_MAXIMUM, is_numeric($token['size'] ?? null) && is_finite((float)$token['size']) ? (float)$token['size'] : 40));
         return $token;
     }
-    $base = ['small' => 30, 'normal' => 40, 'large' => 60, 'huge' => 100][$category];
-    $token['size'] = max(10, min(XAR_UNIT_SIZE_MAXIMUM, round($base * applicationMapScaleSettings($map, $layerId)['gridSize'] / 50, 3)));
+    $settings = applicationMapScaleSettings($map, $layerId);
+    $wide = $settings['unitScalePreset'] === 'wide' || ($settings['unitScaleProfile'] ?? null) === 'wide';
+    $multiplier = ($wide ? ['small' => 0.8, 'normal' => 1, 'large' => 1.4, 'huge' => 2.5]
+        : ['small' => 0.75, 'normal' => 1, 'large' => 1.5, 'huge' => 2.5])[$category];
+    $token['size'] = max(10, min(XAR_UNIT_SIZE_MAXIMUM, round($settings['gridSize'] * $multiplier, 3)));
     return $token;
 }
 
 function applicationValidMapScaleSettings(array $value): bool {
-    if (array_key_exists('unitScalePreset', $value) && !in_array($value['unitScalePreset'], ['outdoor', 'indoor', 'custom'], true)) return false;
+    if (array_key_exists('unitScalePreset', $value) && !applicationMapScalePresetValid($value['unitScalePreset'])) return false;
+    if (array_key_exists('unitScaleAuto', $value) && !is_bool($value['unitScaleAuto'])) return false;
+    if (array_key_exists('unitScaleProfile', $value) && $value['unitScaleProfile'] !== 'wide') return false;
     foreach (['gridSize', 'gridOffsetX', 'gridOffsetY'] as $key) {
         if (!array_key_exists($key, $value)) continue;
         $number = $value[$key];

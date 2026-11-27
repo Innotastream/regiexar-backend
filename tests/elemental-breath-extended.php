@@ -49,6 +49,103 @@ extendedBreathCheck(is_array($prompt),'Le même compte voit l’esquive de son c
 $before=$db->domains;$wrongAbility=runCommand($db,'token.attack.oppose',['attackId'=>$child['id'],'requestId'=>'extended-defense-ability-forged','abilityId'=>'invented-defense','statId'=>'character-stat-force']);extendedBreathCheck($wrongAbility->status===409&&$db->domains===$before,'Une compétence de défense substituée est refusée sans effet');
 $foreign=runCommand($db,'token.attack.oppose',['attackId'=>$child['id'],'requestId'=>'extended-defense-foreign','statId'=>'character-stat-agility'],false,'account-other');extendedBreathCheck($foreign->status===403&&$db->domains===$before,'Un autre compte ne peut pas esquiver pour ce clone');
 $defense=runCommand($db,'token.attack.oppose',['attackId'=>$child['id'],'requestId'=>'extended-defense-forged-stat','statId'=>'character-stat-force','rollMode'=>'advantage']);extendedBreathCheck($defense->status===200,'Le propriétaire peut esquiver : '.json_encode($defense->body));extendedBreathCheck(($defense->body['attack']['opposition']['statId']??'')==='character-stat-agility'&&($defense->body['attack']['opposition']['rollMode']??'')==='normal','Statistique et mode falsifiés sont remplacés par l’Agilité normale autoritaire');
+
+function extendedChanceDecision(MemoryConnection $db, string $id, string $decision = 'approve', array $defenders = []): TestResponse {
+    return runCommand($db, 'token.attack.area.resolve',
+        ['attackId'=>$id, 'decision'=>$decision, 'confirmed'=>true, 'defenseTokenIds'=>$defenders], true, 'account-gm');
+}
+
+function extendedChanceResources(MemoryConnection $db): array {
+    $sheet = $db->payload('character:character-player');
+    $items = array_column($db->payload('items')['instances'], null, 'id');
+    return [(float) $sheet['resources']['mana'], (float) $sheet['fatigue']['current'],
+        $items['sheet-infusion-1']['location']['kind'], $items['sheet-infusion-2']['location']['kind']];
+}
+
+foreach ([
+    'position dans le cône'=>['x'=>21, 'y'=>51, 'size'=>45],
+    'sortie du cône'=>['x'=>90],
+    'pion masqué'=>['hidden'=>true],
+    'nouveau contrôleur'=>['controllerPlayerId'=>'account-other'],
+    'défenseur KO'=>['hp'=>0],
+] as $scenario => $change) {
+    $db = extendedAreaFixture();
+    $launch = extendedAreaLaunch($db);
+    $gate = $db->payload('activity')['pendingAttacks'][0] ?? [];
+    extendedBreathCheck($launch->status === 200 && ($gate['areaGate']['targetTokenIds'] ?? []) === ['extended-ally-clone'],
+        'Le lanceur prépare sa seule cible : ' . $scenario);
+    extendedAreaFixtureChance($db, $gate['id'], 70);
+    $key = 'token:scene-one:extended-ally-clone';
+    $db->put($key, array_replace($db->payload($key), $change));
+    $paid = [80.0, 10.0, 'consumed', 'inventory'];
+    extendedBreathCheck(extendedChanceResources($db) === $paid, 'Le lancement coûte une seule potion, 20 mana et 10 fatigue');
+    $before = $db->domains;
+    $resolved = extendedChanceDecision($db, $gate['id'], 'approve', ['extended-ally-clone']);
+    if ($scenario === 'position dans le cône') {
+        $children = $resolved->body['areaAttacks'] ?? [];
+        extendedBreathCheck($resolved->status === 200 && count($children) === 1
+            && $children[0]['targetTokenId'] === 'extended-ally-clone' && $children[0]['status'] === 'awaiting-opposition',
+            'L’allié peut se déplacer et changer de taille dans le cône avant son esquive : ' . json_encode($resolved->body));
+        extendedBreathCheck($db->payload($key)['hp'] === 1000 && extendedChanceResources($db) === $paid,
+            'Aucun dégât avant l’esquive et aucun deuxième débit');
+        $committed = $db->domains;
+        $replay = extendedChanceDecision($db, $gate['id'], 'approve', ['extended-ally-clone']);
+        extendedBreathCheck($replay->status === 200 && ($replay->body['deduplicated'] ?? false)
+            && $db->domains === $committed, 'Le rejeu de confirmation ne crée ni frappe ni débit');
+        continue;
+    }
+    extendedBreathCheck($resolved->status === 409 && $db->domains === $before,
+        'La confirmation échoue sans effet en cas de ' . $scenario . ' : ' . json_encode($resolved->body));
+    $rejected = extendedChanceDecision($db, $gate['id'], 'reject');
+    extendedBreathCheck($rejected->status === 200 && ($rejected->body['attack']['status'] ?? '') === 'rejected'
+        && ($db->payload('activity')['pendingAttacks'] ?? []) === [] && extendedChanceResources($db) === $paid,
+        'Le MJ ferme la tentative sans dégâts ni remboursement hors échec critique : ' . $scenario);
+}
+
+foreach ([false, true] as $revealBeforeApproval) {
+    $db = extendedAreaFixture();
+    $db->put('token-index:scene-one', ['order'=>['token-player', 'extended-ally-clone', 'token-monster']]);
+    $enemyKey = 'token:scene-one:token-monster';
+    $db->put($enemyKey, array_replace($db->payload($enemyKey), ['x'=>17, 'y'=>50]));
+    $map = $db->payload('map:scene-one');
+    $bytes = str_repeat("\0", 512);
+    for ($row = 29; $row <= 34; $row++) {
+        for ($col = 9; $col <= 12; $col++) applicationSetMaskBit($bytes, $row * 64 + $col, true);
+    }
+    $fog = ['version'=>1, 'enabled'=>true, 'width'=>64, 'height'=>64,
+        'mask'=>rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=')];
+    $db->put('map:scene-one', [...$map, 'fog'=>$fog]);
+    $launch = extendedAreaLaunch($db);
+    $gate = $db->payload('activity')['pendingAttacks'][0] ?? [];
+    extendedBreathCheck($launch->status === 200 && ($gate['areaGate']['targetTokenIds'] ?? []) === ['extended-ally-clone'],
+        'Le monstre sous le brouillard peint reste absent de l’aperçu du lanceur');
+    extendedAreaFixtureChance($db, $gate['id'], 70);
+    if ($revealBeforeApproval) $db->put('map:scene-one', $map);
+    $before = $db->domains;
+    $resolved = extendedChanceDecision($db, $gate['id'], 'approve', ['extended-ally-clone']);
+    if ($revealBeforeApproval) {
+        extendedBreathCheck($resolved->status === 409 && $db->domains === $before,
+            'Un monstre devenu visible impose de préparer de nouveau le cône');
+    } else {
+        extendedBreathCheck($resolved->status === 200
+            && array_column($resolved->body['areaAttacks'] ?? [], 'targetTokenId') === ['extended-ally-clone']
+            && $db->payload($enemyKey)['hp'] === 40,
+            'Le MJ confirme avec le point de vue du lanceur, sans ajouter un monstre sous le brouillard');
+    }
+}
+
+$db = extendedAreaFixture();
+$source = $db->payload('token:scene-one:token-player');
+$db->put('token:scene-one:token-player', [...$source, 'x'=>70]);
+$launch = extendedAreaLaunch($db);
+$gate = $db->payload('activity')['pendingAttacks'][0] ?? [];
+extendedBreathCheck($launch->status === 200 && ($gate['areaGate']['targetTokenIds'] ?? null) === [],
+    'Le lanceur n’est pas désigné lorsque le cône est vide');
+extendedAreaFixtureChance($db, $gate['id'], 70);
+$resolved = extendedChanceDecision($db, $gate['id']);
+extendedBreathCheck($resolved->status === 200 && ($resolved->body['areaAttacks'] ?? null) === []
+    && $db->payload('character:character-player')['resources']['hp'] === 1000, 'Un cône vide se termine sans infliger de dégâts');
+
 $db=extendedAreaFixture();$source=$db->payload('token:scene-one:token-player');$source['x']=70;$db->put('token:scene-one:token-player',$source);$clone=$db->payload('token:scene-one:extended-ally-clone');$clone['x']=10;$db->put('token:scene-one:extended-ally-clone',$clone);$sheetBefore=$db->payload('character:character-player');$created=extendedAreaLaunch($db,'extended-ally-clone','extended-clone-attempt-0001');extendedBreathCheck($created->status===200,'Le clone peut lancer avec son propre stock : '.json_encode($created->body));
 extendedBreathCheck($db->payload('character:character-player')===$sheetBefore,'La fiche modèle et ses ressources sont intactes');$clone=$db->payload('token:scene-one:extended-ally-clone');extendedBreathCheck($clone['mana']==80&&$clone['fatigue']['current']==10,'Seuls les coûts du clone sont payés');$instances=array_column($db->payload('items')['instances'],null,'id');extendedBreathCheck($instances['clone-infusion-1']['location']['kind']==='consumed'&&$instances['clone-infusion-2']['location']['kind']==='inventory','Un seul composant propre au clone est consommé');extendedBreathCheck($instances['sheet-infusion-1']['location']['kind']==='inventory'&&$instances['sheet-infusion-1']['revision']===1&&$instances['sheet-infusion-2']['revision']===1,'Les deux composants du personnage restent intacts');
 $before=$db->domains;$replay=extendedAreaLaunch($db,'extended-ally-clone','extended-clone-attempt-0001');extendedBreathCheck(($replay->body['deduplicated']??false)&&$db->domains===$before,'Le reçu du clone ne repaie aucun composant ni ressource');$timers=$db->payload('activity')['actionTimers'];extendedBreathCheck(count(array_filter($timers,static fn($timer)=>($timer['tokenId']??'')==='extended-ally-clone'&&($timer['restUseCount']??0)===1))===1&&count(array_filter($timers,static fn($timer)=>($timer['characterId']??'')==='character-player'))===0,'Le quota de repos appartient au clone uniquement');

@@ -32,6 +32,7 @@ function applicationContactZones(mixed $value=[]):array {
         foreach(['id','sceneId','sourceTokenId','sourceUnitId','originExecutionId']as$k)if(!applicationContactZoneId($z[$k]??null))throw new RuntimeException('Une identité de zone de contact est invalide.',400);
         if(isset($seen[$z['id']])||array_key_exists('kind',$z)&&$z['kind']!=='contact-zone'||!in_array($z['layerId']??'', ['ground','upper','basement'],true)||!is_string($z['sourceControllerId']??null)||$z['sourceControllerId']!==''&&!applicationContactZoneId($z['sourceControllerId'])
             ||!is_string($z['createdCombatId']??null)||$z['createdCombatId']!==''&&!applicationContactZoneId($z['createdCombatId'])||!applicationContactZoneInt($z['createdTurnSerial']??null)||!applicationContactZoneInt($z['createdAt']??null)||!applicationContactZoneInt($z['createdRound']??0)
+            ||array_key_exists('createdAfterSourceTurn',$z)&&!is_bool($z['createdAfterSourceTurn'])
             ||array_key_exists('friendlyFire',$z)&&!is_bool($z['friendlyFire'])||!is_array($z['points']??null)||!array_is_list($z['points'])||count($z['points'])<1||count($z['points'])>256)throw new RuntimeException('Une zone de contact est invalide.',400);
         $definition=applicationContactZoneDefinition($z['definition']??null);if($definition===null)throw new RuntimeException('Une définition de zone manque.',400);
         $visualOnlySince=null;
@@ -46,21 +47,24 @@ function applicationContactZones(mixed $value=[]):array {
         $points=[];foreach($z['points']as$p){$point=applicationContactZonePoint($p);if($point===null)throw new RuntimeException('Le trajet de zone est invalide.',400);$points[]=$point;}
         $contacts=$z['contacts']??[];if(!is_array($contacts)||!array_is_list($contacts)||count($contacts)>1000)throw new RuntimeException('Le registre de contacts est invalide.',400);
         $contactKeys=[];$normalized=[];foreach($contacts as$c){
-            if(!applicationContactZoneId($c['targetUnitId']??null)||!applicationContactZoneId($c['combatId']??null)||!applicationContactZoneInt($c['turnSerial']??null)||!is_string($c['requestId']??null)||preg_match('/^[A-Za-z0-9_-]{16,80}$/D',$c['requestId'])!==1)throw new RuntimeException('Un reçu de contact est invalide.',400);
-            $key=json_encode([$c['targetUnitId'],$c['combatId'],$c['turnSerial']],JSON_THROW_ON_ERROR);if(isset($contactKeys[$key]))throw new RuntimeException('Un contact a été compté deux fois.',400);$contactKeys[$key]=true;
-            $normalized[]=array_intersect_key($c,array_flip(['targetUnitId','combatId','turnSerial','requestId']));
+            if(!applicationContactZoneId($c['targetUnitId']??null)||!applicationContactZoneId($c['combatId']??null)||!applicationContactZoneInt($c['turnSerial']??null)||array_key_exists('round',$c)&&!applicationContactZoneInt($c['round'])||!is_string($c['requestId']??null)||preg_match('/^[A-Za-z0-9_-]{16,80}$/D',$c['requestId'])!==1)throw new RuntimeException('Un reçu de contact est invalide.',400);
+            $round=$c['round']??0;
+            $key=json_encode([$c['targetUnitId'],$c['combatId'],$round>0?'round':'serial',$round?:$c['turnSerial']],JSON_THROW_ON_ERROR);if(isset($contactKeys[$key]))throw new RuntimeException('Un contact a été compté deux fois.',400);$contactKeys[$key]=true;
+            $normalized[]=[...array_intersect_key($c,array_flip(['targetUnitId','combatId','turnSerial','requestId'])),...($round>0?['round'=>$round]:[])];
         }
         $seen[$z['id']]=true;$out[]=['kind'=>'contact-zone','id'=>$z['id'],'sceneId'=>$z['sceneId'],'layerId'=>$z['layerId'],'sourceTokenId'=>$z['sourceTokenId'],'sourceUnitId'=>$z['sourceUnitId'],'sourceControllerId'=>$z['sourceControllerId'],
             'originExecutionId'=>$z['originExecutionId'],'definition'=>$definition,'points'=>$points,'createdCombatId'=>$z['createdCombatId'],'createdTurnSerial'=>$z['createdTurnSerial'],'createdRound'=>$z['createdRound']??0,'createdAt'=>$z['createdAt'],'friendlyFire'=>($z['friendlyFire']??false)===true,'contacts'=>$normalized,
-            ...($visualOnlySince===null?[]:['visualOnlySince'=>$visualOnlySince])];
+            ...(!empty($z['createdAfterSourceTurn'])?['createdAfterSourceTurn'=>true]:[]),...($visualOnlySince===null?[]:['visualOnlySince'=>$visualOnlySince])];
     }
     return $out;
 }
 function applicationCreateContactZone(array $definition,array $context):array {
     $clock=$context['initiative']??[];
+    $sourceIndex=array_search($context['sourceTokenId'],$clock['order']??[],true);
+    $createdAfterSourceTurn=($clock['active']??false)===true&&$sourceIndex!==false&&$sourceIndex<=($clock['currentIndex']??0);
     $z=['id'=>$context['id'],'sceneId'=>$context['sceneId'],'layerId'=>$context['layerId'],'sourceTokenId'=>$context['sourceTokenId'],'sourceUnitId'=>$context['sourceUnitId'],'sourceControllerId'=>$context['sourceControllerId']??'',
         'originExecutionId'=>$context['originExecutionId'],'definition'=>$definition,'points'=>[$context['origin']],'createdCombatId'=>$clock['combatId']??'','createdTurnSerial'=>$clock['turnSerial']??0,
-        'createdRound'=>$clock['round']??0,'createdAt'=>$context['now']??(int)floor(microtime(true)*1000),'friendlyFire'=>($context['friendlyFire']??false)===true,'contacts'=>[]];
+        'createdRound'=>$clock['round']??0,'createdAfterSourceTurn'=>$createdAfterSourceTurn,'createdAt'=>$context['now']??(int)floor(microtime(true)*1000),'friendlyFire'=>($context['friendlyFire']??false)===true,'contacts'=>[]];
     return applicationContactZones([$z])[0];
 }
 function applicationAppendContactZonePath(array $zone,array $points):array {
@@ -101,17 +105,18 @@ function applicationAdvanceContactZones(array $zones,string $sceneId,array $prev
             }
         }else{
             $isSource=static fn($id)=>$id===$zone['sourceTokenId']||$unitFor($id)===$zone['sourceUnitId'];
-            $sourceTurn=$isSource($current);
+            $sourceTurn=$forward&&$isSource($current)&&$turnSerial>$zone['createdTurnSerial']
+                &&($round>$zone['createdRound']||$round===$zone['createdRound']&&empty($zone['createdAfterSourceTurn']));
             $present=false;
             foreach($order as$id)if($isSource($id)){$present=true;break;}
-            if($silver&&$rewound){$kept[]=$zone;continue;}
+            if($rewound){$kept[]=$zone;continue;}
             if($marker!==null){
-                $nextSourceTurn=$sourceTurn&&$forward&&$turnSerial>$marker['turnSerial'];
+                $nextSourceTurn=$sourceTurn&&$round>$marker['round'];
                 $nextRoundWithoutSource=!$present&&$round>($previous['round']??0)&&$round>$marker['round'];
                 if(!$nextSourceTurn&&!$nextRoundWithoutSource)$kept[]=$zone;
                 continue;
             }
-            $originalDeadline=($sourceTurn&&$turnSerial>$zone['createdTurnSerial']&&(!$silver||$forward))
+            $originalDeadline=$sourceTurn
                 ||(!$present&&$round>$zone['createdRound']);
             if(!$originalDeadline){$kept[]=$zone;continue;}
             if(!$silver)continue;
@@ -156,10 +161,12 @@ function applicationCollectContactZoneMovement(array &$state,array $mover,array 
         if($unitId===$zone['sourceUnitId']&&!$zone['definition']['affectCaster'])continue;
         $def=$zone['definition'];$affects=[...$def,'affectAllies'=>$def['affectAllies']||$zone['friendlyFire']];
         if($unitId!==$zone['sourceUnitId']&&!applicationDamageAreaAffects($affects,$zone['sourceTokenId'],$zone['sourceControllerId'],$mover['id'],applicationUnitControllerId($mover,$state),$zone['sourceUnitId'],$unitId))continue;
-        if(array_filter($zone['contacts'],static fn($c)=>$c['targetUnitId']===$unitId&&$c['combatId']===$clock['combatId']&&$c['turnSerial']===$clock['turnSerial']))continue;
+        $round=$clock['round']??0;
+        if(array_filter($zone['contacts'],static fn($c)=>$c['targetUnitId']===$unitId&&$c['combatId']===$clock['combatId']
+            &&($c['turnSerial']===$clock['turnSerial']||($c['round']??0)>0&&$c['round']>=$round)))continue;
         if(!applicationContactZoneTouchesPath($zone,$mover,$map,$points))continue;
         $requestId=isset($options['requestIdForContact'])?($options['requestIdForContact'])($zone['id'],$unitId,$clock['combatId'],$clock['turnSerial']):applicationContactZoneRequestId($zone['id'],$unitId,$clock['combatId'],$clock['turnSerial']);
-        $zones[$i]['contacts'][]=['targetUnitId'=>$unitId,'combatId'=>$clock['combatId'],'turnSerial'=>$clock['turnSerial'],'requestId'=>$requestId];
+        $zones[$i]['contacts'][]=['targetUnitId'=>$unitId,'combatId'=>$clock['combatId'],'turnSerial'=>$clock['turnSerial'],'requestId'=>$requestId,...($round>0?['round'=>$round]:[])];
         $events[]=['zoneId'=>$zone['id'],'originExecutionId'=>$zone['originExecutionId'],'sourceTokenId'=>$zone['sourceTokenId'],'sceneId'=>$scene,'layerId'=>$zone['layerId'],'targetTokenId'=>$mover['id'],'targetUnitId'=>$unitId,'requestId'=>$requestId,'damage'=>$def['damage']];
     }
     if($events!==[])$state['devices']['contactZones']=applicationContactZones($zones);return $events;

@@ -24,6 +24,81 @@ foreach([false,true] as $gm){
 }
 specialCheck($db->payload('character:character-player')['stats']['spiritSocial']===70,'Base Social unmodified');
 
+$concealmentArgs = ['statId'=>'character-stat-agility', 'rollOptionId'=>'concealment'];
+$tokenKey = 'token:scene-one:token-player';
+foreach ([false, true] as $gm) {
+    $db = specialFixture();
+    inhoSource($db, $talents);
+    $regular = inhoRoll($db, [...$concealmentArgs, 'rollMode'=>'disadvantage'], $gm);
+    $roll = $regular->body['roll'] ?? [];
+    specialCheck($regular->status === 200 && ($roll['label'] ?? '') === 'Dissimulation'
+        && ($roll['rollMode'] ?? '') === 'advantage' && count($roll['attempts'] ?? []) === 2,
+        'The explicit player and MJ Concealment paths apply Inho’s advantage to the actual dice: '.json_encode($regular->body));
+    specialCheck(($roll['visibility'] ?? '') === 'gm' && ($roll['revealed'] ?? true) === false,
+        'Other players cannot receive the exact value through the roll feed.');
+    specialCheck(inhoRoll($db, [...$concealmentArgs, 'statId'=>'character-stat-spiritSocial'], $gm)->status === 400,
+        'A Forged Social Concealment roll is refused.');
+    specialCheck(inhoRoll($db, [...$concealmentArgs, 'tokenId'=>'', 'characterId'=>'character-player'], $gm)->status === 409,
+        'The new option requires an actual pawn.');
+    $characterKey = 'character:character-player';
+    $character = $db->payload($characterKey);
+    $db->put($characterKey, [...$character, 'specialSuccessStock'=>1]);
+    $db->put($tokenKey, [...$db->payload($tokenKey), 'concealment'=>['result'=>35]]);
+    $args = [...$concealmentArgs, 'useJoker'=>true, 'requestId'=>'concealment-replay-'.($gm?'gm':'player')];
+    $accepted = inhoRoll($db, $args, $gm);
+    $roll = $accepted->body['roll'] ?? [];
+    specialCheck($accepted->status === 200 && ($roll['outcome']['joker'] ?? false) === true
+        && $db->payload($tokenKey)['concealment'] === ['result'=>1],
+        'A deterministic better success records the improved effective value on this token: '.json_encode($accepted->body));
+    $before = $db->domains;
+    specialCheck((inhoRoll($db, $args, $gm)->body['deduplicated'] ?? false) === true && $db->domains === $before,
+        'A retried roll cannot re-spend the Joker or rewrite the pawn.');
+    $full = domainsToApplicationState($db->domains, 0);
+    $projection = static fn (array $view) => array_column($view['map']['tokens'], null, 'id')['token-player'] ?? [];
+    $owned = publicPlayerState($full, ['id'=>'account-player'], []);
+    $other = publicPlayerState($full, ['id'=>'unrelated-player'], []);
+    $stream = publicPlayerState($full, ['id'=>'account-gm'], [], true);
+    specialCheck(($projection($owned)['concealment'] ?? null) === ['result'=>1]
+        && ($projection($other)['concealed'] ?? false) && !isset($projection($other)['concealment'])
+        && ($projection($stream)['concealed'] ?? false) && !isset($projection($stream)['concealment']),
+        'The owner gets the result while visible peers and Stream receive only opacity state.');
+    specialCheck(!in_array($roll['id'], array_column($other['rolls'], 'id'), true)
+        && !in_array($roll['id'], array_column($stream['rolls'], 'id'), true),
+        'A Concealment Joker must not be republished by global Joker handling.');
+    $activity = $db->payload('activity');
+    $forgedRolls = array_map(static fn (array $entry): array => $entry['id'] === $roll['id']
+        ? [...$entry, 'visibility'=>'public', 'revealed'=>true, 'rollOptionId'=>''] : $entry, $activity['rolls']);
+    $merged = preserveApplicationAbilityExtensions('activity', [...$activity, 'rolls'=>$forgedRolls], $activity);
+    $protected = array_column($merged['rolls'], null, 'id')[$roll['id']];
+    specialCheck($protected['visibility'] === 'gm' && $protected['revealed'] === false && $protected['rollOptionId'] === 'concealment',
+        'Replacing a stale activity snapshot cannot accidentally publish a private roll.');
+    $reveal = runCommand($db, 'roll.reveal', ['rollId'=>$roll['id']], true, 'account-gm');
+    specialCheck($reveal->status === 200 && ($reveal->body['roll']['revealed'] ?? false) === true,
+        'The MJ can intentionally publish the roll through its normal declaration.');
+    $forged = prepareApplicationDomainUpsert($tokenKey, [...$db->payload($tokenKey), 'concealment'=>['result'=>-99],'concealed'=>true],
+        $db->domains[$tokenKey], true);
+    specialCheck($forged === null, 'A generic snapshot cannot change an existing score.');
+    $clone = runCommand($db, 'token.clone', ['sceneId'=>'scene-one','tokenId'=>'token-player'], true, 'account-gm');
+    specialCheck($clone->status === 200 && !isset($clone->body['token']['concealment']),
+        'A fresh clone starts with no Concealment from its source.');
+}
+$db = specialFixture();
+inhoSource($db, []);
+$ordinary = inhoRoll($db, $concealmentArgs);
+specialCheck($ordinary->status === 200 && ($ordinary->body['roll']['rollMode'] ?? '') === 'normal',
+    'An ordinary character can hide with a single die.');
+$db->put($tokenKey, [...$db->payload($tokenKey), 'concealment'=>['result'=>14]]);
+$records = $db->domains;
+$pending = [];
+$makeOutcome = static fn (int $value, bool $success): array => ['outcome'=>['result'=>$value,'success'=>$success]];
+foreach ([$makeOutcome(15, true), $makeOutcome(14, true), $makeOutcome(-4, false)] as $row) {
+    onlineConcealmentRoll($records, $pending, $tokenKey, $concealmentArgs, $row);
+    specialCheck($pending === [], 'A worse, identical or failed score does not replace the record.');
+}
+onlineConcealmentRoll($records, $pending, $tokenKey, $concealmentArgs, $makeOutcome(-4, true));
+specialCheck($pending[$tokenKey]['payload']['concealment'] === ['result'=>-4],
+    'A valid result-modified roll uses its effective lower value.');
+
 $db=specialFixture();inhoSource($db,$talents);$source=$db->payload('token:scene-one:token-player');$source['x']=20;$source['y']=50;$db->put('token:scene-one:token-player',$source);$target=$db->payload('token:scene-one:token-monster');$target['x']=25;$db->put('token:scene-one:token-monster',$target);
 $before=$db->payload('activity')['rolls']??[];
 $r=runCommand($db,'token.move',['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>'token-monster','x'=>42,'y'=>50],true,'account-gm');specialCheck($r->status===200,'GM moves enemy: '.json_encode($r->body));

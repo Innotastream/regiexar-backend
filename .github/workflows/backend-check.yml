@@ -47,7 +47,7 @@ jobs:
           php tests/item-physical-cases.php
           php -n tests/dynamic-items-contract.php
           php tests/domain-backward-compatibility.php
-      - name: Exact current-version login policy
+      - name: Store transition login policy
         run: php tests/client-policy.php
       - name: Global MJ Chance reset and durable replay
         run: php tests/luck-reset-contract.php
@@ -114,6 +114,7 @@ jobs:
           php tests/audit-device-authority.php
           php tests/cosmetic-forms.php
           php tests/active-items-poisons.php
+          php tests/poison-runtime.php
           php tests/metamorphosis-duration.php
       - name: Unit inventories, independent clones and linked passages
         run: |
@@ -205,6 +206,7 @@ jobs:
           php tests/combat-audit-contract.php
           php tests/ongoing-effects-contract.php
           php tests/ability-validation-contract.php
+          php tests/experimental-mixture.php
           php tests/pending-ability-domain-contract.php
           php tests/attack-enhancements-contract.php
           php tests/attack-enhancements-lifecycle.php

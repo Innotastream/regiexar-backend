@@ -123,6 +123,10 @@ if (is_array($deduplicatedAttack)) {
     if (onlineWantsTotalOpposition($deduplicatedAttack['areaGate'] ?? [])) {
         $result['pendingAreaGate'] = ($deduplicatedAttack['status'] ?? '') === 'pending';
     }
+    if (!empty($deduplicatedAttack['chanceCastCriticalFailure'])) {
+        $result['chanceCastCriticalFailure'] = true;
+        $result['pendingAreaGate'] = false;
+    }
     $result['deduplicated'] = true;
 } else {
     if (count($receipts) >= XAR_ATTACK_RECEIPT_MAXIMUM) {
@@ -147,6 +151,22 @@ if (is_array($deduplicatedAttack)) {
     }
     $map = $isGm && $mechanicsApplied !== null ? $mechanicsApplied['state']['map'] : applicationDomainPayload($records, $mapKey);
     $map['tokens'] = $sceneTokens;
+    $chargeId=trim((string)($arguments['complexExecutionId']??''));
+    $chargeIndex=$chargeId!==''?findEntryIndex($activity['abilityExecutions']??[],$chargeId):-1;
+    $chargeExecution=$activity['abilityExecutions'][$chargeIndex]??null;
+    if($chargeExecution&&$source!==[]&&($chargeExecution['status']??'')==='active'&&$chargeExecution['sourceTokenId']===$source['id']
+        &&($isGm||$chargeExecution['controllerAccountId']===$accountId)&&applicationIsBodyCharge($chargeExecution)){
+        $chargeStep=$chargeExecution['workflow']['steps'][$chargeExecution['currentStepIndex']]??[];
+        $pendingTargetId=$chargeExecution['stepStates'][$chargeStep['id']??'']['pendingTargetTokenId']??'';
+        if($pendingTargetId!==''&&$pendingTargetId===($arguments['targetTokenId']??'')){
+            $viewer=$chargeExecution['chargeView']??['accountId'=>$accountId,'gm'=>$isGm];
+            $candidates=onlineComplexAbilitySceneTokens($connection,$records,$sceneId,$map,$viewer['accountId'],$viewer['gm'],$pending);
+            [$visibleTokens]=onlineBodyChargeView($connection,$records,$pending,$sceneId,$map,$candidates,$source);
+            $caster=applicationComplexAbilityTokenById($visibleTokens,$source['id'])??$source;
+            if(!applicationBodyChargeTargetAvailable($chargeExecution,['tokenId'=>$pendingTargetId],$caster,$visibleTokens))
+                rejectOnlineCommand($connection,409,'Cette cible n’est plus visible ou disponible pour Bélier.','complex_ability_charge_target_unavailable');
+        }
+    }
     if (($source !== [] && !onlineTokenOnActiveLayer($source, $map)) || ($target !== [] && !onlineTokenOnActiveLayer($target, $map))) {
         rejectOnlineCommand($connection, 409, $automaticDrawRequested
             ? 'Le lanceur de la Danse n’est plus sur ce niveau. Sélectionnez son pion sur son niveau actuel, puis relancez la Danse.'
@@ -283,16 +303,23 @@ if (is_array($deduplicatedAttack)) {
         }
         if ($step['type'] === 'attack-chain' && ($step['targetMode'] ?? 'each') === 'once') {
             $plan = is_array($stepState['plan'] ?? null) ? $stepState['plan'] : [];
+            $plannedOpposition = applicationChainAttackOpposed($step, $stepState);
             if (($target['id'] ?? '') !== ($plan['targetTokenId'] ?? '')
                 || ($arguments['attackId'] ?? '') !== ($plan['attackId'] ?? '')
                 || ($arguments['statId'] ?? '') !== ($plan['statId'] ?? '')
-                || ($arguments['opposed'] ?? false) !== applicationChainAttackOpposed($step,$stepState))
+                || ($arguments['opposed'] ?? false) !== $plannedOpposition
+                || (isset($execution['openingOppositionMode']) && onlineWantsTotalOpposition($arguments)
+                    !== ($plannedOpposition && $execution['openingOppositionMode'] === 'total')))
                 rejectOnlineCommand($connection, 409, 'Respectez la cible, l’arme et l’opposition prévues pour cette série.', 'complex_attack_plan_mismatch');
         }
         if ($step['type'] === 'attack-chain') $attackSeries = [
             'name' => $execution['abilityName'], 'index' => count($stepState['attacks'] ?? []) + 1,
             'count' => ($step['resolutionMode'] ?? '') === 'batch' ? ($stepState['queuedAttackCount'] ?? 0) : $step['count'],
         ];
+        if ($attackSeries !== null && is_string($execution['id'] ?? null) && $execution['id'] !== '' && $stepId !== '') {
+            $seriesId = onlineNormalizeAttackSeriesId($execution['id'].'::'.$stepId);
+            if ($seriesId !== null) $attackSeries['seriesId'] = $seriesId;
+        }
         if ($step['type'] === 'attack-chain' && ($step['resolutionMode'] ?? '') === 'batch') {
             $chainDefinition = $step;
             $chainGate = applicationChainAttackGate($step, $stepState);
@@ -542,7 +569,8 @@ if (is_array($deduplicatedAttack)) {
     $passiveState=onlineDeviceState($connection,$records,$pending);$passiveAttack=!empty($mechanicsDefinition['useWeaponDamage'])&&$selectedWeapon!==[]?[...$mechanicsDefinition,'reach'=>applicationWeaponReach($selectedWeapon)]:($mechanicsDefinition??[]);$targetPassivePenalty=static fn(array $recipient):int=>applicationPassiveRangedAttackPenalty($recipient,$passiveAttack,$passiveState);
     $conditionAttackPenalty=applicationTimedAttackPenalty($passiveState,$source,(string)$target['id'],$sceneId)+$targetPassivePenalty($target)+($chargeStrike['thresholdPenalty']??0);
     $thresholdModifier = ($hitModifierMode === 'threshold' ? $hitModifierValue : 0) - ($castingPlan['difficultyPenalty'] ?? 0) - $conditionAttackPenalty;
-    $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus);
+    $targetResultBonus = applicationPredatoryResultBonus($source, (string) $target['id'], 'attack') + $attackResultBonus;
+    $resultModifier = ($hitModifierMode === 'result' ? $hitModifierValue : 0) - $targetResultBonus;
     $rollMode = applicationOverdriveRollMode($source,$activity,$sceneId,(string)($stats[$statIndex]['id']??''),normalizeOnlineRollMode($arguments['rollMode'] ?? 'normal'));
     $hitFormula = '1d100' . ($resultModifier !== 0 ? ($resultModifier > 0 ? '+' : '') . $resultModifier : '');
     onlineCloseFixedEscapeWindows($connection,$records,$pending,(string)$source['id'],$sceneId);
@@ -554,7 +582,16 @@ if (is_array($deduplicatedAttack)) {
     if(!$prepareDefenseOnly&&$defenseApproval!==null&&!empty($defenseApproval['gate']['preparedHit']['rolled']))$hitRolled=applicationMarkNaturalRoll($hitRolled);
     $hitOutcome = $chainGate !== null ? ($chainGate['outcomeDetails'] ?? classifyOnlineD100Outcome($chainGate['total'], $chainGate['threshold'], 0, 0, true, true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)))
         : ($joker?applicationSpecialSuccessOutcome($threshold):($hasCastingCheck ? classifyOnlineD100Outcome($hitRolled['rawD100'] ?? null, $threshold, $thresholdModifier, $resultModifier, true, true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId)) : ['code' => 'success', 'label' => 'SANS JET', 'success' => true, 'effect' => false, 'automatic' => true]));
-    if($chainGate!==null&&!($hitOutcome['automatic']??false)&&($conditionAttackPenalty||(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)))$hitOutcome=[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$hitOutcome['baseThreshold']??$hitOutcome['threshold'],($hitOutcome['modifier']??0)-$conditionAttackPenalty,($hitOutcome['resultModifier']??0)-(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];
+    if ($chainGate !== null && !($hitOutcome['automatic'] ?? false) && ($conditionAttackPenalty || $targetResultBonus)) {
+        $adjustedOutcome = classifyOnlineD100Outcome($hitOutcome['raw'], $hitOutcome['baseThreshold'] ?? $hitOutcome['threshold'],
+            ($hitOutcome['modifier'] ?? 0) - $conditionAttackPenalty, ($hitOutcome['resultModifier'] ?? 0) - $targetResultBonus,
+            true, true, applicationRollCriticalFailureProtected($source, $pending['activity']['payload'] ?? applicationDomainPayload($records, 'activity'), $sceneId));
+        if ($adjustedOutcome !== null && ($chainGate['fromCast'] ?? false) === true && ($hitOutcome['requiresGmValidation'] ?? true) === false
+            && $hitOutcome['code'] === $adjustedOutcome['code']) {
+            $adjustedOutcome['requiresGmValidation'] = false;
+        }
+        $hitOutcome = [...$hitOutcome, ...($adjustedOutcome ?? [])];
+    }
     applyOnlineD100ResultToRoll($hitRolled, $hitOutcome);
     if ($hasCastingCheck && $hitOutcome !== null) {
         $fatigue = onlineStatFatigueDetails($source, (string) ($stats[$statIndex]['id'] ?? ''), $sourceCharacter);
@@ -621,7 +658,7 @@ if (is_array($deduplicatedAttack)) {
     $damageRoll = null;
     $damageSummary = ['rawDamage' => 0, 'armorPercent' => 0, 'preventedDamage' => 0, 'finalDamage' => 0];
     if (($hitOutcome['success'] ?? false) === true && $projectileGate['percent'] > 0 && !$oppositionRequired && $primaryAffects) {
-        $damageResult = onlineRollAttackDamage([...$damageSpecification,'sceneId'=>$sceneId], $target,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));
+        $damageResult = onlineRollAttackDamage([...$damageSpecification,'sceneId'=>$sceneId], $target,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$source);
         $damageRolled = $damageResult['rolled']; $damageSummary = $damageResult['damage'];
         $damageRoll = onlineRollEntry($identity, $damageRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Token'));
         $damageRoll['visibility'] = 'gm';
@@ -696,6 +733,9 @@ if (is_array($deduplicatedAttack)) {
         'damageRollMode' => 'normal',
         'createdAt' => $now,
     ];
+    $drowWeapon = $selectedWeapon !== [] ? $selectedWeapon : ($attackKind==='weapon' ? $mechanicsDefinition : []);
+    if (($drowCoating=onlineConsumeDrowCoating($connection,$records,$pending,$source,$drowWeapon))!==null)
+        $attack['drowCoating']=$drowCoating;
     $initiative = applicationDomainPayload($records, $initiativeKey);
     $combatActive = ($initiative['active'] ?? false) === true;
     if (($hitOutcome['requiresGmValidation'] ?? false) === true || $projectileGate['pending']) {
@@ -811,6 +851,7 @@ if (is_array($deduplicatedAttack)) {
             }
             if (onlineResourceNumber($areaTarget['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($areaTarget, $areaController !== '')) continue;
             $areaAttack = $attack;
+            unset($areaAttack['drowCoating']);
             foreach (['damage', 'damageRoll', 'cast', 'deferredAbilityCast', 'resolvedAt', 'appliedDamage', 'previousHp', 'currentHp', 'maximumHp', 'validationKind', 'provisionalStatus', 'effectsApplied', 'dotApplied', 'weaponDotApplied', 'reflection', 'guardPercent', 'guardPreventedDamage', 'passivePercent', 'passivePreventedDamage', 'resourcePulse', 'characterId', 'areaAnchorOnly', 'terrainBarrier', 'terrainCreated', 'structureContactProcessed', 'poisonStacksProcessed', 'poisonApplications','attackApproach','approachPoint','approachApplied','mountedMovement', 'riderApplied', 'opposition', 'projectileGate', 'echoDefinitions', 'echoProcessed', 'echoAttacks'] as $field) unset($areaAttack[$field]);
             $areaAttack['id'] = 'attack-' . randomToken(12);
             $areaAttack['requestId'] = 'area-' . randomToken(12);
@@ -843,7 +884,7 @@ if (is_array($deduplicatedAttack)) {
             } elseif (empty($targetOutcome['requiresGmValidation'])&&!$targetGate['pending']&&$areaAttack['opposed'] && ($targetOutcome['breaksOpposition'] ?? false) !== true) {
                 $areaAttack['status'] = 'awaiting-opposition';
             } else {
-                $areaResult = onlineRollAttackDamage($areaAttack, $areaTarget,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId));
+                $areaResult = onlineRollAttackDamage($areaAttack, $areaTarget,null,onlineAttackEnhancementState($connection,$records,$pending,$sceneId),$source);
                 $areaSummary = $areaResult['damage'];
                 $areaRolled = $areaResult['rolled'];
                 $areaRoll = onlineRollEntry($identity, $areaRolled, $attackName . ' · Dégâts', (string) ($source['name'] ?? 'Attaquant'));

@@ -7,7 +7,7 @@ function checkChampion(bool $condition,string $message):void{if(!$condition)thro
 $scene='scene';$source=['id'=>'caster','characterId'=>'sheet','followCharacter'=>true,'controllerPlayerId'=>'owner','x'=>20,'y'=>50,'size'=>40,'hp'=>10,'maxHp'=>100,'mana'=>0,'maxMana'=>0,'layerId'=>'ground'];
 $enemy=['id'=>'enemy','x'=>30,'y'=>50,'size'=>40,'hp'=>100,'maxHp'=>100,'armor'=>20,'magicArmor'=>50,'layerId'=>'ground'];
 $ally=[...$source,'id'=>'ally','characterId'=>'other-sheet','x'=>40];
-$clock=['active'=>true,'combatId'=>'combat','turnSerial'=>1,'order'=>['caster','enemy'],'currentIndex'=>0];
+$clock=['active'=>true,'turnsStarted'=>true,'combatId'=>'combat','round'=>1,'turnSerial'=>1,'order'=>['caster','enemy'],'currentIndex'=>0];
 $weapon=['id'=>'chain','formula'=>'1d50+20','damageType'=>'physical','reach'=>'reach'];
 $champion=['id'=>'low-hp','name'=>'Buff de recette','effect'=>'enhancement','castingStatId'=>'','fatigueCost'=>5,'activationHpMaxPercent'=>10,'attackEnhancement'=>['mode'=>'bonus','formula'=>'30','damageType'=>'inherit','turns'=>5,'target'=>'self','trigger'=>'all-attacks']];
 $stigma=['id'=>'stigma','name'=>'Bénédiction de recette','effect'=>'enhancement','castingStatId'=>'','fatigueCost'=>10,'restRecharge'=>'long','usesPerRest'=>1,'attackEnhancement'=>['mode'=>'bonus','formula'=>'15','damageType'=>'inherit','turns'=>5,'target'=>'self','bonuses'=>['force'=>15,'agility'=>15],'criticalFailureAsFailure'=>true]];
@@ -52,7 +52,12 @@ checkChampion(onlineAttackArmorPercent($protected,'ignore')===0,'Ignore bypasses
 $visual=applicationTokenBuffVisuals($source,$state,$scene);checkChampion(count(array_filter($visual,static fn($entry)=>(float)($entry['auraScale']??0)===21.0))===1,'Emitter projected with public scaled contour');
 $controller=static fn($token)=>$token['controllerPlayerId']??'';
 $single=['useWeaponDamage'=>true,'requiredWeaponAttackId'=>'chain','singleEnemy'=>['damageRepetitions'=>2,'conditionRider'=>['version'=>1,'label'=>'Restreint','turns'=>1,'resistance'=>false]]];
-checkChampion(applicationAbilityRangeCells($single,[['id'=>'main','reach'=>'melee'],$weapon],'main')===4.0,'Required weapon controls fallback range');
+$fallbackWeapons = [['id'=>'main','reach'=>'melee'], $weapon];
+checkChampion(applicationAbilityRangeCells($single,$fallbackWeapons,'main')===4.0,'Required Allonge weapon controls the four-cell fallback range');
+checkChampion(applicationAbilityTargetInRange($single, $source, [...$enemy,'x'=>44], $state['map'], $fallbackWeapons, 'main'),
+    'The edge of the target fits at exactly four cells');
+checkChampion(!applicationAbilityTargetInRange($single, $source, [...$enemy,'x'=>44.01], $state['map'], $fallbackWeapons, 'main'),
+    'The target falls outside beyond four cells');
 checkChampion(applicationSimpleWeaponDamage($single,[$weapon])['damageFormula']==='1d50+20','Actual required weapon formula');
 try{applicationSimpleWeaponDamage($single,[$weapon],'other');throw new RuntimeException('Wrong weapon accepted');}catch(RuntimeException $e){checkChampion(str_contains($e->getMessage(),'configurée'),'Wrong weapon blocked');}
 checkChampion(applicationSingleEnemyAttackFields($single,[$ally,$enemy],$source,$enemy,$controller)['damageRepetitions']===2,'One enemy repeats');
@@ -65,6 +70,15 @@ $withFixed=applicationEnhancedAttackDamage(['formula'=>$multiplied['damageFormul
 checkChampion($withFixed['formula']==='1d50+20+1d50+20+30+15','Fixed bonuses apply after dice multiplier');
 checkChampion(applicationEnhancedAttackDamage(['formula'=>'0','damageType'=>'physical'],$source,$state,$scene)['formula']==='0','Zero damage control never becomes an offensive damage spell');
 $previous=$clock;$effects=$state['attackEnhancements'];
-for($turn=1;$turn<=5;$turn++){$next=[...$clock,'turnSerial'=>1+$turn];$effects=applicationAdvanceAttackEnhancements($effects,$scene,$previous,$next);checkChampion(applicationAdvanceAttackEnhancements($effects,$scene,$previous,$next)===$effects,'Idempotent turn');checkChampion(($effects[0]['remainingTurns']??0)===5-$turn,'Five recipient turns');$previous=$next;}
+for ($turn = 1; $turn <= 5; $turn++) {
+    $enemyTurn = [...$previous, 'turnSerial'=>$previous['turnSerial'] + 1, 'currentIndex'=>1];
+    checkChampion(applicationAdvanceAttackEnhancements($effects, $scene, $previous, $enemyTurn) === $effects,
+        'The enemy turn keeps the caster’s duration');
+    $next = [...$enemyTurn, 'round'=>$enemyTurn['round'] + 1, 'turnSerial'=>$enemyTurn['turnSerial'] + 1, 'currentIndex'=>0];
+    $effects = applicationAdvanceAttackEnhancements($effects, $scene, $enemyTurn, $next);
+    checkChampion(applicationAdvanceAttackEnhancements($effects, $scene, $enemyTurn, $next) === $effects, 'Idempotent turn');
+    checkChampion(($effects[0]['remainingTurns'] ?? 0) === 5 - $turn, 'Five recipient turns');
+    $previous = $next;
+}
 checkChampion($effects===[],'All combined modifiers expire');
 echo json_encode(['ok'=>true,'checks'=>$checks,'scope'=>'generic combat modifiers, moving aura, required weapon and repeated damage; pure authority contract'],JSON_UNESCAPED_UNICODE).PHP_EOL;

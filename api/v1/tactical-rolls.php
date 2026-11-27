@@ -245,6 +245,37 @@ function applicationTacticalRollVisibility(array $roll, array $source, string $k
     return $roll;
 }
 
+function onlineConcealmentRoll(array $records, array &$pending, string $tokenKey, array $arguments, array $roll): array
+{
+    $option = $arguments['rollOptionId'] ?? '';
+    if (!in_array($option, ['concealment', 'inho-stealth-advantage'], true)) return $roll;
+    if ($option === 'concealment') {
+        $roll['rollOptionId'] = 'concealment';
+        $roll['visibility'] = 'gm';
+        $roll['revealed'] = false;
+        unset($roll['gmRevealed'], $roll['revealedAt']);
+    }
+    $outcome = $roll['outcome'] ?? [];
+    $result = $outcome['result'] ?? $roll['total'] ?? null;
+    if ($tokenKey === '' || ($outcome['success'] ?? false) !== true || !is_int($result)) return $roll;
+    $token = $pending[$tokenKey]['payload'] ?? applicationDomainPayload($records, $tokenKey);
+    if ($token === [] || applicationIsNonCombatant($token) || $result >= ($token['concealment']['result'] ?? PHP_INT_MAX)) return $roll;
+    $token['concealment'] = ['result'=>$result];
+    queueOnlineDomainUpsert($pending, $records, $tokenKey, $token);
+    return $roll;
+}
+
+function onlineAssertConcealmentRollSource(PDO $connection, array $arguments, array $source, string $tokenKey, array $index): void
+{
+    if (($arguments['rollOptionId'] ?? '') !== 'concealment') return;
+    if ($tokenKey === '' || (isset($index['order']) && !in_array($source['id'] ?? null, $index['order'], true))) {
+        rejectOnlineCommand($connection, 409, 'Placez ou sélectionnez le pion pour faire un test de Dissimulation.', 'concealment_token_required');
+    }
+    if (applicationIsNonCombatant($source)) {
+        rejectOnlineCommand($connection, 403, 'Cet élément fixe ne peut pas se dissimuler.', 'fixed_structure_cannot_act');
+    }
+}
+
 function applicationTacticalRollReceipt(array $activity, string $requestId, string $accountId, string $signature, int $now, ?PDO $connection = null): ?array {
     if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) throw new RuntimeException('invalid_tactical_roll_request');
     $count = 0;
@@ -275,6 +306,7 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     if (!validApplicationDomainKey($sourceKey)) rejectOnlineCommand($connection, 400, 'La source du jet est invalide.', 'invalid_tactical_roll_source');
     $keys = [$sourceKey, 'activity'];
     if ($sceneId !== '') $keys = [...$keys, 'map:' . $sceneId, 'scene:' . $sceneId];
+    if ($tokenId !== '' && ($arguments['rollOptionId'] ?? '') === 'concealment') $keys[] = 'token-index:' . $sceneId;
     $records = array_replace($records, applicationDomainRecords($connection, $keys));
     $activity = applicationDomainPayload($records, 'activity');
     $requestId = (string) ($arguments['requestId'] ?? ''); $accountId = (string) $identity['id'];
@@ -290,6 +322,8 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     $source = applicationDomainPayload($records, $sourceKey);
     if ($source === []) rejectOnlineCommand($connection, 404, 'La source du jet n’existe plus.', 'tactical_roll_source_missing');
     if(applicationIsNonCombatant($source))rejectOnlineCommand($connection,403,'Cet élément fixe ne peut pas agir.','fixed_structure_cannot_act');
+    onlineAssertConcealmentRollSource($connection, $arguments, $source, $tokenId !== '' ? $sourceKey : '',
+        applicationDomainPayload($records, 'token-index:' . $sceneId));
     if(!$isGm){
         if($sceneId!==onlineActiveSceneId($table))rejectOnlineCommand($connection,409,'La scène a changé. Rouvrez le jet.','stale_scene');
         if($tokenId!==''?(onlineTokenControllerIdFromRecords($connection,$records,$source)!==$accountId||!empty($source['hidden'])):($source['ownerPlayerId']??'')!==$accountId)
@@ -311,17 +345,14 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
     try { $spec = applicationTacticalRollSpecification([...$source,'initiativeBonus'=>applicationEffectiveInitiativeBonus($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId),'stats'=>onlineEnhancedStatRows($connection,$records,$pending,$source,$sceneId)], $arguments); }
     catch (RuntimeException $error) { rejectOnlineCommand($connection, in_array($error->getCode(),[400,403],true)?$error->getCode():400, $error->getCode()?$error->getMessage():'Vérifiez la statistique, le nom et la formule du jet.', $error->getMessage()); }
     $spec['rollMode']=applicationOverdriveRollMode($source,$activity,$sceneId,(string)($arguments['statId']??''),$spec['rollMode']);
-    $cloneLuckThreshold = $spec['kind'] === 'luck' && $tokenId !== ''
-        ? onlineIndependentCloneLuckThreshold($connection, $records, $pending, $source) : null;
+    if ($spec['kind'] === 'luck') $spec['threshold'] = onlineUnitLuckThreshold($connection, $records, $pending, $source);
     $joker=applicationRequestsSpecialSuccess($arguments);
     $rolled = $joker?onlineConsumeSpecialSuccess($connection,$records,$pending,$source,$sceneId):onlineRollFormulaWithMode($spec['formula'], $spec['rollMode'], $spec['threshold'], $spec['modifier'], $spec['d100RollUnder']);
-    $outcome = $joker?applicationSpecialSuccessOutcome($cloneLuckThreshold ?? $spec['threshold']):($spec['threshold'] !== null
+    $outcome = $joker?applicationSpecialSuccessOutcome($spec['threshold']):($spec['threshold'] !== null || $spec['kind'] === 'luck'
         ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null, $spec['threshold'], $spec['modifier'], $spec['resultModifier'], $spec['kind'] !== 'hit', $spec['kind'] === 'stat' && ($arguments['kind'] ?? '') !== 'custom-stat', applicationRollCriticalFailureProtected($source,$activity,$sceneId))
-        : ($spec['kind'] === 'luck' ? classifyOnlineD100Outcome($rolled['rawD100'] ?? null,
-            $cloneLuckThreshold ?? onlineCharacterLuckThreshold($connection, $records, $pending, $owner['characterId'] ?? $characterId),
-            0, 0, true, false, applicationRollCriticalFailureProtected($source, $activity, $sceneId)) : null));
+        : null);
     applyOnlineD100ResultToRoll($rolled, $outcome);
-    if ($outcome !== null && $spec['threshold'] !== null) $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
+    if ($outcome !== null && $spec['threshold'] !== null && $spec['kind'] !== 'luck') $outcome['resultCustomized'] = $spec['modifierMode'] === 'result';
     if ($outcome !== null && $spec['kind'] === 'stat') {
         $fatigue = onlineStatFatigueDetails($source, (string) ($arguments['statId'] ?? ''), $character ?? null);
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
@@ -340,9 +371,12 @@ function onlineGmTacticalRoll(PDO $connection, array &$records, array &$pending,
         $roll['revealed'] = false;
     }
     $roll=applicationForcePublicJoker($roll);
+    $roll = onlineConcealmentRoll($records, $pending, $tokenId !== '' ? $sourceKey : '', $arguments, $roll);
     $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
-    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, ['kind' => 'roll', ...applicationRollActivityFields($roll)]);
+    $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId,
+        ['kind' => 'roll', ...(($roll['rollOptionId'] ?? '') === 'concealment'
+            ? ['characterName'=>$roll['characterName'], 'summary'=>'Dissimulation'] : applicationRollActivityFields($roll))]);
     $activity = $pending['activity']['payload'] ?? $activity;
     $receipts = array_values(array_filter($activity['resourceReceipts'] ?? [], static fn($entry): bool => is_array($entry) && ($entry['expiresAt'] ?? 0) > $now));
     $initiativeUpdated = $tokenId !== '' && $spec['kind'] === 'initiative';

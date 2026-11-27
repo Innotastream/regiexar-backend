@@ -94,6 +94,36 @@ $sourceKey = 'token:scene-one:' . $body['sourceTokenId'];
 $model = $db->payload('character:character-player');
 $paid = $db->payload($sourceKey);
 requireTactical($start->body['cast']['outcome']['code'] === 'critical-failure' && (float) $paid['mana'] === 18.0 && (float) $paid['hp'] === 57.0 && (float) $paid['fatigue']['current'] === 149.5, 'The critical failure pays only clone resources.');
+$orphaned = fixture();
+$orphaned->domains = $db->domains;
+$orphaned->revision = $db->revision;
+$orphaned->resourceReceiptLedger = $db->resourceReceiptLedger;
+$indexKey = 'token-index:scene-one';
+$oldIndex = $orphaned->payload($indexKey);
+$newIndex = [...$oldIndex,'order'=>array_values(array_filter($oldIndex['order'],static fn(string $id):bool => $id !== $body['sourceTokenId']))];
+$GLOBALS['testIdentity'] = ['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
+$GLOBALS['testBody'] = ['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,'changes'=>[
+    ['key'=>$sourceKey,'expectedRevision'=>$orphaned->domains[$sourceKey]['revision'],'operation'=>'delete'],
+    ['key'=>$indexKey,'expectedRevision'=>$orphaned->domains[$indexKey]['revision'],'operation'=>'upsert','payload'=>$newIndex],
+]];
+try { patchApplicationDomains($orphaned); } catch (TestResponse $deletion) {
+    requireTactical($deletion->status===200 && $orphaned->payload($sourceKey)===[], 'The paid autonomous caster was deleted through the native MJ route');
+}
+$beforeRefusal = $orphaned->revision;
+requireTactical(validationResolve($orphaned,$start->body,'approve','orphaned-validation-approval')->status===409
+    && $orphaned->revision===$beforeRefusal, 'A deleted caster still cannot finish the paid spell');
+$dismissed = validationResolve($orphaned,$start->body,'reject','orphaned-validation-rejection');
+requireTactical($dismissed->status===200 && ($dismissed->body['validationRejected'] ?? false)
+    && ($dismissed->body['refundUnavailable'] ?? [])===['mana'=>2,'hp'=>3,'fatigue'=>1]
+    && $dismissed->body['refundedCosts']===['mana'=>0,'hp'=>0,'fatigue'=>0]
+    && $orphaned->payload('activity')['pendingAbilityCasts']===[] && $orphaned->payload('activity')['actionTimers']===[]
+    && $orphaned->payload('character:character-player')===$model,
+    'The GM closes the blocked cast and reports the unavailable refund without crediting the model: '.json_encode($dismissed->body));
+$orphanedRevision = $orphaned->revision;
+requireTactical((validationResolve($orphaned,$start->body,'reject','orphaned-validation-rejection')->body['deduplicated'] ?? false)
+    && (runCommand($orphaned,'ability.use',$body)->body['validationRejected'] ?? false)
+    && $orphaned->revision===$orphanedRevision,
+    'Repeating either original request returns the terminal refusal without a phantom refund');
 $rejected = validationResolve($db,$start->body,'reject');
 $restored = $db->payload($sourceKey);
 requireTactical($rejected->status === 200 && (float) $restored['mana'] === 20.0 && (float) $restored['hp'] === 60.0 && (float) $restored['fatigue']['current'] === 148.5, 'Refusing the critical failure restores the clone, including only the fatigue actually gained: ' . json_encode($rejected->body));

@@ -24,6 +24,17 @@ function applicationSetPreparedInitiativeOrder(array $initiative,array $order,?s
 function applicationEffectiveRoundCooldown(array $ability,array $initiative):int {
     return ($initiative['active']??false)===true?max(0,(int)($ability['cooldownRounds']??0)):0;
 }
+
+function applicationDotPlacementRound(array $initiative, string $targetId): array
+{
+    if (empty($initiative['active']) || empty($initiative['turnsStarted'])) return [];
+    $index = array_search($targetId, $initiative['order'] ?? [], true);
+    if ($index === false) return [];
+    $alreadyStarted = $index <= ($initiative['currentIndex'] ?? 0)
+        || in_array($targetId, $initiative['delayedTurnIds'] ?? [], true);
+    return $alreadyStarted ? ['lastTargetRound' => (int) ($initiative['round'] ?? 1)] : [];
+}
+
 function applicationFinishRoundTimers(array $state,string $sceneId,?string $now=null):array {
     $now??=gmdate('c');$kept=[];$removed=[];
     foreach($state['actionTimers']??[] as $timer){

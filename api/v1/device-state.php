@@ -15,6 +15,7 @@ require_once __DIR__.'/metamorphosis.php';
 require_once __DIR__.'/attack-enhancements.php';
 require_once __DIR__.'/device-items.php';
 require_once __DIR__.'/contact-effect-zones.php';
+require_once __DIR__.'/poison-runtime.php';
 
 // Native PHP counterpart of public/device-state.js. Storage and dice are
 // supplied by the authority inside its existing transaction/clock lock.
@@ -97,6 +98,7 @@ function dsStore(mixed $value): array {
     foreach (['devices','craftRequests','pendingRolls','timedConditions','receipts'] as $key) if (!is_array($value[$key]??null) || !array_is_list($value[$key]) || count($value[$key])>($key==='receipts'?2048:1000)) dsError('Le registre des dispositifs est invalide.');
     if(array_key_exists('spellFields',$value))$value['spellFields']=applicationSpellFields($value['spellFields']);
     if(array_key_exists('contactZones',$value))$value['contactZones']=applicationContactZones($value['contactZones']);
+    if(array_key_exists('drowCoatings',$value))$value['drowCoatings']=applicationDrowCoatings($value['drowCoatings']);
     $ids=[];
     foreach ($value['devices'] as $entry) {
         if (!is_string($entry['id']??null) || isset($ids[$entry['id']]) || !is_int($entry['revision']??null) || $entry['revision']<1
@@ -222,6 +224,11 @@ function dsDeployment(array &$state,array &$store,array $actor,array $owner,arra
         'battery'=>['mana'=>0], 'dome'=>['mode'=>dsDomeMode($args,$definition),'channelCount'=>0,'activeTurns'=>0,'lastChannelTurn'=>null],
         'beam'=>['mana'=>0,'participants'=>array_map(static fn($id)=>['characterId'=>$id,'status'=>'pending'],$args['participantCharacterIds']),'mark'=>$args['mark'],'waitingForConsent'=>true],
         'structure'=>['status'=>'preparing','controlOnly'=>true,'variantId'=>applicationQuoteStructureSize($definition,$args)['variantId'],...(array_key_exists('structureSize',$args)?['structureSize'=>applicationQuoteStructureSize($definition,$args)['size']]:[]),'preparationRemainingTurns'=>$definition['preparationTurns']],default=>[] };
+    if ($definition['kind'] === 'dome') {
+        $clock = $state['initiative'] ?? [];
+        $round = applicationDotPlacementRound($clock, $token['id'])['lastTargetRound'] ?? 0;
+        if ($round > 0) $extra += ['lastChannelCombatId'=>$clock['combatId'] ?? '', 'lastChannelRound'=>$round];
+    }
     $device=dsAppend($store,['id'=>($context['id'])('device'),'revision'=>1,'status'=>'active','creatorCharacterId'=>$owner['id'],'controllerAccountId'=>$owner['ownerPlayerId']?:$actor['id'],
         'sourceTokenId'=>$token['id'],'abilityId'=>$ability['id'],'ability'=>$ability,'name'=>$ability['name'],'image'=>dsImage($ability['image']??''),'sceneId'=>$state['activeSceneId'],'x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground','definition'=>$definition,
         'activatedRound'=>(int)($state['initiative']['round']??1),'activatedTurn'=>(int)($state['initiative']['turnSerial']??0),...$extra,...($definition['kind']==='dome'&&$extra['mode']==='carried'?['x'=>$token['x'],'y'=>$token['y'],'layerId'=>$token['layerId']??'ground']:dsPlacement($state,$actor,$token,$definition,$args,$context))]);
@@ -229,6 +236,7 @@ function dsDeployment(array &$state,array &$store,array $actor,array $owner,arra
     return $device;
 }
 function dsCompleteBomb(array &$device,array $state,array $token,array $args,bool $success): void {
+    if ($success) dsSeedDeviceCycleClock($device, $state['initiative']);
     $device=array_replace($device,['status'=>$success?'active':'failed','revision'=>$device['revision']+1,'sourceTokenId'=>$token['id'],'sceneId'=>$state['activeSceneId'],'layerId'=>$token['layerId']??'ground',
         'operatorCharacterId'=>unitIdForToken($token),'controllerAccountId'=>(unitById($state,unitIdForToken($token),false)['ownerPlayerId']??'')?:$device['controllerAccountId'],
         'x'=>$args['x'],'y'=>$args['y'],'remainingTurns'=>$args['delay'],'activatedRound'=>(int)($state['initiative']['round']??1),'lastTickRound'=>(int)($state['initiative']['round']??1)]);
@@ -270,7 +278,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     if(($state['tacticalSync']['paused']??false) && $actor['role']!=='gm') dsError('La table est verrouillée.',423);
     if(!empty($args['sceneId']) && $args['sceneId']!==$state['activeSceneId']) dsError('La scène a changé.');
     $sceneId=$state['activeSceneId']; $id=$context['id']; $now=$context['now'];
-    $maintainsDeviceItems=!in_array($command,['device.mana.set','structure.web.place'],true);
+    $maintainsDeviceItems=!in_array($command,['device.mana.set','structure.web.place','varska.drow-coat'],true);
     if($maintainsDeviceItems)ensureDeviceItems($state,$id);
     if($command==='structure.web.place'){
         if($actor['role']!=='gm')dsError('Seul le MJ peut poser une toile depuis les obstacles.',403);
@@ -281,6 +289,8 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         $web=applicationPlaceSilkWeb($state,$args,$id('structure-web'),(int)round(strtotime($now)*1000));
         $result=['tokenId'=>$web['id']];
         $effects[]=['type'=>'structure.created','tokenId'=>$web['id'],'sceneId'=>$sceneId,'layerId'=>$layerId];
+    } elseif($command==='varska.drow-coat'){
+        $result=applicationDrowCoatWeapon($state,$actor,$args,$context);
     } elseif($command==='appearance.change'){
         $ti=dsIndex($state['map']['tokens'],$args['sourceTokenId']??'');if($ti<0)dsError('Ce pion n’existe plus.');$token=&$state['map']['tokens'][$ti];
         $owner=ownedUnit($state,$actor,unitIdForToken($token));
@@ -322,13 +332,24 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if($ci<0||($store['timedConditions'][$ci]['sceneId']??'')!==$sceneId||($store['timedConditions'][$ci]['remainingTurns']??0)<=0||empty($store['timedConditions'][$ci]['escape']))dsError('Cette entrave ne permet plus de tentative de libération.');
         $condition=$store['timedConditions'][$ci];$ti=dsIndex($state['map']['tokens'],$condition['targetTokenId']);if($ti<0)dsError('Le pion entravé n’existe plus.');
         $token=$state['map']['tokens'][$ti];$owner=ownedUnit($state,$actor,unitIdForToken($token));dsTurn($state,$actor,$token);
-        $turn=($state['initiative']['combatId']??'').':'.($state['initiative']['turnSerial']??0).':'.$condition['remainingTurns'];
+        $clock = $state['initiative'];
+        $combatId = $clock['combatId'] ?? '';
+        $round = max(1, (int) ($clock['round'] ?? 1));
+        $inCombat = ($clock['active'] ?? false) === true;
+        $turn=$combatId.':'.($clock['turnSerial']??0).':'.$condition['remainingTurns'];
         if(($state['initiative']['active']??false)&&($state['initiative']['order'][$state['initiative']['currentIndex']]??'')!==$token['id'])dsError('La libération attend le tour du pion entravé.',403);
         if(($state['initiative']['active']??false)&&!empty($condition['escape']['atTurnStart'])&&(empty($condition['hasStarted'])||!empty($condition['escapeWindowClosed'])))dsError('Cette tentative est possible au début de votre prochain tour, avant toute action.');
-        if(($condition['escapeAttemptTurn']??'')===$turn)dsError('Une tentative de libération a déjà été faite pendant ce tour.');
+        if (($condition['escapeAttemptTurn'] ?? '') === $turn
+            || ($inCombat && ($condition['escapeAttemptCombatId'] ?? null) === $combatId
+                && (int) ($condition['escapeAttemptRound'] ?? 0) >= $round))
+            dsError('Une tentative de libération a déjà été faite pendant ce tour.');
         $index=max(0,($condition['initialTurns']??count($condition['escape']['penalties']))-$condition['remainingTurns']);
         $penalty=$condition['escape']['penalties'][min($index,count($condition['escape']['penalties'])-1)];
         $store['timedConditions'][$ci]['escapeAttemptTurn']=$turn;
+        if ($inCombat) {
+            $store['timedConditions'][$ci]['escapeAttemptCombatId'] = $combatId;
+            $store['timedConditions'][$ci]['escapeAttemptRound'] = $round;
+        }
         $cast=($context['roll'])($state,$owner,$token,$condition['escape']['statId'],$penalty,$condition['label'].' · Se libérer');
         if($cast['pendingGmApproval']??false)$store['pendingRolls'][]=['id'=>$id('validation'),'type'=>'escape','cast'=>$cast,'ownerId'=>$owner['id'],'tokenId'=>$token['id'],'sceneId'=>$sceneId,'effect'=>['conditionId'=>$condition['id']]];
         elseif($cast['success']){array_splice($store['timedConditions'],$ci,1);$effects[]=['type'=>'condition.expire','condition'=>$condition];}
@@ -524,6 +545,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
         if(!$device['waitingForConsent']){
             $clock=$state['initiative'];if($device['sceneId']!==$state['activeSceneId'])foreach($state['scenes']??[] as $scene)if(($scene['id']??'')===$device['sceneId']){$clock=$scene['combat']['initiative'];break;}
             $device['readyRound']=(int)($clock['round']??1)+$device['definition']['delayTurns'];
+            dsSeedDeviceCycleClock($device, $clock);
         }$result=['consented'=>$participant['status']==='approved'];
     } elseif($command==='device.repair') {
         if($actor['role']!=='gm') dsError('Seul le MJ peut réactiver cet appareil.',403);$device=&$store['devices'][dsDevice($store,$args['deviceId']??'',false)];
@@ -531,6 +553,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
     } elseif($command==='device.trigger') {
         $device=&$store['devices'][dsDevice($store,$args['deviceId']??'')];ownedUnit($state,$actor,$device['operatorCharacterId']??$device['creatorCharacterId']);
         if($state['initiative']['active']??false) dsError('Le déclenchement manuel est réservé au hors combat.');if($device['definition']['kind']!=='explosive') dsError('Ce dispositif n’est pas une bombe.');
+        unset($device['cycleClock']);
         $effects[]=['type'=>'explosion','device'=>$device];$device['status']='spent';$device['revision']++;$result=['triggered'=>true];
     } elseif($command==='scene.advance') {
         if($actor['role']!=='gm')dsError('Seul le MJ peut avancer un tour hors combat.',403);
@@ -582,7 +605,7 @@ function applicationApplyDeviceCommand(array $state,array $actor,string $command
 
 function applicationAdvanceDevices(array $state,array $previous,array $context): array {
     [$from,$clock]=applicationInitiativeEffectClocks($previous,$state['initiative']);
-    $advanced=applicationAdvanceDevicesForClock([...$state,'initiative'=>$clock],$from,$context);
+    $advanced=applicationAdvanceDevicesForClock([...$state,'initiative'=>$clock],$from,$context,$previous);
     $advanced['state']['initiative']=$state['initiative'];
     return $advanced;
 }
@@ -650,7 +673,45 @@ function applicationAdvanceElementalConditionSaves(array &$state,array $previous
     if ($recovered!==[]) $store['timedConditions']=array_values(array_filter($store['timedConditions'],
         static fn(array $condition):bool=>!$sameUnit($condition)||!isset($recovered[applicationElementalSavingConditionLabel($condition['label']??null)])));
 }
-function applicationAdvanceDevicesForClock(array $state,array $previous,array $context): array {
+const DEVICE_MAX_CYCLE_ENTRIES = 2000;
+
+function dsSeedDeviceCycleClock(array &$device, array $initiative): void {
+    unset($device['cycleClock']);
+    if (($initiative['active'] ?? false) !== true) return;
+    $entered = array_unique([
+        ...array_slice($initiative['order'] ?? [], 0, max(0, (int) ($initiative['currentIndex'] ?? 0) + 1)),
+        ...($initiative['delayedTurnIds'] ?? []),
+    ]);
+    $device['cycleClock'] = [
+        'combatId' => $initiative['combatId'] ?? '',
+        'round' => max(1, (int) ($initiative['round'] ?? 1)),
+        'entryTokenIds' => array_values(array_slice($entered, -DEVICE_MAX_CYCLE_ENTRIES)),
+    ];
+}
+
+function dsCountDeviceCycleEntry(array &$device, array $previous, array $current, bool $rewound): bool {
+    if (($device['cycleClock']['combatId'] ?? null) !== ($current['combatId'] ?? '')
+        || !is_array($device['cycleClock']['entryTokenIds'] ?? null)) {
+        // Older saves have no marker. Capture the turn about to be left,
+        // including on a rewind, before allowing any entry to count again.
+        dsSeedDeviceCycleClock($device, $previous);
+    }
+    $tokenId = $current['order'][$current['currentIndex'] ?? 0] ?? '';
+    if ($rewound || $tokenId === '') return false;
+    $clock = &$device['cycleClock'];
+    $round = max(1, (int) ($current['round'] ?? 1));
+    if ($round < $clock['round']) return false;
+    if ($round > $clock['round']) {
+        $clock['round'] = $round;
+        $clock['entryTokenIds'] = [];
+    }
+    if (in_array($tokenId, $clock['entryTokenIds'], true)) return false;
+    $clock['entryTokenIds'][] = $tokenId;
+    if (count($clock['entryTokenIds']) > DEVICE_MAX_CYCLE_ENTRIES) array_shift($clock['entryTokenIds']);
+    return true;
+}
+
+function applicationAdvanceDevicesForClock(array $state,array $previous,array $context,array $previousInitiative): array {
     $state['devices']=dsStore($state['devices']??null);$store=&$state['devices'];$current=$state['initiative'];$sceneId=$state['activeSceneId'];$effects=[];
     applicationAdvanceSpellFields($state,$previous,$context,$effects);
     $effects=[...$effects,...applicationAdvanceMetamorphoses($state,$previous,($context['manual']??false)===true)];
@@ -658,9 +719,13 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
     if(($previous['active']??false)===true&&($current['active']??false)!==true){
         $state=applicationFinishCombatRounds($state,$sceneId,$previous);$store=&$state['devices'];
         unset($store['elementalSaveTurns'][$sceneId]);
+        unset($store['poisonSaveTurns'][$sceneId]);
         if (empty($store['elementalSaveTurns'])) unset($store['elementalSaveTurns']);
-        foreach($store['timedConditions'] as $condition)if($condition['sceneId']===$sceneId)$effects[]=['type'=>'condition.expire','condition'=>$condition];
-        $store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($c)=>$c['sceneId']!==$sceneId));
+        $stays = static fn(array $condition): bool => $condition['sceneId'] !== $sceneId || !empty($condition['drowPoisonStacks'])
+            || in_array($condition['sourceAbilityId'] ?? '',
+                ['ability-mania-experimental-mixture-petrification','ability-mania-experimental-mixture-lightning'], true);
+        foreach($store['timedConditions'] as $condition)if(!$stays($condition))$effects[]=['type'=>'condition.expire','condition'=>$condition];
+        $store['timedConditions']=array_values(array_filter($store['timedConditions'],$stays));
         $store['pendingRolls']=array_values(array_filter($store['pendingRolls'],static fn($p)=>($p['sceneId']??'')!==$sceneId||!in_array($p['type']??'',['condition','escape','opportunity'],true)));
         applicationAdvanceFixedStructures($state,$previous,$effects,$context);
         return ['state'=>$state,'effects'=>$effects];
@@ -676,23 +741,61 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
         applicationAdvanceElementalConditionSaves($state,$previous,$current,$context,$effects);
         return ['state'=>$state,'effects'=>$effects];
     }
-    foreach($store['timedConditions'] as &$condition) {
-        if($condition['sceneId']===$sceneId&&($condition['clockCombatId']??'')!==($current['combatId']??'')){$condition['clockCombatId']=$current['combatId']??'';$condition['lastTurnSerial']=-1;}
-        if($condition['sceneId']===$sceneId&&($condition['expiry']??'')==='end-next-turn'&&!$manual){$wasStarted=($condition['hasStarted']??false)===true;if(($current['order'][$current['currentIndex']??0]??'')===$condition['targetTokenId']&&($current['turnSerial']??0)>($condition['createdTurnSerial']??0)){$condition['hasStarted']=true;$condition['escapeWindowClosed']=false;}if(!$wasStarted)continue;}
-        if($condition['sceneId']!==$sceneId||!$manual&&($condition['targetTokenId']!==($previous['order'][$previous['currentIndex']??0]??'')||$condition['lastTurnSerial']>=($current['turnSerial']??0)))continue;
-        $condition['remainingTurns']--;$condition['lastTurnSerial']=$current['turnSerial']??0;if($condition['remainingTurns']<=0)$effects[]=['type'=>'condition.expire','condition'=>$condition];
-    }unset($condition);$store['timedConditions']=array_values(array_filter($store['timedConditions'],static fn($entry)=>$entry['remainingTurns']>0));
+    $serial = (int) ($current['turnSerial'] ?? 0);
+    $rewound = !$manual && ($current['rewoundTurnSerial'] ?? null) === $serial;
+    if (!$rewound) {
+        $entering = $current['order'][$current['currentIndex'] ?? 0] ?? '';
+        $leaving = $previous['order'][$previous['currentIndex'] ?? 0] ?? '';
+        $currentRound = max(1, (int) ($current['round'] ?? 1));
+        $previousRound = max(1, (int) ($previous['round'] ?? 1));
+        $combatId = $current['combatId'] ?? '';
+        foreach ($store['timedConditions'] as &$condition) {
+            if ($condition['sceneId'] !== $sceneId) continue;
+            if (($condition['clockCombatId'] ?? '') !== $combatId) {
+                $condition['clockCombatId'] = $combatId;
+                $condition['lastTurnSerial'] = -1;
+                unset($condition['lastTargetRound'], $condition['startedTargetRound'], $condition['createdTargetRound']);
+            }
+            $tokenId = $condition['targetTokenId'];
+            if (!$manual && ($condition['expiry'] ?? '') === 'end-next-turn') {
+                $wasStarted = ($condition['hasStarted'] ?? false) === true;
+                $startedRound = (int) ($condition['startedTargetRound'] ?? 0);
+                if ($entering === $tokenId && $serial > (int) ($condition['createdTurnSerial'] ?? 0)
+                    && $currentRound > max((int) ($condition['createdTargetRound'] ?? 0), $startedRound)) {
+                    $condition['hasStarted'] = true;
+                    $condition['startedTargetRound'] = $currentRound;
+                    $condition['escapeWindowClosed'] = false;
+                }
+                if (!$wasStarted || $previousRound < $startedRound) continue;
+            }
+            if (!$manual && ($tokenId !== $leaving || (int) ($condition['lastTurnSerial'] ?? 0) >= $serial
+                || (int) ($condition['lastTargetRound'] ?? 0) >= $previousRound)) continue;
+            $condition['remainingTurns']--;
+            $condition['lastTurnSerial'] = $serial;
+            if (!$manual) $condition['lastTargetRound'] = $previousRound;
+            if ($condition['remainingTurns'] <= 0) $effects[] = ['type'=>'condition.expire', 'condition'=>$condition];
+        }
+        unset($condition);
+        $store['timedConditions'] = array_values(array_filter($store['timedConditions'], static fn($entry) => $entry['remainingTurns'] > 0));
+    }
     applicationAdvanceElementalConditionSaves($state,$previous,$current,$context,$effects);
     if(!empty($current['active']))applicationAdvanceFixedStructures($state,$previous,$effects,$context,$manual);
+    $channelCombatId = $current['combatId'] ?? '';
+    $channelRound = max(1, (int) ($current['round'] ?? 1));
+    $enteringTokenId = $current['order'][$current['currentIndex'] ?? 0] ?? '';
     foreach($store['devices'] as &$device) {
         if($device['status']!=='active'||$device['sceneId']!==$sceneId)continue;
         $owner=unitById($state,$device['creatorCharacterId'],false);$token=dsDeviceSource($state,$device);
         if($token)$device['sourceTokenId']=$token['id'];
         if($device['definition']['kind']==='dome'&&(!$owner||!$token||($owner['resources']['hp']??0)<=0||($owner['healthOverride']??'')==='dead'||($token['healthOverride']??'')==='dead')){$device['status']='stopped';$device['revision']++;continue;}
-        if($device['definition']['kind']==='dome'&&$token&&($manual||($current['order'][$current['currentIndex']??0]??'')===$token['id']&&($device['lastChannelTurn']!==$current['turnSerial']||($device['lastChannelCombatId']??'')!==($current['combatId']??'')))) {
+        $newChannelTurn = $token && $enteringTokenId === $token['id']
+            && (($device['lastChannelCombatId'] ?? '') !== $channelCombatId
+                || ((int) ($device['lastChannelRound'] ?? 0) < $channelRound && ($device['lastChannelTurn'] ?? null) !== $serial));
+        if(!$rewound&&$device['definition']['kind']==='dome'&&$token&&($manual||$newChannelTurn)) {
             $device['activeTurns']++;$device['lastChannelTurn']=$current['turnSerial'];
             if(($device['mode']??'carried')!=='placed'){$device['x']=$token['x'];$device['y']=$token['y'];$device['layerId']=$token['layerId']??'ground';}
-            $device['lastChannelCombatId']=$current['combatId']??'';
+            $device['lastChannelCombatId']=$channelCombatId;
+            if (!$manual) $device['lastChannelRound'] = $channelRound;
             $pending=false;foreach($store['pendingRolls'] as $entry)if(($entry['deviceId']??'')===$device['id']&&$entry['type']==='channel')$pending=true;
             if($device['activeTurns']+1>=$device['definition']['channelStartTurn']&&!$pending) {
                 try {
@@ -705,15 +808,16 @@ function applicationAdvanceDevicesForClock(array $state,array $previous,array $c
         }
         if(in_array($device['definition']['kind'],['explosive','beam'],true)){
             if($device['definition']['kind']==='beam'&&$device['waitingForConsent'])continue;
-            if(!$manual&&($current['currentIndex']??0)<0)continue;
+            if(!$manual&&!dsCountDeviceCycleEntry($device,$previousInitiative,$current,$rewound))continue;
             $cycle=max(1,count($current['order']??[]));$device['elapsedTicks']=($device['elapsedTicks']??0)+($manual?$cycle:1);
             if($device['elapsedTicks']<$cycle)continue;$device['elapsedTicks']-=$cycle;$device['elapsedTurns']=($device['elapsedTurns']??0)+1;
         }else continue;
         if($device['definition']['kind']==='explosive') {
             $device['remainingTurns']--;$device['lastTickRound']=$current['round']??1;$device['revision']++;
-            if($device['remainingTurns']<=0){$effects[]=['type'=>'explosion','device'=>$device];$device['status']='spent';}
+            if($device['remainingTurns']<=0){unset($device['cycleClock']);$effects[]=['type'=>'explosion','device'=>$device];$device['status']='spent';}
         }
         if($device['definition']['kind']==='beam'&&!$device['waitingForConsent']&&$device['elapsedTurns']>=$device['definition']['delayTurns']) {
+            unset($device['cycleClock']);
             $effects[]=['type'=>'beam','device'=>$device];$device['status']='spent';$device['revision']++;
             foreach($state['items']['instances']??[] as $itemIndex=>$item)if($item['id']===($device['itemId']??'')){$state['items']['instances'][$itemIndex]['location']=['kind'=>'consumed','characterId'=>$device['creatorCharacterId']];$state['items']['instances'][$itemIndex]['revision']++;break;}
             $effects[]=['type'=>'beam.finish','deviceId'=>$device['id']];

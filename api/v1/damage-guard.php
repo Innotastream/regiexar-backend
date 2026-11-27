@@ -13,7 +13,15 @@ function applicationGuardDamageParts(int $damage, ?array $basis): array
     return array_map(static fn(array $part): array => ['type'=>applicationDamageType($part['type'] ?? null) ?? 'physical',
         'rawDamage'=>max(0,(int)($part['rawDamage'] ?? $part['finalDamage'] ?? 0)), 'finalDamage'=>max(0,(int)($part['finalDamage'] ?? 0)),
         'armorPercent'=>min(100,(int)($part['armorPercent'] ?? 0)),
+        ...(($part['mixtureVulnerable'] ?? false) === true ? [
+            'baseDamageBeforeMixture'=>(int)($part['baseDamageBeforeMixture'] ?? $part['finalDamage'] ?? 0),
+            'mixtureVulnerable'=>true,
+        ] : []),
         ...applicationOptionalDamageElement($part), ...(isset($part['elementalResistancePercent']) ? ['elementalResistancePercent'=>(int)$part['elementalResistancePercent']] : [])], $parts);
+}
+function applicationApplyMixtureVulnerability(int $damage, array $part): int
+{
+    return ($part['mixtureVulnerable'] ?? false) === true ? (int) round($damage * 1.1) : $damage;
 }
 function applicationReflectedDamageBasis(array $summary, string $type, int $damage, array $target = []): array
 {
@@ -24,6 +32,7 @@ function applicationReflectedDamageBasis(array $summary, string $type, int $dama
     $final = 0;
     foreach ($parts as &$part) {
         if ($part['finalDamage'] > 0 && $remaining > 0) { $part['rawDamage']++; $remaining--; }
+        unset($part['baseDamageBeforeMixture'], $part['mixturePetrified'], $part['mixtureVulnerable']);
         $part = [...$part, ...onlineTypedDamageSummary($part['rawDamage'], $target, $part['type'], $part['damageElement'] ?? null, true)];
         $final += $part['finalDamage'];
     }
@@ -53,9 +62,9 @@ function applicationMitigateGuardedDamage(int $damage, array $guards, ?array $ba
             $percent=max(1,min(100,(int)($guard['percent'] ?? 0)));
             if(($guard['armorStacking'] ?? '')==='add')$add=min(100,$add+$percent);else $after=min(100,$after+$percent);
         }
-        $armored=$add>0 ? (int)round($part['rawDamage']*(100-min(100,$part['armorPercent']+$add))/100) : $part['finalDamage'];
+        $armored=$add>0 ? (int)round($part['rawDamage']*(100-min(100,$part['armorPercent']+$add))/100) : ($part['baseDamageBeforeMixture'] ?? $part['finalDamage']);
         if ($add > 0 && isset($part['elementalResistancePercent'])) $armored = applicationReduceElementalDamage($armored, $part['elementalResistancePercent']);
-        $final+=max(0,$armored-(int)round($armored*$after/100));
+        $final+=applicationApplyMixtureVulnerability(max(0,$armored-(int)round($armored*$after/100)), $part);
     }
     $remaining=min($damage,$final);
     return ['damage'=>$remaining,'prevented'=>$damage-$remaining];

@@ -83,6 +83,56 @@ $wound = runCommand($db, 'token.resource.adjust', ['sceneId'=>'scene-one','token
     'requestId'=>'blood-wound-' . randomToken(20)], true, 'account-gm');
 $orbCount = static fn() => $readExecution()['stepStates']['emosphere-orbes']['value'];
 specialCheck($wound->status === 200 && $orbCount() === 1, 'An actual wound under Hémorragie grants a charge in free mode: '.json_encode([$wound->body,$orbCount()]));
+$assisted = new MemoryConnection([]);
+$assisted->domains = $db->domains;
+$addOrb = static fn(array $execution, string $requestId): array => [
+    'action'=>'command','executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],
+    'requestId'=>$requestId,'command'=>['action'=>'counter-gain'],
+];
+$gain = $addOrb($readExecution(), 'blood-mj-grant-0001');
+$beforeGrant = $assisted->payload('activity');
+$denied = runCommand($assisted, 'ability.complex', $gain);
+specialCheck($denied->status === 403 && ($denied->body['code'] ?? '') === 'complex_ability_orb_grant_forbidden'
+    && $assisted->payload('activity') === $beforeGrant, 'The character owner cannot grant themselves an orb.');
+$beforeResources = $assisted->payload('character:character-player');
+$granted = runCommand($assisted, 'ability.complex', $gain, true, 'account-gm');
+$orbState = $granted->body['execution']['stepStates']['emosphere-orbes'] ?? [];
+$lastGain = $orbState['events'][array_key_last($orbState['events'] ?? [])] ?? [];
+specialCheck($granted->status === 200 && ($orbState['value'] ?? null) === 2
+    && ($lastGain['type'] ?? '') === 'gain' && ($lastGain['amount'] ?? 0) === 1 && ($lastGain['actorId'] ?? '') === 'account-gm',
+    'The effective MJ adds one ordinary orb to an active sphere in free mode.');
+specialCheck($assisted->payload('character:character-player') === $beforeResources
+    && $assisted->payload('activity')['actionTimers'] === $beforeGrant['actionTimers']
+    && $assisted->payload('activity')['abilityCueEvents'] === $beforeGrant['abilityCueEvents'],
+    'Granting uses no resources, timer, or new activation cinematic.');
+$again = runCommand($assisted, 'ability.complex', $gain, true, 'account-gm');
+specialCheck($again->status === 200 && ($again->body['deduplicated'] ?? false)
+    && $assisted->payload('activity')['abilityExecutions'][0]['stepStates']['emosphere-orbes']['value'] === 2,
+    'Replaying a grant never creates another orb.');
+$stale = runCommand($assisted, 'ability.complex', [...$gain,'requestId'=>'blood-mj-stale-0001'], true, 'account-gm');
+specialCheck($stale->status === 409 && ($stale->body['code'] ?? '') === 'complex_ability_revision_conflict',
+    'A competing click must use the latest orb count.');
+$third = runCommand($assisted, 'ability.complex', $addOrb($granted->body['execution'], 'blood-mj-third-0001'), true, 'account-gm');
+$capped = runCommand($assisted, 'ability.complex', $addOrb($third->body['execution'], 'blood-mj-cap-0001'), true, 'account-gm');
+specialCheck($third->status === 200 && $capped->status === 409 && ($capped->body['code'] ?? '') === 'complex_ability_counter_maximum'
+    && $assisted->payload('activity')['abilityExecutions'][0]['stepStates']['emosphere-orbes']['value'] === 3,
+    'The configured maximum remains authoritative.');
+
+$clone = [...$assisted->payload('token:scene-one:token-player'),'id'=>'token-arvin-clone','followCharacter'=>false,
+    'cloneSourceCharacterId'=>'character-player','abilities'=>[$ability],'fatigue'=>['current'=>0,'max'=>150]];
+$assisted->put('token:scene-one:token-arvin-clone',$clone);
+$tokenIndex = $assisted->payload('token-index:scene-one');
+$assisted->put('token-index:scene-one',['order'=>[...$tokenIndex['order'],'token-arvin-clone']]);
+$cloneCast = runCommand($assisted, 'ability.complex', [...$request,'requestId'=>'blood-clone-start-0001','sourceTokenId'=>'token-arvin-clone']);
+specialCheck($cloneCast->status === 200 && ($cloneCast->body['execution']['sourceTokenId'] ?? '') === 'token-arvin-clone',
+    'A clone can activate its own sphere: '.$cloneCast->getMessage());
+$cloneGrant = runCommand($assisted, 'ability.complex', $addOrb($cloneCast->body['execution'], 'blood-clone-grant-0001'), true, 'account-gm');
+$ownExecutions = array_column($assisted->payload('activity')['abilityExecutions'],null,'sourceTokenId');
+specialCheck($cloneGrant->status === 200 && $ownExecutions['token-arvin-clone']['stepStates']['emosphere-orbes']['value'] === 1
+    && $ownExecutions['token-player']['stepStates']['emosphere-orbes']['value'] === 3
+    && $assisted->payload('token:scene-one:token-arvin-clone')['fatigue']['current'] === 15,
+    'Granting to the independent clone changes only the clone sphere and charges no extra fatigue.');
+
 $useOrb = static function (string $option, bool $opposed = false) use ($db, $readExecution): TestResponse {
     $execution = $readExecution();
     return runCommand($db, 'ability.complex', ['action'=>'command','executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],
@@ -140,4 +190,7 @@ specialCheck(bloodClockPatch($db, 'scene-one', ['active'=>false])->status === 20
     && $readExecution()['endedByCombat'] === true && $orbCount() === 0, 'The associated combat ends the effect and clears its charges');
 specialCheck(runCommand($db, 'ability.complex', [...$request,'requestId'=>'blood-rest-' . randomToken(20)])->status === 409
     && $db->payload('character:character-player')['fatigue']['current'] === 15, 'Combat and its end neither restart the cast nor refund its rest use');
+$inactive = runCommand($db,'ability.complex',$addOrb($readExecution(),'blood-mj-expired-0001'),true,'account-gm');
+specialCheck($inactive->status === 409 && ($inactive->body['code'] ?? '') === 'complex_ability_terminal'
+    && $orbCount() === 0, 'The grant never reactivates an expired sphere.');
 echo 'blood-activation: '.$specialChecks." checks passed\n";

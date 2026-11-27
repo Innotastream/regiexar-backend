@@ -123,6 +123,60 @@ foreach ([true,false] as $totalAtLaunch) {
         && $db->revision===$sameRevision, 'Le rejeu de la validation conserve toutes les oppositions.');
 }
 
+$friendlyKey = 'token:scene-one:token-player-defender';
+foreach (['inside','outside','new-owner','moving-center'] as $change) {
+    $db = totalOppositionFixture();
+    $character = $db->payload('character:character-player');
+    $character['abilities'][0]['damageTargeting']['affectAllies'] = false;
+    if ($change === 'moving-center') $character['abilities'][0]['damageTargeting']['origin'] = 'target';
+    $db->put('character:character-player', $character);
+    $friendly = runCommand($db, 'unit.friendly-fire', ['sceneId'=>'scene-one','tokenId'=>'token-player','enabled'=>true]);
+    specialCheck($friendly->status===200 && $friendly->body['friendlyFire']===true, 'Le joueur active Friendly fire avant son sort de zone.');
+    $args = totalLaunchArgs('total-area', $change === 'moving-center' ? 'token-monster' : 'token-player');
+    unset($args['oppositionMode']);
+    $waiting = runCommand($db,'token.attack',$args);
+    specialCheck($waiting->status===200 && !empty($waiting->body['pendingAreaGate']),
+        'Le sort prépare la validation de zone sans coût : ' . $waiting->getMessage());
+    $gate = $db->payload('activity')['pendingAttacks'][0]['areaGate'];
+    specialCheck(in_array('token-player-defender',$gate['targetTokenIds'],true)
+        && !in_array('token-player',$gate['targetTokenIds'],true),
+        'Friendly fire inclut l’allié autorisé sans faire du lanceur une victime.');
+    switch ($change) {
+        case 'inside':
+            $db->put($friendlyKey,[...$db->payload($friendlyKey),'x'=>30,'y'=>51,'size'=>45]);
+            break;
+        case 'outside':
+            $db->put($friendlyKey,[...$db->payload($friendlyKey),'x'=>90]);
+            break;
+        case 'new-owner':
+            $db->put($friendlyKey,[...$db->payload($friendlyKey),'controllerPlayerId'=>'account-changed']);
+            break;
+        case 'moving-center':
+            $centerKey = 'token:scene-one:token-monster';
+            $db->put($centerKey,[...$db->payload($centerKey),'x'=>25]);
+            break;
+    }
+    $decision = ['attackId'=>$waiting->body['attack']['id'],'confirmed'=>true,'decision'=>'approve','defenseTokenIds'=>['token-player-defender']];
+    $released = runCommand($db,'token.attack.area.resolve',$decision,true,'account-gm');
+    if ($change === 'inside') {
+        $strikes = array_column($released->body['areaAttacks']??[],null,'targetTokenId');
+        specialCheck($released->status===200 && ($strikes['token-player-defender']['status']??'')==='awaiting-opposition'
+            && ($strikes['token-player-defender']['hit']??[]) !== []
+            && $db->payload($friendlyKey)['hp']===100 && $db->payload('token:scene-one:token-no-stat')['hp']===93
+            && $db->payload('character:character-player')['resources']['mana']===97,
+            'Un déplacement/redimensionnement dans la zone conserve le jet, la défense prévue et le paiement unique : '.$released->getMessage());
+        continue;
+    }
+    $recalculatedAreaRefusal = $change === 'outside' && $released->status===400
+        && str_contains($released->getMessage(),'defense_selection_changed');
+    specialCheck(($released->status===409||$recalculatedAreaRefusal) && $db->payload('character:character-player')['resources']['mana']===100
+        && $db->payload($friendlyKey)['hp']===100, 'L’approbation reste sans effet si la cible change de propriétaire, sort de la zone ou en déplace le centre : '.$released->getMessage());
+    $refused = runCommand($db,'token.attack.area.resolve',[...$decision,'decision'=>'reject','defenseTokenIds'=>[]],true,'account-gm');
+    specialCheck($refused->status===200 && ($refused->body['attack']['status']??'')==='rejected'
+        && $db->payload('activity')['pendingAttacks']===[],
+        'Le MJ peut toujours refuser et vider une préparation devenue caduque.');
+}
+
 $db = totalOppositionFixture();
 $args = totalLaunchArgs('total-direct','token-monster');
 $direct = runCommand($db,'token.attack',$args);

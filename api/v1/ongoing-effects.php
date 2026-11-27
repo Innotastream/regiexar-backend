@@ -63,6 +63,9 @@ function onlineCreateManualHpEffect(PDO $connection, array &$records, array &$pe
     if (($target['maxHp'] ?? 0) <= 0 || onlineTokenIsDead($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== ''))
         rejectOnlineCommand($connection, 409, 'Ce pion doit être vivant et disposer de PV.', 'periodic_hp_target_unavailable');
     $activity = $context['activity'];
+    if ($direction < 0 && applicationHasAllHarmImmunity($target, $activity, $sceneId)) {
+        rejectOnlineCommand($connection, 409, 'Cette cible est protégée par la Potion d’invincibilité.', 'target_invulnerable');
+    }
     $clockKey = 'initiative:' . $sceneId;
     $records = array_replace($records, applicationDomainRecords($connection, [$clockKey, 'devices']));
     $clock = $pending[$clockKey]['payload'] ?? applicationDomainPayload($records, $clockKey);
@@ -103,7 +106,7 @@ function onlineTickManualHpEffect(PDO $connection, array &$records, array &$pend
     $sceneId = $dot['sceneId'];
     $delta = $amount > 0 ? applyOnlineTokenResourceAdjustment(
         $connection, $records, $pending, $sceneId, $target['id'], 'hp', $amount * $dot['direction'],
-        (string) ($identity['id'] ?? ''), true, null, true
+        (string) ($identity['id'] ?? ''), true, null, true, $dot['direction'] < 0
     )['appliedDelta'] : 0;
     $label = $dot['label'] . ' · ' . abs($delta) . ' PV ' . ($dot['direction'] > 0 ? 'rendus' : 'retirés');
     $roll = onlineRollEntry($identity, $rolled, $label, (string) $target['name']);
@@ -229,23 +232,26 @@ function onlineCombatEffectCommand(PDO $connection, array &$records, array &$pen
                     'family'=>applicationEffectFamily($entry),'sourceItemKind'=>$entry['sourceItemKind']??''], false)
             : null;
         $applied = (int) ($health['appliedDamage'] ?? 0); $result['appliedDamage'] = $applied;
+        $healed = (int) ($health['appliedHealing'] ?? 0);
+        $absorbed = (int) ($health['poisonConvertedDamage'] ?? 0);
+        if($absorbed>0)$result['appliedHealing']=$healed;
         $roll = onlineRollEntry($identity, $rolled, 'Fin de combat · ' . ($entry['label'] ?? 'Effet'), (string) $target['name']);
         $roll['diceAppearance'] = onlineDiceAppearance($target, onlineTokenControllerIdFromRecords($connection, $records, $target) !== '');
-        $roll['mapEvent'] = ['kind' => 'damage', 'applied' => $applied > 0, 'value' => $applied, 'label' => $entry['label'] ?? 'Effet',
+        $roll['mapEvent'] = ['kind' => $absorbed>0?'roll':'damage', 'applied' => $applied > 0, 'value' => $absorbed>0?$healed:$applied, 'label' => $absorbed>0?'Corps toxique':($entry['label'] ?? 'Effet'),
             'targetTokenId' => $target['id'], 'anchorTokenId' => $target['id'], 'targetName' => $target['name'], 'sceneId' => $sceneId, 'layerId' => onlineTokenLayerId($target)];
         if (!onlineGmTokenVisibleToPlayers($connection, $records, $table, $target, $sceneId)) { $roll['visibility'] = 'gm'; $roll['revealed'] = false; }
-        if ($element !== null) $roll['damageMitigation'] = [...$summary, 'finalDamage' => $applied];
+        if ($element !== null) $roll['damageMitigation'] = [...$summary, 'finalDamage' => $applied, ...($absorbed>0?['appliedHealing'=>$healed]:[])];
         $activity['rolls'] = array_slice([$roll, ...($activity['rolls'] ?? [])], 0, 100);
         $result['roll'] = $roll;
-        if ($applied > 0) $operation = ['kind' => 'resource-adjust', 'requestId' => $requestId, 'sceneId' => $sceneId, 'tokenId' => $target['id'],
-            'characterId' => $health['characterId'] ?? '', 'resource' => 'hp', 'appliedDelta' => -$applied,
+        if ($applied > 0 || $healed>0) $operation = ['kind' => 'resource-adjust', 'requestId' => $requestId, 'sceneId' => $sceneId, 'tokenId' => $target['id'],
+            'characterId' => $health['characterId'] ?? '', 'resource' => 'hp', 'appliedDelta' => $healed-$applied,
             'previous' => $health['previousHp'] ?? 0, 'current' => $health['currentHp'] ?? 0, 'maximum' => $health['maximumHp'] ?? 0];
     } elseif ($resolve && $decision !== 'skip') $result['targetUnavailable'] = true;
     array_splice($entries, $index, 1); $activity[$field] = $entries;
     queueOnlineDomainUpsert($pending, $records, 'activity', $activity);
     $action = onlineAppendPlayerAction($connection, $records, $pending, $identity, $sceneId, [
         'kind' => $resolve ? 'resource' : 'effect-remove', 'characterName' => $target['name'] ?? $entry['targetName'] ?? 'Cible',
-        'summary' => $resolve ? 'Dégâts de fin de combat : ' . $result['appliedDamage'] . ' PV perdus' : 'Retire ' . ($entry['label'] ?? 'un effet'),
+        'summary' => $resolve ? (!empty($result['appliedHealing'])?'Corps toxique · '.$result['appliedHealing'].' PV rendus':'Dégâts de fin de combat : ' . $result['appliedDamage'] . ' PV perdus') : 'Retire ' . ($entry['label'] ?? 'un effet'),
         ...($operation !== null ? ['operation' => $operation] : [])]);
     $activity = $pending['activity']['payload'] ?? $activity;
     $receipts[] = ['kind' => 'combat-effect', 'requestId' => $requestId, 'accountId' => $identity['id'], 'actionId' => $action['id'],

@@ -78,12 +78,11 @@ requireTactical(
 
 $db = fixture();
 requireTactical(runCommand($db,'tokens.transform',groupArguments($db))->status === 403, 'Players cannot transform groups.');
-requireTactical(runCommand($db,'tokens.transform',groupArguments($db),true)->status === 423, 'An unlocked map refuses groups.');
-$db->put('map:scene-one',['activeLayerId'=>'ground','viewLocked'=>true,'naturalWidth'=>1000,'naturalHeight'=>1000]);
+$db->put('map:scene-one',['activeLayerId'=>'ground','viewLocked'=>false,'naturalWidth'=>1000,'naturalHeight'=>1000]);
 $initialHp = $db->payload('token:scene-one:token-player')['hp'];
 $request = groupArguments($db);
 $response = runCommand($db,'tokens.transform',$request,true);
-requireTactical($response->status === 200, 'The MJ can move a selected group.');
+requireTactical($response->status === 200, 'The MJ can move a selected group independently of the legacy shared camera lock.');
 requireTactical($db->payload('token:scene-one:token-player')['x'] == $request['base']['token-player']['x']+5 && $db->payload('token:scene-one:token-monster')['x'] == $request['base']['token-monster']['x']+5, 'The group preserves its formation.');
 requireTactical($db->payload('token:scene-one:token-player')['hp'] === $initialHp, 'A positional command never rewrites HP from a stale snapshot.');
 $before = $db->domains; $revision = $db->revision;
@@ -196,14 +195,23 @@ $db->put('token-index:scene-two', ['order'=>['token-copy']]);
 $db->put('token:scene-two:token-independent', $db->payload('token:scene-one:token-independent'));
 $db->put('initiative:scene-two', ['order'=>['token-copy']]);
 $db->put('presentation:scene-two', ['map'=>[], 'initiative'=>[]]);
+$portal = ['id'=>'return-marker','revision'=>3,'name'=>'Vers la seconde salle','kind'=>'stairs','layerId'=>'ground','x'=>53,'y'=>45,
+    'destination'=>['sceneId'=>'scene-two','passageId'=>'outgoing-marker']];
+$reverse = [...$portal,'id'=>'outgoing-marker','name'=>'Vers le hall','destination'=>['sceneId'=>'scene-one','passageId'=>'return-marker']];
+$secondMarker = [...$portal,'id'=>'unrelated-marker','destination'=>null];
+$db->put('map:scene-one',[...$db->payload('map:scene-one'),'passages'=>[$portal,$secondMarker]]);
+$db->put('map:scene-two',[...$db->payload('map:scene-two'),'passages'=>[$reverse]]);
+$db->put('devices',[...dsEmpty(),'manualTurns'=>['scene-one'=>4,'scene-two'=>15],
+    'elementalSaveTurns'=>['scene-one'=>['unchanged'=>1],'scene-two'=>['orphan'=>2]],
+    'poisonSaveTurns'=>['scene-two'=>['orphan'=>3]]]);
 $db->put('items', ['version'=>1, 'templates'=>[], 'instances'=>[],
     'inventoryCatalog'=>['token-independent'=>['legacy-model-id']]]);
 $preserved = array_map(static fn(string $key): array => $db->payload($key),
     ['token:scene-one:token-independent','character:character-player','items','table','activity']);
-$removeScene = static function (array $changes) use ($db): TestResponse {
+$removeScene = static function (array $changes, ?MemoryConnection $campaign = null) use ($db): TestResponse {
     $GLOBALS['testIdentity'] = ['id'=>'account-gm','display_name'=>'MJ','effective_mode'=>'gm','permanent_role'=>'gm'];
     $GLOBALS['testBody'] = ['stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION,'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,'changes'=>$changes];
-    try { patchApplicationDomains($db); } catch (TestResponse $response) { return $response; }
+    try { patchApplicationDomains($campaign ?? $db); } catch (TestResponse $response) { return $response; }
     throw new RuntimeException('No domain response');
 };
 $delete = static fn(string $key): array => ['key'=>$key,'operation'=>'delete','expectedRevision'=>1];
@@ -223,7 +231,61 @@ foreach (['scene:scene-two','map:scene-two','initiative:scene-two','presentation
 requireTactical(array_map(static fn(string $key): array => $db->payload($key),
     ['token:scene-one:token-independent','character:character-player','items','table','activity'])===$preserved,
     'Other scenes, inventories, characters, the broadcast table and the activity journal are preserved.');
+requireTactical($db->payload('map:scene-one')['passages'] === [[...$portal,'destination'=>null,'revision'=>4],$secondMarker],
+    'Deleting a scene detaches the reciprocal passage and leaves the marker and unrelated exits intact.');
+requireTactical($db->payload('devices')['manualTurns'] === ['scene-one'=>4]
+    && $db->payload('devices')['elementalSaveTurns'] === ['scene-one'=>['unchanged'=>1]]
+    && !isset($db->payload('devices')['poisonSaveTurns']),
+    'Deleting a scene retires its free-turn clock and saving clocks without affecting the other scene.');
 $stale = $removeScene([['key'=>'token:scene-two:token-independent','operation'=>'upsert','expectedRevision'=>0,
     'payload'=>$db->payload('token:scene-one:token-independent')]]);
 requireTactical($stale->status===409 && !isset($db->domains['token:scene-two:token-independent']),
     'A stale editor cannot recreate an orphan token after removal.');
+
+$campaign = fixture();
+$target = $campaign->payload('token:scene-one:token-monster');
+$campaign->put('token:scene-two:token-room-target',[...$target,'id'=>'token-room-target']);
+$campaign->put('token-index:scene-two',['order'=>['token-copy','token-room-target']]);
+$campaign->put('initiative:scene-two',['active'=>false,'order'=>[]]);
+$model = ['id'=>'scene-delete-item-template','name'=>'Potion d’opposition de recette','kind'=>'potion','active'=>[
+    'version'=>1,'effects'=>[['kind'=>'damage','components'=>[['type'=>'ignore','formula'=>'10']]]],
+    'targeting'=>['mode'=>'single','rangeCells'=>10],
+]];
+$keptItem = ['id'=>'item-room-activation','templateId'=>$model['id'],'revision'=>1,
+    'location'=>['kind'=>'inventory','characterId'=>'character-player']];
+$campaign->put('items',normalizeItemStore(['version'=>1,'templates'=>[$model],
+    'instances'=>[$keptItem,[...$keptItem,'id'=>'item-hall-activation']]]));
+$roomUse = ['requestId'=>'prepare-room-item-delete','sceneId'=>'scene-two','tokenId'=>'token-copy','targetTokenId'=>'token-room-target',
+    'itemId'=>'item-room-activation','characterId'=>'character-player','expectedItemRevision'=>1,'opposed'=>true];
+$hallUse = [...$roomUse,'requestId'=>'prepare-hall-item-survives','sceneId'=>'scene-one','tokenId'=>'token-player',
+    'targetTokenId'=>'token-monster','itemId'=>'item-hall-activation'];
+$heldRoom = runCommand($campaign,'item.activate',$roomUse,true);
+$heldHall = runCommand($campaign,'item.activate',$hallUse,true);
+requireTactical($heldRoom->status===200 && $heldHall->status===200
+    && count($campaign->payload('items')['pendingUses'])===2,
+    'Native item activation leaves two pending possessions before removing a scene: '.json_encode([$heldRoom->body,$heldHall->body]));
+$legacyCampaign = fixture();
+$legacyCampaign->put('table',['activeSceneId'=>null]);
+$legacyCampaign->put('scene-index',['order'=>[]]);
+$legacyItems = $campaign->payload('items');
+$legacyCampaign->put('items',$legacyItems);
+$cancelArgs = ['requestId'=>'cancel-stale-item-native','sceneId'=>'scene-two','useId'=>$heldRoom->body['pendingUse']];
+$cancelAsPlayer = runCommand($legacyCampaign,'item.use.cancel',$cancelArgs);
+requireTactical($cancelAsPlayer->status===403 && $legacyCampaign->payload('items')===$legacyItems,
+    'Without a scene, a player still cannot cancel an orphaned activation.');
+$cancel = runCommand($legacyCampaign,'item.use.cancel',$cancelArgs,true);
+$replayCancel = runCommand($legacyCampaign,'item.use.cancel',$cancelArgs,true);
+requireTactical($cancel->status===200 && $cancel->body['cancelled'] && ($replayCancel->body['deduplicated'] ?? false)
+    && array_column($legacyCampaign->payload('items')['pendingUses'],'id')===[$heldHall->body['pendingUse']]
+    && $legacyCampaign->payload('items')['instances'] === $legacyItems['instances'],
+    'The GM can retire and replay an old orphaned activation without a surviving scene or modifying the items.');
+$itemInstances = $campaign->payload('items')['instances'];
+$sceneDeletion = $removeScene([...$request, $delete('token-index:scene-two'), $delete('token:scene-two:token-copy'),
+    $delete('token:scene-two:token-room-target')],$campaign);
+requireTactical($sceneDeletion->status===200
+    && array_column($campaign->payload('items')['pendingUses'],'id')===[$heldHall->body['pendingUse']]
+    && $campaign->payload('items')['instances'] === $itemInstances,
+    'Deleting the scene retires the obsolete item activation without consuming either inventory item or clearing the unrelated pending use.');
+$newUse = runCommand($campaign,'item.activate',[...$hallUse,'itemId'=>'item-room-activation','requestId'=>'reuse-item-after-scene-removed','opposed'=>false],true);
+requireTactical($newUse->status===200 && $campaign->payload('token:scene-one:token-monster')['hp']===30,
+    'The original inventory item can immediately be used again after the scene deletion: '.json_encode($newUse->body));

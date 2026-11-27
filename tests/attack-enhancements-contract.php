@@ -6,7 +6,7 @@ $checks = 0;
 function requireEnhancement(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); $GLOBALS['checks']++; }
 $source = ['id' => 'keyrie-token', 'characterId' => 'keyrie-fiction', 'followCharacter' => true];
 $weapon = ['id' => 'weapon-1', 'formula' => '1d6+2', 'damageType' => 'physical'];
-$initiative = ['active' => true, 'combatId' => 'combat-fixture', 'turnSerial' => 10, 'currentIndex' => 0, 'order' => ['keyrie-token', 'other']];
+$initiative = ['active' => true, 'combatId' => 'combat-fixture', 'round' => 1, 'turnSerial' => 10, 'currentIndex' => 0, 'order' => ['keyrie-token', 'other']];
 $definition = ['mode' => 'replace', 'formula' => '1d70+12', 'damageType' => 'magical', 'turns' => 5];
 $ability = ['id' => 'club', 'name' => 'Nom éditable', 'effect' => 'damage', 'formula' => '1d70+12', 'damageType' => 'magical', 'attackEnhancement' => $definition];
 requireEnhancement(applicationAttackEnhancement($definition) === $definition, 'Normalization');
@@ -31,7 +31,7 @@ requireEnhancement(count($activity['attackEnhancements']) === 2, 'Refresh withou
 $effects = applicationAdvanceAttackEnhancements($activity['attackEnhancements'], 'scene', $initiative, [...$initiative,'turnSerial'=>11,'currentIndex'=>1]);
 requireEnhancement($effects[0]['remainingTurns'] === 5, 'Other turn does not tick');
 for ($i=1;$i<=5;$i++) {
-    $next = [...$initiative,'turnSerial'=>11+$i];
+    $next = [...$initiative,'round'=>$initiative['round']+$i,'turnSerial'=>11+$i];
     $effects = applicationAdvanceAttackEnhancements($effects,'scene',[...$initiative,'turnSerial'=>$next['turnSerial']-1],$next);
     requireEnhancement(($effects[0]['remainingTurns']??0) === 5-$i, 'Caster turn');
     requireEnhancement(applicationAdvanceAttackEnhancements($effects,'scene',[...$initiative,'turnSerial'=>$next['turnSerial']-1],$next) === $effects, 'Idempotent snapshot');

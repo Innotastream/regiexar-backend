@@ -63,10 +63,31 @@ function applicationPublicOverdriveEffect(array $effect,bool $ownsDetails=false)
 }
 function applicationActiveAbilityDefaults(array $character):array {
     static $defaults=null;
+    static $previousMixtureVersions=null;
     $defaults??=json_decode(file_get_contents(__DIR__.'/active-ability-defaults.json'),true,512,JSON_THROW_ON_ERROR);
     $preset=$defaults[$character['id']??'']??null;
     $applied=is_array($character['activeAbilityDefaults']??null)?array_slice(array_values(array_filter($character['activeAbilityDefaults'],'is_string')),-20):[];
-    if(!$preset||in_array($preset['revision'],$applied,true))return $character;
+    if(!$preset)return $character;
+    if(in_array($preset['revision'],$applied,true)){
+        if(!isset($preset['previousMixtureDescription'])||!is_array($character['abilities']??null))return $character;
+        if($previousMixtureVersions===null){
+            $previousMixtureVersions=[];
+            foreach([$preset['previousMixtureDescription'],...($preset['previousDescriptions']??[])] as $previous){
+                if(!is_string($previous))continue;
+                preg_match('/\A.{2000}/us',$previous,$clientPrefix);
+                array_push($previousMixtureVersions,$previous,substr($previous,0,2000),$clientPrefix[0]??$previous);
+            }
+        }
+        foreach($character['abilities'] as $index=>$entry){
+            if(($entry['id']??null)!=='ability-mania-experimental-mixture')continue;
+            if(in_array($entry['description']??null,$previousMixtureVersions,true)){
+                $character['abilities'][$index]['description']=$preset['abilities'][0]['description'];
+            }
+            $character['abilities'][$index]['manaCost']=$preset['abilities'][0]['manaCost'];
+            break;
+        }
+        return $character;
+    }
     $character['abilities']??=[];
     foreach($preset['abilities'] as $ability)if(!in_array($ability['id'],array_column($character['abilities'],'id'),true))$character['abilities'][]=$ability;
     $character['activeAbilityDefaults']=[...$applied,$preset['revision']];

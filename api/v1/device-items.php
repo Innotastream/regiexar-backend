@@ -43,12 +43,13 @@ function synchronizeDeviceItemLocations(array &$state,string $itemId,array $cont
         if($item['location']['kind']==='inventory'&&$item['location']['characterId']!==$device['creatorCharacterId'])itemFailure('Ce dispositif est lié à son créateur et ne peut pas être donné à une autre unité.',403);
         if($device['definition']['kind']==='beam'&&!in_array($device['status'],['active','inventory','packed'],true))itemFailure('Ce rayon a déjà été déclenché. Utilisez sa compétence après le repos requis.',409);
         if(($device['definition']['canPack']??true)===false&&$item['location']['kind']==='inventory')itemFailure('Ce dispositif ne peut pas être récupéré.',409);
-        if($item['location']['kind']==='inventory'){$device['status']='inventory';$device['ownerUnitId']=$item['location']['characterId'];}
+        if($item['location']['kind']==='inventory'){$device['status']='inventory';$device['ownerUnitId']=$item['location']['characterId'];unset($device['cycleClock']);}
         elseif($item['location']['kind']==='ground'){
             if($device['definition']['kind']==='beam'){
                 $mark=$device['mark']??null;
                 if(!is_array($mark)||!is_numeric($mark['x']??null)||!is_numeric($mark['y']??null)||!is_finite((float)$mark['x'])||!is_finite((float)$mark['y'])||$mark['x']<0||$mark['x']>100||$mark['y']<0||$mark['y']>100||($mark['x']==$item['location']['x']&&$mark['y']==$item['location']['y']))itemFailure('Choisissez une marque distincte du dispositif avec « Gérer le dispositif », puis « Poser ».',400);
                 $device['elapsedTurns']=0;$device['elapsedTicks']=0;
+                unset($device['cycleClock']);
             }
             $device=array_replace($device,$item['location'],['status'=>'active']);unset($device['kind']);
             if(!empty($context['unitId']))$device['ownerUnitId']=$context['unitId'];

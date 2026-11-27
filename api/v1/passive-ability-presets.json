@@ -1,4 +1,15 @@
 {
+  "character-X4kmpvnbF9rQgNGc": [
+    {
+      "version": 1,
+      "id": "varska-toxic-body",
+      "kind": "poison-damage-healing",
+      "name": "Corps toxique",
+      "description": "Transforme tous les dégâts de poison reçus en soins, quelle que soit leur source. Sa résistance au poison reste à 0 %.",
+      "polarity": "positive",
+      "existingCloneDefault": true
+    }
+  ],
   "character-gohachu": [
     {
       "version": 1,
@@ -6,6 +17,15 @@
       "kind": "infusion-forbidden",
       "name": "Infusion interdite",
       "description": "Gohachu ne peut pas infuser de mana dans ses compétences ou attaques.",
+      "polarity": "negative",
+      "existingCloneDefault": true
+    },
+    {
+      "version": 1,
+      "id": "gohachu-traditional-healing-only",
+      "kind": "traditional-healing-only",
+      "name": "Circuit magique détruit",
+      "description": "Gohachu ne récupère des PV que par des moyens traditionnels, comme le repos ou les soins médicaux. Les potions et les soins magiques ne lui rendent aucun PV.",
       "polarity": "negative",
       "existingCloneDefault": true
     }
@@ -34,17 +54,24 @@
       "id": "mania-self-experimentation",
       "kind": "effect-resistance",
       "name": "Auto-expérimentation",
-      "description": "Réduit de 25 % les dégâts des poisons et des potions reçus. Leurs effets nocifs durent un tour de moins sur elle.",
+      "description": "Réduit de 25 % les dégâts des potions hors poison reçues. Leurs effets nocifs durent un tour de moins sur elle.",
       "polarity": "positive",
       "percent": 25,
       "durationReduction": 1,
-      "families": [
-        "poison"
-      ],
+      "families": [],
       "itemKinds": [
         "potion"
       ],
       "affectBeneficial": false
+    },
+    {
+      "version": 1,
+      "id": "mania-poison-manipulator",
+      "kind": "poison-resilience",
+      "name": "Manipulatrice de poison",
+      "description": "Gagne 25 points de résistance au poison. Tous les poisons subis durent un tour de moins, avec une durée minimale d’un tour.",
+      "polarity": "positive",
+      "existingCloneDefault": true
     },
     {
       "version": 1,
@@ -101,8 +128,8 @@
       "version": 1,
       "id": "inho-stealth-advantage",
       "kind": "stat-roll-option",
-      "name": "Avantage au jet de furtivité",
-      "description": "Propose « Furtivité » sur les jets d’Agilité. Lance avec avantage et inscrit « Avantage furtivité » dans le journal.",
+      "name": "Avantage à la dissimulation",
+      "description": "Tous ses jets de Dissimulation utilisent l’Agilité avec avantage. Une réussite rend le pion translucide et sa fiche dynamique conserve le meilleur résultat.",
       "polarity": "positive",
       "statId": "character-stat-agility",
       "resultBonus": 0,

@@ -46,6 +46,23 @@ for ($turn=1;$turn<=5;$turn++) {
 morphCheck($db->payload('character:character-player')['resources']['hp']==70,'Aucune régénération gratuite');
 morphCheck($db->payload('token:scene-one:token-player')['name']===$db->payload('character:character-player')['name'],'Nom initial restauré');
 $timers=$db->payload('activity')['actionTimers']; morphCheck($timers[0]['restUseCount']===1,'Usage par repos conservé');
+$db = morphFixture();
+morphCheck(specialUse($db, 'form', 'token-player')->status === 200, 'Native temporary form cast before revisiting initiative');
+foreach ([
+    [['currentIndex'=>0, 'round'=>8, 'turnSerial'=>11], 4],
+    [['currentIndex'=>1, 'round'=>7, 'turnSerial'=>12, 'rewoundTurnSerial'=>12], 4],
+    [['currentIndex'=>0, 'round'=>8, 'turnSerial'=>13], 4],
+    [['currentIndex'=>1, 'round'=>8, 'turnSerial'=>14], 4],
+    [['currentIndex'=>0, 'round'=>8, 'turnSerial'=>15, 'rewoundTurnSerial'=>15], 4],
+    [['currentIndex'=>1, 'round'=>8, 'turnSerial'=>16], 4],
+    [['currentIndex'=>0, 'round'=>9, 'turnSerial'=>17], 3],
+] as [$turn, $remaining]) {
+    $result = morphClock($db, $turn);
+    $token = $db->payload('token:scene-one:token-player');
+    morphCheck($result->status === 200 && $token['characterId'] === 'character-form'
+        && $token['transformation']['remainingTurns'] === $remaining,
+        'The form only consumes a real departure, turn ' . $turn['turnSerial']);
+}
 $db=morphFixture(); specialUse($db,'form','token-player'); morphResource($db,-180); $r=morphClock($db,['active'=>false]); morphCheck($r->status===200,'Fin du combat');
 morphCheck($db->payload('token:scene-one:token-player')['characterId']==='character-player','Fin du combat expire la forme temporisée');
 morphCheck($db->payload('character:character-player')['resources']['hp']==40,'Fin du combat transfère les dégâts une fois');

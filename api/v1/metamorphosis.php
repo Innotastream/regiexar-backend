@@ -58,7 +58,12 @@ function applicationApplyMetamorphosisPlan(array &$state, array $plan): void {
 function applicationAdvanceMetamorphoses(array &$state, array $previous, bool $manual = false): array {
     $current = $state['initiative'] ?? [];
     $ended = ($previous['active'] ?? false) === true && ($current['active'] ?? false) !== true;
-    $advanced = $manual || ($previous['active'] ?? false) === true && ($current['active'] ?? false) === true && ($previous['combatId'] ?? '') === ($current['combatId'] ?? '') && ($current['turnSerial'] ?? 0) > ($previous['turnSerial'] ?? 0);
+    $serial = (int) ($current['turnSerial'] ?? 0);
+    $combatId = $current['combatId'] ?? '';
+    $previousRound = max(1, (int) ($previous['round'] ?? 1));
+    $advanced = $manual || ($previous['active'] ?? false) === true && ($current['active'] ?? false) === true
+        && ($previous['combatId'] ?? '') === $combatId && $serial > (int) ($previous['turnSerial'] ?? 0)
+        && ($current['rewoundTurnSerial'] ?? null) !== $serial;
     if (!$ended && !$advanced) return [];
     $tokens = applicationMorphTokens($state); $effects = []; $handled = [];
     foreach ($state['map']['tokens'] ?? [] as $token) {
@@ -68,8 +73,12 @@ function applicationAdvanceMetamorphoses(array &$state, array $previous, bool $m
         $group = array_values(array_filter($tokens, static fn($entry) => applicationMorphLinked($entry) && !empty($entry['transformation']['active']) && ($entry['transformation']['requestId'] ?? '') === $form['requestId'] && ($entry['characterId'] ?? '') === $form['formCharacterId']));
         $ids = array_column($group, 'id'); $clockTokenId = in_array($form['clockTokenId'] ?? '', $previous['order'] ?? [], true) ? $form['clockTokenId'] : null;
         if ($clockTokenId === null) foreach ($previous['order'] ?? [] as $id) if (in_array($id, $ids, true)) { $clockTokenId = $id; break; }
-        if (!$ended && !$manual && (($previous['order'][$previous['currentIndex'] ?? 0] ?? '') !== $clockTokenId || ($form['clockCombatId'] ?? '') === ($current['combatId'] ?? '') && ($form['lastTurnSerial'] ?? 0) >= ($current['turnSerial'] ?? 0))) continue;
-        $next = [...$form, 'remainingTurns' => $ended ? 0 : max(0, $form['remainingTurns'] - 1), 'lastTurnSerial' => $current['turnSerial'] ?? 0, 'clockCombatId' => $current['combatId'] ?? ''];
+        if (!$ended && !$manual && (($previous['order'][$previous['currentIndex'] ?? 0] ?? '') !== $clockTokenId
+            || ($form['clockCombatId'] ?? '') === $combatId && ((int) ($form['lastTurnSerial'] ?? 0) >= $serial
+                || (int) ($form['lastTargetRound'] ?? 0) >= $previousRound))) continue;
+        $next = [...$form, 'remainingTurns' => $ended ? 0 : max(0, $form['remainingTurns'] - 1),
+            'lastTurnSerial' => $serial, 'clockCombatId' => $combatId,
+            ...(!$manual && !$ended ? ['lastTargetRound' => $previousRound] : [])];
         if ($next['remainingTurns'] > 0) { applicationSetMorphTokens($state, $ids, $next, $form['formCharacterId']); continue; }
         applicationSettleFormHealth($state, $form);
         applicationSetMorphTokens($state, $ids, [...$next, 'active' => false], $form['baseCharacterId']);

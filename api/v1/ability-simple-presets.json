@@ -53,6 +53,27 @@
       "description": "Place un mur orientable de 5 × 1 cases. À sa création, chaque cible à 2 cases ou moins du mur subit 1d30+10 dégâts physiques et 1d10+10 de poison ignorant l’armure. Le poison frappe encore aux deux tours suivants de chaque victime. Cet obstacle attaquable de 75 PV bloque la vue et le déplacement. Le MJ peut le déplacer ou le détruire. Tout ennemi qui attaque le mur subit 1d30+10 dégâts physiques."
     }
   },
+  "ability-c2d11a48-40e5-46a6-b43a-05405d1a5362": {
+    "presetId": "inho-final-chain",
+    "revision": 2,
+    "effect": "complex",
+    "workflowUpgrade": {
+      "steps": [
+        {
+          "match": {
+            "type": "attack-chain",
+            "firstGateAtCast": true,
+            "resolutionMode": "batch"
+          },
+          "values": {
+            "allowOpposition": true,
+            "oppositionMode": "once",
+            "criticalSuccessCompletesChain": true
+          }
+        }
+      ]
+    }
+  },
   "ability-7BG1hkmR6vBEbTLL": {
     "presetId": "single-weapon-full-damage",
     "revision": 1,
@@ -117,8 +138,11 @@
   },
   "ability-1a43a9ff-6af8-4b37-8940-d6894ba864a2": {
     "presetId": "supreme-eye-reach",
-    "revision": 1,
+    "revision": 3,
     "effect": "movement",
+    "rangeUpgradeOnly": true,
+    "rangeUpgradeFrom": 6,
+    "rangeUpgradeFromRevision": 2,
     "values": {
       "reach": "reach",
       "rangeCells": 4,
@@ -376,6 +400,7 @@
   "ability-93fa3849-3fbf-43fa-84cb-0c0c9d7f4189": {
     "effect": "enhancement",
     "attackEnhancementTrigger": "melee-weapon",
+    "attackEnhancementDotFormulaUpgrade": ["1d20", "1d20+2"],
     "attackEnhancementWeaponIds": [
       "weapon-2"
     ]
@@ -498,7 +523,7 @@
           }
         ]
       },
-      "description": "Charge en ligne droite jusqu’à 15 cases (portée À distance). Les ennemis qui entrent dans l’allonge de la hallebarde subissent chacun une frappe de Force, avec un malus cumulatif de 10 par ennemi sur le trajet. Les pions en collision sont écartés sur un côté libre.\n\nÀ l’arrivée, percute la cible avec le corps puis lui porte une seule frappe, sans le malus cumulatif du trajet. La cible est Étourdie jusqu’à la fin de son prochain tour complet, même si la frappe finale échoue. Une cible insensible à l’assommement reçoit Déstabilisé pour la même durée, sans malus supplémentaire.\n\nL’aperçu du trajet et des ennemis précède la validation. Après acceptation, choisissez les défenses de chaque cible dans le récapitulatif. Aucun jet préalable au lancement.",
+      "description": "Charge en ligne droite jusqu’à 15 cases (portée À distance). Traverse les pions sur le trajet sans les déplacer. Les ennemis visibles à portée de l’arme subissent chacun une frappe de Force, avec un malus cumulatif de 10 par frappe sur le trajet. Si le tir allié est actif, choisissez les cibles intermédiaires visibles à frapper.\n\nÀ l’arrivée, percute la cible avec le corps puis lui porte une seule frappe, sans le malus cumulatif du trajet. La cible est Étourdie jusqu’à la fin de son prochain tour complet, même si la frappe finale échoue. Une cible insensible à l’assommement reçoit Déstabilisé pour la même durée, sans malus supplémentaire.\n\nL’aperçu du trajet et des ennemis précède la validation. Après acceptation, choisissez les défenses de chaque cible dans le récapitulatif. Aucun jet préalable au lancement.",
       "rangeCells": 15
     }
   },
@@ -541,15 +566,22 @@
     }
   },
   "ability-29a3ef13-ceea-4740-bfe2-4007fa89e10b": {
-    "rangeCells": 8,
-    "reach": "reach",
-    "reducedFailureCooldown": true,
-    "infusion": {
-      "version": 1,
-      "enabled": true,
-      "ratio": 1,
-      "minimumMana": 0,
-      "refundOnMiss": false
+    "presetId": "ethereal-fangs-reach",
+    "revision": 2,
+    "effect": "damage",
+    "rangeUpgradeFrom": 6,
+    "rangeUpgradeFromRevision": 1,
+    "values": {
+      "rangeCells": 8,
+      "reach": "reach",
+      "reducedFailureCooldown": true,
+      "infusion": {
+        "version": 1,
+        "enabled": true,
+        "ratio": 1,
+        "minimumMana": 0,
+        "refundOnMiss": false
+      }
     }
   },
   "ability-d9f65d3a-1a9d-4580-a0f6-b1441e078a79": {

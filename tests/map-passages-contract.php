@@ -39,8 +39,13 @@ $foreign=runCommand($db,'passage.use',$args,false,'foreign');requireTactical($fo
 $tooFar=$token;$tooFar['x']=32.501;$db->put('token:scene-one:token-player',$tooFar);
 requireTactical(runCommand($db,'passage.use',[...$args,'requestId'=>'passage-too-far-000001','expectedX'=>32.501])->status===409,'The native dispatcher refuses traversal beyond 2.5 cells');
 $db->put('token:scene-one:token-player',$token);
+$manualWound = runCommand($db,'combat.effect.periodic-hp',['requestId'=>'passage-moving-wound-test','sceneId'=>'scene-one',
+    'tokenId'=>'token-player','layerId'=>'ground','label'=>'Blessure en voyage','formula'=>'2','turns'=>3,'direction'=>-1],true);
+requireTactical($manualWound->status===200, 'A real periodic wound is attached before travel: '.json_encode($manualWound->body));
 $activity=$db->payload('activity');$buff=['id'=>'travelling-buff','abilityId'=>'club','label'=>'Gourdin','holder'=>applicationEnhancementHolder($token),'sceneId'=>'scene-one','targetTokenId'=>'token-player',
     'mode'=>'replace','formula'=>'1d70+12','damageType'=>'magical','turns'=>5,'remainingTurns'=>3,'combatId'=>'source-combat','lastTurnSerial'=>900];
+$activity['pendingDotResolutions'][]=['id'=>'passage-pending-dot','sceneId'=>'scene-one','targetTokenId'=>'token-player',
+    'targetIdentity'=>onlineDotTargetIdentity($token),'label'=>'Poison résiduel','formula'=>'1','damageType'=>'poison','remainingTurns'=>1];
 $activity['attackEnhancements']=[$buff,[...$buff,'id'=>'independent-buff','holder'=>'token:independent-clone']];$db->put('activity',$activity);
 $arrivalInitiative=['active'=>true,'combatId'=>'arrival-combat','turnSerial'=>2,'order'=>['token-player'],'currentIndex'=>0];$db->put('initiative:scene-two',$arrivalInitiative);
 $db->put('scene:other',['metadata'=>['id'=>'other','name'=>'Carte hors trajet']]);
@@ -60,9 +65,52 @@ $effects=applicationAdvanceAttackEnhancements($effects,'scene-two',$arrivalIniti
 requireTactical($effects[0]['remainingTurns']===2,'The next destination turn consumes exactly one remaining turn');
 requireTactical($db->payload('table')['activeSceneId']==='scene-one'&&$db->payload('map:scene-one')['activeLayerId']==='ground','Traversal never changes the scene broadcast by the GM');
 $arrived=$db->payload('token:scene-two:token-player');requireTactical(($arrived['layerId']??'')==='upper'&&$arrived['x']>51&&$arrived['x']<61&&$arrived['y']==61&&$db->payload('token:scene-one:token-player')===[],'Only the unit moves near the repositioned endpoint');
+$wound = $db->payload('activity')['damageOverTime'][0];
+$pendingWound = $db->payload('activity')['pendingDotResolutions'][0];
+requireTactical($wound['sceneId'] === 'scene-two' && $wound['combatId'] === 'arrival-combat' && $wound['lastTurnSerial'] === 2
+    && $wound['remainingTurns'] === 3 && $pendingWound['sceneId'] === 'scene-two' && $pendingWound['remainingTurns'] === 1,
+    'The active wound and unresolved end-of-combat wound follow the real arrival pawn, with no additional turn used');
+$targetBeforeTick=$db->payload('character:character-player')['resources']['hp'];
+$db->put('initiative:scene-two',['active'=>false,'order'=>[],'turnSerial'=>2]);
+$tick = runCommand($db,'mechanics.command',['command'=>'scene.advance','arguments'=>['sceneId'=>'scene-two','requestId'=>'passage-wound-arrival-manual-turn']],true);
+requireTactical($tick->status===200 && $db->payload('character:character-player')['resources']['hp']===$targetBeforeTick-2
+    && $db->payload('activity')['damageOverTime'][0]['remainingTurns']===2, 'The next real turn in the new scene applies exactly one wound tick');
 $replay=runCommand($db,'passage.use',$args);requireTactical($replay->status===200&&($replay->body['deduplicated']??false),'Traversal remains idempotent after transfer to another scene');
 $removed=runCommand($db,'passage.remove',['requestId'=>'passage-remove-00000001','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>4],true);
 requireTactical($removed->status===200&&$db->payload('map:scene-two')['passages'][0]['destination']===null,'Removing an endpoint removes its backlink atomically');
+
+foreach ([true,false] as $hasOtherCombatant) {
+    $fight = fixture();
+    $fight->put('map:scene-one',$map);
+    $fight->put('map:scene-two',$map);
+    $fight->put('token:scene-one:token-player',[...$fight->payload('token:scene-one:token-player'),'x'=>21,'y'=>20,'initiative'=>15]);
+    $sourceOrder = $hasOtherCombatant ? ['token-player','token-monster'] : ['token-player'];
+    $clock = ['active'=>true,'turnsStarted'=>true,'combatId'=>'cross-scene-combat','currentIndex'=>0,'round'=>2,'turnSerial'=>7,
+        'order'=>$sourceOrder,'roundBaseOrder'=>$sourceOrder,'delayedTurnIds'=>[],
+        'previousRoundOrder'=>['order'=>$sourceOrder,'delayedTurnIds'=>['token-player']],'movementOverrides'=>['token-player'=>true]];
+    $fight->put('initiative:scene-one',$clock);
+    $arrivalClock = ['active'=>false,'order'=>[],'round'=>1,'turnSerial'=>3];
+    $fight->put('initiative:scene-two',$arrivalClock);
+    requireTactical(runCommand($fight,'passage.create',[
+        'requestId'=>'create-combat-travel-proof','endpoints'=>$command['endpoints'],
+    ],true)->status===200,'Combat exit is physically placed with the normal command');
+    $leaveArgs = ['requestId'=>'leave-active-fight-proof','sceneId'=>'scene-one','passageId'=>'entrance','expectedRevision'=>1,
+        'tokenId'=>'token-player','expectedX'=>21,'expectedY'=>20];
+    $leftFight = runCommand($fight,'passage.use',$leaveArgs);
+    $remainingClock = $fight->payload('initiative:scene-one');
+    $arrivedPawn = $fight->payload('token:scene-two:token-player');
+    requireTactical($leftFight->status===200 && $remainingClock['active']===$hasOtherCombatant
+        && $remainingClock['order']===($hasOtherCombatant?['token-monster']:[]) && $remainingClock['currentIndex']===0
+        && $remainingClock['turnSerial']===7 && $remainingClock['round']===2 && $remainingClock['movementOverrides']===[]
+        && !in_array('token-player',$remainingClock['previousRoundOrder']['order'] ?? [],true)
+        && !in_array('token-player',$remainingClock['previousRoundOrder']['delayedTurnIds'] ?? [],true)
+        && $fight->payload('initiative:scene-two')===$arrivalClock && ($arrivedPawn['initiative'] ?? null)===null,
+        'A crossing leaves no active or rewind initiative entry behind and arranges the remaining combat without a phantom turn: '.json_encode($leftFight->body));
+    requireTactical((runCommand($fight,'passage.use',$leaveArgs)->body['deduplicated'] ?? false)
+        && $fight->payload('initiative:scene-one')===$remainingClock,
+        'A crossing receipt retry does not change the source combat again');
+}
+
 $valid=$command['endpoints'][0];$valid['revision']=1;$valid['destination']=null;
 foreach(['12',NAN,INF] as $invalid){try{normalizePassages([[...$valid,'x'=>$invalid]]);throw new LogicException('Invalid coordinate accepted');}catch(RuntimeException $error){requireTactical($error->getCode()===400,'Passage coordinates require finite JSON numbers');}}
 requireTactical(normalizeApplicationMapLights([['id'=>'flame','x'=>20,'y'=>30,'name'=>'Flamme','icon'=>'flame']])[0]['icon']==='flame','The native light normalizer preserves the crackling flame model');
@@ -192,6 +240,8 @@ foreach(['one','two'] as $targetScene)foreach([1,2,20] as $count){
     foreach($result['state']['actionTimers'] as $timer)requireTactical($timer['sceneId']===$targetScene&&$timer['remainingRounds']===3,'Rider timers follow without a new turn');
     foreach($result['state']['attackEnhancements'] as $buff)requireTactical($buff['sceneId']===$targetScene&&$buff['remainingTurns']===3,'Rider buffs follow without spending a turn');
     foreach($result['state']['devices']['devices'] as $dome)requireTactical($dome['sceneId']===$targetScene&&$dome['layerId']==='upper'&&$dome['revision']===5,'Carried rider domes follow once');
+    if ($targetScene === 'one') requireTactical($result['state']['initiative']===$before['initiative'],
+        'Using stairs inside the same fight preserves the turn and score');
     $mountedChecks++;
 }
 foreach(['foreign','off-turn','empty-turn','not-controllable','owned-by-other','immovable-rider','duplicate-rider','capacity','wrong-level','nested','rider-alone'] as $failure){
@@ -219,10 +269,18 @@ foreach($case['map']['passages'] as &$passage)if($passage['id']==='from')$passag
 $arrive=$case['scenes'][1]['combat']['map'];$arrive['passages'][0]['destination']['sceneId']='scene-one';
 $mountedDb->put('scene:scene-one',['metadata'=>['id'=>'scene-one','name'=>'Départ monté']]);$mountedDb->put('scene:scene-two',['metadata'=>['id'=>'scene-two','name'=>'Arrivée montée']]);
 $mountedDb->put('scene-index',['order'=>['scene-one','scene-two']]);$mountedDb->put('map:scene-one',$case['map']);$mountedDb->put('map:scene-two',$arrive);
-$mountedDb->put('initiative:scene-one',$case['initiative']);$mountedDb->put('token-index:scene-one',['order'=>['mount','rider-0','rider-1']]);$mountedDb->put('token-index:scene-two',['order'=>[]]);
+$mountedOrder = ['rider-0','rider-1','mount'];
+$mountedClock = [...$case['initiative'],'turnsStarted'=>true,'combatId'=>'mounted-passage-combat','order'=>$mountedOrder,
+    'roundBaseOrder'=>$mountedOrder,'delayedTurnIds'=>['rider-1'],'previousRoundOrder'=>['order'=>$mountedOrder,'delayedTurnIds'=>['mount']],
+    'round'=>2,'turnSerial'=>12];
+$mountedDb->put('initiative:scene-one',$mountedClock);$mountedDb->put('token-index:scene-one',['order'=>['mount','rider-0','rider-1']]);$mountedDb->put('token-index:scene-two',['order'=>[]]);
 foreach($case['map']['tokens'] as $unit)$mountedDb->put('token:scene-one:'.$unit['id'],$unit);
 $nativeArgs=[...$mountedArgs,'sceneId'=>'scene-one','requestId'=>'mounted-native-travel-0001'];
 $arrived=runCommand($mountedDb,'passage.use',$nativeArgs);requireTactical($arrived->status===200&&$arrived->body['riderCount']===2,'Native pilot traversal commits both riders: '.json_encode($arrived->body));
+$oldFight = $mountedDb->payload('initiative:scene-one');
+requireTactical($oldFight['order']===[] && !$oldFight['active'] && !$oldFight['turnsStarted'] && $oldFight['turnSerial']===12
+    && !isset($oldFight['roundBaseOrder'],$oldFight['delayedTurnIds'],$oldFight['previousRoundOrder']),
+    'The mounted group clears the departure roster and ends the empty fight with no simulated turn');
 $after=$mountedDb->domains;
 for($retry=0;$retry<12;$retry++){$replay=runCommand($mountedDb,'passage.use',$nativeArgs);requireTactical($replay->status===200&&!empty($replay->body['deduplicated']),'Native mounted traversal replay is durable');}
 requireTactical($mountedDb->domains===$after,'Twelve native replays do not write duplicate units or lights');

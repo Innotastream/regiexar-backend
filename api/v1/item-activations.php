@@ -61,8 +61,18 @@ function finishItemUse(array &$state,array &$items,array $use,array $actor,array
  elseif(!$vesselEmptied&&$item['location']['kind']==='inventory'&&empty($use['definition']['reusable']))$item['location']=['kind'=>'consumed','characterId'=>$item['location']['characterId']];
  $item['revision']++;$items['instances'][$ii]=$item;$items['pendingUses']=array_values(array_filter($items['pendingUses']??[],static fn($u)=>$u['id']!==$use['id']));return [...$result,'item'=>$item];
 }
+function cancelPendingItemUse(array &$items, mixed $useId, bool $isGm): array
+{
+    if (!$isGm) itemFailure('Seul le MJ peut annuler cette activation.',403);
+    if (!itemId($useId)) itemFailure('Référence d’activation invalide.',400);
+    $index = findEntryIndex($items['pendingUses'] ?? [],$useId);
+    if ($index < 0) itemFailure('Cette activation n’est plus en attente.',404);
+    return array_splice($items['pendingUses'],$index,1)[0];
+}
+
 function applyItemUseCommand(array &$state,array &$items,array $actor,string $command,array $args,array $context):array {
  $state['items']=$items;$items['pendingUses']??=[];$gm=$actor['role']==='gm';
+ if($command==='item.use.cancel'){cancelPendingItemUse($items,$args['useId']??null,$gm);return ['cancelled'=>true];}
  if(!empty($state['tacticalSync']['paused'])&&!$gm)itemFailure('La table est temporairement verrouillée par le MJ.',423);
  if($command==='item.activate'){
   $item=null;foreach($items['instances'] as $i)if($i['id']===($args['itemId']??'')){$item=$i;break;}if(!$item||$item['revision']!==($args['expectedItemRevision']??null))itemFailure('Cet objet a changé.',409);
@@ -76,14 +86,15 @@ function applyItemUseCommand(array &$state,array &$items,array $actor,string $co
   $targets=count($summons)===count($active['effects'])?[]:itemUseTargets($state,$resolvedActive,$source,$args,$context);
   $areaPoint=null;if(applicationHasArmorReductionZone($active)){$layer=$state['map']['activeLayerId']??'ground';$areaPoint=applicationAreaTargetPoint(($active['targeting']['origin']??'')==='source'?applicationTokenSpatialFootprint($source,$state['map']):($args['targetPoint']??null),$layer);if($areaPoint===null)itemFailure('Choisissez un centre de zone sur le niveau courant.',409);if(!array_filter($active['effects'],static fn($e)=>$e['kind']!=='summon'&&$e['kind']!=='arbitration-zone'&&!(($e['kind']??'')==='armor-reduction'&&($e['scope']??'target')==='zone')))$targets=[];}
   if($item['location']['kind']==='ground'&&!is_bool($args['opposed']??null))itemFailure('Choisissez avec ou sans opposition.',400);$selectDefenses=($active['targeting']['mode']??'')==='area'&&count($targets)>0&&(bool)array_filter($active['effects'],static fn($e)=>in_array($e['kind'],['damage','dot','condition','armor-reduction'],true)&&($e['scope']??'')!=='zone'&&($e['timing']??'')!=='on-hit')&&(!$gm||!is_bool($args['opposed']??null));$opposed=$selectDefenses||($args['opposed']??false)===true&&count($targets)>0;
-  if(count($items['pendingUses'])>=100)itemFailure('Traitez les activations d’objets en attente.',429);
+  if($opposed&&count($items['pendingUses'])>=100)itemFailure('Traitez les activations d’objets en attente.',429);
   $use=['id'=>($context['id'])('item-use'),'itemId'=>$item['id'],'itemRevision'=>$item['revision'],'sceneId'=>$state['activeSceneId'],'layerId'=>$state['map']['activeLayerId']??'ground','name'=>$template['name'],'definition'=>$active,...($itemEnhancement?['itemEnhancement'=>$itemEnhancement]:[]),'sourceTokenId'=>$source['id'],'sourceUnitId'=>$args['characterId']??'','controllerAccountId'=>$gm?'':$actor['id'],'sourcePoint'=>['x'=>$source['x']??null,'y'=>$source['y']??null,'layerId'=>$source['layerId']??'ground'],...($point?['summonPoint'=>$point]:[]),...($areaPoint?['areaPoint'=>$areaPoint]:[]),'phase'=>$selectDefenses?'defense-selection':'opposition','accountId'=>$actor['id'],'role'=>$actor['role'],'targets'=>array_map(static fn($t)=>['tokenId'=>$t['id'],'status'=>$opposed?'pending':'affected'],$targets)];
   foreach($targets as $t)if(str_starts_with($t['id'],'item-owner-'))itemFailure('Placez le pion de cette unité pour cette action.',409);
-  $items['pendingUses'][]=$use;return $opposed?['pendingUse'=>$use['id'],'pendingOpposition'=>true]:finishItemUse($state,$items,$use,$actor,$context);
+  if (!$opposed) return finishItemUse($state,$items,$use,$actor,$context);
+  $items['pendingUses'][]=$use;
+  return ['pendingUse'=>$use['id'],'pendingOpposition'=>true];
  }
  $ui=-1;foreach($items['pendingUses'] as $i=>$u)if($u['id']===($args['useId']??'')){$ui=$i;break;}if($ui<0)itemFailure('Cette activation n’est plus en attente.',404);$use=$items['pendingUses'][$ui];
  if($use['sceneId']!==$state['activeSceneId']||$use['layerId']!==($state['map']['activeLayerId']??'ground'))itemFailure('Revenez sur la scène et le niveau de cette activation.',409);
- if($command==='item.use.cancel'){if(!$gm)itemFailure('Seul le MJ peut annuler cette activation.',403);array_splice($items['pendingUses'],$ui,1);return ['cancelled'=>true];}
  if($command==='item.trap.resolve'){
   if(!$gm)itemFailure('Seul le MJ peut valider le passage sur un piège.',403);if($use['phase']!=='trigger')itemFailure('Ce piège a déjà été validé.',409);if(!is_bool($args['opposed']??null))itemFailure('Choisissez avec ou sans opposition.',400);
   $item=null;foreach($items['instances'] as $i)if($i['id']===$use['itemId']){$item=$i;break;}if(!$item)itemFailure('Ce piège n’existe plus.',409);

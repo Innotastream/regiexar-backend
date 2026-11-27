@@ -13,7 +13,7 @@ $circle=$aura;$dance=['id'=>'dance','name'=>'Zone armée de recette','effect'=>'
 $c['abilities']=normalizeOnlineAbilities([$champion,$stigma,$circle,$dance]);$c['weaponText']='Principale 1d2+3; Chaîne 1d2+6';$c['weaponAttacks']=[['id'=>'main','name'=>'Principale','formula'=>'1d2+3','damageType'=>'physical','reach'=>'melee'],['id'=>'chain','name'=>'Chaîne','formula'=>'1d2+6','damageType'=>'physical','reach'=>'reach']];$db->put('character:character-player',$c);
 $db->put('map:scene-one',['gridSize'=>50,'naturalWidth'=>1000,'naturalHeight'=>1000,'activeLayerId'=>'ground']);
 $db->put('initiative:scene-one',['active'=>true,'order'=>['token-player','token-monster'],'currentIndex'=>0,'round'=>1,'turnSerial'=>1,'combatId'=>'champion-combat']);
-$enemy=$db->payload('token:scene-one:token-monster');$enemy=[...$enemy,'x'=>35,'hp'=>10000,'maxHp'=>10000,'armor'=>0,'magicArmor'=>0,'layerId'=>'ground'];$db->put('token:scene-one:token-monster',$enemy);
+$enemy=$db->payload('token:scene-one:token-monster');$enemy=[...$enemy,'x'=>43,'hp'=>10000,'maxHp'=>10000,'armor'=>0,'magicArmor'=>0,'layerId'=>'ground'];$db->put('token:scene-one:token-monster',$enemy);
 $otherEnemy=$db->payload('token:scene-one:token-monster-two');$otherEnemy['x']=95;$db->put('token:scene-one:token-monster-two',$otherEnemy);
 $use=static function($id,$extra=[])use($db){return championCommand($db,'ability.use',['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','layerId'=>'ground','abilityId'=>$id,'requestId'=>'champion-use-'.randomToken(16),...$extra]);};
 $denied=$use($champion['id'],['targetTokenId'=>'token-monster']);championNative($denied->status===400,'Self-only buff rejects forged recipient before cost: '.json_encode($denied->body));

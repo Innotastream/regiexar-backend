@@ -50,6 +50,7 @@ function onlineConsumeSpecialSuccess(PDO $connection,array &$records,array &$pen
 }
 
 function applicationForcePublicJoker(array $roll): array {
+    if (($roll['rollOptionId'] ?? '') === 'concealment') return $roll;
     if (($roll['outcome']['joker']??false)===true||($roll['joker']??false)===true) { $roll['visibility']='public';$roll['revealed']=true;$roll['gmRevealed']=true; }
     return $roll;
 }

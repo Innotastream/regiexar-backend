@@ -9,8 +9,7 @@ function applicationMapWithDefaultScalePresets(array $map, string $sceneId, stri
 
     $scaleForLayer = static function (string $layerId) use ($sceneId, $deuillrouteSceneId): array {
         $preset = $sceneId === $deuillrouteSceneId && $layerId === 'upper' ? 'indoor' : 'outdoor';
-        $settings = applicationMapScaleSettings(['unitScalePreset' => $preset]);
-        return ['unitScalePreset' => $preset, 'gridSize' => $settings['gridSize']];
+        return ['unitScalePreset' => $preset, 'gridSize' => $preset === 'indoor' ? 75 : 50];
     };
     $activeLayerId = $map['activeLayerId'] ?? 'ground';
     if (!in_array($activeLayerId, ['basement', 'ground', 'upper'], true)) $activeLayerId = 'ground';
@@ -64,6 +63,71 @@ function migrateApplicationDefaultMapScales(PDO $connection): void
         $connection->prepare('INSERT INTO schema_migrations (version,name,checksum) VALUES (25,:name,:checksum)')
             ->execute([':name' => 'map_scale_defaults_legacy_campaign',
                 ':checksum' => hash('sha256', 'map-scale|outdoor|preserve-lobby|deuilroute-upper-indoor')]);
+        $connection->commit();
+    } catch (Throwable $error) {
+        if ($connection->inTransaction()) $connection->rollBack();
+        throw $error;
+    }
+}
+
+function applicationMapWithUpdatedPresetGrid(array $map): array
+{
+    $update = static function (array $level): array {
+        $previous = ['outdoor' => 50, 'indoor' => 75];
+        $upgraded = ['outdoor' => 40, 'indoor' => 60];
+        $preset = $level['unitScalePreset'] ?? null;
+        $size = $level['gridSize'] ?? null;
+        if (is_string($preset) && isset($previous[$preset])
+            && (is_int($size) || is_float($size)) && $size == $previous[$preset]) {
+            $level['gridSize'] = $upgraded[$preset];
+        }
+        return $level;
+    };
+    $map = $update($map);
+    foreach ($map['layers'] ?? [] as $layerId => $level) {
+        if (is_array($level) && in_array($layerId, ['basement', 'ground', 'upper'], true)) {
+            $map['layers'][$layerId] = $update($level);
+        }
+    }
+    return $map;
+}
+
+function applicationUpdatedPresetGridChanges(array $records): array
+{
+    $pending = [];
+    foreach (applicationDomainPayload($records, 'scene-index')['order'] ?? [] as $sceneId) {
+        $scene = applicationDomainPayload($records, 'scene:' . $sceneId);
+        if (strtolower(trim((string) ($scene['metadata']['name'] ?? ''))) === 'lobby') continue;
+        $key = 'map:' . $sceneId;
+        $record = $records[$key] ?? null;
+        if (!is_array($record['payload'] ?? null)) continue;
+        $before = $record['payload'];
+        $after = applicationMapWithUpdatedPresetGrid($before);
+        if ($after === $before) continue;
+        // The stored map is already authoritative. Rewrite only the known grid values,
+        // without reprocessing the rest of its historical calibration or media.
+        $pending[] = ['key'=>$key, 'operation'=>'upsert', 'payload'=>$after, 'current'=>$record];
+    }
+    return $pending;
+}
+
+function migrateApplicationPresetGridSizes(PDO $connection): void
+{
+    $connection->beginTransaction();
+    try {
+        $clock = domainClockRecord($connection, true);
+        $records = applicationDomainRecords($connection, ['scene-index']);
+        $keys = [];
+        foreach (applicationDomainPayload($records, 'scene-index')['order'] ?? [] as $sceneId) {
+            $keys[] = 'scene:' . $sceneId;
+            $keys[] = 'map:' . $sceneId;
+        }
+        if ($keys !== []) $records += applicationDomainRecords($connection, $keys);
+        $pending = applicationUpdatedPresetGridChanges($records);
+        if ($pending !== []) persistDomainChangesInTransaction($connection, [], $clock, $pending);
+        $connection->prepare('INSERT INTO schema_migrations (version,name,checksum) VALUES (29,:name,:checksum)')
+            ->execute([':name' => 'map_preset_grid_sizes',
+                ':checksum' => hash('sha256', 'map-preset-grid|outdoor:50:40|indoor:75:60|preserve-lobby')]);
         $connection->commit();
     } catch (Throwable $error) {
         if ($connection->inTransaction()) $connection->rollBack();

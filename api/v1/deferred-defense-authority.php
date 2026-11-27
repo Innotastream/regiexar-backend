@@ -9,7 +9,47 @@ function onlineDefenseParty(PDO $connection,array $records,array $token,array $m
     return ['unitId'=>unitIdForToken($token),'controllerId'=>onlineTokenControllerIdFromRecords($connection,$records,$token),'layerId'=>onlineTokenLayerId($token,$map),'x'=>$point['x'],'y'=>$point['y'],'size'=>$point['size']??$token['size']??40];
 }
 function onlineWeaponTurnState(array $records,array $pending,string $sceneId,array $map=[]):array{
-    return ['activeSceneId'=>$sceneId,'map'=>$map,'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),'actionTimers'=>$pending['activity']['payload']['actionTimers']??applicationDomainPayload($records,'activity')['actionTimers']??[]];
+    $activity = $pending['activity']['payload'] ?? applicationDomainPayload($records,'activity');
+    return ['activeSceneId'=>$sceneId,'map'=>$map,'initiative'=>$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId),
+        'actionTimers'=>$activity['actionTimers']??[], 'attackEnhancements'=>$activity['attackEnhancements']??[]];
+}
+function onlineBodyChargeView(PDO $connection, array &$records, array $pending, string $sceneId, array $map,
+    array $tokens, array $source): array
+{
+    $physicalTokens = onlineSceneTokensForLights($connection, $records, $pending, $sceneId);
+    $map['tokens'] = $physicalTokens;
+    $physical = applicationTokenSpatialFootprint($source, $map);
+    $character = unitUsesCharacterSheet($source) ? applicationDomainPayload($records, 'character:'.($source['characterId'] ?? '')) : [];
+    $observer = ['x'=>$physical['x'], 'y'=>$physical['y'], 'visionDistance'=>onlineTokenVisionDistance($source, $character ?: null),
+        'darkVision'=>onlineTokenDarkVision($source, $character ?: null), 'source'=>'token'];
+    $occlusion = applicationActiveMapOcclusionState($map, $physicalTokens);
+    $mask = applicationComputeVisionMask($occlusion, [$observer], $map['gridSize'] ?? 50);
+    $clear = onlineVisiblePathPointTester(applicationActiveMapFogState($map),$mask);
+    $mist = applicationCreateMistVision($map['visionZones'] ?? [],[...$map,...$occlusion],
+        [[...$observer,'size'=>$physical['size'] ?? 40,'mask'=>$mask]],['sceneId'=>$sceneId,'layerId'=>onlineTokenLayerId($source,$map)]);
+    $visible = static fn($x,$y) => $clear($x,$y) && !applicationMistShadowAtPoint($mist,$x,$y);
+    $seen = [];
+    foreach ($tokens as &$token) {
+        $seen[$token['id']] = true;
+        if ($token['id'] !== $source['id'] && (!applicationTerrainBarrierPointVisible(applicationTokenSpatialFootprint($token,$map),$map,$clear)
+            || applicationMistTokenVisibility($mist,$token)!=='clear')) {
+            $token['hidden'] = true;
+        }
+    }
+    unset($token);
+    foreach ($physicalTokens as $token) {
+        if (!isset($seen[$token['id']])) $tokens[] = [...$token, 'hidden'=>true];
+    }
+    $map['_chargeVisible'] = $visible;
+    return [$tokens, $map];
+}
+function onlineBodyChargeGateFinalId(array $gate): ?string
+{
+    if (is_string($gate['bodyChargeFinalTokenId'] ?? null)) return $gate['bodyChargeFinalTokenId'];
+    if (($gate['kind'] ?? '') !== 'complex-start' || !applicationIsBodyCharge($gate['definition'] ?? [])) return null;
+    $request = $gate['requestBody'] ?? [];
+    $selection = $request['initialSelection'] ?? $request['chargeSelection'] ?? [];
+    return is_string($selection['allocations'][0]['tokenId'] ?? null) ? $selection['allocations'][0]['tokenId'] : null;
 }
 function onlineComplexDefensePreview(PDO $connection,array &$records,array $pending,array $identity,array $arguments,array $ability,array $source,string $sceneId,array $map,bool $isGm):?array{
     $first=$ability['workflow']['steps'][0]??[];$pathStrike=!empty($first['pathStrike']['staged']);$charge=null;$allocated=false;foreach($ability['workflow']['steps']as$step){if(!empty($step['charge']['staged']))$charge=$step;if($step['type']==='allocated-attacks')$allocated=true;}
@@ -17,6 +57,8 @@ function onlineComplexDefensePreview(PDO $connection,array &$records,array $pend
     $selection=$arguments['initialSelection']??$arguments['chargeSelection']??null;
     if(!is_array($selection)||!is_array($selection['allocations']??null))throw new RuntimeException('Choisissez et confirmez les cibles avant de demander les défenses au MJ.',400);
     $tokens=onlineComplexAbilitySceneTokens($connection,$records,$sceneId,$map,(string)$identity['id'],$isGm,$pending);$map['tokens']=$tokens;$attackSource=$source;foreach($tokens as$token)if($token['id']===$source['id'])$attackSource=$token;
+    $bodyCharge=$charge!==null&&applicationIsBodyCharge($ability);
+    if($bodyCharge)[$tokens,$map]=onlineBodyChargeView($connection,$records,$pending,$sceneId,$map,$tokens,$attackSource);
     if($pathStrike){$visibleIds=array_column($tokens,'id');foreach(onlineSceneTokensForLights($connection,$records,$pending,$sceneId)as$t)if(!in_array($t['id'],$visibleIds,true))$tokens[]=[...$t,'hidden'=>true];$map['tokens']=$tokens;if($isGm){$occlusion=applicationActiveMapOcclusionState($map,$tokens);$physical=applicationTokenSpatialFootprint($source,$map);$character=applicationDomainPayload($records,'character:'.($source['characterId']??''));$origin=[['x'=>$physical['x'],'y'=>$physical['y'],'visionDistance'=>onlineTokenVisionDistance($source,$character?:null),'darkVision'=>onlineTokenDarkVision($source,$character?:null),'source'=>'token']];$map['_chargeVisible']=onlineVisiblePathPointTester(applicationActiveMapFogState($map),applicationComputeVisionMask($occlusion,$origin,$map['gridSize']??50));}else $map['_chargeVisible']=onlineMapMovementVisibility($connection,$records,$map,(string)$identity['id'],$sceneId);$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');$map['_abilityExecutions']=$activity['abilityExecutions']??[];$map['_abilityMovementLeases']=$activity['abilityMovementLeases']??[];$map['_abilityTimedConditions']=onlineDeviceState($connection,$records,$pending)['devices']['timedConditions'];}
     $command=[...$selection,'action'=>'select-targets','opposed'=>false];if(isset($selection['attackPlan']))$command['attackPlan']=array_map(static fn($strike)=>[...$strike,'opposed'=>false],$selection['attackPlan']);
     $reason=weaponAttackPlanReason(onlineWeaponTurnState($records,$pending,$sceneId,$map),$attackSource,$command['attackPlan']??[],['sceneId'=>$sceneId]);if($reason!=='')throw new RuntimeException($reason,409);
@@ -24,17 +66,22 @@ function onlineComplexDefensePreview(PDO $connection,array &$records,array $pend
     $initiative=$pending['initiative:'.$sceneId]['payload']??applicationDomainPayload($records,'initiative:'.$sceneId);$context=['actor'=>['id'=>$identity['id'],'role'=>$isGm?'gm':'player'],'tokens'=>$tokens,'map'=>$map,'preview'=>true,'combatActive'=>($initiative['active']??false)===true,'currentTokenId'=>$initiative['order'][$initiative['currentIndex']??0]??'','now'=>$now,'roll'=>static function(){throw new RuntimeException('Une préparation ne peut lancer aucun dé.',500);}];
     if($pathStrike){$movementSelection=$arguments['movementSelection']??null;if(!is_array($movementSelection))throw new RuntimeException('Préparez le point final et le trajet avant les défenses.',400);$preview=applyApplicationComplexAbilityCommand($preview,['action'=>'plan-path-strike','selection'=>[...$movementSelection,'targetTokenIds'=>array_column($selection['allocations'],'tokenId')],'expectedRevision'=>$preview['revision']],$context);$preview=applyApplicationComplexAbilityCommand($preview,['action'=>'confirm-movement','expectedRevision'=>$preview['revision']],$context);}
     $preview=applyApplicationComplexAbilityCommand($preview,[...$command,'expectedRevision'=>$preview['revision']],$context);
-    if($charge!==null)$preview=applyApplicationComplexAbilityCommand($preview,['action'=>'plan-charge','expectedRevision'=>$preview['revision']],$context);
+    if($charge!==null)$preview=applyApplicationComplexAbilityCommand($preview,['action'=>'plan-charge','expectedRevision'=>$preview['revision'],
+        ...($bodyCharge&&array_key_exists('pathTargetTokenIds',$selection)?['pathTargetTokenIds'=>$selection['pathTargetTokenIds']]:[])],$context);
     $ids=$charge!==null?array_column($preview['stepStates'][$charge['id']]['allocations']??[],'tokenId'):array_column($selection['allocations'],'tokenId');$targets=[];
     foreach($ids as$id){$target=null;foreach($tokens as$token)if($token['id']===$id)$target=$token;if($target===null)throw new RuntimeException('Une cible préparée n’est plus visible.',409);$targets[]=$target;}
     return ['targets'=>$targets,'selection'=>$command,'charge'=>$charge!==null,...($pathStrike?['pathStrike'=>true,'pathStrikeFingerprint'=>hash('sha256',json_encode(canonicalApplicationDomainValue(array_intersect_key($preview['stepStates'][$first['id']],array_flip(['origin','destination','points','distanceMeters','sourceSize','targets','targetPositions','finalPath']))),JSON_THROW_ON_ERROR))]:[])];
 }
-function onlineApplyApprovedComplexSelection(PDO $connection,array &$records,array &$pending,array $table,array $execution,array $arguments,array $approval):array{
+function onlineApplyApprovedComplexSelection(PDO $connection,array &$records,array &$pending,array $table,array $execution,array $arguments,array $approval,array $authority=[]):array{
     $selection=$arguments['initialSelection']??$arguments['chargeSelection']??null;if(!is_array($selection))return $execution;$allowed=$approval['defenseTokenIds'];
     $command=[...$selection,'action'=>'select-targets','opposed'=>true,'defenseTokenIds'=>$allowed];if(isset($selection['attackPlan']))$command['attackPlan']=array_map(static fn($strike)=>[...$strike,'opposed'=>in_array($strike['tokenId'],$allowed,true)],$selection['attackPlan']);$commands=[$command];
     if(!empty($execution['workflow']['steps'][0]['pathStrike']['staged']))$commands=[['action'=>'plan-path-strike','selection'=>[...($arguments['movementSelection']??[]),'targetTokenIds'=>array_column($selection['allocations'],'tokenId')]],['action'=>'confirm-movement'],$command];
-    if(array_filter($execution['workflow']['steps'],static fn($step)=>!empty($step['charge']['staged']))){$commands[]=['action'=>'plan-charge'];$commands[]=['action'=>'confirm-movement','defenses'=>array_map(static fn($id)=>['tokenId'=>$id,'opposed'=>in_array($id,$allowed,true)],$approval['gate']['targetTokenIds'])];}
-    foreach($commands as$index=>$command){$result=onlineUseComplexAbility($connection,$records,$pending,$table,$approval['gm'],['action'=>'command','requestId'=>'prepare-'.$execution['id'].'-'.$index,'executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],'command'=>$command],true);$execution=$result['execution'];}
+    if(array_filter($execution['workflow']['steps'],static fn($step)=>!empty($step['charge']['staged']))){
+        $ids=$approval['gate']['targetTokenIds'];
+        $commands[]=['action'=>'plan-charge',...(applicationIsBodyCharge($execution)?['pathTargetTokenIds'=>array_values(array_diff($ids,[$selection['allocations'][0]['tokenId']]))]:[])];
+        $commands[]=['action'=>'confirm-movement','defenses'=>array_map(static fn($id)=>['tokenId'=>$id,'opposed'=>in_array($id,$allowed,true)],$ids)];
+    }
+    foreach($commands as$index=>$command){$result=onlineUseComplexAbility($connection,$records,$pending,$table,$approval['gm'],['action'=>'command','requestId'=>'prepare-'.$execution['id'].'-'.$index,'executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],'command'=>$command],true,null,$authority);$execution=$result['execution'];}
     return $execution;
 }
 function onlineQueueDeferredDefenseGate(PDO $connection,array &$records,array &$pending,array $identity,array $arguments,array $context):array{
@@ -64,12 +111,29 @@ function onlineAssertDeferredDefenseParties(PDO $connection,array &$records,arra
     $map=$pending[$mapKey]['payload']??applicationDomainPayload($records,$mapKey);$tokens=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$map['tokens']=$tokens;
     $source=null;foreach($tokens as$token)if($token['id']===$attack['sourceTokenId'])$source=$token;
     if(!$source||canonicalApplicationDomainValue(onlineDefenseParty($connection,$records,$source,$map))!==canonicalApplicationDomainValue($gate['sourceParty'])||(float)($source['hp']??0)<=0)throw new RuntimeException('Le lanceur a changé depuis l’aperçu. Refusez cette demande et préparez à nouveau l’action.',409);
+    $chargeFinalId=onlineBodyChargeGateFinalId($gate);
+    $areaTargeting = $gate['definition']['damageTargeting'] ?? [];
+    $usesLiveArea = ($gate['kind'] ?? '') === 'defense-selection' && ($areaTargeting['mode'] ?? '') === 'area'
+        && ($gate['requestBody']['targetingMode'] ?? '') !== 'single';
+    $areaAnchorId = ($areaTargeting['origin'] ?? 'target') === 'target' ? ($gate['requestBody']['targetTokenId'] ?? '') : '';
     $targets=[];$eligible=[];foreach($gate['targetTokenIds']as$id){$target=null;foreach($tokens as$token)if($token['id']===$id)$target=$token;
-        if(!$target||!empty($target['hidden'])||canonicalApplicationDomainValue(onlineDefenseParty($connection,$records,$target,$map))!==canonicalApplicationDomainValue($gate['targetParties'][$id])||onlineTokenIsDead($target,onlineTokenControllerIdFromRecords($connection,$records,$target)!==''))throw new RuntimeException('Une cible a changé depuis l’aperçu. Refusez cette demande et préparez à nouveau l’action.',409);
+        $party=$target!==null?onlineDefenseParty($connection,$records,$target,$map):[];
+        $expected=$gate['targetParties'][$id]??[];
+        // The normal area resolver recalculates the complete group on the current
+        // map. A recipient can move inside it, but a targeted center cannot move.
+        if(($chargeFinalId!==null&&$id!==$chargeFinalId)||($usesLiveArea&&$id!==$areaAnchorId)){
+            $keys=array_flip(['unitId','controllerId','layerId']);
+            $party=array_intersect_key($party,$keys);$expected=array_intersect_key($expected,$keys);
+        }
+        if(!$target||!empty($target['hidden'])||($chargeFinalId!==null&&!empty($target['dimSilhouette']))||canonicalApplicationDomainValue($party)!==canonicalApplicationDomainValue($expected)||onlineTokenIsDead($target,onlineTokenControllerIdFromRecords($connection,$records,$target)!=='')){
+            if($chargeFinalId!==null&&$id!==$chargeFinalId)continue;
+            throw new RuntimeException($chargeFinalId!==null?'La cible finale a changé ou n’est plus disponible.':'Une cible a changé depuis l’aperçu. Refusez cette demande et préparez à nouveau l’action.',409);
+        }
         $targets[]=$target;if(($gate['definition']['noDefensePossible']??$gate['ability']['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0&&(!isset($gate['preparedHit'])||(!empty($gate['preparedHit']['outcomes'][$id]['success'])&&empty($gate['preparedHit']['outcomes'][$id]['breaksOpposition']))))$eligible[]=$id;
     }
-    if(!onlineDefenseIdsEqual($eligible,$gate['defenseEligibleTokenIds'])||array_diff($allowed,$eligible)!==[])throw new RuntimeException('Les cibles pouvant se défendre ont changé.',409);
-    return compact('map','source','targets');
+    if($chargeFinalId===null&&(!onlineDefenseIdsEqual($eligible,$gate['defenseEligibleTokenIds'])||array_diff($allowed,$eligible)!==[]))throw new RuntimeException('Les cibles pouvant se défendre ont changé.',409);
+    if($chargeFinalId!==null&&!in_array($chargeFinalId,array_column($targets,'id'),true))throw new RuntimeException('La cible finale n’est plus disponible.',409);
+    return compact('map','source','targets','eligible');
 }
 function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array &$pending,array $identity,array $arguments,array $attack):array{
     $gate=$attack['areaGate'];$allowed=applicationApprovedAreaDefenseIds([...$gate,'targetTokenIds'=>$gate['defenseEligibleTokenIds']??$gate['targetTokenIds']],$arguments['defenseTokenIds']??[]);$signature=onlineAreaDefenseSignature($arguments,$allowed);
@@ -83,13 +147,18 @@ function onlineResolveDeferredDefenseGate(PDO $connection,array &$records,array 
     }
     $released=null;
     if($arguments['decision']==='approve'){
-        onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);
+        $partyCheck=onlineAssertDeferredDefenseParties($connection,$records,$pending,$attack,$allowed);
         $gate['resolving']=true;$attack['areaGate']=$gate;foreach($activity['pendingAttacks']as&$entry)if($entry['id']===$attack['id'])$entry=$attack;unset($entry);foreach($activity['attackReceipts']as&$entry)if(($entry['attack']['id']??'')===$attack['id'])$entry['attack']=$attack;unset($entry);queueOnlineDomainUpsert($pending,$records,'activity',$activity);
         $actor=['id'=>$attack['accountId'],'display_name'=>$attack['playerName'],'effective_mode'=>$attack['attackerRole'],'permanent_role'=>$attack['attackerRole']];$request=[...$gate['requestBody'],'requestId'=>'release-'.$attack['id']];$table=$pending['table']['payload']??applicationDomainPayload($records,'table');
         if ($gate['kind']!=='complex-start' && onlineWantsTotalOpposition($gate)) {
             $request['oppositionMode']='total';$request['opposed']=true;
         }
         $approval=['gate'=>$gate,'defenseTokenIds'=>$allowed,'gm'=>$identity];
+        if(onlineBodyChargeGateFinalId($gate)!==null){
+            $approval['gate']['targetTokenIds']=array_column($partyCheck['targets'],'id');
+            $approval['gate']['defenseEligibleTokenIds']=$partyCheck['eligible'];
+            $approval['defenseTokenIds']=array_values(array_intersect($allowed,$partyCheck['eligible']));
+        }
         if ($gate['kind'] === 'complex-start') {
             $released = onlineUseComplexAbility($connection,$records,$pending,$table,$actor,$request,$attack['attackerRole']==='gm',null,['defenseApproval'=>$approval]);
         } else {

@@ -21,4 +21,43 @@ $again=runCommand($db,'token.attack',$arguments);specialCheck($again->status===2
 $db=fangFixture();$target=$db->payload('token:scene-one:token-monster');$target['x']=64.01;$db->put('token:scene-one:token-monster',$target);
 $r=runCommand($db,'token.attack',[...$arguments,'requestId'=>'fangs-far-'.randomToken(16),'rangeCells'=>999]);specialCheck($r->status===409,'Beyond eight cells refused');specialCheck($db->payload('character:character-player')['resources']['mana']===100,'Refused range pays nothing');
 $legacy=$db->payload('character:character-player')['abilities'][0];$legacy['castingStatId']='character-stat-agility';$rules=normalizeOnlineAbilities([$legacy])[0];specialCheck($rules['rangeCells']===8&&$rules['reducedFailureCooldown']===true&&$rules['infusion']['minimumMana']===0,'Shared configurable rules loaded');
+$candidateDescription = "Deux frappes de rapière envoient deux crocs éthérés vers la même cible.\n\nPortée : 6 cases. Vous pouvez infuser du mana pour renforcer les dégâts ignorant l’armure. Le mana infusé reste dépensé en cas d’échec.";
+$customInfusion = ['version'=>1, 'enabled'=>true, 'ratio'=>2, 'minimumMana'=>3, 'refundOnMiss'=>true];
+foreach ([
+    [1, 6.0, 'reach', 8],
+    [1, 6, 'melee', 6],
+    [1, 11, 'reach', 11],
+    [null, 8, 'reach', 8],
+    [null, 6, 'reach', 6],
+    [2, 6, 'reach', 6],
+] as [$revision, $range, $reach, $expectedRange]) {
+    $entry = [...$legacy, 'rangeCells'=>$range, 'reach'=>$reach, 'infusion'=>$customInfusion];
+    if ($revision !== null) $entry['rulePreset'] = ['id'=>'ethereal-fangs-reach', 'revision'=>$revision];
+    if ($revision === 1 && $reach === 'reach' && $range === 6.0) $entry['description'] = $candidateDescription;
+    $normalized = normalizeOnlineAbilities([$entry])[0];
+    specialCheck($normalized['rangeCells'] === $expectedRange && $normalized['reach'] === $reach
+        && $normalized['infusion'] === $customInfusion
+        && ($normalized['rulePreset']['revision'] ?? 0) === 2,
+        'Corrective Fourreaux migration keeps custom range, reach and infusion: ' . json_encode([$revision,$range,$reach,$normalized]));
+    if (isset($entry['description'])) specialCheck(str_contains($normalized['description'], 'Portée : 8 cases.'), 'The stored six-cell description follows the restored range.');
+    specialCheck(normalizeOnlineAbilities([$normalized])[0] === $normalized, 'Fourreaux migration is idempotent.');
+}
+
+$eye = ['id'=>'ability-1a43a9ff-6af8-4b37-8940-d6894ba864a2', 'name'=>'Œil suprême', 'effect'=>'movement', 'formula'=>'0'];
+specialCheck(applicationConfiguredAbilityRules($eye)['rangeCells'] === 4, 'An unconfigured Supreme Eye defaults to four cells.');
+foreach ([
+    [2, 6.0, 'reach', 4],
+    [2, 4, 'reach', 4],
+    [2, 9, 'reach', 9],
+    [2, 6, 'ranged', 6],
+    [1, 6, 'reach', 6],
+    [3, 6, 'reach', 6],
+] as [$revision, $range, $reach, $expectedRange]) {
+    $saved = [...$eye, 'rangeCells'=>$range, 'reach'=>$reach, 'rulePreset'=>['id'=>'supreme-eye-reach','revision'=>$revision]];
+    $restored = applicationConfiguredAbilityRules($saved);
+    specialCheck($restored['rangeCells'] === $expectedRange && $restored['reach'] === $reach
+        && $restored['rulePreset']['revision'] === 3,
+        'Only the range inherited from the temporary Supreme Eye preset changes.');
+    specialCheck(applicationConfiguredAbilityRules($restored) === $restored, 'Supreme Eye migration is idempotent.');
+}
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

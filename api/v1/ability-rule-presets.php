@@ -2,7 +2,9 @@
 declare(strict_types=1);
 require_once __DIR__.'/fixed-structure-size.php';
 require_once __DIR__.'/ability-description-presets.php';
+require_once __DIR__.'/ability-messages.php';
 require_once __DIR__.'/path-strike-presets.php';
+require_once __DIR__.'/item-template-aliases.php';
 const XAR_PRECISION_SERPENTAIRE_ID='ability-b7c57dd7-7a09-45aa-b5a0-7e1928a06066';
 function applicationSimpleAbilityPresets(): array
 {
@@ -74,7 +76,20 @@ function applicationSacredCircleDescription(array $effect): string
         $points ? 'Résistances en points de pourcentage — '.implode(', ', $points).'.' : '',
     ]));
 }
+function applicationConfiguredElementalBreath(array $source): array {
+    if (($source['id']??'')!=='ability-mania-elemental-breath' || ($source['effect']??'')!=='damage') return $source;
+    if (in_array($source['itemRequirement']['templateId']??'', ['',XAR_ELEMENTAL_POTION_ALIAS_ID,'potion-catalog-elemental-component'],true)) {
+        $source['itemRequirement']=['templateId'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'quantity'=>1,'consumeOn'=>'attempt'];
+        if(is_string($source['description']??null))$source['description']=preg_replace('/Potion infus[ée]e/iu','Potion élémentaire',$source['description']);
+    }
+    if(is_string($source['description']??null))$source['description']=str_replace(
+        'Le jet de Chance est résolu avant le souffle : seul un échec critique le bloque, sans rendre les coûts, la potion ni l’utilisation. Le MJ arbitre les réussites critiques et autres effets de Chance.',
+        'Seuls les critiques de Chance sont affichés. Un échec critique annule le souffle et rend la Potion élémentaire. Le mana, la fatigue et l’utilisation restent dépensés. Le MJ arbitre les réussites critiques.',
+        $source['description']);
+    return $source;
+}
 function applicationConfiguredAbilityRules(array $source): array {
+    $source = applicationConfiguredElementalBreath(applicationConfiguredPrayerAbility($source));
     $presets = applicationSimpleAbilityPresets();
     $configured=applicationConfiguredStructureSizing(applicationConfiguredPathStrikeAbility(applicationConfiguredInclusiveFatigue(applicationConfiguredOppositionAbility($source))));$preset=$presets[$source['id']??'']??null;
     if (($preset['presetId'] ?? '') === 'rotatable-thorn-wall' && ($configured['effect'] ?? 'damage') === 'damage') {
@@ -124,12 +139,26 @@ function applicationConfiguredAbilityRules(array $source): array {
     if(isset($preset['attackEnhancementTrigger'])&&($source['effect']??'')===($preset['effect']??'')&&($source['attackEnhancement']['mode']??'')==='on-attack-dot')return [...$configured,'attackEnhancement'=>applicationConfiguredAttackEnhancement((string)$source['id'],$source['attackEnhancement'])];
     if(isset($preset['values'])&&($source['effect']??'damage')===($preset['effect']??'damage')){
         $applied=applicationAbilityRulePreset($source['rulePreset']??null);
+        $previousRange = $source['rangeCells'] ?? null;
+        $matchesRangeUpgrade = isset($preset['rangeUpgradeFrom'])
+            && (is_int($previousRange) || is_float($previousRange))
+            && (float) $previousRange === (float) $preset['rangeUpgradeFrom']
+            && ($source['reach'] ?? null) === $preset['values']['reach']
+            && (!isset($preset['rangeUpgradeFromRevision']) || ($applied['revision'] ?? null) === $preset['rangeUpgradeFromRevision']);
+        if ($preset['presetId'] === 'ethereal-fangs-reach') {
+            if (($applied['id'] ?? null) === $preset['presetId'] && $applied['revision'] >= $preset['revision']) return $configured;
+            $usesDefaults = !array_key_exists('rangeCells', $source) && !array_key_exists('infusion', $source);
+            $wasStandard = ($applied['id'] ?? null) === $preset['presetId'] && $matchesRangeUpgrade;
+            $changes = $usesDefaults ? $preset['values'] : ($wasStandard ? ['rangeCells' => $preset['values']['rangeCells']] : []);
+            return [...$configured, ...$changes, 'rulePreset' => ['id' => $preset['presetId'], 'revision' => $preset['revision']]];
+        }
         if(!empty($preset['deviceUpgradeOnly'])&&($configured['device']['kind']??'')==='beam'){return [...$configured,'device'=>[...$preset['values']['device'],...$configured['device']],...(!empty($preset['values']['description'])&&($configured['device']['unlimitedRange']??true)&&($configured['device']['affectUnseen']??true)&&!($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])?['description'=>$preset['values']['description']]:[]),...(!($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision'])?['rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]]:[])];}
         if(!empty($preset['upgradeOnly'])&&$applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']<$preset['revision'])return [...$configured,...$preset['upgradeValues'],'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
         if(!empty($preset['targetingUpgradeOnly'])&&!($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']>=$preset['revision']))return [...$configured,'damageTargeting'=>['affectCaster'=>true,'affectAllies'=>true,'affectEnemies'=>true,...($preset['targetingDefaults']??[]),...($configured['damageTargeting']??[]),...$preset['values']['damageTargeting']],...(!empty($preset['values']['description'])?['description'=>$preset['values']['description']]:[]),'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
         if($applied!==null&&$applied['id']===$preset['presetId']&&$applied['revision']<$preset['revision']&&!empty($preset['rangeUpgradeOnly'])){
             $upgraded=[...$configured,...($preset['upgradeValues']??[]),'rulePreset'=>['id'=>$preset['presetId'],'revision'=>$preset['revision']]];
             if(!isset($preset['rangeUpgradeRevision'])||$applied['revision']<$preset['rangeUpgradeRevision']){
+                if (isset($preset['rangeUpgradeFrom']) && !$matchesRangeUpgrade) return $upgraded;
                 $upgraded['rangeCells']=$preset['values']['rangeCells'];
                 if(isset($source['workflow'])){$upgraded['workflow']=$source['workflow'];foreach($upgraded['workflow']['steps'] as &$movement)if(!empty($movement['charge'])){$movement['maximumCells']=$preset['values']['rangeCells'];foreach($upgraded['workflow']['steps'] as &$target)if($target['id']===$movement['charge']['targetStepId']){$target['rangeCells']=$preset['values']['rangeCells'];unset($target['rangeMeters']);}unset($target);}unset($movement);}
                 if(!empty($preset['rangeDescriptionFrom'])&&str_starts_with($upgraded['description']??'',$preset['rangeDescriptionFrom']))$upgraded['description']=$preset['rangeDescriptionTo'].substr($upgraded['description'],strlen($preset['rangeDescriptionFrom']));
@@ -154,6 +183,11 @@ function applicationConfiguredAttackEnhancement(string $abilityId,array $enhance
             'bonuses'=>[...$preset['enhancementBonusUpgrade'],...(is_array($enhancement['bonuses']??null)?$enhancement['bonuses']:[])]];
     if(!isset($preset['attackEnhancementTrigger'])||($enhancement['mode']??'')!=='on-attack-dot')return $enhancement;
     $patch=[];if(!array_key_exists('trigger',$enhancement))$patch['trigger']=$preset['attackEnhancementTrigger'];if(!array_key_exists('weaponIds',$enhancement)&&isset($preset['attackEnhancementWeaponIds']))$patch['weaponIds']=$preset['attackEnhancementWeaponIds'];
+    $formula = $enhancement['dot']['formula'] ?? null;
+    if (isset($preset['attackEnhancementDotFormulaUpgrade']) && is_string($formula)) {
+        [$oldFormula, $newFormula] = $preset['attackEnhancementDotFormulaUpgrade'];
+        if (strtolower(preg_replace('/\s+/','',$formula)) === $oldFormula) $patch['dot'] = [...$enhancement['dot'], 'formula'=>$newFormula];
+    }
     return $patch!==[]?[...$enhancement,...$patch]:$enhancement;
 }
 

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/character-statistics.php';
+require_once __DIR__ . '/simple-weapon-ability.php';
 
 function applicationCharge(mixed $v): ?array {
     if (!$v) return null;
@@ -14,7 +15,26 @@ function applicationCharge(mixed $v): ?array {
         'finalCondition'=>dsRider($v['finalCondition']??null)];
 }
 function applicationChargeEnemy(array $source,array $target):bool {$controller=static fn($t)=>($t['controllerAccountId']??'')?:($t['controllerPlayerId']??'')?:(!empty($t['playerControlled'])?'player':'');return $source['id']!==$target['id']&&(!empty($source['friendlyFire'])||(bool)$controller($source)!==(bool)$controller($target));}
-function applicationChargeWeaponRange(array $source):int {return ['melee'=>2,'reach'=>4,'ranged'=>15][applicationWeaponReach($source['weaponAttacks'][0]??[])];}
+function applicationIsBodyCharge(array $ability): bool
+{
+    return ($ability['abilityId'] ?? $ability['id'] ?? '') === 'ability-566f321d-ca05-4b02-92ad-8149076076e6'
+        || ($ability['abilityId'] ?? $ability['id'] ?? '') === 'body-charge' || ($ability['rulePreset']['id'] ?? '') === 'body-charge';
+}
+function applicationChargeSelectionIds(mixed $ids): array
+{
+    if (!is_array($ids) || !array_is_list($ids) || count($ids) > 99) {
+        applicationChargeFail('La sélection des cibles du trajet est invalide.');
+    }
+    $selected = [];
+    foreach ($ids as $id) {
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,120}$/D', $id) || isset($selected[$id])) {
+            applicationChargeFail('La sélection des cibles du trajet est invalide.');
+        }
+        $selected[$id] = $id;
+    }
+    return array_values($selected);
+}
+function applicationChargeWeaponRange(array $source):int {return applicationWeaponRangeCells($source['weaponAttacks'][0]??[]);}
 function applicationChargeFail(string $message): never { applicationComplexAbilityFail($message,'complex_ability_charge_invalid'); }
 function applicationChargeDistanceMeters(array $a,array $b,array $map): float {
     $d=applicationComplexMovementDimensions($map);$x=abs($b['x']-$a['x'])*$d['width']/(100*$d['grid']);$y=abs($b['y']-$a['y'])*$d['height']/(100*$d['grid']);
@@ -24,7 +44,8 @@ function applicationChargeFinalTarget(array $execution,array $step,array $tokens
     $allocations=$execution['stepStates'][$step['charge']['targetStepId']]['allocations']??[];
     if(count($allocations)!==1)applicationChargeFail('Choisissez une cible finale avant de charger.');
     $target=null;foreach($tokens as $t)if($t['id']===$allocations[0]['tokenId']){$target=$t;break;}
-    if(!$target||!is_numeric($target['x']??null)||!is_numeric($target['y']??null)||$target['id']===$execution['sourceTokenId']||!empty($target['hidden'])||($target['hp']??0)<=0||($target['layerId']??'ground')!==$execution['layerId'])applicationChargeFail('La cible finale n’est plus disponible sur ce niveau.');
+    if(!$target||!is_numeric($target['x']??null)||!is_numeric($target['y']??null)||$target['id']===$execution['sourceTokenId']||!empty($target['hidden'])||($target['hp']??0)<=0||($target['layerId']??'ground')!==$execution['layerId']
+        || (applicationIsBodyCharge($execution) && !empty($target['dimSilhouette'])))applicationChargeFail('La cible finale n’est plus visible ou disponible sur ce niveau.');
     return $target;
 }
 function applicationValidateChargePath(array $state,array $target,array $map,bool $atDestination=false,?array $source=null): void {
@@ -57,7 +78,9 @@ function applicationChargeAttackPlan(array $execution,array $step,array $state,a
     $final=applicationChargeFinalTarget($execution,$step,$tokens);applicationValidateChargePath($state,$final,$map,true,$source);$weapon=$source['weaponAttacks'][0]??null;
     if(empty($weapon['id']))applicationChargeFail('L’unité qui charge doit avoir une arme principale configurée.');
     if(!array_filter($source['stats']??[],static fn($s)=>($s['id']??'')===$step['charge']['statId']&&is_numeric($s['value']??null)))applicationChargeFail('La statistique de la charge est absente de cette unité.');
-    $crossed=[];foreach($tokens as $t){if($t['id']===$source['id']||$t['id']===$final['id']||!is_numeric($t['x']??null)||!is_numeric($t['y']??null)||!empty($t['hidden'])||!empty($t['dimSilhouette'])||($t['layerId']??'ground')!==$execution['layerId']||($t['hp']??0)<=0||($t['maxHp']??0)<=0)continue;
+    $selected=applicationIsBodyCharge($execution)&&array_key_exists('pathTargetTokenIds',$state)
+        ? array_fill_keys(applicationChargeSelectionIds($state['pathTargetTokenIds']),true) : null;
+    $crossed=[];foreach($tokens as $t){if($t['id']===$source['id']||$t['id']===$final['id']||($selected!==null&&!isset($selected[$t['id']]))||!is_numeric($t['x']??null)||!is_numeric($t['y']??null)||!empty($t['hidden'])||!empty($t['dimSilhouette'])||($t['layerId']??'ground')!==$execution['layerId']||($t['hp']??0)<=0||($t['maxHp']??0)<=0)continue;
         if(($step['charge']['pathTargets']??'')==='enemies'&&!applicationChargeEnemy($source,$t))continue;
         $distance=applicationChargeFirstContact($t,$state,$map,($step['charge']['pathRange']??'')==='weapon'?applicationChargeWeaponRange($source):0);if(is_finite($distance))$crossed[]=['token'=>$t,'distance'=>$distance];}
     usort($crossed,static fn($a,$b)=>($a['distance']<=>$b['distance'])?:strcmp($a['token']['id'],$b['token']['id']));

@@ -127,6 +127,24 @@ function applicationPassageDestinationRecords(PDO $db, array $map, string $scene
     }
     return $records;
 }
+function applicationTransferPassageDots(array &$state, string $tokenId, string $fromSceneId, string $targetSceneId, array $clock): void
+{
+    foreach (['damageOverTime','pendingDotResolutions'] as $field) {
+        foreach ($state[$field] ?? [] as $index=>$effect) {
+            if (($effect['sceneId'] ?? '') !== $fromSceneId || ($effect['targetTokenId'] ?? '') !== $tokenId) continue;
+            $effect['sceneId'] = $targetSceneId;
+            if ($field === 'damageOverTime') {
+                $effect['combatId'] = !empty($clock['active']) ? ($clock['combatId'] ?? '') : '';
+                $effect['lastTurnSerial'] = (int) ($clock['turnSerial'] ?? 0);
+                $effect['lastManualTurn'] = (int) ($state['devices']['manualTurns'][$targetSceneId] ?? 0);
+                unset($effect['lastTargetRound']);
+                $effect += applicationDotPlacementRound($clock,$tokenId);
+            }
+            $state[$field][$index] = $effect;
+        }
+    }
+}
+
 function applicationApplyPassageCommand(array $state,array $identity,string $command,array $args,array $context=[]):array {
     $isGm=($identity['role']??'')==='gm';
     if($command!=='passage.use'&&!$isGm)passageFailure('La gestion des passages est réservée au MJ.',403);
@@ -220,6 +238,7 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
         foreach($travelers as $traveler){
         $index=array_search($traveler['id'],array_column($map['tokens'],'id'),true);
         $token=array_replace($traveler,$position,['layerId'=>$target['layerId'],'targetTokenId'=>null,'_updatedAt'=>$movedAt,'_movedAt'=>$movedAt]);
+        if ($targetScene !== $sceneId) $token['initiative'] = null;
         foreach($map['tokens'] as &$other)if(($other['targetTokenId']??'')===$token['id']&&($other['layerId']??'ground')!==$token['layerId'])$other['targetTokenId']=null;unset($other);
         if($targetScene===$sceneId)$map['tokens'][$index]=$token;
         else {
@@ -240,8 +259,20 @@ function applicationApplyPassageCommand(array $state,array $identity,string $com
             $destinationInitiative=$targetScene===$state['activeSceneId']?($state['initiative']??[]):[];
             if($targetScene!==$state['activeSceneId'])foreach($state['scenes']??[] as $scene)if($scene['id']===$targetScene)$destinationInitiative=$scene['combat']['initiative']??[];
             if(isset($state['attackEnhancements']))$state['attackEnhancements']=applicationTransferAttackEnhancements($state['attackEnhancements'],$token,$sceneId,$targetScene,$destinationInitiative);
+            applicationTransferPassageDots($state,$token['id'],$sceneId,$targetScene,$destinationInitiative);
         }
         foreach(array_keys($state['devices']['devices']??[]) as $i){$device=&$state['devices']['devices'][$i];if($device['sourceTokenId']===$token['id']&&$device['sceneId']===$sceneId&&$device['definition']['kind']==='dome'&&($device['mode']??'carried')!=='placed')$device=array_replace($device,['sceneId'=>$targetScene,'layerId'=>$token['layerId'],'x'=>$token['x'],'y'=>$token['y'],'revision'=>$device['revision']+1]);unset($device);}
+        }
+        if ($targetScene !== $sceneId) {
+            if ($sceneId === $state['activeSceneId']) {
+                $state['initiative'] = removeOnlineTokenIdsFromInitiative($state['initiative'],$travelerIds);
+            } else {
+                foreach ($state['scenes'] as $index=>$scene) {
+                    if ($scene['id'] !== $sceneId) continue;
+                    $state['scenes'][$index]['combat']['initiative'] = removeOnlineTokenIdsFromInitiative($scene['combat']['initiative'] ?? [],$travelerIds);
+                    break;
+                }
+            }
         }
         return ['state'=>$state,'result'=>['tokenId'=>$leaderId,'riderCount'=>count($travelers)-1,'sourceSceneId'=>$sceneId,'sceneId'=>$targetScene,'layerId'=>$target['layerId'],'x'=>$position['x'],'y'=>$position['y'],'destinationLabel'=>passageDestinationLabel($state,$entry)]];
     }else passageFailure('Action de passage inconnue.',400);
@@ -381,8 +412,14 @@ function onlinePassageCommand(PDO $db,array &$records,array &$pending,array $ide
         }
     } else {
         $old=legacyStateToDomains($before);$new=legacyStateToDomains($applied['state']);
-        foreach($new as $key=>$payload)if((str_starts_with($key,'map:')||str_starts_with($key,'token:')||str_starts_with($key,'token-index:')||in_array($key,['devices','activity'],true))&&dsCanonical($old[$key]??null)!==dsCanonical($payload))queueOnlineDomainUpsert($pending,$records,$key,$payload);
+        foreach($new as $key=>$payload)if((str_starts_with($key,'map:')||str_starts_with($key,'token:')||str_starts_with($key,'token-index:')||str_starts_with($key,'initiative:')||in_array($key,['devices','activity'],true))&&dsCanonical($old[$key]??null)!==dsCanonical($payload))queueOnlineDomainUpsert($pending,$records,$key,$payload);
         foreach($old as $key=>$payload)if(str_starts_with($key,'token:')&&!isset($new[$key]))queueOnlineDomainDelete($pending,$records,$key);
+        if ($command === 'passage.use') {
+            $departureClockKey = 'initiative:'.$applied['result']['sourceSceneId'];
+            if (!empty($old[$departureClockKey]['active']) && empty($new[$departureClockKey]['active'])) {
+                onlineFinishPrunedCombat($db,$records,$pending,$identity,[$departureClockKey=>true]);
+            }
+        }
     }
     onlineStorePersistentCommandReceipt($records,$pending,$receipt,'passage-command',$requestId,$identity['id'],'passage-'.$requestId,$args['sceneId']??'passages',$signature,$applied['result']);
     return $applied['result'];

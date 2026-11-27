@@ -5,10 +5,13 @@ function applicationPassivePresets():array {static $presets=null;return $presets
 function applicationPassiveKinds():array {return [
  'stat-roll-option'=>['name'=>'Option de jet de caractéristique','description'=>'Propose un jet particulier sur la caractéristique configurée, avec amélioration de résultat ou avantage.'],
  'manual'=>['name'=>'Passif à arbitrer','description'=>'Connaissance ou particularité à arbitrer par le MJ, sans bonus chiffré automatique.'],
+ 'poison-damage-healing'=>['name'=>'Corps toxique','description'=>'Les dégâts de poison reçus restaurent autant de PV. Le passif ne confère pas de résistance au poison.'],
+ 'poison-resilience'=>['name'=>'Manipulatrice de poison','description'=>'Ajoute 25 points de résistance au poison. Les poisons reçus durent un tour de moins, pour une durée minimale d’un tour.'],
  'effect-resistance'=>['name'=>'Résistance aux effets reçus','description'=>'Réduit les dégâts et la durée des familles d’effets ou des consommables configurés.'],
  'ranged-target-evasion'=>['name'=>'Malus des attaques à distance reçues','description'=>'Réduit le seuil des attaques à distance dirigées contre cette unité.'],
  'infusion-efficiency'=>['name'=>'Efficacité des infusions','description'=>'Améliore le ratio des infusions déjà autorisées par les attaques et compétences.'],
  'infusion-forbidden'=>['name'=>'Infusion interdite','description'=>'Cette unité ne peut pas infuser de mana dans ses compétences ou attaques.'],
+ 'traditional-healing-only'=>['name'=>'Circuit magique détruit','description'=>'Seuls les soins traditionnels, comme le repos et les soins médicaux, restaurent ses PV.'],
  'opportunity-attack'=>['name'=>'Attaque d’opportunité','description'=>'En combat, avertit après qu’un ennemi quitte la portée d’une arme de mêlée. Le MJ choisit de résoudre ou de refuser la réaction ; aucune attaque automatique.'],
  'mental-control-resistance'=>['name'=>'Boss : résistance au contrôle mental','description'=>'Un contrôle mental réussi devient une simple influence de même durée. Le contrôleur du pion ne change pas.'],
  'ability-fatigue-surcharge'=>['name'=>'Fatigue supplémentaire des compétences','description'=>'L’activation d’une compétence coûte une fatigue supplémentaire. Les coûts indiqués comme déjà majorés ne sont pas augmentés une seconde fois.']];}
@@ -42,7 +45,9 @@ function applicationPassiveAbilities(mixed $v):array {
  return $result;
 }
 function applicationConfiguredPassiveAbilities(array $source):array {
- $values=applicationPassiveAbilities($source['passiveAbilities']??null);$origin=($source['characterId']??'')?:((($source['cloneSourceCharacterId']??'')?:($source['id']??'')));$entries=applicationPassivePresets()[$origin]??[];
+ $values=applicationPassiveAbilities($source['passiveAbilities']??null);$origin=($source['characterId']??'')?:((($source['cloneSourceCharacterId']??'')?:($source['id']??'')));
+ if(in_array($origin,['token-P-CK3ZtFhBidBd0rf3mlyA','unit_token-P-CK3ZtFhBidBd0rf3mlyA'],true))$origin='character-X4kmpvnbF9rQgNGc';
+ $entries=applicationPassivePresets()[$origin]??[];
  $independent=($source['followCharacter']??true)===false||!empty($source['linkedTokenId'])||($source['independent']??false)===true||($source['independentClone']??false)===true||!empty($source['cloneSourceCharacterId'])&&($source['id']??'')!==$origin;
  foreach(array_is_list($entries)?$entries:[$entries] as $preset){if($independent&&($preset['existingCloneDefault']??false)!==true)continue;$found=false;foreach($values as $value)if($value['id']===$preset['id']||!in_array($preset['kind'],['manual','stat-roll-option'],true)&&$value['kind']===$preset['kind']){$found=true;break;}if(!$found)$values[]=$preset;}
  return applicationPassiveAbilities($values);

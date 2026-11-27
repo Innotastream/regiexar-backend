@@ -115,10 +115,14 @@ function normalizeItemStore(?array $value): array {
     if (($value['version'] ?? 1) !== 1) itemFailure('Ces objets proviennent d’une version plus récente. Ils ont été conservés.', 409);
     if (!is_array($value['templates'] ?? null) || !is_array($value['instances'] ?? null) || count($value['templates']) > 200 || count($value['instances']) > 2000) itemFailure('La collection d’objets dépasse les limites.');
     $value=applicationWeaponCatalogPresets(applicationPotionCatalogPresets(mergeKnownItemTemplateAliases($value)));
+    $pendingItems=array_fill_keys(array_column(is_array($value['pendingUses']??null)?$value['pendingUses']:[],'itemId'),true);
+    $activeTemplateIds=[];
+    foreach ($value['instances'] as $instance) if (isset($pendingItems[$instance['id']??''])) $activeTemplateIds[$instance['templateId']]=true;
     $categories=normalizeItemCategories($value['categories']??[]);
     $templates = []; $ids = [];
     foreach ($value['templates'] as $template) {
         if (!is_array($template)) itemFailure('Le modèle d’objet est invalide.');
+        if (!isset($activeTemplateIds[$template['id']??''])) $template=applicationPoisonPotionTemplate(applicationGenericExplosivePotion($template));
         $template = normalizeItemTemplate($template);
         if(customItemCategoryId($template['category']??null)&&!in_array($template['category'],array_column($categories,'id'),true))itemFailure('Cette catégorie n’existe plus.');
         if (isset($ids[$template['id']])) itemFailure('Deux modèles portent le même identifiant.');
@@ -495,7 +499,12 @@ function applyDynamicItemCommand(array $state, array $identity, string $command,
             }
             if ($template['kind'] !== 'potion') itemFailure('Cet objet n’est pas une potion.');
             $resources = $recipient['resources'] ?? [];
-            foreach (['hp', 'mana'] as $resource) $resources[$resource] = max($resource === 'hp' ? -1000000000 : 0, min($resources[$resource === 'hp' ? 'maxHp' : 'maxMana'] ?? 0, ($resources[$resource] ?? 0) + $template['potion'][$resource]*($itemEnhancement['multipliers']['healing']??1)));
+            foreach (['hp', 'mana'] as $resource) {
+                if ($resource === 'hp' && $template['potion']['hp'] > 0 && applicationTraditionalHealingOnly($recipient, $state)) continue;
+                if ($resource === 'hp' && $template['potion']['hp'] < 0
+                    && applicationHasAllHarmImmunity($recipientToken ?? $recipient, $state, $state['activeSceneId'])) continue;
+                $resources[$resource] = max($resource === 'hp' ? -1000000000 : 0, min($resources[$resource === 'hp' ? 'maxHp' : 'maxMana'] ?? 0, ($resources[$resource] ?? 0) + $template['potion'][$resource]*($itemEnhancement['multipliers']['healing']??1)));
+            }
             $fatigue = $recipient['fatigue'] ?? []; $fatigue['current'] = max(0, min($fatigue['max'] ?? 150, ($fatigue['current'] ?? 0) + $template['potion']['fatigue']*($template['potion']['fatigue']<0?($itemEnhancement['multipliers']['healing']??1):1)));
             $patch = ['id' => $recipient['id'], 'resources' => $resources, 'fatigue' => $fatigue];
             applicationConsumeItemUseEnhancement($state,$itemEnhancement);
@@ -609,6 +618,20 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
         }
         return [...$result, 'deduplicated' => true];
     }
+    if ($command === 'item.use.cancel') {
+        $records += applicationDomainRecords($connection,['items']);
+        $items = applicationDomainPayload($records,'items');
+        try {
+            $use = cancelPendingItemUse($items,$args['useId'] ?? null,$isGm);
+        } catch (RuntimeException $error) {
+            rejectOnlineCommand($connection,$error->getCode(),$error->getMessage(),'item_command_refused');
+        }
+        queueOnlineDomainUpsert($pending,$records,'items',$items);
+        onlineAppendPlayerAction($connection,$records,$pending,$identity,$use['sceneId'],['kind'=>'action','summary'=>'Annule une utilisation d’objet']);
+        $result = ['cancelled'=>true];
+        onlineStorePersistentCommandReceipt($records,$pending,$context,'item-command',$requestId,$identity['id'],'item-'.$requestId,'items',$signature,$result);
+        return $result;
+    }
     $records = array_replace($records, applicationDomainRecords($connection, ['items', 'devices', 'scene-index']), applicationDomainRecordsByPrefix($connection, 'character:'));
     $sceneId = $isGm && itemId($args['sceneId'] ?? null) ? $args['sceneId'] : onlineActiveSceneId($table);
     $records = array_replace($records, applicationDomainRecords($connection, ['map:' . $sceneId,'initiative:'.$sceneId]));
@@ -664,7 +687,7 @@ function onlineItemCommand(PDO $connection, array &$records, array &$pending, ar
     if($command==='item.opposition'){foreach($state['map']['tokens']??[]as$target)if(($target['id']??'')===($args['targetTokenId']??''))foreach($applied['result']['rolls']as&$r)onlineAwardNaturalJoker($connection,$records,$pending,$target,$r,$r['outcome']??null,$sceneId);unset($r);}
     $result = isset($applied['result']['template']) ? ['templateId' => $applied['result']['template']['id']] : $applied['result'];
     if (!$isGm) $result = publicItemCommandResult($result,$applied['items']['templates']??[]);
-    if(in_array($command,['item.consume','item.activate','item.defenses.select','item.trap.resolve','item.use.cancel','item.opposition','item.opposition.validate'],true)){
+    if(in_array($command,['item.consume','item.activate','item.defenses.select','item.trap.resolve','item.opposition','item.opposition.validate'],true)){
         onlineAppendPlayerAction($connection,$records,$pending,$identity,$sceneId,['kind'=>'action','summary'=>'Résout une utilisation d’objet']);
     }
     onlineStorePersistentCommandReceipt($records, $pending, $context, 'item-command', $requestId, $identity['id'], 'item-' . $requestId, 'items', $signature, $result);

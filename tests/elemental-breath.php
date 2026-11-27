@@ -4,14 +4,26 @@ define('XAR_TACTICAL_FIXTURE_ONLY',true);
 require __DIR__.'/tactical-lifecycle.php';
 $checks=0;
 function breathCheck(bool $ok,string $message):void{if(!$ok)throw new RuntimeException($message);$GLOBALS['checks']++;}
-function breathAbility():array{return ['id'=>'ability-mania-elemental-breath','name'=>'Souffle renommé de recette','description'=>'Recette configurable','effect'=>'damage','formula'=>'10d6','damageType'=>'magical','castingStatId'=>'','fatigueCost'=>10,'manaCost'=>20,'cooldownRounds'=>0,'restRecharge'=>'short','usesPerRest'=>2,'reach'=>'reach','rangeCells'=>4,'projectile'=>false,'damageTargeting'=>['mode'=>'area','shape'=>'cone','lengthCells'=>4,'radiusCells'=>4,'origin'=>'point','affectCaster'=>false,'affectAllies'=>true,'affectEnemies'=>true,'defenseSelection'=>'gm-agility'],'castGate'=>['version'=>1,'kind'=>'chance','blockOn'=>'critical-failure','defenseSelection'=>'gm-agility'],'itemRequirement'=>['templateId'=>'potion-infused','quantity'=>1,'consumeOn'=>'attempt'],'damageVariants'=>[['id'=>'fire','label'=>'Feu','damageType'=>'magical'],['id'=>'acid','label'=>'Acide','damageType'=>'physical']]];}
-function breathFixture(bool $hyperactive=true):MemoryConnection{$db=fixture();$c=$db->payload('character:character-player');$c['passiveAbilities']=$hyperactive?[['version'=>1,'id'=>'fixture-hyperactive','kind'=>'ability-fatigue-surcharge','amount'=>1]]:[];$c['abilities']=[breathAbility()];$c['resources']=['hp'=>1000,'maxHp'=>1000,'mana'=>100,'maxMana'=>100];$c['fatigue']=['current'=>0,'max'=>150];$db->put('character:character-player',$c);$db->put('initiative:scene-one',['active'=>false,'round'=>1]);$db->put('items',['version'=>1,'templates'=>[['id'=>'potion-infused','kind'=>'object','name'=>'Infusion','description'=>'Composant','image'=>'']],'instances'=>[['id'=>'infusion-one','templateId'=>'potion-infused','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']],['id'=>'infusion-two','templateId'=>'potion-infused','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']]]]);return $db;}
+function breathAbility():array{return ['id'=>'ability-mania-elemental-breath','name'=>'Souffle renommé de recette','description'=>'Consomme une Potion infusée.','effect'=>'damage','formula'=>'10d6','damageType'=>'magical','castingStatId'=>'','fatigueCost'=>10,'manaCost'=>20,'cooldownRounds'=>0,'restRecharge'=>'short','usesPerRest'=>2,'reach'=>'reach','rangeCells'=>4,'projectile'=>false,'damageTargeting'=>['mode'=>'area','shape'=>'cone','lengthCells'=>4,'radiusCells'=>4,'origin'=>'point','affectCaster'=>false,'affectAllies'=>true,'affectEnemies'=>true,'defenseSelection'=>'gm-agility'],'castGate'=>['version'=>1,'kind'=>'chance','blockOn'=>'critical-failure','defenseSelection'=>'gm-agility'],'itemRequirement'=>['templateId'=>XAR_ELEMENTAL_POTION_ALIAS_ID,'quantity'=>1,'consumeOn'=>'attempt'],'damageVariants'=>[['id'=>'fire','label'=>'Feu','damageType'=>'magical'],['id'=>'acid','label'=>'Acide','damageType'=>'physical']]];}
+function breathFixture(bool $hyperactive=true):MemoryConnection{$db=fixture();$c=$db->payload('character:character-player');$c['passiveAbilities']=$hyperactive?[['version'=>1,'id'=>'fixture-hyperactive','kind'=>'ability-fatigue-surcharge','amount'=>1]]:[];$c['abilities']=[breathAbility()];$c['resources']=['hp'=>1000,'maxHp'=>1000,'mana'=>100,'maxMana'=>100];$c['fatigue']=['current'=>0,'max'=>150];$db->put('character:character-player',$c);$db->put('initiative:scene-one',['active'=>false,'round'=>1]);$db->put('items',['version'=>1,'templates'=>[['id'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'kind'=>'object','name'=>'Potion élémentaire','description'=>'Composant','image'=>'']],'instances'=>[['id'=>'infusion-one','templateId'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']],['id'=>'infusion-two','templateId'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'revision'=>1,'location'=>['kind'=>'inventory','characterId'=>'character-player']]]]);return $db;}
 breathCheck(validApplicationAbilityEffects(breathAbility()),'The configurable gate schema must survive PHP validation');
 $fields=applicationAbilityEffectFields(breathAbility());breathCheck(isset($fields['castGate'],$fields['itemRequirement'],$fields['damageVariants'])&&$fields['damageTargeting']['shape']==='cone','Normalization must retain reusable fields');
 $legacy=breathAbility();
 $legacy['damageVariants'][]=['id'=>'ice','label'=>'Glace','damageType'=>'magical'];
 $legacy['damageVariants'][]=['id'=>'lightning','label'=>'Foudre','damageType'=>'magical'];
 $normalized=normalizeOnlineAbilities([$legacy])[0];
+breathCheck($normalized['itemRequirement']['templateId']===XAR_ELEMENTAL_POTION_TEMPLATE_ID && str_contains($normalized['description'],'Potion élémentaire'),
+    'The former infused component and description point to the actual elemental potion model');
+$legacyNote='Le jet de Chance est résolu avant le souffle : seul un échec critique le bloque, sans rendre les coûts, la potion ni l’utilisation. Le MJ arbitre les réussites critiques et autres effets de Chance.';
+$updatedNote='Seuls les critiques de Chance sont affichés. Un échec critique annule le souffle et rend la Potion élémentaire. Le mana, la fatigue et l’utilisation restent dépensés. Le MJ arbitre les réussites critiques.';
+breathCheck(applicationConfiguredElementalBreath([...$legacy,'description'=>"Règle de feu. $legacyNote"])['description']==="Règle de feu. $updatedNote",
+    'The specific former mechanic is updated inside a custom description without changing its other rules');
+$stored=breathFixture()->payload('items');
+$stored['templates'][]=['id'=>XAR_ELEMENTAL_POTION_ALIAS_ID,'kind'=>'object','name'=>'Potion infusée'];
+$stored['instances'][0]['templateId']=XAR_ELEMENTAL_POTION_ALIAS_ID;
+$recovered=normalizeItemStore($stored);
+breathCheck(count($recovered['templates'])===1 && $recovered['instances'][0]['templateId']===XAR_ELEMENTAL_POTION_TEMPLATE_ID
+    && $recovered['instances'][0]['id']==='infusion-one','An obsolete stock reference is attached to the existing potion without duplicating its instance');
 breathCheck($normalized['damageVariants']===[
  ['id'=>'fire','label'=>'Feu','damageType'=>'magical','damageElement'=>'fire'],
  ['id'=>'acid','label'=>'Acide','damageType'=>'physical'],
@@ -36,19 +48,48 @@ $invalidCast=runCommand($invalidDb,'token.attack',['sceneId'=>'scene-one','sourc
 breathCheck($invalidCast->status===400&&$invalidDb->domains===$invalidBefore,'A point inside the body is refused before costs, components or rolls');
 $plain=breathFixture(false);$plainSource=synchronizeOnlineCharacterToken($plain->payload('token:scene-one:token-player'),$plain->payload('character:character-player'));$plainPlan=onlinePrepareAbilityCasting($plain,normalizeOnlineAbilities([breathAbility()])[0],$plainSource,'scene-one',$plain->payload('initiative:scene-one'),$plain->payload('activity'));
 breathCheck($plainPlan['fatigueCost']===10,'The same breath has no implicit surcharge on an unrelated unit');
-$db=breathFixture();$created=runCommand($db,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'ability-mania-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'acid','requestId'=>'elemental-breath-attempt-0001']);
+$nativeRequest=['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>'ability-mania-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'acid','requestId'=>'elemental-breath-attempt-0001'];
+for($attempt=0;$attempt<20;$attempt++){
+ $db=breathFixture();$created=runCommand($db,'token.attack',$nativeRequest);
+ if(empty($created->body['chanceCastCriticalFailure']))break;
+ breathCheck(empty($db->payload('activity')['pendingAttacks'])&&$db->payload('items')['instances'][0]['location']['kind']==='inventory',
+    'Native critical failure is immediately closed and keeps its potion');
+}
 breathCheck($created->status===200,'Gate creation failed: '.json_encode($created->body));
 $attack=$db->payload('activity')['pendingAttacks'][0];breathCheck(($attack['validationKind']??'')==='area-gate'&&$attack['damageType']==='physical','Chance must defer the entire cone with selected damage nature');
 breathCheck($db->payload('character:character-player')['resources']['mana']==80&&$db->payload('character:character-player')['fatigue']['current']==11,'Attempt pays mana and the migrated fatigue including Mania passive once');
 breathCheck($db->payload('items')['instances'][0]['location']['kind']==='consumed','Attempt consumes actual inventory component');
+$saved=$db->payload('activity');
+foreach($saved['pendingAttacks'] as &$row){
+ $row['areaGate']['ability']['itemRequirement']=breathAbility()['itemRequirement'];
+ $row['areaGate']['ability']['description']=breathAbility()['description'];
+}
+unset($row);
+$saved['attackReceipts'][0]['attack']=$saved['pendingAttacks'][0];
+$db->put('activity',$saved);
 $selection=['attackId'=>$attack['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>[]];
-$result=runCommand($db,'token.attack.area.resolve',$selection,true,'account-gm');breathCheck($result->status===200,'Gate resolution failed: '.json_encode($result->body));
+$result=runCommand($db,'token.attack.area.resolve',$selection,true,'account-gm');breathCheck($result->status===200&&($result->body['attack']['status']??'')==='resolved','Stored cone resolves with the old component and description snapshots: '.json_encode($result->body));
 $snapshot=$db->domains;$replay=runCommand($db,'token.attack.area.resolve',$selection,true,'account-gm');breathCheck($replay->status===200&&($replay->body['deduplicated']??false)===true&&$db->domains===$snapshot,'GM replay must not pay, roll or damage twice');
 $forged=runCommand($db,'token.attack.area.resolve',[...$selection,'defenseTokenIds'=>['unrelated-token']],true,'account-gm');breathCheck($forged->status===400,'Defense table cannot add or remove units');
+
+$cloneDb=breathFixture();
+$cloneDb->put('luck',['characters'=>['character-player'=>['rollCount'=>1,'rawTotal'=>95,'startedAt'=>'2026-10-01T00:00:00Z','updatedAt'=>'2026-10-01T00:00:00Z']]]);
+$clone=runCommand($cloneDb,'token.clone',['sceneId'=>'scene-one','tokenId'=>'token-player','requestId'=>'elemental-breath-clone-0001'],true,'account-gm');
+$cloneId=$clone->body['token']['id']??'';
+breathCheck($clone->status===200&&$cloneId!=='','A real clone carries a separate launcher and inventory.');
+$beforeCloneLuck=$cloneDb->payload('luck');
+$cloneBreath=runCommand($cloneDb,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>$cloneId,'targetTokenId'=>$cloneId,
+    'attackKind'=>'ability','attackId'=>'ability-mania-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'fire','requestId'=>'clone-elemental-breath-0001']);
+$cloneOutcome=$cloneBreath->body['cast']['outcome']??[];
+breathCheck($cloneBreath->status===200
+    &&($cloneOutcome!==[]?($cloneOutcome['threshold']===50&&$cloneOutcome['raw']>=1&&$cloneOutcome['raw']<=100):
+        ($cloneBreath->body['cast']['roll']??null)===null)
+    && ($cloneBreath->body['cast']['gateAllowsEffect']??null)===(($cloneOutcome['code']??'')!=='critical-failure')
+    && $cloneDb->payload('luck')===$beforeCloneLuck,'An actual clone breath rolls Chance against 50 under the usual gate, independent of the source sheet.');
 // A regular failed launch with reduced failure refunds fatigue only. The same
 // component primitive is used, without the cone or Chance ability names.
 $db=breathFixture();$source=synchronizeOnlineCharacterToken($db->payload('token:scene-one:token-player'),$db->payload('character:character-player'));$records=applicationDomainRecords($db);$pending=[];
-$ability=['id'=>'other-ingredient-skill','name'=>'Compétence indépendante','castingStatId'=>'force','manaCost'=>20,'fatigueCost'=>10,'cooldownRounds'=>5,'reducedFailureCooldown'=>true,'itemRequirement'=>['templateId'=>'potion-infused','quantity'=>1,'consumeOn'=>'attempt']];
+$ability=['id'=>'other-ingredient-skill','name'=>'Compétence indépendante','castingStatId'=>'force','manaCost'=>20,'fatigueCost'=>10,'cooldownRounds'=>5,'reducedFailureCooldown'=>true,'itemRequirement'=>['templateId'=>XAR_ELEMENTAL_POTION_TEMPLATE_ID,'quantity'=>1,'consumeOn'=>'attempt']];
 $db->put('initiative:scene-one',['active'=>true,'round'=>1]);$records=applicationDomainRecords($db);
 $plan=onlinePrepareAbilityCasting($db,$ability,$source,'scene-one',['active'=>true,'round'=>1],$db->payload('activity'));
 $cast=onlineCommitAbilityCasting($db,$records,$pending,$plan,['success'=>false,'statId'=>'force','outcome'=>['code'=>'failure','success'=>false],'roll'=>null],$source,['id'=>'account-player']);
@@ -56,17 +97,71 @@ breathCheck(($cast['fatigueRefunded']??0)==11&&$pending['character:character-pla
 breathCheck($pending['character:character-player']['payload']['resources']['mana']==80&&$pending['items']['payload']['instances'][0]['location']['kind']==='consumed','Reduced failure never restores mana or consumed components');
 // Deterministic dice are injected only into the real authority helper, as for
 // the existing damage roller; no production environment flag controls dice.
-foreach([['fire',70],['ice',70],['lightning',70],['acid',70],['fire',100],['ice',11]] as [$variantId,$raw]){
+foreach([['fire',70],['ice',70],['lightning',70],['acid',70],['acid',55],['fire',100],['ice',100],['ice',11]] as [$variantId,$raw]){
  $db=breathFixture();$character=$db->payload('character:character-player');$rule=breathAbility();$rule['damageVariants']=[['id'=>'fire','label'=>'Feu','damageType'=>'magical'],['id'=>'ice','label'=>'Glace','damageType'=>'magical'],['id'=>'lightning','label'=>'Foudre','damageType'=>'magical'],['id'=>'acid','label'=>'Acide','damageType'=>'physical']];$character['abilities']=[$rule];$db->put('character:character-player',$character);
+ $legacyOnly=$raw===100&&$variantId==='ice';
+ if($legacyOnly){
+  $legacyStock=$db->payload('items');$legacyStock['templates'][0]=['id'=>XAR_ELEMENTAL_POTION_ALIAS_ID,'name'=>'Potion infusée','kind'=>'object'];
+  foreach($legacyStock['instances'] as &$instance)$instance['templateId']=XAR_ELEMENTAL_POTION_ALIAS_ID;
+  unset($instance);$db->put('items',$legacyStock);
+ }
+ $initialItems=$db->payload('items');
  $records=applicationDomainRecords($db);$pending=[];$source=synchronizeOnlineCharacterToken($db->payload('token:scene-one:token-player'),$character);$ability=normalizeOnlineAbilities($source['abilities'])[0];$identity=['id'=>'account-player','display_name'=>'Recette','effective_mode'=>'player','permanent_role'=>'player'];$plan=onlinePrepareAbilityCasting($db,$ability,$source,'scene-one',$db->payload('initiative:scene-one'),$db->payload('activity'));
  $args=['requestId'=>'native-cone-'.$variantId.'-'.$raw.'-0001','sourceTokenId'=>'token-player','targetTokenId'=>'token-player','attackKind'=>'ability','attackId'=>$rule['id'],'targetPoint'=>['x'=>90,'y'=>50],'variantId'=>$variantId];$tokens=onlineSceneTokensForLights($db,$records,$pending,'scene-one');$map=[...$db->payload('map:scene-one'),'tokens'=>$tokens];$targets=array_values(array_filter($tokens,static fn($token)=>in_array($token['id'],['token-monster','token-monster-two'],true)));
  $created=onlineBeginAreaCastGate($db,$records,$pending,$identity,$args,['ability'=>$ability,'source'=>$source,'sceneId'=>'scene-one','layerId'=>'ground','map'=>$map,'activity'=>$db->payload('activity'),'receipts'=>[],'castingPlan'=>$plan,'targetPoint'=>$args['targetPoint'],'targets'=>$targets,'damageComponents'=>[['type'=>$variantId==='acid'?'physical':'magical','formula'=>'10d6']],'damageFormula'=>'10d6','damageType'=>$variantId==='acid'?'physical':'magical','isGm'=>false,'visible'=>true],static fn()=>['formula'=>'1d100','total'=>$raw,'rawD100'=>$raw,'breakdown'=>(string)$raw,'rollMode'=>'normal','selectedIndex'=>0]);
+ if(in_array($raw,[55,70],true))breathCheck($created['cast']['outcome']===null&&$created['cast']['roll']===null
+    &&$created['cast']['gateAllowsEffect']===true&&$created['rolls']===[]&&empty($pending['activity']['payload']['rolls'])
+    &&!isset($created['attack']['hit']['total'])&&!isset($created['attack']['hit']['raw']),'Ordinary Chance and special 55 stay absent from replies, map, and journal');
+ else breathCheck(($created['cast']['roll']['outcome']['code']??null)===($raw===100?'critical-failure':'critical-success')
+    &&($created['cast']['roll']['outcome']['requiresGmValidation']??null)===($raw!==100)
+    &&($created['cast']['roll']['mapEvent']['value']??null)===$raw&&count($pending['activity']['payload']['rolls']??[])===1,
+    'Both types of critical Chance are visible once');
  breathCheck(empty($pending['activity']['payload']['abilityCueEvents']),'No animation before Chance/table validation');
  $resolution=['attackId'=>$created['attack']['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>[]];$resolved=onlineResolveAreaCastGate($db,$records,$pending,['id'=>'account-gm','display_name'=>'MJ'],$resolution,true);
- breathCheck($pending['character:character-player']['payload']['resources']['mana']==80&&$pending['character:character-player']['payload']['fatigue']['current']==11&&$pending['items']['payload']['instances'][0]['location']['kind']==='consumed','Every Chance outcome retains all attempt costs, including the migrated Mania passive');
+ breathCheck($pending['character:character-player']['payload']['resources']['mana']==80&&$pending['character:character-player']['payload']['fatigue']['current']==11,'Every Chance outcome retains mana and fatigue, including Mania’s passive');
  breathCheck($pending['activity']['payload']['actionTimers'][0]['restUseCount']===1,'Critical failure retains the rest quota');
- if($raw===100){breathCheck($resolved['areaAttacks']===[]&&$resolved['attack']['status']==='missed'&&empty($pending['activity']['payload']['abilityCueEvents']),'Critical failure cannot emit damage or spell animation');}
+ if($raw===100){
+  breathCheck($created['chanceCastCriticalFailure']===true&&!$created['pendingAreaGate']&&empty($pending['activity']['payload']['pendingAttacks'])
+    && ($created['cast']['refundedItemIds']??[])===['infusion-one']&&($pending['items']['payload']??$db->payload('items'))===$initialItems,
+    'Critical failure closes immediately and keeps the exact potion and revision, including legacy stock and total opposition');
+  breathCheck($resolved['areaAttacks']===[]&&$resolved['attack']['status']==='missed'&&empty($pending['activity']['payload']['abilityCueEvents'])
+    &&$resolved['deduplicated']&&$resolved['chanceCastCriticalFailure'],'A late approval of a critical failure cannot emit damage or spell animation');
+  if($legacyOnly){
+   $beforeTotal=$pending;
+   breathCheck(onlineResolveTotalOppositionResults($db,$records,$pending,$created,true,true)===$created&&$pending===$beforeTotal,
+      'The automatic total-opposition handler emits no opposition or roll after critical failure');
+  }
+ }
  else{breathCheck(count($resolved['areaAttacks'])===2,'All units fixed by the cone are resolved');foreach($resolved['areaAttacks'] as $child)breathCheck($child['damageFormula']==='10d6'&&($child['hit']['outcome']['automatic']??false)===true&&$child['damage']['rawDamage']>=10&&$child['damage']['rawDamage']<=60,'Chance critical effects never multiply 10d6');$events=$pending['activity']['payload']['abilityCueEvents'];breathCheck(count($events)===1&&$events[0]['completionCue']['spell']['presetId']==='elemental-'.$variantId&&$events[0]['completionCue']['spell']['sceneId']==='scene-one','Exactly one trusted spatial cue, with correct element and scene');}
  $before=$pending;breathCheck(onlineResolveAreaCastGate($db,$records,$pending,['id'=>'account-gm'],$resolution,true)['deduplicated']===true&&$before===$pending,'Replayed confirmation never emits another event or damage');
+ if($raw===100){
+  foreach($pending as $change)$db->put($change['key'],$change['payload']);
+  $after=$db->domains;$replayedAttack=runCommand($db,'token.attack',['sceneId'=>'scene-one',...$args]);
+  breathCheck($replayedAttack->status===200&&($replayedAttack->body['deduplicated']??false)&&($replayedAttack->body['chanceCastCriticalFailure']??false)
+    && $db->domains===$after,'Replaying the native attack does not roll again, return a second potion, or create a defense');
+  if($legacyOnly){
+   $previous=$db->payload('activity');$earlierAttack=$previous['attackReceipts'][0]['attack'];
+   unset($earlierAttack['chanceCastCriticalFailure'],$earlierAttack['resolvedAt']);
+   $earlierAttack['status']='pending';$earlierAttack['validationKind']='area-gate';
+   $earlierAttack['cast']['consumedItemIds']=['infusion-one','infusion-two'];
+   unset($earlierAttack['cast']['refundedItemIds']);
+   $previous['pendingAttacks']=[$earlierAttack];$previous['attackReceipts'][0]['attack']=$earlierAttack;$db->put('activity',$previous);
+   $stock=$db->payload('items');
+   $stock['instances'][0]['location']['kind']='consumed';$stock['instances'][0]['revision']++;
+   $stock['instances'][1]['location']=['kind'=>'consumed','characterId'=>'character-other'];
+   $db->put('items',$stock);
+   $refuse=[...$resolution,'decision'=>'reject'];
+   $restored=runCommand($db,'token.attack.area.resolve',$refuse,true,'account-gm');
+   $restoredStock=$db->payload('items');
+   breathCheck($restored->status===200&&$restored->body['chanceCastCriticalFailure']&&$restored->body['attack']['status']==='missed'
+      && $restored->body['attack']['cast']['refundedItemIds']===['infusion-one'] && empty($db->payload('activity')['pendingAttacks'])
+      && $restoredStock['instances'][0]['location']===['kind'=>'inventory','characterId'=>'character-player']
+      && $restoredStock['instances'][0]['revision']===3 && $restoredStock['instances'][1]===$stock['instances'][1],
+      'Closing an older staged critical failure restores only the matching consumed instance to its original owner');
+   $beforeRetry=$db->domains;$retry=runCommand($db,'token.attack.area.resolve',$refuse,true,'account-gm');
+   breathCheck($retry->status===200&&$retry->body['deduplicated']&&$retry->body['chanceCastCriticalFailure']
+      && $db->domains===$beforeRetry,'An older failure cannot give a second refund once closed');
+  }
+ }else breathCheck($pending['items']['payload']['instances'][0]['location']['kind']==='consumed','A viable breath consumes its potion');
 }
 echo 'Souffle élémentaire PHP : '.$checks." contrôles réussis\n";

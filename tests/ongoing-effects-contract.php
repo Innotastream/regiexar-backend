@@ -10,6 +10,24 @@ function effectFixture(array $dots): MemoryConnection {
     $db->put('activity', $activity);
     return $db;
 }
+function requireGmIdentity(PDO $connection): array {
+    return $GLOBALS['testIdentity'];
+}
+function visitEffectCombatTurn(MemoryConnection $db, array $initiative): void {
+    $key = 'initiative:scene-one';
+    $GLOBALS['testIdentity'] = ['id'=>'account-gm', 'display_name'=>'MJ fictif', 'effective_mode'=>'gm', 'permanent_role'=>'gm'];
+    $GLOBALS['testBody'] = [
+        'stateSchemaVersion'=>XAR_SESSION_SCHEMA_VERSION, 'domainSchemaVersion'=>XAR_DOMAIN_SCHEMA_VERSION,
+        'changes'=>[['key'=>$key, 'operation'=>'upsert', 'expectedRevision'=>$db->domains[$key]['revision'], 'payload'=>$initiative]],
+    ];
+    try {
+        patchApplicationDomains($db);
+    } catch (TestResponse $response) {
+        requireTactical($response->status === 200, 'The exact MJ turn update is accepted: ' . json_encode($response->body));
+        return;
+    }
+    throw new RuntimeException('Missing initiative response.');
+}
 function endEffectCombat(MemoryConnection $db): array {
     $records = applicationDomainRecords($db);
     $pending = [];
@@ -142,4 +160,231 @@ $attack = applyOnlineAttackConditions($db, $records, $pending, [
 $activity = validatedDomainPayload('activity', $pending['activity']['payload']);
 requireTactical(($attack['dotApplied'] ?? false) && count($activity['damageOverTime']) === 102,
     'The attack keeps its poison and the resulting activity remains a valid domain.');
+
+$db = fixture();
+$targetKey = 'token:scene-one:token-monster';
+$db->put($targetKey, [...$db->payload($targetKey), 'hp'=>100, 'maxHp'=>100]);
+$sheetKey = 'character:character-player';
+$rule = ['id'=>'clock-probe-poison', 'name'=>'Poison de recette', 'effect'=>'damage', 'formula'=>'1', 'damageType'=>'ignore',
+    'castingStatId'=>'', 'rangeCells'=>4,
+    'damageOverTime'=>['label'=>'Poison de recette', 'formula'=>'7', 'damageType'=>'poison', 'turns'=>3]];
+$db->put($sheetKey, [...$db->payload($sheetKey), 'abilities'=>[$rule]]);
+$baseOrder = ['token-player', 'token-monster', 'token-monster-two'];
+$clock = ['active'=>true, 'turnsStarted'=>true, 'combatId'=>'combat-dot-navigation',
+    'turnSerial'=>1, 'round'=>1, 'order'=>$baseOrder, 'currentIndex'=>0];
+$db->put('initiative:scene-one', $clock);
+$hit = runCommand($db, 'token.attack', ['sceneId'=>'scene-one', 'sourceTokenId'=>'token-player', 'targetTokenId'=>'token-monster',
+    'attackKind'=>'ability', 'attackId'=>$rule['id'], 'opposed'=>false, 'requestId'=>'clock-probe-poison-0001']);
+requireTactical($hit->status === 200 && $hit->body['attack']['status'] === 'applied'
+    && $db->payload($targetKey)['hp'] === 99, 'The ordinary attack natively applies a three-turn poison.');
+$manual = runCommand($db, 'combat.effect.periodic-hp', [...$periodic, 'formula'=>'3', 'requestId'=>'clock-probe-manual-0001'],
+    true, 'account-gm');
+requireTactical($manual->status === 200, 'The same target also gets a manual DOT waiting for its next turn.');
+$delayed = [...$clock, 'order'=>['token-monster','token-player','token-monster-two'],
+    'roundBaseOrder'=>$baseOrder, 'delayedTurnIds'=>['token-player']];
+foreach ([
+    ['label'=>'delay passes to the target', 'clock'=>[...$delayed, 'turnSerial'=>2], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'resume the delayed turn', 'clock'=>[...$delayed, 'currentIndex'=>1, 'turnSerial'=>3], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'previous shows the target again', 'clock'=>[...$delayed, 'turnSerial'=>4, 'rewoundTurnSerial'=>4], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'forward to the postponed token', 'clock'=>[...$delayed, 'currentIndex'=>1, 'turnSerial'=>5], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'last creature completes the round', 'clock'=>[...$delayed, 'currentIndex'=>2, 'turnSerial'=>6], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'restore the original order next round', 'clock'=>[...$clock, 'round'=>2, 'turnSerial'=>7], 'hp'=>89, 'durations'=>[2,1]],
+    ['label'=>'the next genuine target turn', 'clock'=>[...$clock, 'round'=>2, 'currentIndex'=>1, 'turnSerial'=>8], 'hp'=>79, 'durations'=>[1]],
+] as $step) {
+    visitEffectCombatTurn($db, $step['clock']);
+    requireTactical((int) $db->payload($targetKey)['hp'] === $step['hp']
+        && array_column($db->payload('activity')['damageOverTime'], 'remainingTurns') === $step['durations'],
+        'Only the real turn applies one instance of each active effect: ' . $step['label']);
+}
+requireTactical(applicationDotPlacementRound($delayed, 'token-player') === ['lastTargetRound'=>1]
+    && applicationDotPlacementRound($clock, 'token-monster') === [], 'When an effect is added, a postponed target has already begun its turn.');
+
+$stacked = [...$dot, 'id'=>'dot-audit-parked', 'formula'=>'7', 'family'=>'poison', 'damageType'=>'poison',
+    'sourceEffectId'=>'poison-audit', 'combatId'=>'combat-audit-old', 'lastTurnSerial'=>15, 'lastTargetRound'=>4];
+$db = effectFixture([$stacked]);
+$db->put('initiative:scene-one', [...$clock, 'combatId'=>'combat-audit-old', 'round'=>4, 'turnSerial'=>15]);
+visitEffectCombatTurn($db, [...$clock, 'active'=>false, 'combatId'=>'combat-audit-old', 'round'=>4, 'turnSerial'=>15]);
+$advance = runCommand($db, 'mechanics.command', ['command'=>'scene.advance',
+    'arguments'=>['sceneId'=>'scene-one', 'requestId'=>'clock-probe-manual-phase-0001']], true, 'account-gm');
+requireTactical($advance->status === 200 && $db->payload($targetKey)['hp'] === 33
+    && $db->payload('activity')['damageOverTime'][0]['remainingTurns'] === 1,
+    'A parked stack consumes exactly one tick on free-mode advance.');
+visitEffectCombatTurn($db, [...$clock, 'combatId'=>'combat-audit-new', 'turnSerial'=>16]);
+visitEffectCombatTurn($db, [...$clock, 'combatId'=>'combat-audit-new', 'currentIndex'=>1, 'turnSerial'=>17]);
+requireTactical($db->payload($targetKey)['hp'] === 26 && $db->payload('activity')['damageOverTime'] === [],
+    'A renewed combat ticks the preserved poison without comparing its rounds to the prior combat.');
+
+$db = fixture();
+$clock = [...$clock, 'combatId'=>'combat-enhancement-navigation'];
+$db->put('initiative:scene-one', $clock);
+$activity = $db->payload('activity');
+$source = $db->payload('token:scene-one:token-player');
+$target = $db->payload($targetKey);
+$statBuff = ['id'=>'clock-probe-buff', 'name'=>'Buff de durée',
+    'attackEnhancement'=>['mode'=>'stats', 'turns'=>3, 'bonuses'=>['force'=>10]]];
+$nextTurn = ['id'=>'clock-probe-echo', 'name'=>'Buff du prochain tour',
+    'attackEnhancement'=>['mode'=>'echo', 'turns'=>1, 'formula'=>'5', 'allyFormula'=>'5', 'damageType'=>'ignore',
+        'expiry'=>'after-next-turn']];
+applicationActivateAttackEnhancement($activity, $statBuff, $source, 'scene-one', $clock, 'clock-duration', $target);
+applicationActivateAttackEnhancement($activity, $nextTurn, $source, 'scene-one', $clock, 'clock-until-turn-end', $target);
+$db->put('activity', $activity);
+visitEffectCombatTurn($db, [...$clock, 'currentIndex'=>1, 'turnSerial'=>2]);
+$effects = $db->payload('activity')['attackEnhancements'];
+requireTactical($effects[0]['remainingTurns'] === 2 && $effects[1]['hasStarted'] === true,
+    'Both buffs use the first real start of the target turn.');
+visitEffectCombatTurn($db, [...$clock, 'turnSerial'=>3, 'rewoundTurnSerial'=>3]);
+requireTactical($db->payload('activity')['attackEnhancements'] === $effects,
+    'Going backward from the target does not wear down a buff or end its active turn.');
+visitEffectCombatTurn($db, [...$clock, 'currentIndex'=>1, 'turnSerial'=>4]);
+requireTactical($db->payload('activity')['attackEnhancements'] === $effects,
+    'Re-entering the same target turn does not count for either buff.');
+$postponed = [...$clock, 'order'=>['token-player','token-monster-two','token-monster'],
+    'roundBaseOrder'=>$baseOrder, 'delayedTurnIds'=>['token-monster'], 'currentIndex'=>1, 'turnSerial'=>5];
+visitEffectCombatTurn($db, $postponed);
+requireTactical($db->payload('activity')['attackEnhancements'] === $effects, 'Postponing the target does not end its turn.');
+visitEffectCombatTurn($db, [...$postponed, 'currentIndex'=>2, 'turnSerial'=>6]);
+requireTactical($db->payload('activity')['attackEnhancements'] === $effects, 'Resuming the delayed turn does not spend another buff turn.');
+visitEffectCombatTurn($db, [...$clock, 'round'=>2, 'turnSerial'=>7]);
+$effects = $db->payload('activity')['attackEnhancements'];
+requireTactical(array_column($effects, 'id') === ['clock-duration'] && $effects[0]['remainingTurns'] === 2,
+    'The echo expires only when the delayed turn actually ends.');
+visitEffectCombatTurn($db, [...$clock, 'round'=>2, 'currentIndex'=>1, 'turnSerial'=>8]);
+requireTactical($db->payload('activity')['attackEnhancements'][0]['remainingTurns'] === 1,
+    'The ordinary buff loses its next turn in the next round.');
+
+$timedRule = ['id'=>'clock-probe-stun', 'name'=>'Étourdissement de recette', 'effect'=>'movement', 'formula'=>'0',
+    'castingStatId'=>'', 'rangeCells'=>4, 'cooldownRounds'=>0,
+    'conditionRider'=>['version'=>1, 'label'=>'Étourdi', 'turns'=>3, 'resistance'=>false,
+        'blocksActions'=>true, 'blocksMovement'=>true]];
+foreach ([true, false] as $inCombat) {
+    $db = fixture();
+    $clock = [...$clock, 'combatId'=>'combat-audit-condition', 'active'=>$inCombat];
+    $db->put('initiative:scene-one', $clock);
+    $db->put($sheetKey, [...$db->payload($sheetKey), 'abilities'=>[$timedRule]]);
+    $cast = runCommand($db, 'ability.use', ['sceneId'=>'scene-one', 'sourceTokenId'=>'token-player', 'targetTokenId'=>'token-monster',
+        'abilityId'=>$timedRule['id'], 'requestId'=>'clock-probe-condition-0001']);
+    requireTactical($cast->status === 200 && in_array('Étourdi', $db->payload($targetKey)['conditions'], true),
+        'The native skill adds its timed stun.');
+    if (!$inCombat) {
+        foreach ([2,1,0] as $remaining) {
+            $advance = runCommand($db, 'mechanics.command', ['command'=>'scene.advance',
+                'arguments'=>['sceneId'=>'scene-one', 'requestId'=>'clock-probe-stun-phase-000'.$remaining]], true, 'account-gm');
+            requireTactical($advance->status === 200 && ($db->payload('devices')['timedConditions'][0]['remainingTurns'] ?? 0) === $remaining,
+                'A free-mode turn counts exactly once for a timed condition.');
+        }
+    } else {
+        foreach ([
+            [['currentIndex'=>1, 'turnSerial'=>2], 3],
+            [['currentIndex'=>2, 'turnSerial'=>3], 2],
+            [['currentIndex'=>1, 'turnSerial'=>4, 'rewoundTurnSerial'=>4], 2],
+            [['currentIndex'=>0, 'turnSerial'=>5, 'rewoundTurnSerial'=>5], 2],
+            [['currentIndex'=>1, 'turnSerial'=>6], 2],
+            [['currentIndex'=>2, 'turnSerial'=>7], 2],
+            [['currentIndex'=>0, 'turnSerial'=>8, 'round'=>2], 2],
+            [['currentIndex'=>1, 'turnSerial'=>9, 'round'=>2], 2],
+            [['currentIndex'=>2, 'turnSerial'=>10, 'round'=>2], 1],
+            [['currentIndex'=>0, 'turnSerial'=>11, 'round'=>3], 1],
+            [['currentIndex'=>1, 'turnSerial'=>12, 'round'=>3], 1],
+            [['currentIndex'=>2, 'turnSerial'=>13, 'round'=>3], 0],
+        ] as [$fields, $remaining]) {
+            visitEffectCombatTurn($db, [...$clock, ...$fields]);
+            requireTactical(($db->payload('devices')['timedConditions'][0]['remainingTurns'] ?? 0) === $remaining
+                && in_array('Étourdi', $db->payload($targetKey)['conditions'] ?? [], true) === ($remaining > 0),
+                'Only a real target departure wears down the stun at clock ' . $fields['turnSerial']);
+        }
+    }
+    requireTactical(!in_array('Étourdi', $db->payload($targetKey)['conditions'] ?? [], true),
+        'Expiration of the final tick removes the condition badge.');
+}
+
+$db = fixture();
+$clock = ['active'=>true, 'turnsStarted'=>true, 'combatId'=>'combat-audit-channel', 'round'=>1, 'turnSerial'=>1,
+    'order'=>$baseOrder, 'currentIndex'=>0];
+$db->put('initiative:scene-one', $clock);
+$sheet = $db->payload($sheetKey);
+$sheet['resources']['mana'] = $sheet['resources']['maxMana'] = 100;
+$sheet['abilities'] = [['id'=>'clock-probe-dome', 'name'=>'Dôme de recette', 'effect'=>'device', 'formula'=>'0', 'castingStatId'=>'',
+    'manaCost'=>0, 'fatigueCost'=>0, 'device'=>dsDefinition(['kind'=>'dome', 'channelStartTurn'=>2, 'channelManaCost'=>5, 'penaltyIncrement'=>0])]];
+$db->put($sheetKey, $sheet);
+$launched = runCommand($db, 'mechanics.command', ['command'=>'device.deploy', 'arguments'=>[
+    'sceneId'=>'scene-one', 'abilityId'=>'clock-probe-dome', 'characterId'=>'character-player', 'sourceTokenId'=>'token-player',
+    'requestId'=>'clock-probe-channel-0001',
+]]);
+requireTactical($launched->status === 200, 'The player really deploys the dome through the tactical command.');
+$records = applicationDomainRecords($db);
+$pending = [];
+$state = onlineDeviceSelectScene(onlineDeviceState($db, $records, $pending), 'scene-one');
+$identity = ['id'=>'account-player', 'display_name'=>'Joueur', 'effective_mode'=>'player', 'permanent_role'=>'player'];
+$context = onlineDeviceContext($db, $records, $pending, $identity);
+$rollCount = 0;
+$context['roll'] = static function () use (&$rollCount): array {
+    $rollCount++;
+    return ['success'=>true, 'pendingGmApproval'=>false];
+};
+$dome = $state['devices']['devices'][0];
+foreach (['explosive','beam'] as $kind) {
+    $state['devices']['devices'][] = [...$dome, 'id'=>'device-clock-'.$kind, 'elapsedTurns'=>0, 'elapsedTicks'=>0,
+        'definition'=>dsDefinition(['kind'=>$kind, 'delayTurns'=>60]), 'remainingTurns'=>60, 'waitingForConsent'=>false,
+        'itemId'=>'clock-fixture-item-'.$kind];
+}
+$advanceClock = static function (array $state, array $next) use ($context): array {
+    $previous = $state['initiative'];
+    $state['initiative'] = $next;
+    return applicationAdvanceDevices($state, $previous, $context)['state'];
+};
+$state = $advanceClock($state, [...$clock, 'currentIndex'=>1, 'turnSerial'=>2]);
+$before = array_column($state['devices']['devices'], null, 'id');
+$state = $advanceClock($state, [...$clock, 'turnSerial'=>3, 'rewoundTurnSerial'=>3]);
+requireTactical(array_column($state['devices']['devices'], null, 'id') === $before && $rollCount === 0
+    && unitById($state, 'character-player', false)['resources']['mana'] === 100,
+    'Going backward neither pays a dome channel nor moves the fuse or beam preparation.');
+$state = $advanceClock($state, [...$clock, 'currentIndex'=>1, 'turnSerial'=>4]);
+requireTactical(array_column($state['devices']['devices'], null, 'id') === $before && $rollCount === 0,
+    'Suivant after Précédent does not reduce the fuse or move the beam preparation.');
+$state = $advanceClock($state, [...$clock, 'currentIndex'=>2, 'turnSerial'=>5]);
+$secondRound = [...$clock, 'turnSerial'=>6, 'round'=>2];
+$state = $advanceClock($state, $secondRound);
+$devicesAfterRound = array_column($state['devices']['devices'], null, 'id');
+foreach (['explosive', 'beam'] as $kind) {
+    $device = $devicesAfterRound['device-clock-'.$kind];
+    requireTactical($device['elapsedTurns'] === 1 && $device['elapsedTicks'] === 0,
+        'Only the three genuine turn entries make one full cycle for '.$kind.'.');
+}
+requireTactical($state['devices']['devices'][0]['channelCount'] === 1 && $rollCount === 1
+    && (float) unitById($state, 'character-player', false)['resources']['mana'] === 95.0,
+    'The new genuine turn pays for exactly one dome roll.');
+$state = $advanceClock($state, [...$clock, 'currentIndex'=>2, 'turnSerial'=>7, 'rewoundTurnSerial'=>7]);
+$state = $advanceClock($state, [...$secondRound, 'turnSerial'=>8]);
+requireTactical($state['devices']['devices'][0]['channelCount'] === 1 && $rollCount === 1
+    && (float) unitById($state, 'character-player', false)['resources']['mana'] === 95.0,
+    'Replaying the same round cannot pay for or roll a second channel.');
+requireTactical(array_column($state['devices']['devices'], null, 'id') === $devicesAfterRound,
+    'A rewind across the round boundary and its replay do not tick either timer.');
+
+$clock = [...$clock, 'combatId'=>'combat-audit-escape', 'order'=>['token-monster','token-player','token-monster-two'],
+    'currentIndex'=>1, 'turnSerial'=>10];
+$state['initiative'] = $clock;
+$state['devices']['devices'] = [];
+$state['devices']['timedConditions'][] = ['id'=>'clock-escape-test', 'sceneId'=>'scene-one', 'targetTokenId'=>'token-player',
+    'label'=>'Entravé', 'expiry'=>'end-next-turn', 'createdTurnSerial'=>0, 'startedTargetRound'=>1, 'hasStarted'=>true,
+    'escapeWindowClosed'=>false, 'remainingTurns'=>2, 'initialTurns'=>2, 'clockCombatId'=>'combat-audit-escape',
+    'lastTurnSerial'=>0, 'escape'=>['statId'=>'character-stat-dexterity', 'penalties'=>[0,5], 'atTurnStart'=>true]];
+$context['roll'] = static function () use (&$rollCount): array {
+    $rollCount++;
+    return ['success'=>false, 'pendingGmApproval'=>false];
+};
+$rollCount = 0;
+$actor = ['id'=>'account-player', 'role'=>'player'];
+$args = ['conditionId'=>'clock-escape-test', 'requestId'=>'clock-escape-test-0001'];
+$first = applicationApplyDeviceCommand($state, $actor, 'condition.escape', $args, $context);
+requireTactical($first['result']['escaped'] === false && $rollCount === 1, 'The first actual escape test fails once.');
+$state = $advanceClock($first['state'], [...$clock, 'currentIndex'=>0, 'turnSerial'=>11, 'rewoundTurnSerial'=>11]);
+$state = $advanceClock($state, [...$clock, 'turnSerial'=>12]);
+try {
+    applicationApplyDeviceCommand($state, $actor, 'condition.escape', [...$args, 'requestId'=>'clock-escape-test-0002'], $context);
+    throw new RuntimeException('A replayed turn accepted a second escape.');
+} catch (RuntimeException $error) {
+    requireTactical($error->getCode() === 409 && str_contains($error->getMessage(), 'déjà été faite') && $rollCount === 1,
+        'A failed escape remains spent when the GM revisits the same turn.');
+}
 echo "Ongoing effects, residual damage and roll revelation contracts passed.\n";

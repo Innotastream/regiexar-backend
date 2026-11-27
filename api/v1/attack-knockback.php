@@ -44,6 +44,8 @@ function applicationPlanAttackKnockback(array $attack,array $map,array $executio
 function onlineApplyAttackKnockback(PDO $db,array &$records,array &$pending,array $attack):array {
     if(empty($attack['knockback'])||isset($attack['knockbackApplied'])||!isset($attack['damage']['knockbackRoll'])||!in_array($attack['status']??'',['applied','blocked'],true))return $attack;
     $state=onlineDeviceSelectScene(onlineDeviceState($db,$records,$pending),(string)$attack['sceneId']);
+    $target = $state['map']['tokens'][dsIndex($state['map']['tokens'], $attack['targetTokenId'])] ?? [];
+    if (applicationHasAllHarmImmunity($target, $state, $attack['sceneId'])) return $attack;
     $plan=applicationPlanAttackKnockback($attack,$state['map'],$state['abilityExecutions']??[],$state['abilityMovementLeases']??[]);if($plan===null)return $attack;
     $attack['knockbackApplied']=$plan;$now=(int)floor(microtime(true)*1000);$trap=false;
     foreach($plan['moves'] as $move){

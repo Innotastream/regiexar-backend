@@ -10,6 +10,7 @@ require_once __DIR__.'/item-payloads.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__.'/elemental-resistances.php';
 require_once __DIR__.'/weapon-turn-limits.php';
+require_once __DIR__.'/poison-runtime.php';
 
 function activeItemTag(mixed $v):bool{return is_string($v)&&preg_match('/^[a-z][a-z0-9-]{0,59}$/D',$v)===1;}
 function activeItemInt(mixed $v,int $min,int $max):bool{return is_int($v)&&$v>=$min&&$v<=$max;}
@@ -67,8 +68,11 @@ function applicationPeriodicDamageElement(array $effect): ?string
 
 function applicationElementalPeriodicDamageSuppressed(array $entity, array $effect, array $charactersById = []): bool
 {
+    if (!empty($entity['_allHarmImmunity']) && (($effect['manualHp'] ?? false) !== true || ($effect['direction'] ?? -1) < 0)) return true;
     if (($effect['manualHp'] ?? false) === true) return false;
-    return applicationElementalStatusImmune($entity, applicationPeriodicDamageElement($effect), $charactersById);
+    $element = applicationPeriodicDamageElement($effect);
+    if ($element === 'poison' && applicationPoisonHeals($entity)) return false;
+    return applicationElementalStatusImmune($entity, $element, $charactersById);
 }
 function applicationHasEffectImmunity(array $source,array $state,string $sceneId,string $family):bool {
  foreach($source['conditionImmunities']??[] as $v)if(applicationEffectFamily($v)===$family)return true;$holder=applicationEnhancementHolder($source);
@@ -90,14 +94,19 @@ function applicationBeneficialPoisonEnhancement(array $effect): bool
 }
 
 function applicationCleanseUnitEffects(array &$state,array &$unit,array $families):void {
- $ids=[];$clean=static fn($v)=>!in_array(applicationEffectFamily($v),$families,true);
+ $drowLabels=[];
+ if(in_array('poison',$families,true))foreach($state['devices']['timedConditions']??[] as $condition){
+  if(!empty($condition['drowPoisonStacks'])&&(($unit['id']??'')===($condition['targetCharacterId']??null)||($unit['unitTokenId']??'')===$condition['targetTokenId']))$drowLabels[$condition['label']]=true;
+ }
+ $ids=[];$clean=static fn($v)=>!in_array(applicationEffectFamily($v),$families,true)&&(!is_string($v)||!isset($drowLabels[$v]));
  $unit['conditions']=array_values(array_filter($unit['conditions']??[],$clean));
- $cleanMap=static function(array &$map)use(&$ids,$unit,$clean):void{foreach($map['tokens']??[] as $i=>$t)if(unitIdForToken($t)===$unit['id']){$ids[]=$t['id'];$t['conditions']=array_values(array_filter($t['conditions']??[],$clean));$t['condition']=implode(', ',$t['conditions']);$map['tokens'][$i]=$t;}};
+ if(isset($unit['conditionsBase']))$unit['conditionsBase']=array_values(array_filter($unit['conditionsBase'],$clean));
+ $cleanMap=static function(array &$map)use(&$ids,$unit,$clean):void{foreach($map['tokens']??[] as $i=>$t)if(unitIdForToken($t)===$unit['id']){$ids[]=$t['id'];$t['conditions']=array_values(array_filter($t['conditions']??[],$clean));if(isset($t['conditionsBase']))$t['conditionsBase']=array_values(array_filter($t['conditionsBase'],$clean));$t['condition']=implode(', ',$t['conditions']);$map['tokens'][$i]=$t;}};
  $cleanMap($state['map']);foreach($state['scenes']??[] as $i=>$scene)if(isset($scene['combat']['map'])){$cleanMap($scene['combat']['map']);$state['scenes'][$i]=$scene;}
  foreach(['damageOverTime','pendingDotResolutions'] as $key)$state[$key]=array_values(array_filter($state[$key]??[],static fn($e)=>!in_array($e['targetTokenId']??'',$ids,true)||$clean($e)));
  $holder=($unit['unitKind']??'')==='token'?'token:'.$unit['unitTokenId']:'character:'.$unit['id'];
  $state['attackEnhancements']=array_values(array_filter($state['attackEnhancements']??[],static fn($e)=>($e['holder']??'')!==$holder||$clean($e)
-     || (applicationEffectFamily($e)==='poison'&&applicationBeneficialPoisonEnhancement($e))));
+     || (in_array(applicationEffectFamily($e),['poison','bleeding'],true)&&applicationBeneficialPoisonEnhancement($e))));
  if(isset($state['devices'])){$state['devices']['timedConditions']=array_values(array_filter($state['devices']['timedConditions']??[],static fn($e)=>!in_array($e['targetTokenId']??'',$ids,true)||$clean($e)));$state['devices']['pendingRolls']=array_values(array_filter($state['devices']['pendingRolls']??[],static fn($p)=>!in_array($p['effect']['targetTokenId']??'',$ids,true)||$clean($p['effect']['rider']??$p['effect']??[])));}
  foreach($state['abilityExecutions']??[] as $i=>$e)if(($e['status']??'')==='active'&&in_array($e['sourceTokenId']??'',$ids,true)
      &&applicationEffectFamily($e)!=='poison'&&!$clean($e))$state['abilityExecutions'][$i]=[...$e,'status'=>'completed','endedByCure'=>true,'revision'=>$e['revision']+1];
@@ -108,6 +117,9 @@ function applicationApplyActiveItem(array &$state,array $template,array &$unit,?
  $sceneId=$state['activeSceneId'];$holder=($unit['unitKind']??'')==='token'?'token:'.$unit['unitTokenId']:'character:'.$unit['id'];$clock=$state['initiative']??[];$result=['used'=>true,'itemName'=>$template['name'],'healing'=>0,'rolls'=>[],'messages'=>[],...(isset($context['itemEnhancement'])?['itemEnhancement'=>$context['itemEnhancement']]:[])];
  foreach($active['effects'] as $index=>$baseAction){
   $a=applicationPassiveItemDuration(applicationEnhancedItemAction($baseAction,$context['itemEnhancement']??null),$unit,$template,$state);if($a===null)continue;
+  if($a['kind']==='heal-max-die'&&($template['kind']??'')==='potion'&&applicationTraditionalHealingOnly($unit,$state))continue;
+  if(($a['kind']==='armor-reduction'||$a['kind']==='stats'&&applicationHarmfulEnhancement($a))
+      &&applicationHasAllHarmImmunity($token??$unit,$state,$sceneId))continue;
   if(in_array($a['kind'],['damage','dot','condition'],true)){if(!$token)itemFailure('Placez le pion sur la carte pour utiliser cet effet.',409);applicationItemPayload($state,$template,$unit,$token,$a,$index,$context,$result);}
   if($a['kind']==='stackable-effect')applicationApplyStackableItemEffect($state,$a,$token,$context);
   if($a['kind']==='cleanse')applicationCleanseUnitEffects($state,$unit,$a['families']);
@@ -116,6 +128,7 @@ function applicationApplyActiveItem(array &$state,array $template,array &$unit,?
    if($a['kind']==='armor-reduction'&&$a['scope']==='zone')itemFailure('Une zone doit être créée depuis la carte.',409);
    $d=$a['kind']==='stats'?$a['duration']:['kind'=>'rounds','turns'=>$a['turns']];$mode=$a['kind']==='immunity'?'immunity':'stats';
    $e=['id'=>($context['id'])('item-effect'),'abilityId'=>'item-'.$template['id'],'holder'=>$holder,'label'=>$template['name'],'sceneId'=>$sceneId,'targetTokenId'=>$token['id']??'','casterTokenId'=>$token['id']??'','abilityImage'=>$template['image']??'','combatId'=>!empty($clock['active'])&&$d['kind']==='rounds'?($clock['combatId']??''):'','lastTurnSerial'=>$clock['turnSerial']??0,'mode'=>$mode,'turns'=>$d['turns']??1,'remainingTurns'=>$d['turns']??1,'stackGroup'=>'item-'.$template['id'],'effectIndex'=>$index,...($mode==='stats'?['bonuses'=>$a['kind']==='armor-reduction'?applicationArmorReductionBonuses($a):$a['bonuses']]:['family'=>$a['family']]),...($d['kind']==='rests'?['expiry'=>'rests','remainingShortRests'=>$d['shortRests']]:[])];
+   if ($d['kind'] === 'rounds') $e += applicationDotPlacementRound($clock, $e['targetTokenId']);
    $effects=array_values(array_filter($state['attackEnhancements']??[],static fn($old)=>($old['holder']??'')!==$holder||($old['stackGroup']??'')!==$e['stackGroup']||($old['mode']??'')!==$mode||($old['effectIndex']??$index)!==$index));if(count($effects)>=100)itemFailure('Trop d’effets actifs.',409);$effects[]=$e;$state['attackEnhancements']=$effects;
   }
   elseif($a['kind']==='light'){
@@ -137,10 +150,14 @@ function applicationAttackPoisonStacks(array &$state,array &$attack,array $sourc
  $enhancements=applicationActiveAttackEnhancements($source,$state,$attack['sceneId']);
  foreach($enhancements as $e)if(($e['mode']??'')==='on-hit-effects'&&applicationAttackTriggersEnhancement($e,$attack)){$payload=$e['payload'];unset($payload['timing'],$payload['buffTurns'],$payload['trigger']);$unit=unitById($state,unitIdForToken($target));$r=['rolls'=>[],'messages'=>[]];applicationItemPayload($state,['id'=>$e['abilityId'],'name'=>$e['label'],'image'=>$e['abilityImage']??''],$unit,$target,$payload,0,['id'=>$id,'sourceTokenId'=>$source['id']],$r);}
  if(!array_filter($enhancements,static fn($effect)=>($effect['mode']??'')==='on-attack-dot')
-    ||applicationElementalStatusImmune(applicationElementalResistanceTarget($target,$state,$attack['sceneId']),'poison'))return;
+    ||applicationElementalPeriodicDamageSuppressed(applicationElementalResistanceTarget($target,$state,$attack['sceneId']),['damageType'=>'poison']))return;
  $clock=$state['initiative']??[];$manualTurn=(int)($state['devices']['manualTurns'][$attack['sceneId']]??0);$key=!empty($clock['active'])?($clock['combatId']??'').':'.($clock['turnSerial']??0):'free:'.$manualTurn;
  foreach($state['attackEnhancements']??[] as $i=>$e){if(($e['mode']??'')!=='on-attack-dot'||!applicationAttackTriggersEnhancement($e,$attack)||!in_array($e['id'],array_column($enhancements,'id'),true)||($e['appliedTargets'][$target['id']]??'')===$key)continue;
-  $d=$e['dot'];$turns=applicationPassiveEffectTurns($target,$d['turns'],['family'=>'poison','harmful'=>true],$state);if($turns<=0){$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;continue;}$dotId=$id('dot');$state['damageOverTime'][]=['id'=>$dotId,'sourceAbilityId'=>$e['abilityId']??'','sourceEffectId'=>$e['id'],'sceneId'=>$attack['sceneId'],'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$source['name']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'label'=>$d['label'],'family'=>'poison','formula'=>$d['formula'],'damageType'=>'poison','remainingTurns'=>$turns,'lastTurnSerial'=>$clock['turnSerial']??0,'lastManualTurn'=>$manualTurn];$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;
+  if(!applicationPoisonMayLand($state,$target,$attack['sceneId'],['sourceAbilityId'=>$e['abilityId']??'','damageType'=>'poison','label'=>$e['dot']['label']??'Poison'])){
+   $state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;
+   continue;
+  }
+  $d=applicationConfiguredAttackEnhancement((string)($e['abilityId']??''),$e)['dot'];$turns=applicationPassiveEffectTurns($target,$d['turns'],['family'=>'poison','harmful'=>true],$state);if($turns<=0){$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;continue;}$dotId=$id('dot');$state['damageOverTime'][]=['id'=>$dotId,'sourceAbilityId'=>$e['abilityId']??'','sourceEffectId'=>$e['id'],'sceneId'=>$attack['sceneId'],'combatId'=>!empty($clock['active'])?($clock['combatId']??''):'','sourceName'=>$source['name']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'label'=>$d['label'],'family'=>'poison','formula'=>$d['formula'],'damageType'=>'poison','remainingTurns'=>$turns,'lastTurnSerial'=>$clock['turnSerial']??0,'lastManualTurn'=>$manualTurn,...applicationDotPlacementRound($clock,$target['id'])];$state['attackEnhancements'][$i]['appliedTargets'][$target['id']]=$key;
   $attack['poisonApplications'][]=['effectId'=>$e['id'],'abilityId'=>$e['abilityId']??'','sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'dotId'=>$dotId];
  }
 }

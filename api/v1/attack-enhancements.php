@@ -4,6 +4,7 @@ require_once __DIR__.'/ability-overdrive.php';
 require_once __DIR__.'/armor-reduction.php';
 require_once __DIR__.'/item-use-enhancements.php';
 require_once __DIR__.'/attack-receipt-retention.php';
+require_once __DIR__.'/combat-round-lifecycle.php';
 require_once __DIR__ . '/character-statistics.php';
 require_once __DIR__ . '/unit-authority.php';
 
@@ -11,6 +12,12 @@ require_once __DIR__.'/active-items.php';
 require_once __DIR__.'/ability-rule-presets.php';
 require_once __DIR__.'/elemental-resistances.php';
 function applicationAttackEnhancementDefinition(mixed $value): ?array {
+    if (is_array($value) && ($value['mode'] ?? '') === 'mixture-irradiation') {
+        return ($value['turns'] ?? null) === 5 ? ['mode'=>'mixture-irradiation','turns'=>5] : null;
+    }
+    if (is_array($value) && ($value['mode'] ?? '') === 'molecular-acid') {
+        return ($value['turns'] ?? null) === 1 ? ['mode'=>'molecular-acid','turns'=>1] : null;
+    }
     if(is_array($value)&&($value['mode']??'')==='overdrive')return applicationOverdrive($value);
     if(is_array($value)&&($value['mode']??'')==='arbitration-zone'){try{$d=applicationSpecialItemEffect([...$value,'kind'=>'arbitration-zone']);}catch(RuntimeException){return null;}$area=applicationFixedEffectArea($value['fixedArea']??null);return $d&&$area?['mode'=>'arbitration-zone','label'=>$d['label'],'turns'=>$d['turns'],'color'=>$d['color'],'fixedArea'=>$area]:null;}
     if(is_array($value)&&($value['mode']??'')==='next-item-use')return applicationItemUseEnhancementDefinition($value);
@@ -124,8 +131,12 @@ function applicationTokenBuffVisuals(array $token, array $state, string $sceneId
 function applicationTransferAttackEnhancements(array $effects, array $source, string $fromSceneId, string $toSceneId, array $initiative): array {
     $holder = applicationEnhancementHolder($source);
     return array_map(static fn(array $effect): array => empty($effect['fixedArea']) && $effect['sceneId'] === $fromSceneId && $effect['holder'] === $holder
+        && (($effect['mode'] ?? '') !== 'mixture-irradiation' || ($effect['targetTokenId'] ?? '') === $source['id'])
         ? [...$effect, 'sceneId' => $toSceneId, 'targetTokenId' => $source['id'],
-            'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0)]
+            'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0),
+            'lastTargetRound' => 0,...(($effect['mode']??'')==='mixture-irradiation' ? [
+                'lastIrradiationManualTurn'=>0,'lastIrradiationCombatId'=>'','lastIrradiationRound'=>0,
+            ] : [])]
         : $effect, $effects);
 }
 
@@ -158,6 +169,42 @@ function applicationActiveAttackEnhancements(array $source,array $state,string $
         &&(!isset($effect['aura'])||applicationEnhancementAuraAffects($effect,$source,$state,$sceneId))
         &&(!isset($effect['fixedArea'])||applicationFixedAreaAffects($effect,$source,$state,$sceneId))));
 }
+function applicationHasAllHarmImmunity(array $source, array $state, string $sceneId): bool {
+    $holder = ($source['unitKind'] ?? '') === 'token' ? 'token:'.$source['unitTokenId'] : applicationEnhancementHolder($source);
+    foreach ($state['attackEnhancements'] ?? [] as $effect) {
+        if (($effect['holder'] ?? '') === $holder && ($effect['mode'] ?? '') === 'immunity'
+            && ($effect['abilityId'] ?? '') === 'ability-mania-experimental-mixture-invincibility'
+            && ($effect['family'] ?? '') === 'all-harm' && ($effect['sceneId'] ?? '') === $sceneId
+            && ($effect['remainingTurns'] ?? 0) > 0) return true;
+    }
+    return false;
+}
+function applicationHasMixtureLightning(array $source, array $state, string $sceneId): bool {
+    $holder = applicationEnhancementHolder($source);
+    foreach ($state['attackEnhancements'] ?? [] as $effect) {
+        if (($effect['abilityId'] ?? '') === 'ability-mania-experimental-mixture-lightning'
+            && ($effect['holder'] ?? '') === $holder && ($effect['sceneId'] ?? '') === $sceneId
+            && ($effect['mode'] ?? '') === 'stats' && ($effect['remainingTurns'] ?? 0) > 0) return true;
+    }
+    return false;
+}
+function applicationHasMolecularAcid(array $source, array $state, string $sceneId): bool {
+    $holder = applicationEnhancementHolder($source);
+    foreach ($state['attackEnhancements'] ?? [] as $effect) {
+        if (($effect['abilityId'] ?? '') === 'ability-mania-experimental-mixture-acid'
+            && ($effect['holder'] ?? '') === $holder && ($effect['sceneId'] ?? '') === $sceneId
+            && ($effect['mode'] ?? '') === 'molecular-acid' && ($effect['remainingTurns'] ?? 0) > 0) return true;
+    }
+    return false;
+}
+function applicationMolecularAttackDamage(int $amount, string $type, bool $weakened): int {
+    return $weakened && $type === 'physical' ? (int) round($amount * .8) : $amount;
+}
+function applicationHarmfulEnhancement(array $effect): bool {
+    return in_array($effect['mode'] ?? '', ['molecular-acid','mixture-irradiation'], true)
+        || ($effect['mode'] ?? '') === 'stats' && is_array($effect['bonuses'] ?? null)
+        && array_filter($effect['bonuses'], static fn(mixed $value): bool => is_numeric($value) && $value < 0) !== [];
+}
 function applicationEnhancementAuraAffects(array $effect,array $source,array $state,string $sceneId):bool {
     $effect=applicationConfiguredAttackEnhancement((string)($effect['abilityId']??''),$effect);
     $map=($state['activeSceneId']??$state['activeScene']['id']??'')===$sceneId?($state['map']??[]):[];
@@ -172,6 +219,12 @@ function applicationEnhancementAuraAffects(array $effect,array $source,array $st
 }
 function onlineAttackEnhancementState(PDO $connection,array &$records,array $pending,string $sceneId,?array $activity=null,?array $owners=null):array {
     $activity??=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+    if (!isset($pending['devices']) && !isset($records['devices'])) {
+        $records = array_replace($records, applicationDomainRecords($connection, ['devices']));
+    }
+    $devices = $pending['devices']['payload'] ?? applicationDomainPayload($records, 'devices');
+    $petrifications = applicationMixturePetrifications($devices, $sceneId);
+    if ($petrifications !== []) $activity['mixturePetrifications'] = $petrifications;
     if(!array_filter($activity['attackEnhancements']??[],static fn($effect)=>(isset($effect['aura'])||isset($effect['fixedArea']))&&($effect['sceneId']??'')===$sceneId&&($effect['remainingTurns']??0)>0))return $activity;
     if(!isset($records['map:'.$sceneId]))$records=array_replace($records,applicationDomainRecords($connection,['map:'.$sceneId]));
     $map=$pending['map:'.$sceneId]['payload']??applicationDomainPayload($records,'map:'.$sceneId);
@@ -185,7 +238,25 @@ function onlineAttackEnhancementState(PDO $connection,array &$records,array $pen
 function applicationAttackResultBonus(array $source,array $state,string $sceneId):int {
     return array_sum(array_map(static fn($effect)=>(int)($effect['bonuses']['attackResultBonus']??0),applicationActiveAttackEnhancements($source,$state,$sceneId)));
 }
+function applicationMixturePetrifications(array $devices, string $sceneId): array {
+    $holders = [];
+    foreach ($devices['timedConditions'] ?? [] as $condition) {
+        if (($condition['sceneId'] ?? '') !== $sceneId || ($condition['remainingTurns'] ?? 0) <= 0
+            || ($condition['label'] ?? '') !== 'Pétrifié' || !str_starts_with($condition['id'] ?? '', 'mixture-petrification-')) continue;
+        $holder = !empty($condition['targetCharacterId']) ? 'character:'.$condition['targetCharacterId'] : 'token:'.$condition['targetTokenId'];
+        $holders[$holder] = true;
+    }
+    return $holders;
+}
 function applicationEnhancedResistanceTarget(array $source,array $state,string $sceneId):array {
+    unset($source['_allHarmImmunity'], $source['mixturePetrified'], $source['mixtureLightning'], $source['mixtureAcid']);
+    if (applicationHasAllHarmImmunity($source, $state, $sceneId)) $source['_allHarmImmunity'] = true;
+    if (applicationHasMixtureLightning($source, $state, $sceneId)) $source['mixtureLightning'] = true;
+    if (applicationHasMolecularAcid($source, $state, $sceneId)) $source['mixtureAcid'] = true;
+    if (in_array('Pétrifié', $source['conditions'] ?? [], true)) {
+        $petrifications = $state['mixturePetrifications'] ?? applicationMixturePetrifications($state['devices'] ?? [], $sceneId);
+        if (isset($petrifications[applicationEnhancementHolder($source)])) $source['mixturePetrified'] = true;
+    }
     $effects=applicationActiveAttackEnhancements($source,$state,$sceneId);
     $bonus=['physical'=>0,'magical'=>0];foreach($effects as $effect){$bonus['physical']+=(int)($effect['bonuses']['physicalResistance']??0);$bonus['magical']+=(int)($effect['bonuses']['magicalResistance']??0);}
     $overrides=applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId,$effects);
@@ -219,7 +290,7 @@ function applicationEffectiveElementalResistanceOverrides(array $source, array $
     }
     $result=[];
     if($totals!==[]){
-        $base=normalizeApplicationElementalResistances($source['elementalResistances']??null);
+        $base=applicationBaseElementalResistances($source);
         foreach($totals as $element=>$amount){
             $effective=max(XAR_ELEMENTAL_RESISTANCE_MINIMUM,min(100,$base[$element]+$amount));
             if($effective!==$base[$element])$result[$element]=$effective;
@@ -228,13 +299,24 @@ function applicationEffectiveElementalResistanceOverrides(array $source, array $
     return [...$result,...$overrides];
 }
 
+function applicationBaseElementalResistances(array $source): array {
+    $resistances=normalizeApplicationElementalResistances($source['elementalResistances']??null);
+    if(applicationPoisonHeals($source))$resistances['poison']=0;
+    if(applicationHasPassive($source,'poison-resilience'))$resistances['poison']=min(100,$resistances['poison']+25);
+    return $resistances;
+}
+
 function applicationEffectiveElementalResistances(array $source, array $state, string $sceneId): array {
-    return [...normalizeApplicationElementalResistances($source['elementalResistances']??null),
+    return [...applicationBaseElementalResistances($source),
         ...(is_array($source['elementalResistanceOverrides']??null)?$source['elementalResistanceOverrides']:[]),
         ...applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId)];
 }
 
 function applicationElementalResistanceTarget(array $source,array $state,string $sceneId,?array $sheet=null):array {
+    unset($source['_allHarmImmunity'], $source['mixtureLightning'], $source['mixtureAcid']);
+    if (applicationHasAllHarmImmunity($source, $state, $sceneId)) $source['_allHarmImmunity'] = true;
+    if (applicationHasMixtureLightning($source, $state, $sceneId)) $source['mixtureLightning'] = true;
+    if (applicationHasMolecularAcid($source, $state, $sceneId)) $source['mixtureAcid'] = true;
     if($sheet===null&&unitUsesCharacterSheet($source))foreach($state['characters']??[] as $candidate){
         if(($candidate['id']??null)!==$source['characterId'])continue;
         $sheet=$candidate;
@@ -242,6 +324,8 @@ function applicationElementalResistanceTarget(array $source,array $state,string 
     }
     if($sheet!==null&&$sheet!==[])$source['elementalResistances']=$sheet['elementalResistances']??[];
     $overrides=applicationEffectiveElementalResistanceOverrides($source,$state,$sceneId);
+    if(applicationPoisonHeals($source)||applicationHasPassive($source,'poison-resilience'))
+        $overrides['poison']??=applicationBaseElementalResistances($source)['poison'];
     return $overrides===[]?$source:[...$source,'elementalResistanceOverrides'=>$overrides];
 }
 
@@ -254,6 +338,7 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
     $definition = applicationAttackEnhancement($ability['attackEnhancement'] ?? null);
     if ($definition === null) return;
     $recipient ??= $source;if(isset($definition['aura'])||($definition['target']??'')==='self')$recipient=$source;
+    if (applicationHarmfulEnhancement($definition) && applicationHasAllHarmImmunity($recipient, $activity, $sceneId)) return;
     if ((applicationEffectFamily($definition)==='poison' || applicationEffectFamily($ability)==='poison')
         && !applicationBeneficialPoisonEnhancement($definition) && applicationHasEffectImmunity($recipient,$activity,$sceneId,'poison')) return;
     $holder = applicationEnhancementHolder($recipient);
@@ -270,18 +355,20 @@ function applicationActivateAttackEnhancement(array &$activity, array $ability, 
         ...(($definition['trigger']??'')==='main-weapon'?['weaponId'=>$recipient['weaponAttacks'][0]['id']??'']:[]),...(($definition['expiry']??'')==='after-next-turn'?['hasStarted'=>false]:[]),
         'targetTokenId' => $recipient['id'], 'casterTokenId' => $source['id'], 'remainingTurns' => $definition['turns'],
         'combatId' => ($initiative['active'] ?? false) === true ? ($initiative['combatId'] ?? '') : '', 'lastTurnSerial' => (int) ($initiative['turnSerial'] ?? 0),
-        ...($previousOverdrive?array_intersect_key($previousOverdrive,array_flip(['id','remainingTurns','combatId','lastTurnSerial','deferredFatigue'])):[])];
+        ...applicationDotPlacementRound($initiative, $recipient['id']),
+        ...($previousOverdrive?array_intersect_key($previousOverdrive,array_flip(['id','remainingTurns','combatId','lastTurnSerial','lastTargetRound','deferredFatigue'])):[])];
     $activity['attackEnhancements'] = $effects;
     if($definition['mode']==='overdrive')applicationRechargeOverdriveTimers($activity,$source,$definition);
 }
 
 function applicationPausePoisonEnhancement(array $effect): ?array {
     return ($effect['mode'] ?? '') === 'on-attack-dot' && ($effect['remainingTurns'] ?? 0) > 0
-        ? [...$effect, 'combatId'=>'', 'lastTurnSerial'=>0] : null;
+        ? [...$effect, 'combatId'=>'', 'lastTurnSerial'=>0, 'lastTargetRound'=>0] : null;
 }
 
 function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, array $previous, array $initiative, bool $manual = false, array $tokens = []): array {
     if($manual){$remaining=[];foreach($effects as $effect){
+        if(in_array($effect['mode']??'',['molecular-acid','mixture-irradiation'],true)){$remaining[]=$effect;continue;}
         if(($effect['sceneId']??'')!==$sceneId||in_array($effect['expiry']??'',['rests','long-rest','combat-or-rest'],true)){$remaining[]=$effect;continue;}
         if(($effect['expiry']??'')==='after-next-turn'){if(empty($effect['hasStarted'])){$effect['hasStarted']=true;$remaining[]=$effect;}continue;}
         $effect['remainingTurns']--;if($effect['remainingTurns']>0)$remaining[]=$effect;
@@ -291,8 +378,13 @@ function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, a
         foreach($effects as $effect) {
             if(in_array($effect['expiry']??'',['rests','long-rest'],true)||$effect['sceneId']!==$sceneId&&!(($effect['expiry']??'')==='combat-or-rest'&&array_filter($tokens,static fn($token)=>applicationEnhancementHolder($token)===($effect['holder']??''))))$remaining[]=$effect;
             elseif (($poison = applicationPausePoisonEnhancement($effect)) !== null) $remaining[] = $poison;
-            elseif (($effect['mode'] ?? '') === 'immunity' && ($effect['family'] ?? '') === 'poison' && $effect['remainingTurns'] > 0)
-                $remaining[] = [...$effect, 'combatId'=>'', 'lastTurnSerial'=>0];
+            elseif (($effect['mode'] ?? '') === 'immunity' && (in_array($effect['family'] ?? '', ['poison','all-harm'], true)) && $effect['remainingTurns'] > 0)
+                $remaining[] = [...$effect, 'combatId'=>'', 'lastTurnSerial'=>0, 'lastTargetRound'=>0];
+            elseif (($effect['mode'] ?? '') === 'stats' && in_array($effect['abilityId'] ?? '',
+                ['ability-mania-experimental-mixture','ability-mania-experimental-mixture-lightning'], true)
+                && $effect['remainingTurns'] > 0)
+                $remaining[] = [...$effect, 'combatId'=>'', 'lastTurnSerial'=>0, 'lastTargetRound'=>0, 'lastRound'=>0];
+            elseif (($effect['mode'] ?? '') === 'mixture-irradiation' && $effect['remainingTurns'] > 0) $remaining[] = $effect;
             elseif(isset($effect['fixedArea']))$remaining[]=[...$effect,'combatId'=>'','lastRound'=>0];
         }
         return $remaining;
@@ -301,18 +393,22 @@ function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, a
         $effects = array_map(static function (array $effect) use ($sceneId, $initiative): array {
             if (($effect['sceneId'] ?? '') !== $sceneId) return $effect;
             if (applicationPausePoisonEnhancement($effect) !== null)
-                return [...$effect, 'combatId'=>$initiative['combatId']??'', 'lastTurnSerial'=>(int)($initiative['turnSerial']??0)];
+                return [...$effect, 'combatId'=>$initiative['combatId']??'', 'lastTurnSerial'=>(int)($initiative['turnSerial']??0),
+                    'lastTargetRound'=>0];
             if (isset($effect['fixedArea'])) return [...$effect, 'combatId'=>$initiative['combatId']??'', 'lastRound'=>max(1,(int)($initiative['round']??1))];
             return $effect;
         }, $effects);
     }
-    if (($initiative['active'] ?? false) !== true || (int) ($initiative['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)) return $effects;
+    if (($initiative['active'] ?? false) !== true || (int) ($initiative['turnSerial'] ?? 0) <= (int) ($previous['turnSerial'] ?? 0)
+        || ($initiative['rewoundTurnSerial'] ?? null) === $initiative['turnSerial']) return $effects;
+    $combatId = $initiative['combatId'] ?? '';
+    $round = max(1, (int) ($initiative['round'] ?? 1));
     $tokenId = $initiative['order'][$initiative['currentIndex'] ?? 0] ?? '';
     $remaining = [];
     foreach ($effects as $effect) {
         if ($effect['sceneId'] !== $sceneId || in_array($effect['expiry']??'',['rests','long-rest','combat-or-rest'],true)) { $remaining[] = $effect; continue; }
+        if (in_array($effect['mode'] ?? '', ['molecular-acid','mixture-irradiation'], true)) { $remaining[] = $effect; continue; }
         if(isset($effect['fixedArea'])){
-            $round=max(1,(int)($initiative['round']??1));
             if(($previous['active']??false)!==true||($effect['combatId']??'')!==($initiative['combatId']??'')) {
                 $remaining[]=[...$effect,'combatId'=>$initiative['combatId']??'','lastRound'=>$round];continue;
             }
@@ -320,10 +416,28 @@ function applicationAdvanceAttackEnhancements(array $effects, string $sceneId, a
             $effect['remainingTurns']-=max(0,$round-$last);$effect['lastRound']=max($last,$round);
             if($effect['remainingTurns']>0)$remaining[]=$effect;continue;
         }
-        if (($effect['combatId'] ?? '') !== '' && $effect['combatId'] !== ($initiative['combatId'] ?? '')) continue;
-        if(($effect['expiry']??'')==='after-next-turn'){if(!empty($effect['hasStarted'])&&($previous['order'][$previous['currentIndex']??0]??'')===$effect['targetTokenId'])continue;if($tokenId===$effect['targetTokenId'])$effect['hasStarted']=true;$remaining[]=$effect;continue;}
-        if ($effect['targetTokenId'] === $tokenId && (int) ($effect['lastTurnSerial'] ?? 0) < $initiative['turnSerial']) {
-            $effect['remainingTurns']--; $effect['lastTurnSerial'] = $initiative['turnSerial'];
+        $effectCombatId = $effect['combatId'] ?? '';
+        if ($effectCombatId !== '' && $effectCombatId !== $combatId) continue;
+        $lastTargetRound = $effectCombatId === $combatId ? (int) ($effect['lastTargetRound'] ?? 0) : 0;
+        $startsTurn = $effect['targetTokenId'] === $tokenId && $lastTargetRound < $round
+            && ($effectCombatId !== $combatId || (int) ($effect['lastTurnSerial'] ?? 0) < $initiative['turnSerial']);
+        if (($effect['expiry'] ?? '') === 'after-next-turn') {
+            if (!empty($effect['hasStarted']) && ($previous['order'][$previous['currentIndex'] ?? 0] ?? '') === $effect['targetTokenId']
+                && ($previous['combatId'] ?? '') === $combatId && (int) ($previous['round'] ?? 1) >= $lastTargetRound) continue;
+            if ($startsTurn) {
+                $effect['hasStarted'] = true;
+                $effect['combatId'] = $combatId;
+                $effect['lastTargetRound'] = $round;
+                $effect['lastTurnSerial'] = $initiative['turnSerial'];
+            }
+            $remaining[] = $effect;
+            continue;
+        }
+        if ($startsTurn) {
+            $effect['remainingTurns']--;
+            $effect['combatId'] = $combatId;
+            $effect['lastTargetRound'] = $round;
+            $effect['lastTurnSerial'] = $initiative['turnSerial'];
         }
         if ($effect['remainingTurns'] > 0) $remaining[] = $effect;
     }
@@ -476,6 +590,9 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
         if(empty($effect['bonuses']))continue;
         foreach($effect['bonuses'] as $key=>$amount)$bonuses[$key]=($bonuses[$key]??0)+$amount;
     }
+    if (($drowPenalty=applicationDrowStatPenalty($source,$activity['devices']??[],$sceneId))>0) {
+        foreach (['force','agility','dexterity'] as $stat) $bonuses[$stat]=($bonuses[$stat]??0)-$drowPenalty;
+    }
     if($character!==null){
         $rows=applicationEffectiveCharacterStats($character,$bonuses);$ids=array_column($rows,'id');
         // An attack may add an already resolved weapon-skill row. Keep these
@@ -495,11 +612,12 @@ function applicationEnhancedStatRows(array $source,array $activity,string $scene
     unset($row);return $rows;
 }
 function onlineEnhancedStatRows(PDO $connection,array &$records,array $pending,array $source,string $sceneId,?array $activity=null): array {
-    $keys=['activity'];$holder=applicationEnhancementHolder($source);if(str_starts_with($holder,'character:'))$keys[]=$holder;
+    $keys=['activity'];if(!isset($pending['devices'])&&!isset($records['devices']))$keys[]='devices';$holder=applicationEnhancementHolder($source);if(str_starts_with($holder,'character:'))$keys[]=$holder;
     $records=array_replace($records,applicationDomainRecords($connection,$keys));
     $activity??=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     $character=str_starts_with($holder,'character:')?($pending[$holder]['payload']??applicationDomainPayload($records,$holder)):null;
-    return applicationEnhancedStatRows($source,onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),$sceneId,$character);
+    return applicationEnhancedStatRows($source,[...onlineAttackEnhancementState($connection,$records,$pending,$sceneId,$activity),
+        'devices'=>$pending['devices']['payload']??applicationDomainPayload($records,'devices')],$sceneId,$character);
 }
 
 function applicationEffectiveInitiativeBonus(array $source,array $state,string $sceneId):int { $bonus=(int)($source['initiativeBonus']??0);foreach(applicationActiveAttackEnhancements($source,$state,$sceneId) as $effect)$bonus+=(int)($effect['bonuses']['initiativeBonus']??0);return $bonus; }

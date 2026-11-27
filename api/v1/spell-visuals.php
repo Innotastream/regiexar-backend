@@ -11,6 +11,18 @@ function applicationEnemyAttackVisualDurations(): array {
     return ['enemy-bite'=>390, 'enemy-blade'=>365, 'enemy-claw'=>365, 'enemy-impact'=>365, 'enemy-arrow'=>420,
         'enemy-fire'=>490, 'enemy-ice'=>490, 'enemy-poison'=>510, 'enemy-lightning'=>390, 'enemy-arcane'=>485];
 }
+function applicationMixtureCinematicDurations(): array {
+    return array_fill_keys([
+        'mania-mixture-cinematic-restoration-field',
+        'mania-mixture-cinematic-vital-concentrate',
+        'mania-mixture-cinematic-regenerative-serum',
+        'mania-mixture-cinematic-mixture-explosion',
+        'mania-mixture-cinematic-alchemical-blast',
+        'mania-mixture-cinematic-caustic-reaction',
+        'mania-mixture-cinematic-corrosive-catalyst',
+        'mania-mixture-cinematic-mixture-irradiation',
+    ], 5500);
+}
 function applicationSpellVisualCatalogue(): array { return ['healing-touch'=>3600,'ethereal-weapon-echo'=>1220,'root-entanglement'=>3400,'thorn-wall-growth'=>3650,'feral-metamorphosis'=>4600,'mirror-copy'=>3800,'whisper-puppet'=>3300,'hypnotic-words'=>3600,'supreme-eye'=>3900,'weapon-poison-brew'=>2300,'weapon-poison-coat'=>2700,'timed-flux-explosion'=>1900,'stationary-blue-bolt'=>1350,'trass-plasma-beam'=>2200,'moonlight-density'=>2400,'mist-capsule'=>1600,'potion-satchel'=>3400,'super-potion-charge'=>2800,'predator-analysis'=>3300,'venom-awakening'=>2800,'venom-ramifications'=>1300,'venom-affliction'=>1700,'barbed-chain-area-sweep'=>1260,'compact-force-wave'=>2150,'force-wall-shatter'=>1250,'intimidation-red'=>2300,'blood-awakening'=>2600,'arvin-valse-prologue'=>1900,'arvin-blood-invocation'=>3950,'blood-burst'=>1290,'blood-crystal'=>1640,'elemental-fire'=>2200,'elemental-ice'=>2400,'elemental-lightning'=>1900,'elemental-acid'=>2400,'elemental-darkness'=>2600,'elemental-roots'=>2800]; }
 function applicationSpellVisualDuration(mixed $value): int {
     $spell=applicationSpellVisual($value);if($spell===null)return 0;
@@ -18,6 +30,8 @@ function applicationSpellVisualDuration(mixed $value): int {
     if($spell['placement']==='melee')return applicationCombatAnimationDuration(applicationMeleeVisualCatalogue()[$spell['presetId']])+1600+applicationMeleeVisualDeliverySlack($spell['presetId']);
     $enemy=applicationEnemyAttackVisualDurations()[$spell['presetId']]??null;
     if($enemy!==null)return applicationCombatAnimationDuration($enemy)+1600;
+    $mixture = applicationMixtureCinematicDurations()[$spell['presetId']] ?? null;
+    if ($mixture !== null) return applicationCombatAnimationDuration($mixture) + 2800;
     if($spell['presetId']==='ethereal-weapon-echo')return applicationCombatAnimationDuration(1220)+3000;
     return applicationCombatAnimationDuration(applicationSpellVisualCatalogue()[$spell['presetId']])+(in_array($spell['presetId'],['healing-touch','root-entanglement','thorn-wall-growth','feral-metamorphosis','mirror-copy','whisper-puppet','hypnotic-words','supreme-eye','weapon-poison-brew','weapon-poison-coat','timed-flux-explosion','stationary-blue-bolt','trass-plasma-beam','blood-awakening','arvin-valse-prologue','arvin-blood-invocation','blood-burst','blood-crystal','force-wall-shatter','compact-force-wave','venom-awakening','venom-ramifications','venom-affliction','barbed-chain-area-sweep','potion-satchel','mist-capsule','super-potion-charge','predator-analysis'],true)?1600:0);
 }
@@ -26,9 +40,11 @@ function applicationSpellVisual(mixed $value): ?array {
     if(is_array($value)&&($value['placement']??'')==='dash')return applicationTokenDash($value);
     if(is_array($value)&&($value['placement']??'')==='melee')return applicationMeleeVisual($value);
     if(!is_array($value)||($value['version']??null)!==1||!is_string($value['presetId']??null)
-        ||!array_key_exists($value['presetId'],applicationSpellVisualCatalogue()+applicationEnemyAttackVisualDurations())
+        ||!array_key_exists($value['presetId'],applicationSpellVisualCatalogue()+applicationEnemyAttackVisualDurations()+applicationMixtureCinematicDurations())
         ||!is_string($value['sceneId']??null)||preg_match('/^[A-Za-z0-9_-]{1,180}$/D',$value['sceneId'])!==1
         ||!in_array($value['layerId']??null,['ground','upper','basement'],true)||!in_array($value['placement']??null,['source','target','area','cone','beam'],true))return null;
+    if (isset(applicationMixtureCinematicDurations()[$value['presetId']])
+        && ($value['placement'] !== 'source' || ($value['followSource'] ?? false) !== true)) return null;
     $point=static fn($p)=>is_array($p)&&array_reduce(['x','y'],static fn($ok,$key)=>$ok&&(is_int($p[$key]??null)||is_float($p[$key]??null))&&is_finite((float)$p[$key])&&$p[$key]>=0&&$p[$key]<=100,true);
     $source=$value['source']??null;if(!$point($source)||(!is_int($source['size']??null)&&!is_float($source['size']??null))||!is_finite((float)$source['size'])||$source['size']<10||$source['size']>10000)return null;
     if(($value['placement']??'')==='beam'){$size=$value['widthCells']??null;return $value['presetId']==='trass-plasma-beam'&&$point($value['targetPoint']??null)&&(is_int($size)||is_float($size))&&is_finite((float)$size)&&$size>=.5&&$size<=100&&floor($size*2)==$size*2&&hypot($value['targetPoint']['x']-$source['x'],$value['targetPoint']['y']-$source['y'])>1e-6?['version'=>1,'presetId'=>$value['presetId'],'sceneId'=>$value['sceneId'],'layerId'=>$value['layerId'],'placement'=>'beam','source'=>['x'=>$source['x'],'y'=>$source['y'],'size'=>$source['size']],'targetPoint'=>array_intersect_key($value['targetPoint'],array_flip(['x','y'])),'widthCells'=>$size]:null;}

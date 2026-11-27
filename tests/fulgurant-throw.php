@@ -14,6 +14,15 @@ $ability=normalizeOnlineAbilities($character['abilities'])[0];
 specialCheck(($ability['manualAction']??false)===true&&$ability['castingStatId']==='','Preset manual with no casting roll');
 specialCheck($ability['fatigueCost']===5&&$ability['cooldownRounds']===3&&$ability['usesPerRest']===2&&$ability['restRecharge']==='short','New common costs and limits');
 specialCheck(validApplicationAbilityCastingFields(['manualAction'=>true])&&!validApplicationAbilityCastingFields(['manualAction'=>'true']),'Manual metadata type checked');
+$explosive=normalizeItemStore(['version'=>1,'templates'=>[['id'=>'preset-explosive-potion','name'=>'Potion explosive','kind'=>'object','category'=>'ability',
+    'sourceAbilityId'=>$id,'creatorCharacterId'=>'character-player',
+    'active'=>['version'=>1,'useLabel'=>'Réservée aux compétences','authority'=>'owner','ingredientTag'=>'explosive-potion','effects'=>[]]]],
+    'instances'=>[['id'=>'existing-explosive','templateId'=>'preset-explosive-potion','revision'=>2,'location'=>['kind'=>'inventory','characterId'=>'character-player']]]]);
+$explosiveTemplate=$explosive['templates'][0];
+specialCheck($explosiveTemplate['kind']==='potion' && $explosiveTemplate['category']==='usable'
+    && !isset($explosiveTemplate['sourceAbilityId']) && !isset($explosiveTemplate['active']['ingredientTag'])
+    && $explosiveTemplate['active']['effects'][0]['kind']==='message' && $explosive['instances'][0]['id']==='existing-explosive',
+    'An existing explosive potion is a generic usable model with its inventory identity preserved');
 $normalized=normalizeOnlineAbilities([[...$ability,'manualAction'=>false,'fatigueCost'=>7]])[0];specialCheck($normalized['manualAction']===false&&$normalized['fatigueCost']===7,'Explicit later settings preserved');
 $beforeCharacter=$db->payload('character:character-player');$beforeMonster=$db->payload('token:scene-one:token-monster');$beforeSource=$db->payload('token:scene-one:token-player');$beforeActivity=$db->payload('activity');
 $requestId='manual-potions-replay-'.randomToken(16);$args=['requestId'=>$requestId];

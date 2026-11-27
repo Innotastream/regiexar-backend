@@ -75,4 +75,20 @@ $s['items']['instances'][]=[...$s['items']['instances'][0],'id'=>'second-trap','
 $s['items']['pendingUses']=array_map(static fn($i)=>['id'=>'busy-'.$i,'itemId'=>'busy-item-'.$i],range(1,99));$before=$s;
 try{queueItemTrapPassages($s,$s['map']['tokens'][0],['x'=>10,'y'=>50],['x'=>90,'y'=>50],null,static fn($p)=>$p.'-new');objectCheck(false,'Saturated queue accepted');}catch(RuntimeException $e){objectCheck($e->getCode()===429&&$s===$before,'Two simultaneous traps refuse atomically if the queue is full');}
 
+$s=objectFixture(['version'=>1,'effects'=>[$damage],'targeting'=>$single]);
+for ($i=0;$i<100;$i++) {
+    $itemId='busy-copy-'.$i;
+    $s['items']['instances'][]=[...$s['items']['instances'][0],'id'=>$itemId];
+    $s['items']['pendingUses'][]=['id'=>'busy-use-'.$i,'itemId'=>$itemId,'itemRevision'=>1,
+        'sceneId'=>'s','layerId'=>'ground','phase'=>'opposition','definition'=>$s['items']['templates'][0]['active'],
+        'targets'=>[['tokenId'=>'target','status'=>'pending']]];
+}
+$originalQueue=normalizeItemUses($s['items']['pendingUses']);
+try { objectAction($s,'item.activate',['opposed'=>true]); objectCheck(false,'Queue accepted another opposition'); }
+catch (RuntimeException $e) { objectCheck($e->getCode()===429,'Full queue still refuses an action that requires a new defense'); }
+$r=objectAction($s,'item.activate');
+objectCheck($r['damage']===25&&$s['items']['instances'][0]['location']['kind']==='consumed',
+    'Immediate item still resolves once when all defense slots are occupied.');
+objectCheck($s['items']['pendingUses']===$originalQueue,'Immediate item leaves the existing defense queue intact.');
+
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$count,'productionAccess'=>false])."\n");

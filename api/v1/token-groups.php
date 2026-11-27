@@ -142,7 +142,6 @@ function nearestOnlineGroupPosition(array $desired, array $token, array $map, ar
 
 function planApplicationTokenGroupTransform(array $map, array $request): array
 {
-    if (($map['viewLocked'] ?? false) !== true) throw new DomainException('Verrouillez le cadrage de la carte pour agir sur un groupe.', 423);
     $ids = $request['tokenIds'] ?? null;
     if (!is_array($ids) || !applicationDomainArrayIsList($ids) || count($ids) < 1 || count($ids) > 2000) throw new DomainException('Sélection de pions invalide.', 400);
     foreach ($ids as $id) if (!is_string($id) || preg_match('/^[A-Za-z0-9_-]{1,80}$/D', $id) !== 1) throw new DomainException('Identifiant de pion invalide.', 400);
@@ -315,7 +314,7 @@ function applyOnlineTokenCloneCommand(PDO $connection, array &$records, array &$
         'cloneSourceCharacterId' => $source['characterId'] ?? ($source['cloneSourceCharacterId'] ?? null),
         'cloneSourceTokenId' => $source['id'], 'layerId' => onlineTokenLayerId($source, $map), 'libraryTemplateId' => null,
         'initiative' => null, 'resourcePulse' => null, '_updatedAt' => (int) floor(microtime(true) * 1000), '_movedAt' => (int) floor(microtime(true) * 1000)]);
-    unset($clone['transformation']);
+    unset($clone['transformation'], $clone['concealment'], $clone['concealed'], $clone['experimentalMixture'], $clone['experimentalMixtureCharges']);
     if (applicationUnitScalesWithMap($clone)) $clone['sizeCategory'] = applicationUnitSizeCategory($source);
     $clone = applicationScaleUnitForMap($clone, $map, $clone['layerId']);
     if(unitUsesCharacterSheet($source)&&!empty($character))$clone['stats']=applicationIndependentCharacterStats($character);

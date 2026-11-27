@@ -10,7 +10,7 @@ function assertSharedGmCommands(source) {
   const guard = source.match(/if \(\$isGm && !in_array\(\$command, \[([^\]]+)\], true\) && !in_array\(\s*\$command,\s*\[([^\]]+)\],\s*true\s*\)\)/);
   assert.ok(guard, "la liste commune doit rester sous le contrôle du mode MJ");
   const parseCommands = (list) => [...list.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
-  assert.deepEqual(parseCommands(guard[1]), ["map.animation", "map.time-weather", "strategy-break", "table-tokens", "token.initiative.batch"]);
+  assert.deepEqual(parseCommands(guard[1]), ["ability.mixture", "map.animation", "map.time-weather", "strategy-break", "table-tokens", "token.initiative.batch"]);
   const actual = parseCommands(guard[2]);
   assert.equal(new Set(actual).size, actual.length, "aucune commande commune en double");
   assert.deepEqual(actual.sort(), [...expectedSharedGmCommands].sort());
@@ -105,8 +105,8 @@ test("aucune source PHP ne redéclare une fonction de premier niveau", async () 
 
 test("le backend partage la file Codex, porte les nouveaux schémas et conserve le domaine chance", async () => {
   const [index, domains, manifest] = await Promise.all([read("api/v1/index.php"), read("api/v1/domains.php"), read("manifest.json")]);
-  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.29'/);
-  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-4-5-stream-veille-20261126-1'/);
+  assert.match(index, /XAR_BACKEND_VERSION = '0\.19\.30'/);
+  assert.match(index, /XAR_BACKEND_BUILD = 'client-4-4-6-pluie-priere-inventaire-20261126-1'/);
   assert.match(index, /'build' => XAR_BACKEND_BUILD/);
   assert.match(index, /revisioned_domains_and_media_retention/);
   assert.match(index, /private_codex_image_studio/);
@@ -143,9 +143,9 @@ test("le backend partage la file Codex, porte les nouveaux schémas et conserve 
   assert.match(domains, /readonly_luck_domain/);
   assert.match(domains, /\['table', 'roster', 'luck', 'items', 'devices', 'activity', 'audio'\]/);
   assert.match(domains, /if \(!\$hasActiveScene\) \$records \+= applicationDomainRecords\(\$connection, \['detached-combat'\]\)/);
-  assert.equal(JSON.parse(manifest).backendVersion, "0.19.29");
-  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.4.5");
-  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 28);
+  assert.equal(JSON.parse(manifest).backendVersion, "0.19.30");
+  assert.equal(JSON.parse(manifest).announcedApplicationVersion, "4.4.6");
+  assert.equal(JSON.parse(manifest).databaseSchemaVersion, 29);
   assert.equal(JSON.parse(manifest).imageStudioMinimumApplicationVersion, "2.1.0");
   assert.equal(JSON.parse(manifest).abilityAssistantMinimumApplicationVersion, "3.3.5");
 });
@@ -245,7 +245,7 @@ test("les attaques ciblées et opposées restent autoritaires sans divulguer l�
   assert.match(attack, /findEntryIndex\(\$stats/);
   assert.match(attack, /onlineRollAttackDamage\(\[\.\.\.\$damageSpecification,'sceneId'=>\$sceneId\], \$target,null,onlineAttackEnhancementState\(/);
   assert.match(effects, /foreach \(\$selected\['components'\] as \$(\w+)\)[\s\S]*?onlineTypedDamageSummary\([^;]+\$target,\s*\$\1\['type'\]/);
-  assert.match(effects, /onlineTypedDamageSummary\([^;]+\$target,\s*\$attack\['damageType'\] \?\? 'physical'/);
+  assert.match(effects, /\$type = \$attack\['damageType'\] \?\? 'physical';[\s\S]*?onlineTypedDamageSummary\(\$rawDamage,\s*\$target,\s*\$type,\s*\$attack\['damageElement'\] \?\? null\)/);
   assert.match(effects, /\$final \+= \$summary\['finalDamage'\]/);
   assert.match(attack, /\$combatActive = \(\$initiative\['active'\] \?\? false\) === true/);
   assert.match(attack, /elseif \(\$combatActive\)[\s\S]*?applyOnlineAttackDamage/);
@@ -362,13 +362,13 @@ test("la commande ciblée déplace les tokens MJ et Joueur sans élargir les dro
   assert.match(domains, /\$allowed !== true/);
 });
 
-test("la santé reste publique mais seule la version courante peut se connecter", async () => {
+test("la santé reste publique et la transition Store n’admet que les deux versions publiées", async () => {
   const [index, readme, manifestSource, workflow] = await Promise.all([
     read("api/v1/index.php"), read("README.md"), read("manifest.json"), read(".github/workflows/backend-check.yml")
   ]);
   const manifest = JSON.parse(manifestSource);
-  assert.equal(manifest.announcedApplicationVersion, "4.4.5");
-  assert.deepEqual(manifest.allowedApplicationVersions, ["4.4.5"]);
+  assert.equal(manifest.announcedApplicationVersion, "4.4.6");
+  assert.deepEqual(manifest.allowedApplicationVersions, ["4.4.5", "4.4.6"]);
   assert.equal(manifest.minimumApplicationVersion, "4.4.5");
   const policy = index.slice(index.indexOf("function clientPolicy"), index.indexOf("function drainingBackendSession"));
   const enforcement = index.slice(index.indexOf("function requireSupportedClient"), index.indexOf("function databaseConnection"));

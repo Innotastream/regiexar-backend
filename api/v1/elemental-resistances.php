@@ -124,7 +124,7 @@ function applicationRecordElementalConditionSave(array &$state,array $unit,strin
 {
     $rolled=$save['rolled'];
     if ($rolled===null) return;
-    $label=applicationElementalSavingConditionLabel($label);
+    $label=applicationElementalSavingConditionLabel($label) ?? $label;
     $name=(string)($unit['name']??$token['name']??'Unité');
     $outcome=classifyOnlineD100Outcome($rolled,$save['threshold'],0,0,false);
     $entry=onlineRollEntry(['display_name'=>$name],['formula'=>'1d100','total'=>$rolled,'breakdown'=>"[$rolled]"],'Résistance · '.$label,$name,$outcome);
@@ -149,8 +149,15 @@ function applicationElementalStatusImmune(array $entity, ?string $element, array
     return is_numeric($percent) && is_finite((float) $percent) && $percent >= 100;
 }
 
+function applicationIsHarmfulCondition(mixed $label): bool
+{
+    return is_string($label) && trim($label) !== '' && !onlineReservedHealthCondition($label)
+        && !in_array(normalizeOnlineCondition($label), ['Motivé','Invisible','Inspiré','Protégé','Fortifié','Concentré'], true);
+}
+
 function applicationElementalConditionSuppressed(array $entity, mixed $label, array $charactersById = []): bool
 {
+    if (!empty($entity['_allHarmImmunity']) && applicationIsHarmfulCondition($label)) return true;
     return applicationElementalStatusImmune($entity, applicationElementalStatusType($label), $charactersById);
 }
 

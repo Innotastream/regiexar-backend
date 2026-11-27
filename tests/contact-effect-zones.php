@@ -28,23 +28,34 @@ $rewoundContact=$insideState;
 $rewoundContact['initiative']=[...$insideState['initiative'],'turnSerial'=>13,'rewoundTurnSerial'=>13];
 specialCheck(applicationCollectContactZoneMovement($rewoundContact,$inside,['x'=>40,'y'=>50],['x'=>40,'y'=>50])===[]
     &&$rewoundContact['devices']['contactZones']===$insideState['devices']['contactZones'],'A rewound initiative cannot hit a victim already standing on the filament again');
+$rewoundContact['initiative']=[...$insideState['initiative'],'turnSerial'=>14];
+specialCheck(applicationCollectContactZoneMovement($rewoundContact,$inside,['x'=>40,'y'=>50],['x'=>40,'y'=>50])===[],
+    'Stepping forward again in the same round cannot charge the same victim twice');
+$rewoundContact['initiative']=[...$insideState['initiative'],'turnSerial'=>16,'round'=>3];
+specialCheck(count(applicationCollectContactZoneMovement($rewoundContact,$inside,['x'=>40,'y'=>50],['x'=>40,'y'=>50]))===1,
+    'A real later round can charge one contact while the filament is active');
 $ally=[...$enemy,'id'=>'ally-token','controllerPlayerId'=>'account-player'];$allied=$insideState;$allied['map']['tokens'][]=$ally;$allied['initiative']['order'][1]='ally-token';$allied['devices']['contactZones']=[$zone];
 specialCheck(applicationCollectContactZoneMovement($allied,$ally,['x'=>40,'y'=>40],['x'=>40,'y'=>60])===[],'Allies are excluded by default');
 $allied['devices']['contactZones'][0]['friendlyFire']=true;specialCheck(count(applicationCollectContactZoneMovement($allied,$ally,['x'=>40,'y'=>40],['x'=>40,'y'=>60]))===1,'Authoritative Friendly Fire opens allied contact through the common relation rule');
 $allied['initiative']=[...$clock,'turnSerial'=>13];specialCheck(applicationCollectContactZoneMovement($allied,$source,['x'=>20,'y'=>50],['x'=>30,'y'=>50])===[],'Friendly Fire does not invent affectCaster');
 $alias=[...$source,'id'=>'linked-caster-alias'];$aliasState=$insideState;$aliasState['map']['tokens'][]=$alias;$aliasState['initiative']['order'][1]=$alias['id'];$aliasState['devices']['contactZones'][0]['friendlyFire']=true;specialCheck(applicationCollectContactZoneMovement($aliasState,$alias,['x'=>20,'y'=>50],['x'=>30,'y'=>50])===[],'Friendly Fire never bypasses affectCaster through another linked occurrence of the same source unit');
-$next=[...$clock,'turnSerial'=>12,'currentIndex'=>0];
 $context=['tokens'=>[$source,$enemy]];
+$replay=[...$clock,'turnSerial'=>12,'currentIndex'=>0];
+specialCheck(applicationAdvanceContactZones([$zone],$scene,$clock,$replay,$context)===[$zone],
+    'Returning to the source turn of placement does not retire the damaging filament');
+$next=[...$replay,'round'=>3];
 $visual=applicationAdvanceContactZones([$zone],$scene,$clock,$next,$context);
-specialCheck(($visual[0]['visualOnlySince']??null)===['turnSerial'=>12,'round'=>2,'manualTurn'=>0],'Damage expires exactly at the next source turn start');
+specialCheck(($visual[0]['visualOnlySince']??null)===['turnSerial'=>12,'round'=>3,'manualTurn'=>0],'Damage expires exactly at the next source turn start');
 $otherTurn=[...$next,'turnSerial'=>13,'currentIndex'=>1];
 $decorativeState=$insideState;
 $decorativeState['initiative']=$otherTurn;
 $decorativeState['devices']['contactZones']=$visual;
 specialCheck(applicationCollectContactZoneMovement($decorativeState,$enemy,['x'=>40,'y'=>40],['x'=>40,'y'=>60])===[]&&$decorativeState['devices']['contactZones']===$visual,'A real crossing of the decorative filament cannot hurt or consume a contact');
-$second=[...$next,'turnSerial'=>14,'round'=>3];
+$second=[...$next,'turnSerial'=>14,'round'=>4];
 $rewound=[...$otherTurn,'currentIndex'=>0,'turnSerial'=>14,'rewoundTurnSerial'=>14];
 specialCheck(applicationAdvanceContactZones($visual,$scene,$otherTurn,$rewound,$context)===$visual,'Revisiting the source turn preserves the decorative filament');
+specialCheck(applicationAdvanceContactZones($visual,$scene,$otherTurn,[...$next,'turnSerial'=>14],$context)===$visual,
+    'Stepping forward again into the same round keeps the decorative filament');
 specialCheck(applicationAdvanceContactZones($visual,$scene,$otherTurn,$second,$context)===[],'The drawing ends at the second source turn start');
 $linked=[...$source,'id'=>'other-linked-source'];
 $nextLinked=$next;$nextLinked['order'][0]=$linked['id'];

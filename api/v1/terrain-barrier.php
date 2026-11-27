@@ -93,9 +93,11 @@ function applicationTerrainBarrierPointVisible(array $token,array $map,callable 
     for($i=0;$i<24;$i++){$a=$i*M_PI/12;$x=$token['x']+cos($a)*$rx;$y=$token['y']+sin($a)*$ry;if($x>=0&&$x<=100&&$y>=0&&$y<=100&&$visible($x,$y))return true;}return false;
 }
 function applicationTerrainBarrierWalls(array $walls,array $map): array {
+    unset($walls['closedDoorSegments']);
     $layer=$map['activeLayerId']??'ground';$level=$map['layers'][$layer]??$map;
     $nw=max(1,(float)($level['naturalWidth']??$map['naturalWidth']??1600));$nh=max(1,(float)($level['naturalHeight']??$map['naturalHeight']??900));
     $bytes=applicationWallMaskBytes($walls)??str_repeat("\0",(int)ceil($walls['width']*$walls['height']/8));$changed=false;
+    $closedDoorSegments = [];
     foreach($map['tokens']??[] as $token){
         if(!applicationTerrainBarrierActive($token)||!applicationTerrainBarrierPositioned($token)||($token['layerId']??'ground')!==$layer)continue;$changed=true;
         $rect=applicationIsRectangularObstacle($token);$door=applicationIsObstacleDoor($token);$grid=(float)(($map['gridSize']??0)?:50);
@@ -119,6 +121,13 @@ function applicationTerrainBarrierWalls(array $walls,array $map): array {
             // Fixed jambs overlap the adjacent wall by 4% of the door width.
             $angle=deg2rad($rotation);
             foreach([-1,1] as $side)$pieces[]=[$across*.18,$rotation,$side*.45*$across*cos($angle)*$grid,$side*.45*$across*sin($angle)*$grid];
+            if (empty($token['terrainBarrier']['open'])) {
+                // Keep the continuous optical edge separate from movement collision.
+                $halfWidth = .54 * $across * $grid;
+                $dx = $halfWidth * cos($angle) * 100 / $nw;
+                $dy = $halfWidth * sin($angle) * 100 / $nh;
+                $closedDoorSegments[] = [$token['x']-$dx, $token['y']-$dy, $token['x']+$dx, $token['y']+$dy];
+            }
         }
         foreach($pieces as [$length,$angle,$offsetX,$offsetY]){
             $px=$token['x']*$nw/100+$offsetX;$py=$token['y']*$nh/100+$offsetY;
@@ -135,7 +144,9 @@ function applicationTerrainBarrierWalls(array $walls,array $map): array {
             }
         }
     }
-    if($changed)$walls['mask']=rtrim(strtr(base64_encode($bytes),'+/','-_'),'=');return $walls;
+    if($changed)$walls['mask']=rtrim(strtr(base64_encode($bytes),'+/','-_'),'=');
+    if ($closedDoorSegments !== []) $walls['closedDoorSegments'] = $closedDoorSegments;
+    return $walls;
 }
 function applicationCreateTerrainBarrierToken(array $ability,array $point,string $id,bool $playerSide=false): array {
     $d=applicationTerrainBarrier($ability['terrainBarrier']??null);if(!$d)return [];

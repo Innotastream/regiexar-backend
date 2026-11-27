@@ -84,13 +84,17 @@ requireTactical($ungraded->status===200 && $newRoll['formula']==='1d100' && ($ne
     && ($newRoll['outcome']['code']??null)===($expected['code']??null)
     && $newSheet->payload('luck')['characters']['character-player']['rollCount']===1, 'An uninitialized sheet starts its history after an ungraded first Chance roll.');
 
-// Generate real receipts through the 0.19.29 paths, before the clone marker
-// makes the same token eligible for the new threshold, then replay both IDs.
+// Generate ungraded receipts before this token has its own history or clone
+// marker. Then verify the original results survive both eligibility changes.
 $cloneKey = 'token:scene-one:'.$cloneId;
 $cloneRecord = $db->domains[$cloneKey];
+$luckRecord = $db->domains['luck'];
 $legacySource = $cloneRecord['payload'];
 unset($legacySource['cloneSourceTokenId'], $legacySource['independentClone']);
 $db->put($cloneKey,$legacySource,$cloneRecord['revision']);
+$legacyLuck = $luckRecord['payload'];
+unset($legacyLuck['characters']['unit_'.$cloneId]);
+$db->put('luck', $legacyLuck, $luckRecord['revision']);
 $legacy = [];
 foreach ($actors as [$isGm,$account]) {
     $args = ['sceneId'=>'scene-one','layerId'=>'ground','tokenId'=>$cloneId,'kind'=>'luck','requestId'=>'luck-legacy-receipt-'.$account];
@@ -100,6 +104,7 @@ foreach ($actors as [$isGm,$account]) {
     $legacy[] = [$isGm,$account,$args,$reply->body['roll']];
 }
 $db->domains[$cloneKey] = $cloneRecord;
+$db->domains['luck'] = $luckRecord;
 $beforeReplay = [$db->domains,$db->revision];
 foreach ($legacy as [$isGm,$account,$args,$roll]) {
     $reply = runCommand($db, 'token.roll', $args, $isGm, $account);

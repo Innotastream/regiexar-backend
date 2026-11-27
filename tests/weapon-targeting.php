@@ -10,6 +10,9 @@ $map=['naturalWidth'=>1000,'naturalHeight'=>1000,'gridSize'=>50];$a=['id'=>'a','
 specialCheck(abs(applicationMapDistanceInCells($a,$b,$map,true,true)-.8)<1e-9,'Edges and diagonal metric');
 foreach(['melee'=>2,'reach'=>4,'ranged'=>15] as $reach=>$cells){$edge=10+($cells*50+40)/10;$b=[...$a,'id'=>'b','x'=>$edge,'y'=>$edge];specialCheck(applicationWeaponInRange(['reach'=>$reach],$a,$b,$map),'Inclusive range boundary');specialCheck(!applicationWeaponInRange(['reach'=>$reach],$a,[...$b,'x'=>$edge+.01],$map),'Outside boundary rejected');}
 specialCheck(applicationAbilityRangeCells(['useWeaponDamage'=>true],[$weapon])===4.0,'Weapon fallback');specialCheck(applicationAbilityRangeCells([],[$weapon])===15.0,'Spell fallback');specialCheck(applicationAbilityRangeCells(['rangeCells'=>30,'useWeaponDamage'=>true],[$weapon])===30.0,'Explicit range wins');
+$distant=['reach'=>'ranged','minimumReach'=>'ranged'];$boundary=[...$a,'id'=>'b','x'=>34];
+specialCheck(!applicationAbilityTargetInRange($distant,$a,$boundary,$map),'Distance starts after inclusive four-cell Allonge');
+specialCheck(applicationAbilityTargetInRange($distant,$a,[...$boundary,'x'=>34.001],$map),'Just after Allonge can be targeted');
 function targetingFixture(array $weapon):MemoryConnection {
  $db=specialFixture();$c=$db->payload('character:character-player');$c['weaponText']='Arme fictive / 1d2+6';$c['weaponAttacks']=[$weapon];$c['specialSuccessStock']=1;$db->put('character:character-player',$c);
  $second=$db->payload('token:scene-one:token-monster');$second['id']='token-monster-two';$second['x']=65;$db->put('token:scene-one:token-monster-two',$second);return $db;
