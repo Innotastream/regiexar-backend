@@ -21,6 +21,8 @@ specialCheck(empty($db->payload('devices')['contactZones'])&&empty($db->payload(
 $args['requestId']='path-strike-accept-'.randomToken(16);$start=runCommand($db,'ability.complex',$args);
 $approve=runCommand($db,'token.attack.area.resolve',['attackId'=>$start->body['attack']['id'],'decision'=>'approve','confirmed'=>true,'defenseTokenIds'=>['token-monster'],'requestId'=>'path-strike-approve-'.randomToken(16)],true);
 specialCheck($approve->status===200&&is_array($approve->body['execution']??null),'Real MJ decision starts the prepared route: '.json_encode($approve->body));$execution=$approve->body['execution'];
+specialCheck(($db->payload('activity')['abilityExecutions'][0]['sourceSight']??false)===true,
+    'The new caster sight persists across workflow actions');
 specialCheck($db->payload('token:scene-one:token-player')['x']===20,'MJ approval itself does not teleport the source');
 specialCheck(count($db->payload('devices')['contactZones']??[])===1&&count($db->payload('devices')['contactZones'][0]['points'])===1,'The filament lifetime starts once at the approved cast, before its first real hop');
 specialCheck(array_column($execution['stepStates']['targets']['attackPlan'],'tokenId')===['token-monster','token-monster-two'],'Actual workflow orders enemies by descending distance to final point');
@@ -194,4 +196,19 @@ $rider=$mounted->payload('token:scene-one:token-player');specialCheck(!isset($ri
 $clone=$fresh();$sheet=$clone->payload('character:character-player');$sheet['resources']['mana']=40;$sheet['abilities']=[];$clone->put('character:character-player',$sheet);$own=$clone->payload('token:scene-one:token-player');$own=[...$own,'independent'=>true,'followCharacter'=>true,'abilities'=>[[...$ability,'manaCost'=>3]],'mana'=>30,'maxMana'=>100];$clone->put('token:scene-one:token-player',$own);
 $r=runCommand($clone,'ability.complex',[...$args,'requestId'=>'path-clone-start-'.randomToken(16)]);specialCheck($r->status===200&&!empty($r->body['pendingAreaGate']),'Independent clone uses its own workflow despite followCharacter legacy flag: '.json_encode($r->body));$r=fixtureApproveDefenseGate($clone,$r);specialCheck($r->status===200,'Independent workflow is approved normally: '.json_encode($r->body));specialCheck($clone->payload('token:scene-one:token-player')['mana']===27&&$clone->payload('character:character-player')['resources']['mana']===40,'Independent clone pays 30 to 27 and leaves model mana 40 untouched');
 $cloneAction=null;foreach($clone->payload('activity')['combatActions']as$action)if(in_array('execution:'.$r->body['execution']['id'],$action['aliases'],true))$cloneAction=$action;specialCheck($cloneAction!==null,'Independent cast has its own complete undo action');$undo=runCommand($clone,'action.undo',['actionId'=>$cloneAction['actionIds'][0],'requestId'=>'path-clone-undo-'.randomToken(16)],true);specialCheck($undo->status===200&&$clone->payload('token:scene-one:token-player')['mana']===30&&$clone->payload('character:character-player')['resources']['mana']===40,'Undo restores clone mana 27 to 30 and keeps the model untouched');
+foreach ([false,true] as $gm) {
+    $limited=$fresh();
+    $sheet=$limited->payload('character:character-player');
+    $limited->put('character:character-player',[...$sheet,'visionDistance'=>2]);
+    $map=$limited->payload('map:scene-one');
+    $limited->put('map:scene-one',[...$map,'vision'=>['enabled'=>true,'shared'=>true,'distance'=>12]]);
+    $ally=[...$limited->payload('token:scene-one:token-monster'),'id'=>'sight-ally','x'=>55,'y'=>50,
+        'characterId'=>'','controllerPlayerId'=>'account-player','visionDistance'=>12];
+    $limited->put('token:scene-one:sight-ally',$ally);
+    $index=$limited->payload('token-index:scene-one');$index['order'][]='sight-ally';$limited->put('token-index:scene-one',$index);
+    $before=$limited->domains;
+    $r=runCommand($limited,'ability.complex',[...$args,'requestId'=>'path-caster-sight-'.randomToken(16)],$gm,$gm?'account-gm':'account-player');
+    specialCheck($r->status===409&&($r->body['code']??'')==='complex_ability_path_strike_invalid'
+        &&$limited->domains===$before,'Shared vision cannot extend the caster route even for the player or during MJ preparation: '.json_encode($r->body));
+}
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

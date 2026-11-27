@@ -14,6 +14,19 @@ function criticalTestDb(): MemoryConnection {
     $target=$db->payload('token:scene-one:token-monster');$target['hp']=$target['maxHp']=10000;$db->put('token:scene-one:token-monster',$target);
     return $db;
 }
+foreach ([false,true] as $gm) {
+    $db=criticalTestDb();
+    $map=$db->payload('map:scene-one');
+    $fog=str_repeat("\0",512);
+    applicationSetMaskBit($fog,32*64+18,true);
+    $db->put('map:scene-one',[...$map,'fog'=>['version'=>1,'enabled'=>true,'width'=>64,'height'=>64,
+        'mask'=>rtrim(strtr(base64_encode($fog),'+/','-_'),'=')]]);
+    $before=$db->domains;
+    $r=runCommand($db,'ability.complex',['action'=>'start','requestId'=>'chain-visible-cast-'.randomToken(16),'sceneId'=>'scene-one',
+        'sourceTokenId'=>'token-player','targetTokenId'=>'token-monster','abilityId'=>'fiction-critical-chain'],$gm,$gm?'account-gm':'account-player');
+    requireTactical($r->status===403&&($r->body['code']??'')==='attack_target_hidden'&&$db->domains===$before,
+        'The first chain roll is not started or charged against a target outside caster sight: '.json_encode($r->body));
+}
 for($position=1;$position<=5;$position++){
     $db=criticalTestDb();$ability=criticalTestAbility();$now=(int)floor(microtime(true)*1000);
     $outcome=classifyOnlineD100Outcome($position===1?11:12,95);$outcome['requiresGmValidation']=false;

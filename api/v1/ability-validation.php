@@ -246,6 +246,20 @@ function onlineResolveAbilityCasting(PDO $connection, array &$records, array &$p
     $entry['status'] = $decision === 'approve' ? 'approved' : 'rejected'; $entry['resolvedAt'] = gmdate('c');
     $result = [...$result, 'pendingValidation' => false, 'validation' => publicOnlineAbilityValidation($entry, (string) $identity['id']), 'deduplicated' => false];
     $activity = $pending['activity']['payload'] ?? $activity;
+    $parentAttackId = $private['plan']['defenseApproval']['parentAttackId'] ?? null;
+    $executionId = $result['execution']['id'] ?? null;
+    if ($decision === 'approve' && $entry['route'] === 'ability.complex' && is_string($parentAttackId)
+        && $entry['requestId'] === 'release-' . $parentAttackId
+        && $executionId === 'execution-' . $entry['requestId']) {
+        foreach ($activity['attackReceipts'] ?? [] as $index => $receipt) {
+            $parent = $receipt['attack'] ?? [];
+            if (($parent['id'] ?? null) !== $parentAttackId || ($parent['status'] ?? null) !== 'resolved'
+                || ($parent['areaGate']['kind'] ?? null) !== 'complex-start'
+                || !onlineWantsTotalOpposition($parent['areaGate'])) continue;
+            $activity['attackReceipts'][$index]['attack']['areaGate']['executionId'] = $executionId;
+            break;
+        }
+    }
     $activity['pendingAbilityCasts'] = array_values(array_filter($activity['pendingAbilityCasts'] ?? [], static fn(array $candidate): bool => $candidate['id'] !== $validationId));
     foreach ($activity['resourceReceipts'] ?? [] as $i => $receipt) {
         if (($receipt['requestId'] ?? '') === $entry['requestId'] && ($receipt['accountId'] ?? '') === $private['identity']['id']) {

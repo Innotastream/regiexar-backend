@@ -39,6 +39,13 @@ $mirrorRequest=['requestId'=>'mirror-best-stat-first','sceneId'=>'scene-one','la
 $copy=runCommand($db,'ability.use',$mirrorRequest);
 specialCheck($copy->status===200&&($copy->body['cast']['statId']??null)==='character-stat-agility'
     &&($copy->body['cast']['outcome']['baseThreshold']??null)===73,'Native Mirror uses temporary Agility with a fatigue penalty, not the request or mental resistance: '.json_encode($copy->body));
+$mirrorOutcome = $copy->body['cast']['outcome'];
+$publicMirror = publicOnlineAttackRoll(['outcome'=>$mirrorOutcome],false);
+specialCheck(($mirrorOutcome['bestStat'] ?? false) === true && ($publicMirror['outcome']['bestStat'] ?? false) === true
+    && !isset($publicMirror['outcome']['threshold']) && !isset($publicMirror['outcome']['baseThreshold']),
+    'The public Mirror die identifies the best stat without showing its private threshold');
+$ordinaryProjection = publicOnlineAttackRoll(['outcome'=>[...$mirrorOutcome,'bestStat'=>'true']],false);
+specialCheck(!isset($ordinaryProjection['outcome']['bestStat']),'A non-boolean best-stat marker is not made public');
 specialCheck(!empty($db->payload('token:scene-one:token-player')['appearanceState']['active']),'Native successful Mirror applies the appearance');
 $character=$db->payload('character:character-player');$character['temporaryStats']=['agility'=>36,'intelligence'=>90];$db->put('character:character-player',$character);
 $replay=runCommand($db,'ability.use',$mirrorRequest);
@@ -319,4 +326,33 @@ $r=specialUse($db,$poison['id'],'token-player',['consumableItemId'=>$vial]);spec
 $cues=array_values(array_filter($db->payload('activity')['abilityCueEvents']??[],static fn($e)=>($e['completionCue']['spell']['presetId']??'')==='weapon-poison-coat'));specialCheck(count($cues)===1&&$cues[0]['completionCue']['spell']['weaponProfile']==='bladed-whip','Coating uses the actual equipped main weapon profile');
 specialCheck($db->payload('character:character-player')['fatigue']['current']===5,'Visual stages do not change the application cost');
 
+foreach ([false,true] as $gm) foreach ([false,true] as $open) {
+    $db=specialFixture();
+    $sheet=$db->payload('character:character-player');
+    $sheet['abilities']=[['id'=>'door-visibility-heal','name'=>'Soin de recette','effect'=>'healing','formula'=>'8',
+        'healingFormula'=>'8','castingStatId'=>'','manaCost'=>3,'rangeCells'=>8]];
+    $db->put('character:character-player',$sheet);
+    $source=$db->payload('token:scene-one:token-player');
+    $db->put('token:scene-one:token-player',[...$source,'x'=>20,'y'=>50]);
+    $target=$db->payload('token:scene-one:token-monster');
+    $db->put('token:scene-one:token-monster',[...$target,'x'=>30,'y'=>50,'hp'=>400]);
+    $door=['id'=>'heal-sight-door','name'=>'Porte','x'=>25,'y'=>50,'size'=>100,'hp'=>50,'maxHp'=>50,
+        'layerId'=>'ground','fixedStructure'=>true,
+        'terrainBarrier'=>['version'=>1,'shape'=>'door','rotation'=>90,'layout'=>'double','widthCells'=>4,'open'=>$open]];
+    $db->put('token:scene-one:heal-sight-door',$door);
+    $index=$db->payload('token-index:scene-one');$index['order'][]=$door['id'];$db->put('token-index:scene-one',$index);
+    $map=$db->payload('map:scene-one');
+    $db->put('map:scene-one',[...$map,'vision'=>['enabled'=>true,'shared'=>true,'distance'=>8]]);
+    $before=$db->domains;
+    $result=runCommand($db,'ability.use',['requestId'=>'heal-door-sight-'.randomToken(16),'sceneId'=>'scene-one','layerId'=>'ground',
+        'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'abilityId'=>'door-visibility-heal'],$gm,$gm?'account-gm':'account-player');
+    if (!$open) {
+        specialCheck($result->status===403&&($result->body['code']??'')==='healing_target_hidden'&&$db->domains===$before,
+            'A shut door hides the healing recipient without spending the spell, in either view: '.json_encode($result->body));
+    } else {
+        specialCheck($result->status===200&&$db->payload('token:scene-one:token-monster')['hp']===408
+            &&$db->payload('character:character-player')['resources']['mana']===97,
+            'The same heal reaches its recipient once the door is open: '.json_encode($result->body));
+    }
+}
 fwrite(STDOUT,json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_UNESCAPED_UNICODE)."\n");

@@ -53,6 +53,15 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     $character = $owner['characterId'] !== '' ? applicationDomainPayload($records, 'character:' . $owner['characterId']) : [];
     $rules = $character !== [] ? synchronizeOnlineCharacterToken($source, $character) : $source;
     $rules['controllerPlayerId'] = onlineTokenControllerIdFromRecords($connection, $records, $source);
+    $sourceSight = $continuation === null || ($continuation['plan']['sourceSight'] ?? false) === true;
+    $vision = null;
+    $sourceVision = static function () use (&$vision,$map,$source,$character,$sceneId): array {
+        return $vision ??= onlineAbilitySourceVisibility($map,$source,$character ?: null,$sceneId);
+    };
+    $targetVisible = static function (array $target) use ($sourceSight,$sourceVision,$source,$isGm,$connection,&$records,$map,$accountId,$sceneId): bool {
+        if ($sourceSight) return $target['id'] === $source['id'] || $sourceVision()['token']($target);
+        return $isGm || (empty($target['hidden']) && onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId));
+    };
     $abilities = normalizeOnlineAbilities($rules['abilities'] ?? []);
     $abilityIndex = findEntryIndex($abilities, (string) ($arguments['abilityId'] ?? '')); $ability = $abilityIndex >= 0 ? $abilities[$abilityIndex] : null;
     if ($continuation === null && ($ability['visualD75'] ?? false) === true && onlineIsPreviousStoreRelease()) {
@@ -73,7 +82,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         if ($formPlan['deduplicated']) return ['effect' => 'metamorphosis', 'activeCharacterId' => $formPlan['activeCharacterId'], 'deduplicated' => true];
     } elseif(!empty($ability['tacticalEffect'])||!empty($ability['conditionRider'])&&($ability['effect']??'')==='movement'){
         $target=applicationDomainPayload($records,onlineTokenDomainKey($sceneId,$arguments['targetTokenId']??''));
-        if($target===[]||applicationIsNonCombatant($target)||!onlineTokenOnActiveLayer($target,$map)||(!$isGm&&(($target['hidden']??false)||!onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId))))rejectOnlineCommand($connection,403,'La cible de cette compétence doit être une unité visible.','tactical_target_hidden');
+        if($target===[]||applicationIsNonCombatant($target)||!onlineTokenOnActiveLayer($target,$map)||!$targetVisible($target))rejectOnlineCommand($connection,403,'La cible de cette compétence doit être une unité visible.','tactical_target_hidden');
         if(($ability['tacticalEffect']['kind']??'')==='control'&&$source['id']===$target['id'])rejectOnlineCommand($connection,400,'Choisissez une autre unité à contrôler.','tactical_self_control');
         if (in_array($ability['tacticalEffect']['kind'] ?? '', ['control','mark'], true)
             && applicationHasAllHarmImmunity($target, $activity, $sceneId)) {
@@ -86,14 +95,14 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $targetRules=$targetSheet!==[]?synchronizeOnlineCharacterToken($target,$targetSheet):$target;
         $targetRules['controllerPlayerId']=onlineTokenControllerIdFromRecords($connection,$records,$target);
         if($target===[]||$source['id']===$target['id']||applicationIsNonCombatant($target)||applicationAbilitySourceDefeated($targetRules)
-            ||!onlineTokenOnActiveLayer($target,$map)||(!$isGm&&(($target['hidden']??false)||!onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId))))
+            ||!onlineTokenOnActiveLayer($target,$map)||!$targetVisible($target))
             rejectOnlineCommand($connection,403,'Choisissez une autre unité vivante et visible.','stat_check_target_forbidden');
         if(count(array_filter(applicationTrimStatChecks($activity['statChecks']??[],(int)floor(microtime(true)*1000)),'applicationStatCheckPending'))>=XAR_STAT_CHECK_MAXIMUM)
             rejectOnlineCommand($connection,429,'Le MJ doit terminer les duels en attente.','stat_check_capacity');
     } elseif (!in_array($ability['effect'] ?? '', ['movement', 'summoning'], true)) {
         if (!in_array($ability['effect'] ?? '', ['healing', 'enhancement'], true)) rejectOnlineCommand($connection, 404, 'Cette capacité n’existe plus.', 'healing_ability_missing');
         $target = applicationDomainPayload($records, onlineTokenDomainKey($sceneId, $arguments['targetTokenId'] ?? ''));
-        if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || (!$isGm && (($target['hidden'] ?? false) || !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId)))) rejectOnlineCommand($connection, 403,
+        if ($target === [] || !onlineTokenOnActiveLayer($target, $map) || !$targetVisible($target)) rejectOnlineCommand($connection, 403,
             $ability['effect'] === 'enhancement' ? 'Le bénéficiaire du buff n’est plus visible. Rouvrez la capacité.' : 'La cible du soin n’est pas visible.', 'healing_target_hidden');
         if ($ability['effect'] === 'healing') {
             $targetOwner = applicationAbilityCastingOwner($target);
@@ -109,7 +118,12 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
         $zonePoint=applicationAreaTargetPoint($arguments['targetPoint']??null,onlineTokenLayerId($source,$map));
         if($zonePoint===null||!applicationAbilityTargetInRange($ability,$source,$zonePoint,$map,$rules['weaponAttacks']??[]))rejectOnlineCommand($connection,409,'Choisissez un point à portée pour la nappe de brume.','vision_zone_point_invalid');
         if(count($map['visionZones']??[])>=64)rejectOnlineCommand($connection,429,'La carte contient déjà trop de nappes de vision.','vision_zone_capacity');
-        if(!$isGm){$visible=onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId);if(!$visible($zonePoint['x'],$zonePoint['y']))rejectOnlineCommand($connection,403,'Le point choisi n’est pas visible.','vision_zone_point_hidden');}
+        if (!$isGm || $sourceSight) {
+            $visible = $sourceSight ? $sourceVision()['point'] : onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId);
+            if (!$visible($zonePoint['x'],$zonePoint['y'])) {
+                rejectOnlineCommand($connection,403,'Le point choisi n’est pas visible par le lanceur.','vision_zone_point_hidden');
+            }
+        }
     }
     if(($ability['tacticalEffect']['kind']??'')==='coating'){
         if((onlineTokenControllerIdFromRecords($connection,$records,$source)!=='')!==(onlineTokenControllerIdFromRecords($connection,$records,$target)!==''))rejectOnlineCommand($connection,403,'Ce poison s’applique sur votre arme ou celle d’un allié.','coating_target_forbidden');
@@ -128,6 +142,7 @@ function onlineUseAbility(PDO $connection, array &$records, array &$pending, arr
     }
     $costedAbility = $infusion !== null ? [...$ability, 'manaCost' => ($ability['manaCost'] ?? 0) + $infusion['mana']] : $ability;
     $plan = $continuation['plan'] ?? ($returning ? null : onlinePrepareAbilityCasting($connection, $costedAbility, $rules, $sceneId, applicationDomainPayload($records, 'initiative:' . $sceneId), $activity));
+    if ($plan !== null && $sourceSight) $plan['sourceSight'] = true;
     if ($infusion !== null) $plan['healingInfusion'] = $infusion;
     if($continuation===null&&$plan!==null&&empty(applicationSpellVisualBindings()[$ability['id']??'']['onResolvedDamage'])){
         $visualContext=[];

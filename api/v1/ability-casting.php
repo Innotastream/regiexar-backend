@@ -179,10 +179,11 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
     // string means no casting check. Legacy simple rolls had no check.
     $visualD75 = ($ability['visualD75'] ?? false) === true;
     $statId = $visualD75 || !empty($ability['manualD100'])?'':(array_key_exists('castingStatId', $ability) ? $ability['castingStatId'] : ($legacyStatId ?? ''));
+    $bestStat = $statId === 'best-stat';
     $stat = null;
     if ($statId !== '') {
         $stats = $source['stats'] ?? [];
-        $stat = $statId === 'best-stat' ? applicationBestAbilityCastingStat($stats) : applicationAbilityCastingStat($stats, $statId);
+        $stat = $bestStat ? applicationBestAbilityCastingStat($stats) : applicationAbilityCastingStat($stats, $statId);
         if (!is_array($stat) || !is_numeric($stat['value'] ?? null)) throw new RuntimeException('ability_cast_stat_missing');
         $statId = (string) $stat['id'];
     }
@@ -201,7 +202,8 @@ function applicationAbilityCastingPlan(array $ability, array $source, string $sc
         'usedRound' => $round, 'cooldownRounds' => applicationEffectiveRoundCooldown($ability,$initiative), 'manaCost' => $manaCost,
         'reducedFailureEnabled' => ($initiative['active']??false)===true && $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
         'reducedFailureFatigueRefund' => $statId !== '' && ($ability['reducedFailureCooldown'] ?? false) === true,
-        'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
+        'statId' => $statId, 'statLabel' => (string) ($stat['label'] ?? ''),
+        ...($bestStat ? ['bestStat'=>true] : []), 'threshold' => $stat === null ? null : max(0, min(100, (int) $stat['value']))];
 }
 
 function applicationAbilityFailedCooldownRounds(array $plan, array $cast): int {
@@ -268,7 +270,10 @@ function onlineAbilityCastingRoll(array $plan, array $source, array $identity, a
         $fatigue = onlineStatFatigueDetails($source, (string) $plan['statId'], $character);
         if ($fatigue !== null) $outcome['fatigue'] = $fatigue;
     }
-    if ($outcome !== null) $outcome['resultCustomized'] = empty($plan['manualD100'])&&($modifierMode === 'result'||($plan['fixedResultModifier'] ?? 0)!==0);
+    if ($outcome !== null) {
+        if (($plan['bestStat'] ?? false) === true) $outcome['bestStat'] = true;
+        $outcome['resultCustomized'] = empty($plan['manualD100'])&&($modifierMode === 'result'||($plan['fixedResultModifier'] ?? 0)!==0);
+    }
     $roll = onlineRollEntry($identity, $rolled, $plan['label'] . ' · Lancement · ' . $plan['statLabel'], (string) ($source['name'] ?? 'Personnage'), $outcome);
     $sourceTokenId = $sourceTokenId !== '' ? $sourceTokenId : (string) ($source['id'] ?? '');
     $roll = onlineAbilityRollVisibility($roll, $source, $identity, $sourceVisibleToPlayers, (string) $plan['sceneId'], $sourceTokenId);

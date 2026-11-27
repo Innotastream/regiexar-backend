@@ -34,6 +34,8 @@ function applicationBodyChargeLandingFree(array $source, array $point, array $to
         if (isset($ignored[$token['id']]) || !empty($token['mountedOnTokenId'])
             || ($token['layerId'] ?? 'ground') !== ($map['activeLayerId'] ?? 'ground')
             || !is_numeric($token['x'] ?? null) || !is_numeric($token['y'] ?? null)) continue;
+        // The travel mask already checks the open leaves and both jambs.
+        if (applicationIsObstacleDoor($token) && ($token['terrainBarrier']['open'] ?? false) === true) continue;
         if (is_numeric($token['hp'] ?? null) && (float) $token['hp'] <= 0
             && empty($token['terrainBarrier']) && empty($token['fixedStructure']) && empty($token['immovable'])) continue;
         $distance = hypot(($point['x'] - $token['x']) * $d['width'] / 100, ($point['y'] - $token['y']) * $d['height'] / 100);

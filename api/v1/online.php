@@ -4039,7 +4039,25 @@ function onlinePendingAttackParties(PDO $connection, array &$records, array $att
         && ($attack['validationKind'] ?? '') === 'outcome' && onlineTokenIsDead($target, $targetController !== '')) {
         $reject(409, 'Cette cible est déjà morte.', 'target_already_defeated');
     }
-    if (($attack['attackerRole'] ?? 'player') !== 'gm' && $sceneId === onlineActiveSceneId(applicationDomainPayload($records, 'table'))) {
+    if (($attack['sourceSight'] ?? false) === true) {
+        $viewKey = 'source:'.$sceneId.':'.$source['id'];
+        $targetView = $visibility[$viewKey] ?? null;
+        if ($targetView === null) {
+            $visibilityMap = $queued[$mapKey]['payload'] ?? $map;
+            $visibilityMap['tokens'] = $map['tokens'] ?? onlineSceneTokensForLights($connection,$records,$queued,$sceneId);
+            $character = [];
+            if (unitUsesCharacterSheet($source)) {
+                $characterKey = 'character:'.$source['characterId'];
+                if (!isset($queued[$characterKey]) && !isset($records[$characterKey])) $load([$characterKey]);
+                $character = $queued[$characterKey]['payload'] ?? applicationDomainPayload($records,$characterKey);
+            }
+            $targetView = onlineAbilitySourceVisibility($visibilityMap,$source,$character ?: null,$sceneId)['token'];
+            if ($visibility !== null) $visibility[$viewKey] = $targetView;
+        }
+        if (!$targetView($target)) {
+            $reject(409,'La cible n’est plus visible par le lanceur. Le MJ peut annuler cette attaque.','attack_target_hidden');
+        }
+    } elseif (($attack['attackerRole'] ?? 'player') !== 'gm' && $sceneId === onlineActiveSceneId(applicationDomainPayload($records, 'table'))) {
         $mapKey = 'map:' . $sceneId;
         $load([$mapKey]);
         $visibilityMap = applicationDomainPayload($records, $mapKey);
@@ -4611,6 +4629,7 @@ function publicOnlineAttackRoll(mixed $value, bool $detailsVisible = false, stri
             'raw', 'result', 'resultModifier', 'resultModifierApplied', 'resultCustomized', 'modifier', 'code', 'label', 'success',
             'effect', 'immediate', 'automatic', 'breaksOpposition', 'requiresGmValidation', 'joker',
         ]);
+        if (($source['outcome']['bestStat'] ?? false) === true) $public['outcome']['bestStat'] = true;
         if ($detailsVisible) {
             $public['outcome'] += publicOnlineAttackProjectionFields($source['outcome'], ['baseThreshold', 'threshold', 'fatigue']);
         }
@@ -5127,8 +5146,17 @@ function onlineAttackApproachPlan(PDO $connection,array &$records,array &$pendin
     $movementSource=applicationAttackApproachMovementSource($source,[...$map,'tokens'=>$tokens],($attack['mountedMovement']??false)===true);
     if(!empty($attack['targetRangeCells'])&&!applicationAbilityTargetInRange(['rangeCells'=>$attack['targetRangeCells'],...(isset($attack['minimumReach'])?['minimumReach'=>$attack['minimumReach']]:[])],$movementSource,$target,[...$map,'tokens'=>$tokens]))throw new RuntimeException('La cible est hors de portée de la compétence.',409);
     $layer=$body['layerId']??'ground';$level=[...$map,...($map['layers'][$layer]??[]),'tokens'=>$tokens,'activeLayerId'=>$layer];unset($level['layers']);$visibleRecords=array_replace($records,$pending);
-    if(!$isGm&&(!empty($target['hidden'])||!empty($target['dimSilhouette'])||!onlineAttackTargetVisible($connection,$visibleRecords,$level,$target,$actorId,$sceneId)))throw new RuntimeException('La cible n’est plus visible.',403);
-    $level['_chargeVisible']=$isGm?static fn()=>true:onlineMapMovementVisibility($connection,$visibleRecords,$level,$actorId,$sceneId);$activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
+    if (!empty($attack['sourceSight'])) {
+        $key='character:'.($source['characterId']??'');
+        $character=$pending[$key]['payload']??applicationDomainPayload($records,$key);
+        $vision=onlineAbilitySourceVisibility($level,$source,$character?:null,$sceneId);
+        if (!$vision['token']($target)) throw new RuntimeException('La cible n’est plus visible par le lanceur.',403);
+        $level['_chargeVisible']=$vision['point'];
+    } else {
+        $level['_chargeVisible']=$isGm?static fn()=>true:onlineMapMovementVisibility($connection,$visibleRecords,$level,$actorId,$sceneId,$tokens);
+        if(!$isGm&&(!empty($target['hidden'])||!empty($target['dimSilhouette'])||!onlineAttackTargetVisible($connection,$visibleRecords,$level,$target,$actorId,$sceneId,$level['_chargeVisible'])))throw new RuntimeException('La cible n’est plus visible.',403);
+    }
+    $activity=$pending['activity']['payload']??applicationDomainPayload($records,'activity');
     return applicationPlanAttackApproach($attack,$level,$activity['abilityExecutions']??[],$activity['abilityMovementLeases']??[]);
     } catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()>=400&&$error->getCode()<600?(int)$error->getCode():409,$error->getMessage(),'attack_approach_blocked');}
 }

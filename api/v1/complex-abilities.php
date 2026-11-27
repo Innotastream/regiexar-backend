@@ -37,6 +37,12 @@ final class ApplicationComplexAbilityException extends RuntimeException
     }
 }
 
+function applicationIsBloodSphereExecution(array $execution): bool
+{
+    return ($execution['abilityId'] ?? '') === 'ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2'
+        || ($execution['rulePreset']['id'] ?? '') === 'blood-sphere-precombat';
+}
+
 function applicationComplexAbilityFail(
     string $message,
     string $code = 'complex_ability_invalid',
@@ -757,6 +763,7 @@ function normalizeApplicationComplexAbilityExecution(mixed $value): array
         'controllerAccountId' => applicationComplexAbilityIdentifier($source['controllerAccountId'] ?? '', '', 128),
         'controllerName' => applicationComplexAbilityText($source['controllerName'] ?? '', 120),
         'combatId' => applicationComplexAbilityIdentifier($source['combatId'] ?? '', '', 120),
+        ...(($source['sourceSight'] ?? false) === true ? ['sourceSight'=>true] : []),
         ...(is_string($source['chargeView']['accountId']??null)&&is_bool($source['chargeView']['gm']??null)
             ? ['chargeView'=>['accountId'=>$source['chargeView']['accountId'],'gm'=>$source['chargeView']['gm']]] : []),
         ...(!empty($source['targetRangeCells'])?['targetRangeCells'=>$source['targetRangeCells']]:[]),
@@ -1884,8 +1891,7 @@ function applyApplicationComplexAbilityCommand(
                 'stepId' => $step['id'], 'label' => $option['label'], 'detail' => $option['description']], $now);
             applicationComplexAbilityFinishStep($execution, $state, $now);
         } elseif ($step['type'] === 'counter' && $action === 'counter-gain') {
-            $bloodSphere = ($execution['abilityId'] ?? '') === 'ability-emosphere-6a5b9f30-448f-4096-9c4b-49e02941ead2'
-                || ($execution['rulePreset']['id'] ?? '') === 'blood-sphere-precombat';
+            $bloodSphere = applicationIsBloodSphereExecution($execution);
             if ($bloodSphere) {
                 if (!$isGm) applicationComplexAbilityFail('Seul le MJ peut ajouter une orbe à Hémo-sphère.', 'complex_ability_orb_grant_forbidden', 403);
                 if ($execution['combatId'] !== '' && ($context['combatActive'] ?? false) !== true) {
@@ -1927,6 +1933,11 @@ function applyApplicationComplexAbilityCommand(
             $orbiting = max(0, $previous - count($deployments));
             if ($orbiting < $option['cost']) applicationComplexAbilityFail($step['counterLabel'] . ' disponible insuffisant : ' . $orbiting . '/' . $option['cost'] . '.', 'complex_ability_counter_insufficient');
             $effect = $option['effect'] ?? ['kind' => 'none'];
+            if (array_key_exists('oppositionMode', $command)
+                && ($command['oppositionMode'] !== 'total' || ($command['opposed'] ?? false) !== true
+                    || $effect['kind'] !== 'damage' || ($execution['noDefensePossible'] ?? false) === true)) {
+                applicationComplexAbilityFail('Ce mode d’opposition ne s’applique pas à cette utilisation de charge.', 'complex_counter_opposition_invalid', 400);
+            }
             $targetId = applicationComplexAbilityIdentifier($command['targetTokenId'] ?? '');
             $target = in_array($effect['kind'], ['damage', 'guard'], true) ? applicationComplexAbilityTokenById($tokens, $targetId) : null;
             if (in_array($effect['kind'], ['damage', 'guard'], true) && (!is_array($target) || ($target['layerId'] ?? 'ground') !== $execution['layerId'])) {
@@ -1947,6 +1958,7 @@ function applyApplicationComplexAbilityCommand(
             if ($limitedByTurn) $state['lastSpendTurnKey'] = $turnKey;
             $state['lastUse'] = ['optionId' => $optionId, 'effect' => $effect, 'targetTokenId' => $targetId,
                 ...($effect['kind'] === 'damage' ? ['opposed' => ($execution['noDefensePossible'] ?? false) !== true && ($command['opposed'] ?? true) !== false] : []),
+                ...(isset($command['oppositionMode']) ? ['oppositionMode' => 'total'] : []),
                 'targetName' => is_array($target) ? applicationComplexAbilityText($target['name'] ?? '', 120, 'Cible') : '',
                 'markerId' => $markerId, 'rolled' => $rolled, 'revision' => $execution['revision'] + 1];
             $state['events'][] = ['at' => $now, 'type' => $markerId !== '' ? 'deploy' : 'spend', 'value' => $state['value'],

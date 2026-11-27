@@ -133,11 +133,36 @@ specialCheck($cloneGrant->status === 200 && $ownExecutions['token-arvin-clone'][
     && $assisted->payload('token:scene-one:token-arvin-clone')['fatigue']['current'] === 15,
     'Granting to the independent clone changes only the clone sphere and charges no extra fatigue.');
 
-$useOrb = static function (string $option, bool $opposed = false) use ($db, $readExecution): TestResponse {
+$orbRequest = static function (string $option, bool $opposed = false, string $mode = '') use ($readExecution): array {
     $execution = $readExecution();
-    return runCommand($db, 'ability.complex', ['action'=>'command','executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],
+    return ['action'=>'command','executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],
         'requestId'=>'blood-free-spend-' . randomToken(20),
-        'command'=>['action'=>'counter-spend','optionId'=>$option,'targetTokenId'=>'token-monster','opposed'=>$opposed]]);
+        'command'=>['action'=>'counter-spend','optionId'=>$option,'targetTokenId'=>'token-monster',
+            'opposed'=>$opposed,...($mode === '' ? [] : ['oppositionMode'=>$mode])]];
+};
+$useOrb = static fn(string $option): TestResponse => runCommand($db, 'ability.complex', $orbRequest($option));
+$orbAttack = static function (TestResponse $response) use ($db): array {
+    $attackId = $response->body['chargeEffect']['attackId'] ?? '';
+    foreach ($db->payload('activity')['attackReceipts'] ?? [] as $receipt) {
+        if (($receipt['attack']['id'] ?? '') === $attackId) return $receipt['attack'];
+    }
+    return [];
+};
+$snapshot = static fn(): array => [$db->domains,$db->revision,$db->mediaObjects,$db->resourceReceiptLedger,$db->healthOverlays];
+$restore = static function (array $state) use ($db): void {
+    [$db->domains,$db->revision,$db->mediaObjects,$db->resourceReceiptLedger,$db->healthOverlays] = $state;
+};
+$testOrbOutcome = static function (string $code, bool $opposed = false, string $mode = '') use ($db,$orbRequest,$orbAttack,$snapshot,$restore): array {
+    $before = $snapshot();
+    for ($attempt = 0; $attempt < 400; $attempt++) {
+        $request = $orbRequest('burst',$opposed,$mode);
+        $response = runCommand($db,'ability.complex',$request);
+        if ($response->status !== 200) throw new RuntimeException('Offensive orb launch failed: ' . json_encode($response->body));
+        $attack = $orbAttack($response);
+        if (($attack['hit']['outcome']['code'] ?? '') === $code) return [$response,$request,$attack];
+        $restore($before);
+    }
+    throw new RuntimeException('Offensive orb did not reach roll outcome ' . $code);
 };
 $legacy = $readExecution();
 unset($legacy['rulePreset'], $legacy['workflow']['steps'][0]['spendOutsideCombat']);
@@ -160,13 +185,64 @@ specialCheck(($visual['source']['x'] ?? -1) == $db->payload('token:scene-one:tok
 $wound = runCommand($db, 'token.resource.adjust', ['sceneId'=>'scene-one','tokenId'=>'token-monster','resource'=>'hp','delta'=>-1,
     'requestId'=>'blood-wound-' . randomToken(20)], true, 'account-gm');
 specialCheck($wound->status === 200 && $orbCount() === 1, 'Another actual wound grants an orb');
-$spent = $useOrb('burst');
-$freeAttack = array_values(array_filter($db->payload('activity')['pendingAttacks'], static fn($attack) =>
-    $attack['id'] === ($spent->body['chargeEffect']['attackId'] ?? '')));
-specialCheck($spent->status === 200 && $orbCount() === 0 && ($freeAttack[0]['damageFormula'] ?? '') === '1d25+5'
-    && $freeAttack[0]['status'] === 'pending', 'In free mode the damage formula is upgraded and the MJ keeps their damage validation');
+$baseAttackState = $snapshot();
+$map=$db->payload('map:scene-one');
+$fog=str_repeat("\0",512);
+applicationSetMaskBit($fog,32*64+32,true);
+$db->put('map:scene-one',[...$map,'fog'=>['version'=>1,'enabled'=>true,'width'=>64,'height'=>64,
+    'mask'=>rtrim(strtr(base64_encode($fog),'+/','-_'),'=')]]);
+foreach ([false,true] as $gm) foreach (['burst','shield'] as $projection) {
+    $before=$db->domains;
+    $hidden=runCommand($db,'ability.complex',$orbRequest($projection),$gm,$gm?'account-gm':'account-player');
+    specialCheck($hidden->status===403&&($hidden->body['code']??'')==='attack_target_hidden'
+        &&$orbCount()===1&&$db->domains===$before,'An unseen target never spends a damage or protection orb: '.json_encode($hidden->body));
+}
+$restore($baseAttackState);
+
+$arvin = $db->payload('character:character-player');
+$arvin['stats'] = ['force'=>26,'agility'=>44,'intelligence'=>62,'spiritSocial'=>13];
+$arvin['temporaryStats'] = ['agility'=>91];
+$arvin['fatigue']['current'] = 60;
+$db->put('character:character-player', $arvin);
+$modifiedStatsState = $snapshot();
+$orbTargetHp = $db->payload('token:scene-one:token-monster')['hp'];
+[$spent,$orbLaunch,$attack] = $testOrbOutcome('success');
+$hit = $attack['hit'];
+$publicOrb = publicOnlineAttackRoll($attack['hitRoll'],false);
+specialCheck($orbCount() === 0 && $hit['statId'] === 'character-stat-agility'
+    && ($hit['outcome']['baseThreshold'] ?? null) === 81 && ($hit['outcome']['bestStat'] ?? false) === true
+    && $hit['formula'] === '1d100' && $hit['raw'] >= 1 && $hit['raw'] <= 100,
+    'The offensive orb rolls an actual d100 against the current, fatigue-adjusted best stat: ' . json_encode($hit));
+specialCheck(($publicOrb['outcome']['bestStat'] ?? false) === true && !isset($publicOrb['outcome']['baseThreshold']),
+    'A public offensive orb preserves the best-stat cue without leaking the private threshold');
+$replayOrb = runCommand($db,'ability.complex',$orbLaunch);
+specialCheck($replayOrb->status === 200 && ($replayOrb->body['deduplicated'] ?? false) && $orbCount() === 0
+    && ($replayOrb->body['rolls'][0]['id'] ?? null) === ($spent->body['rolls'][0]['id'] ?? '')
+    && $db->payload('character:character-player')['fatigue']['current'] === 60,
+    'The original hit survives request replay without another charge or activation fatigue: ' . json_encode($replayOrb->body));
+
+$restore($modifiedStatsState);
+[,,$attack] = $testOrbOutcome('failure',true,'total');
+specialCheck($attack['status'] === 'missed' && empty($attack['opposition']) && empty($attack['damageRoll'])
+    && $orbCount() === 0 && $db->payload('token:scene-one:token-monster')['hp'] === $orbTargetHp,
+    'An ordinary miss consumes the orb without opposition or damage');
+
+$restore($modifiedStatsState);
+[,,$attack] = $testOrbOutcome('critical-success',true,'total');
+specialCheck($attack['status'] === 'pending' && $attack['validationKind'] === 'outcome'
+    && ($attack['opposition']['reason'] ?? '') === 'immediate-outcome' && $orbCount() === 0
+    && $db->payload('token:scene-one:token-monster')['hp'] === $orbTargetHp,
+    'A critical hit skips total opposition but still waits for the MJ before applying damage');
+$refused = runCommand($db,'token.attack.resolve',['attackId'=>$attack['id'],'confirmed'=>true,'decision'=>'reject'],true,'account-gm');
+specialCheck($refused->status === 200 && $orbCount() === 0 && $db->payload('token:scene-one:token-monster')['hp'] === $orbTargetHp,
+    'Rejecting a remarkable result leaves the projected orb spent and the target unharmed: ' . json_encode($refused->body));
+
+$restore($baseAttackState);
+[,,$freeAttack] = $testOrbOutcome('success');
+specialCheck($orbCount() === 0 && $freeAttack['damageFormula'] === '1d25+5'
+    && $freeAttack['status'] === 'pending', 'In free mode the damage formula is upgraded and the MJ keeps their damage validation');
 $hp = $db->payload('token:scene-one:token-monster')['hp'];
-$approved = runCommand($db, 'token.attack.resolve', ['attackId'=>$freeAttack[0]['id'],'confirmed'=>true,'decision'=>'approve'], true, 'account-gm');
+$approved = runCommand($db, 'token.attack.resolve', ['attackId'=>$freeAttack['id'],'confirmed'=>true,'decision'=>'approve'], true, 'account-gm');
 specialCheck($approved->status === 200 && ($approved->body['attack']['guardPercent'] ?? null) === 25
     && $db->payload('token:scene-one:token-monster')['hp'] === $hp - $approved->body['attack']['appliedDamage']
     && $db->payload('activity')['nextAttackGuards'] === [], 'The shield protects against actual damage and is consumed in free mode: ' . json_encode($approved->body));
@@ -177,11 +253,14 @@ specialCheck(bloodClockPatch($db, 'scene-two', ['active'=>false])->status === 20
     'Ending another scene combat does not expire the effect');
 specialCheck(bloodClockPatch($db, 'scene-one', ['active'=>true,'combatId'=>'orb-fight','turnSerial'=>11,'currentIndex'=>1])->status === 200
     && $readExecution()['combatId'] === 'orb-fight' && $orbCount() === 1, 'The encounter binds the existing execution and keeps its charge');
-$spent = $useOrb('burst', true);
-$opposedAttack = array_values(array_filter($db->payload('activity')['pendingAttacks'], static fn($attack) =>
-    $attack['id'] === ($spent->body['chargeEffect']['attackId'] ?? '')));
-specialCheck($spent->status === 200 && $orbCount() === 0 && ($opposedAttack[0]['damageFormula'] ?? '') === '1d25+5'
-    && $opposedAttack[0]['status'] === 'awaiting-opposition', 'An orb launched out of turn stays open to the selected defense');
+$combatOrbState = $snapshot();
+[,,$totalAttack] = $testOrbOutcome('success',true,'total');
+specialCheck(($totalAttack['opposition']['automatic'] ?? false) && $totalAttack['status'] !== 'awaiting-opposition'
+    && $orbCount() <= 1, 'Total opposition resolves the NPC defense in the launch command: ' . json_encode($totalAttack));
+$restore($combatOrbState);
+[,,$opposedAttack] = $testOrbOutcome('success',true);
+specialCheck($orbCount() === 0 && $opposedAttack['damageFormula'] === '1d25+5'
+    && $opposedAttack['status'] === 'awaiting-opposition', 'An orb launched out of turn stays open to the selected defense');
 $wound = runCommand($db, 'token.resource.adjust', ['sceneId'=>'scene-one','tokenId'=>'token-monster','resource'=>'hp','delta'=>-1,
     'requestId'=>'blood-wound-' . randomToken(20)], true, 'account-gm');
 specialCheck($wound->status === 200 && $orbCount() === 1, 'Wounds continue to grant charges in the associated combat: ' .

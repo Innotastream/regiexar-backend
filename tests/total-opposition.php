@@ -217,13 +217,14 @@ specialCheck($noDefense->status===200 && count($db->payload('activity')['pending
 $db = totalOppositionFixture();
 $sourceKey = 'character:character-player';
 $character = $db->payload($sourceKey);
-$character['abilities'][] = ['id'=>'total-allocated','name'=>'Rafale test','effect'=>'complex','formula'=>'0','castingStatId'=>'',
+$allocatedAbility = ['id'=>'total-allocated','name'=>'Rafale test','effect'=>'complex','formula'=>'0','castingStatId'=>'',
     'workflow'=>['version'=>8,'steps'=>[
         ['id'=>'targets','type'=>'targets','minTargets'=>1,'maxTargets'=>2,'maximumPerTarget'=>1,'allocationTotal'=>0],
         ['id'=>'strikes','type'=>'allocated-attacks','sourceStepId'=>'targets','awarenessMode'=>'none','damageMode'=>'configured',
             'hitMode'=>'automatic','statId'=>'','damageComponents'=>[['type'=>'magical','formula'=>'7','ignoreArmor'=>true]],
             'defenseStatId'=>'character-stat-force','defenseRollMode'=>'disadvantage'],
     ]]];
+$character['abilities'][] = $allocatedAbility;
 $db->put($sourceKey,$character);
 $start = runCommand($db,'ability.complex',['action'=>'start','requestId'=>'total-allocated-start','sceneId'=>'scene-one','sourceTokenId'=>'token-player',
     'abilityId'=>'total-allocated','initialSelection'=>['allocations'=>[['tokenId'=>'token-monster-two','count'=>1]],
@@ -287,5 +288,93 @@ $result = runCommand($db,'token.attack.area.resolve',['attackId'=>$remarkable->b
 specialCheck($result->status===200
     && count(array_filter($result->body['areaAttacks']??[],static fn(array $attack):bool=>!empty($attack['opposition']['rollId'])))===0,
     'Après confirmation, le jet remarquable conserve sa règle et ne lance aucune défense.');
+
+$validation = null;
+$firstTarget = 'token-monster-two';
+$secondTarget = 'token-player-defender';
+$groupDecision = ['confirmed'=>true, 'decision'=>'approve', 'oppositionMode'=>'total'];
+foreach (range(1, 360) as $trial) {
+    $db = totalOppositionFixture();
+    $character = $db->payload($sourceKey);
+    $character['stats']['force'] = 100;
+    $character['abilities'][] = [...$allocatedAbility, 'castingStatId'=>'character-stat-force', 'manaCost'=>3];
+    $db->put($sourceKey, $character);
+    $defenderKey = 'token:scene-one:' . $secondTarget;
+    $defender = $db->payload($defenderKey);
+    $defender['stats'][] = ['id'=>'character-stat-force','label'=>'Force','value'=>'40'];
+    $db->put($defenderKey,$defender);
+    $selected = [$firstTarget,$secondTarget];
+    $start = runCommand($db, 'ability.complex', ['action'=>'start','requestId'=>'total-critical-start-id',
+        'sceneId'=>'scene-one','sourceTokenId'=>'token-player','abilityId'=>$allocatedAbility['id'],
+        'initialSelection'=>[
+            'allocations'=>array_map(static fn(string $tokenId): array => ['tokenId'=>$tokenId,'count'=>1], $selected),
+            'attackPlan'=>array_map(static fn(string $tokenId): array => ['tokenId'=>$tokenId,'attackId'=>$allocatedAbility['id'],'statId'=>'','opposed'=>false], $selected)
+        ]]);
+    specialCheck($start->status===200 && !empty($start->body['pendingAreaGate']), 'A real allocated cast prepares both recipients.');
+    $gateId = $start->body['attack']['id'];
+    $resolvedGate = runCommand($db, 'token.attack.area.resolve', ['attackId'=>$gateId,...$groupDecision], true, 'account-gm');
+    specialCheck(in_array($resolvedGate->status, [200,202], true), 'Total is an authorized group choice.');
+    if (empty($resolvedGate->body['pendingValidation'])) continue;
+    $candidate = $db->payload('activity')['pendingAbilityCasts'][0];
+    if (($candidate['cast']['outcome']['code'] ?? '') !== 'critical-success') continue;
+    $validation = $candidate;
+    break;
+}
+specialCheck($validation!==null && $db->payload($sourceKey)['resources']['mana']===97,
+    'A real initial critical success paid once and awaits its independent adjudication.');
+specialCheck(!isset($resolvedGate->body['attack']['areaGate']['executionId']), 'No execution exists before the remarkable result is approved.');
+$waitingActivity = $db->payload('activity');
+$waitingReceipts = onlineRetainedAttackReceipts($waitingActivity, applicationResourceReceiptClock() + XAR_ATTACK_RECEIPT_TTL_MILLISECONDS + 1);
+specialCheck(in_array($gateId, array_column(array_column($waitingReceipts,'attack'),'id'), true)
+    && applicationClosedAttackReceiptGroups($waitingActivity)===[],
+    'An outstanding remarkable decision protects its resolved group from expiry and from immediate SQL archival.');
+$validationDecision = ['requestId'=>'total-critical-decision-id','validationId'=>$validation['id'],'confirmed'=>true,'decision'=>'approve'];
+$approved = runCommand($db, 'ability.resolve', $validationDecision, true, 'account-gm');
+$execution = $approved->body['execution'] ?? [];
+specialCheck($approved->status===200 && isset($execution['id']) && $db->payload($sourceKey)['resources']['mana']===97,
+    'Approval creates exactly one execution and never repays the cast.');
+$beforeReplay = [$db->domains,$db->revision];
+$approvalReplay = runCommand($db, 'ability.resolve', $validationDecision, true, 'account-gm');
+$gateReplay = runCommand($db, 'token.attack.area.resolve', ['attackId'=>$gateId,...$groupDecision], true, 'account-gm');
+specialCheck(($approvalReplay->body['deduplicated']??false)===true
+    && ($approvalReplay->body['execution']['id']??null)===$execution['id']
+    && ($gateReplay->body['deduplicated']??false)===true
+    && ($gateReplay->body['attack']['areaGate']['executionId']??null)===$execution['id']
+    && [$db->domains,$db->revision]===$beforeReplay, 'Both decisions recover the same execution and do no new work.');
+foreach ([$firstTarget,$secondTarget] as $targetId) {
+    $prepared = runCommand($db, 'ability.complex', ['action'=>'command','requestId'=>'total-critical-prepare-'.$targetId,
+        'executionId'=>$execution['id'],'expectedRevision'=>$execution['revision'],
+        'command'=>['action'=>'prepare-target','targetTokenId'=>$targetId]]);
+    specialCheck($prepared->status===200, 'Prepare each actual strike after the resumed cast.');
+    $execution = $prepared->body['execution'];
+    $strikeBody = ['sceneId'=>'scene-one','sourceTokenId'=>'token-player','targetTokenId'=>$targetId,'attackKind'=>'ability',
+        'attackId'=>$allocatedAbility['id'],'statId'=>'','opposed'=>true,'complexExecutionId'=>$execution['id'],
+        'requestId'=>'total-critical-strike-'.$targetId];
+    $strike = runCommand($db,'token.attack',$strikeBody);
+    specialCheck($strike->status===200, 'The resumed execution can attack each of its actual recipients.');
+    $id = $strike->body['attack']['id'];
+    $current = array_column(array_column($db->payload('activity')['attackReceipts'],'attack'),null,'id')[$id];
+    if ($targetId === $firstTarget) {
+        specialCheck(($current['opposition']['automatic']??false)===true && !empty($current['opposition']['rollId']),
+            'A creature still rolls automatically through the approved preparation after the casting validation.');
+        if ($current['status']==='pending') {
+            $confirmed = runCommand($db,'token.attack.resolve',['attackId'=>$id,'decision'=>'approve','confirmed'=>true],true,'account-gm');
+            specialCheck($confirmed->status===200, 'A separately remarkable automatic defense can still be authorized.');
+        }
+        $liveExecution = $db->payload('activity')['abilityExecutions'][0];
+        $confirmation = runCommand($db, 'ability.complex', ['action'=>'command','requestId'=>'total-critical-confirm-attack',
+            'executionId'=>$execution['id'],'expectedRevision'=>$liveExecution['revision'],
+            'command'=>['action'=>'confirm-attack','attackRequestId'=>$strikeBody['requestId']]]);
+        specialCheck($confirmation->status===200, 'Continue from the first resolved attack to the next recipient.');
+        $execution = $confirmation->body['execution'];
+        continue;
+    }
+    specialCheck($current['status']==='awaiting-opposition' && !isset($current['opposition']) && $current['defenderAccountId']==='account-defender',
+        'The same resumed total mode leaves the controlled character in charge of their defense.');
+    $defense = runCommand($db,'token.attack.oppose',['attackId'=>$id,'requestId'=>'total-critical-player-defense','statId'=>'character-stat-force',
+        'decision'=>'roll'],false,'account-defender');
+    specialCheck($defense->status===200 && !empty($defense->body['attack']['opposition']['rollId']),
+        'The controlling player can roll their preserved opposition.');
+}
 
 echo json_encode(['ok'=>true,'checks'=>$specialChecks],JSON_THROW_ON_ERROR).PHP_EOL;

@@ -22,7 +22,7 @@ function extendedAreaFixture():MemoryConnection{
  $instances=[];foreach(['character-player'=>'sheet','unit_extended-ally-clone'=>'clone'] as $unit=>$prefix)for($i=1;$i<=2;$i++)$instances[]=['id'=>$prefix.'-infusion-'.$i,'templateId'=>'extended-infusion','revision'=>1,'location'=>['kind'=>'inventory','characterId'=>$unit]];
  $db->put('items',['version'=>1,'templates'=>[['id'=>'extended-infusion','kind'=>'object','name'=>'Infusion étendue','description'=>'Composant','image'=>'']],'instances'=>$instances]);return $db;
 }
-function extendedAreaLaunch(MemoryConnection $db,string $source='token-player',string $request='extended-area-attempt-0001'):TestResponse{return runCommand($db,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>$source,'targetTokenId'=>$source,'attackKind'=>'ability','attackId'=>'extended-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'fire','requestId'=>$request]);}
+function extendedAreaLaunch(MemoryConnection $db,string $source='token-player',string $request='extended-area-attempt-0001',bool $gm=false):TestResponse{return runCommand($db,'token.attack',['sceneId'=>'scene-one','sourceTokenId'=>$source,'targetTokenId'=>$source,'attackKind'=>'ability','attackId'=>'extended-elemental-breath','targetPoint'=>['x'=>90,'y'=>50],'variantId'=>'fire','requestId'=>$request],$gm,$gm?'account-gm':'account-player');}
 function extendedAreaFixtureChance(MemoryConnection $db,string $id,int $raw):void{
  $activity=$db->payload('activity');$outcome=classifyOnlineD100Outcome($raw,50);
  foreach($activity['pendingAttacks'] as &$attack)if($attack['id']===$id)$attack['areaGate']['chanceOutcome']=$outcome;unset($attack);
@@ -102,7 +102,7 @@ foreach ([
         'Le MJ ferme la tentative sans dégâts ni remboursement hors échec critique : ' . $scenario);
 }
 
-foreach ([false, true] as $revealBeforeApproval) {
+foreach ([false, true] as $gm) foreach ([false, true] as $revealBeforeApproval) {
     $db = extendedAreaFixture();
     $db->put('token-index:scene-one', ['order'=>['token-player', 'extended-ally-clone', 'token-monster']]);
     $enemyKey = 'token:scene-one:token-monster';
@@ -115,7 +115,7 @@ foreach ([false, true] as $revealBeforeApproval) {
     $fog = ['version'=>1, 'enabled'=>true, 'width'=>64, 'height'=>64,
         'mask'=>rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=')];
     $db->put('map:scene-one', [...$map, 'fog'=>$fog]);
-    $launch = extendedAreaLaunch($db);
+    $launch = extendedAreaLaunch($db,gm:$gm);
     $gate = $db->payload('activity')['pendingAttacks'][0] ?? [];
     extendedBreathCheck($launch->status === 200 && ($gate['areaGate']['targetTokenIds'] ?? []) === ['extended-ally-clone'],
         'Le monstre sous le brouillard peint reste absent de l’aperçu du lanceur');

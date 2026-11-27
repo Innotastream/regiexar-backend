@@ -91,6 +91,21 @@ try {
     $executing=groupedReceiptHistory($sample['receipts'],1,'executing-family');$executing[1]['attack']['complexExecutionId']='active-group-execution';
     $db->beginTransaction();$retained=applicationArchiveClosedAttackGroups($db,['attackReceipts'=>$executing,'pendingAttacks'=>[],'abilityExecutions'=>[['id'=>'active-group-execution','status'=>'active']]],$now);$db->rollBack();
     groupedSqlCheck($retained['attackReceipts']===$executing,'An active execution retains every connected member for later branches');
+    $waiting = groupedReceiptHistory($sample['receipts'],1,'critical-awaiting-family');
+    $waitingId = $waiting[0]['attack']['id'];
+    $waiting[0]['attack']['areaGate'] = [...$waiting[0]['attack']['areaGate'],'kind'=>'complex-start','oppositionMode'=>'total'];
+    $casting = ['attackReceipts'=>$waiting,'pendingAttacks'=>[],'pendingAbilityCasts'=>[
+        ['route'=>'ability.complex','status'=>'pending','requestId'=>'release-'.$waitingId,'_private'=>[
+            'plan'=>['defenseApproval'=>['parentAttackId'=>$waitingId,'gate'=>$waiting[0]['attack']['areaGate']]]]]
+    ]];
+    $snapshot=groupedSqlSnapshot($observer);
+    $db->beginTransaction();$stillWaiting=applicationArchiveClosedAttackGroups($db,$casting,$now);$db->commit();
+    groupedSqlCheck($stillWaiting['attackReceipts']===$waiting && groupedSqlSnapshot($observer)===$snapshot,
+        'A resolved Total gate awaiting critical casting confirmation stays out of the SQL archive');
+    $casting['pendingAbilityCasts']=[];
+    $db->beginTransaction();$refusedCasting=applicationArchiveClosedAttackGroups($db,$casting,$now);$db->commit();
+    groupedSqlCheck($refusedCasting['attackReceipts']===[] && applicationReadDirectAttackReceipt($observer,$waiting[0]['requestId'],$now)!==null,
+        'A released casting reservation no longer pins its attack family in active storage');
     $rollback=groupedReceiptHistory($sample['receipts'],1,'rollback-family');$count=(int)$observer->query('SELECT COUNT(*) FROM application_direct_attack_receipts')->fetchColumn();
     $db->beginTransaction();$removed=applicationArchiveClosedAttackGroups($db,['attackReceipts'=>$rollback,'pendingAttacks'=>[]],$now);$db->rollBack();
     groupedSqlCheck($removed['attackReceipts']===[]&&(int)$observer->query('SELECT COUNT(*) FROM application_direct_attack_receipts')->fetchColumn()===$count,'Rolling back an archive removes the complete family from the ledger');

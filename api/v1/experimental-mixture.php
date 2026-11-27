@@ -103,11 +103,9 @@ function onlineExperimentalMixtureHeal(
 }
 
 function onlineExperimentalMixtureTarget(
-    PDO $db, array &$records, array $map, array $source, array $target, string $accountId, string $sceneId,
-    ?string $polarity, bool $isGm, ?Closure $visible
+    PDO $db, array &$records, array $map, array $source, array $target, ?string $polarity, Closure $visible
 ): bool {
-    if ($target === [] || !$isGm && !empty($target['hidden']) || applicationIsNonCombatant($target)
-        || !onlineTokenOnActiveLayer($target, $map) || !$isGm && !onlineAttackTargetVisible($db, $records, $map, $target, $accountId, $sceneId, $visible)) return false;
+    if ($target === [] || applicationIsNonCombatant($target) || !onlineTokenOnActiveLayer($target,$map) || !$visible($target)) return false;
     $targetController = onlineTokenControllerIdFromRecords($db, $records, $target);
     $owner = applicationAbilityCastingOwner($target);
     $sheet = $owner['characterId'] !== '' ? applicationDomainPayload($records, 'character:' . $owner['characterId']) : [];
@@ -599,19 +597,16 @@ function onlineExperimentalMixture(
         }
         $outcome = $outcomes[$mix['outcomeId']];
         $radius = $outcome['radius'];
-        $visible = $isGm ? null : onlineMapMovementVisibility($db, $records, $map, $accountId, $sceneId);
+        $vision = onlineAbilitySourceVisibility($map,$source,$sheet ?: null,$sceneId);
         $targetKey = $radius > 0 ? '' : onlineTokenDomainKey($sceneId,$args['targetTokenId'] ?? '');
         if ($targetKey !== '' && !isset($records[$targetKey])) $records += applicationDomainRecords($db,[$targetKey]);
         $target = applicationDomainPayload($records,$targetKey);
         $point = $radius > 0 ? applicationAreaTargetPoint($args['targetPoint'] ?? null, $layer) : ($target ?: null);
         if ($point === null || !applicationAbilityTargetInRange(['rangeCells'=>8], $source, $point, $map)
-            || $radius > 0 && $visible !== null && !$visible($point['x'], $point['y'])) {
+            || $radius > 0 && !$vision['point']($point['x'],$point['y'])) {
             rejectOnlineCommand($db, 409, 'Visez une cible ou un point visible à huit cases maximum.', 'experimental_mixture_aim_invalid');
         }
         $targetPolarity = !empty($outcome['cleanse']) || !empty($outcome['lightning']) ? null : $outcome['polarity'];
-        $eligible = static function (array $token) use ($db, &$records, $map, $rules, $accountId, $sceneId, $targetPolarity, $isGm, $visible): bool {
-            return onlineExperimentalMixtureTarget($db, $records, $map, $rules, $token, $accountId, $sceneId, $targetPolarity, $isGm, $visible);
-        };
         $result = ['resolved'=>true,'mixture'=>applicationPublicExperimentalMixture($mix)];
         if (!empty($outcome['field'])) {
             $field = applicationCreateMixtureField($devices, $sceneId, $layer, $source, $point, $clock, $mix['id'], $outcome['label'], $outcome['field']);
@@ -623,8 +618,16 @@ function onlineExperimentalMixture(
                 onlineExperimentalMixtureDamage($db, $records, $pending, $table, $identity, $source, $targets, $outcome, $sceneId);
             }
         } else {
-            if ($radius === 0 && !$eligible($target)) rejectOnlineCommand($db, 409, 'Choisissez une unité visible du bon camp.', 'experimental_mixture_target_invalid');
-            $targets = $radius > 0 ? array_values(array_filter(onlineDamageAreaTargets($map['tokens'], $point, $map, $radius, includeHidden: $isGm), $eligible)) : [$target];
+            $targetVisible = $vision['token'];
+            $eligible = static function (array $token) use ($db,&$records,$map,$rules,$targetPolarity,$targetVisible): bool {
+                return onlineExperimentalMixtureTarget($db,$records,$map,$rules,$token,$targetPolarity,$targetVisible);
+            };
+            if ($radius === 0 && !$eligible($target)) {
+                rejectOnlineCommand($db,409,'Choisissez une unité du bon camp visible par le lanceur.','experimental_mixture_target_invalid');
+            }
+            $targets = $radius > 0
+                ? array_values(array_filter(onlineDamageAreaTargets($map['tokens'],$point,$map,$radius),$eligible))
+                : [$target];
             if (!empty($outcome['cleanse'])) {
                 onlineExperimentalVitalConcentrate($db, $records, $pending, $sceneId, $layer, $source, $targets, $outcome['label']);
             } elseif (!empty($outcome['lightning'])) {

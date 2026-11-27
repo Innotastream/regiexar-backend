@@ -59,7 +59,7 @@ function onlineBeginAreaCastGate(PDO $connection,array &$records,array &$pending
         ...($criticalFailure?['status'=>'missed','resolvedAt'=>$now,'chanceCastCriticalFailure'=>true]:['status'=>'pending','validationKind'=>'area-gate']),
         'areaAnchorOnly'=>true,'areaRadiusCells'=>$ability['damageTargeting']['lengthCells'],'targetPoint'=>$targetPoint,'damageType'=>$damageType,'damageFormula'=>$damageFormula,...($damageComponents!==[]?['damageComponents'=>$damageComponents]:[]),'damagePercent'=>100,'damageRollMode'=>'normal','damage'=>[],'finalDamage'=>0,'opposed'=>false,
         'hit'=>$showChanceRoll?['raw'=>$raw,'total'=>$rolled['total'],'formula'=>'1d100','statId'=>'luck','statLabel'=>'Chance','outcome'=>$outcome,'rollId'=>$roll['id']]:[],
-        ...($showChanceRoll?['hitRoll'=>$roll]:[]),'cast'=>$cast,'createdAt'=>$now,'areaGate'=>['version'=>1,'ability'=>$ability,'variantId'=>$arguments['variantId']??'','sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$targetPoint,'targetTokenIds'=>array_column($targets,'id'),'chanceOutcome'=>$showChanceRoll?$outcome:null]];
+        ...($showChanceRoll?['hitRoll'=>$roll]:[]),'cast'=>$cast,'createdAt'=>$now,'areaGate'=>['version'=>1,...(!empty($context['sourceSight'])?['sourceSight'=>true]:[]),'ability'=>$ability,'variantId'=>$arguments['variantId']??'','sourcePoint'=>applicationTokenSpatialFootprint($source,$map),'targetPoint'=>$targetPoint,'targetTokenIds'=>array_column($targets,'id'),'chanceOutcome'=>$showChanceRoll?$outcome:null]];
     $attack['areaGate']['sourceUnitId']=unitIdForToken($source);$attack['areaGate']['sourceControllerId']=onlineTokenControllerIdFromRecords($connection,$records,$source);
     $map['tokens']=onlineSceneTokensForLights($connection,$records,$pending,$sceneId);$attack['areaGate']['kind']='chance';$attack['areaGate']['defenseStatId']='character-stat-agility';$attack['areaGate']['defenseEligibleTokenIds']=[];$attack['areaGate']['sourceParty']=onlineDefenseParty($connection,$records,$source,$map);$attack['areaGate']['targetParties']=[];
     foreach($targets as$target){$attack['areaGate']['targetParties'][$target['id']]=onlineDefenseParty($connection,$records,$target,$map);if(($ability['noDefensePossible']??false)!==true&&(float)($target['hp']??0)>0)$attack['areaGate']['defenseEligibleTokenIds'][]=$target['id'];}
@@ -100,8 +100,12 @@ function onlineCurrentChanceConeTargets(PDO $connection, array &$records, array 
         throw new RuntimeException('La direction du cône n’est plus disponible. Refusez cette tentative et visez à nouveau.', 409);
     }
     $sceneId = $attack['sceneId'];
-    $visible = $role === 'gm' ? null : onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId, $tokens);
-    if ($visible !== null && !onlineAttackTargetVisible($connection, $records, $map, $aim, $accountId, $sceneId, $visible)) {
+    $sourceKey='character:'.($source['characterId']??'');
+    $character=$pending[$sourceKey]['payload']??applicationDomainPayload($records,$sourceKey);
+    $vision=!empty($gate['sourceSight'])?onlineAbilitySourceVisibility([...$map,'tokens'=>$tokens],$source,$character?:null,$sceneId):null;
+    $visible = $vision === null && $role !== 'gm' ? onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId,$tokens) : null;
+    if ($vision !== null ? !$vision['point']($aim['x'],$aim['y'])
+        : $visible !== null && !onlineAttackTargetVisible($connection,$records,$map,$aim,$accountId,$sceneId,$visible)) {
         throw new RuntimeException('Le point visé n’est plus visible par le lanceur. Refusez cette tentative et visez à nouveau.', 409);
     }
     $targeting['affectAllies'] = !empty($source['friendlyFire']) || ($targeting['affectAllies'] ?? true);
@@ -112,7 +116,8 @@ function onlineCurrentChanceConeTargets(PDO $connection, array &$records, array 
         $controller = onlineTokenControllerIdFromRecords($connection, $records, $target);
         if (!applicationDamageAreaAffects($targeting, $source['id'], $sourceController, $id, $controller,
             $sourceParty['unitId'], unitIdForToken($target))
-            || ($visible !== null && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId, $visible))) {
+            || ($vision !== null ? !$vision['token']($target)
+                : $visible !== null && !onlineAttackTargetVisible($connection,$records,$map,$target,$accountId,$sceneId,$visible))) {
             continue;
         }
         if (unitUsesCharacterSheet($target)) {

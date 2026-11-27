@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/attack-receipt-retention.php';
 
 function applicationGroupedAttackLedgerEnabled(PDO $connection, bool $enable = false): bool
 {
@@ -77,6 +78,7 @@ function applicationClosedAttackReceiptGroups(array $activity): array
     $live = [];
     $indexed = [];
     $activeExecutions = [];
+    foreach (applicationPendingTotalOppositionParents($activity) as $id => $_) $live['attack:' . $id] = true;
     foreach ($activity['abilityExecutions'] ?? [] as $execution) {
         if (($execution['status'] ?? '') !== 'active') continue;
         if (applicationResourceReceiptKey($execution['id'] ?? null, 80)) $activeExecutions[$execution['id']] = true;

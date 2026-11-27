@@ -20,6 +20,10 @@ if ($isGm) {
     rejectOnlineCommand($connection, 409, 'La scène diffusée a changé. Actualisez la carte avant d’attaquer.', 'stale_scene');
 }
 if ($sceneId === '') rejectOnlineCommand($connection, 409, 'Aucune scène active.', 'combat_scene_required');
+$customArbitration = ($arguments['attackKind'] ?? null) === 'custom';
+if ($customArbitration && !$isGm) {
+    rejectOnlineCommand($connection,403,'L’attaque entièrement personnalisée est réservée au MJ.','gm_required');
+}
 $requestId = trim((string) ($arguments['requestId'] ?? ''));
 if (preg_match('/^[A-Za-z0-9_-]{16,80}$/D', $requestId) !== 1) {
     rejectOnlineCommand($connection, 400, 'Référence d’attaque invalide.', 'invalid_attack_request');
@@ -159,9 +163,8 @@ if (is_array($deduplicatedAttack)) {
         $chargeStep=$chargeExecution['workflow']['steps'][$chargeExecution['currentStepIndex']]??[];
         $pendingTargetId=$chargeExecution['stepStates'][$chargeStep['id']??'']['pendingTargetTokenId']??'';
         if($pendingTargetId!==''&&$pendingTargetId===($arguments['targetTokenId']??'')){
-            $viewer=$chargeExecution['chargeView']??['accountId'=>$accountId,'gm'=>$isGm];
-            $candidates=onlineComplexAbilitySceneTokens($connection,$records,$sceneId,$map,$viewer['accountId'],$viewer['gm'],$pending);
-            [$visibleTokens]=onlineBodyChargeView($connection,$records,$pending,$sceneId,$map,$candidates,$source);
+            $candidates=onlineComplexAbilitySceneTokens($connection,$records,$sceneId,$map,$accountId,true,$pending);
+            [$visibleTokens]=onlineAbilitySourceMovementView($connection,$records,$pending,$sceneId,$map,$candidates,$source);
             $caster=applicationComplexAbilityTokenById($visibleTokens,$source['id'])??$source;
             if(!applicationBodyChargeTargetAvailable($chargeExecution,['tokenId'=>$pendingTargetId],$caster,$visibleTokens))
                 rejectOnlineCommand($connection,409,'Cette cible n’est plus visible ou disponible pour Bélier.','complex_ability_charge_target_unavailable');
@@ -207,10 +210,6 @@ if (is_array($deduplicatedAttack)) {
         rejectOnlineCommand($connection, 409, 'Cette cible est déjà morte.', 'target_already_defeated');
     }
     $map = [...applicationDomainPayload($records, $mapKey), 'tokens' => $sceneTokens];
-    $targetVisibility = $isGm ? null : onlineMapMovementVisibility($connection, $records, $map, $accountId, $sceneId, $sceneTokens);
-    if (!$isGm && !onlineAttackTargetVisible($connection, $records, $map, $target, $accountId, $sceneId, $targetVisibility)) {
-        rejectOnlineCommand($connection, 403, 'Cette cible n’est pas visible par votre joueur.', 'attack_target_hidden');
-    }
     $characterId = trim((string) ($source['characterId'] ?? ''));
     if ($characterId !== '' && isset($records['character:' . $characterId])) {
         $character = applicationDomainPayload($records, 'character:' . $characterId);
@@ -226,6 +225,15 @@ if (is_array($deduplicatedAttack)) {
     $source['weaponAttacks']=equipmentAttackRows($source['weaponAttacks']??[],$source,$equipmentState);
     if($hadWeaponDefinitions)$source['damageDice']=$source['weaponAttacks'][0]['formula']??'';
     $complexExecutionId = trim((string) ($arguments['complexExecutionId'] ?? ''));
+    $sourceSight = !$customArbitration && $complexExecutionId === '' && ($defenseApproval === null || ($defenseApproval['gate']['sourceSight'] ?? false) === true);
+    $sourceVision = $sourceSight ? onlineAbilitySourceVisibility($map,$source,$sourceCharacter ?: null,$sceneId) : null;
+    $targetVisibility = !$sourceSight && !$isGm ? onlineMapMovementVisibility($connection,$records,$map,$accountId,$sceneId,$sceneTokens) : null;
+    $targetVisible = $sourceVision['token'] ?? static function (array $candidate) use ($connection,&$records,$map,$accountId,$sceneId,$isGm,$targetVisibility): bool {
+        return $isGm || onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId,$targetVisibility);
+    };
+    if (!$targetVisible($target)) {
+        rejectOnlineCommand($connection,403,'Cette cible n’est pas visible par le lanceur.','attack_target_hidden');
+    }
     $damagePercent = 100;
     $attackSeries = null;
     $chainGate = null; $chainDefinition = null; $chargeStrike = null; $authorizedRangeCells=0; $strikeSourcePosition=null;
@@ -438,7 +446,7 @@ if (is_array($deduplicatedAttack)) {
     foreach($requestedWeaponIds as $weaponTargetId){
         $key=onlineTokenDomainKey($sceneId,$weaponTargetId);$records=array_replace($records,applicationDomainRecords($connection,[$key]));$candidate=applicationDomainPayload($records,$key);
         $controller=onlineTokenControllerIdFromRecords($connection,$records,$candidate);
-        if($candidate===[]||$weaponTargetId===$source['id']||!empty($candidate['hidden'])||!onlineTokenOnActiveLayer($candidate,$map)||(!$isGm&&(!onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId,$targetVisibility))))rejectOnlineCommand($connection,403,'Chaque cible doit être distincte, visible et sur le niveau actif.','weapon_target_forbidden');
+        if($candidate===[]||$weaponTargetId===$source['id']||!empty($candidate['hidden'])||!onlineTokenOnActiveLayer($candidate,$map)||!$targetVisible($candidate))rejectOnlineCommand($connection,403,'Chaque cible doit être distincte, visible et sur le niveau actif.','weapon_target_forbidden');
         if(onlineResourceNumber($candidate['maxHp']??0)<=0||onlineTokenIsDead($candidate,$controller!==''))rejectOnlineCommand($connection,409,'Une des cibles ne peut plus être attaquée.','weapon_target_unavailable');
         $rangeTarget=$mechanicsStrikePosition?[...$candidate,...$mechanicsStrikePosition]:$candidate;
         $rangeSource=$strikeSourcePosition?[...$source,...$strikeSourcePosition]:$source;
@@ -457,7 +465,10 @@ if (is_array($deduplicatedAttack)) {
         ?'La zone de la Danse est centrée sur le lanceur. Sélectionnez son pion, puis validez le cercle autour de lui.':'Cette zone ne peut pas être visée ici.','attack_area_point_invalid');
     $isWallCast=($damageTargeting['shape']??'')==='thorn-wall'&&($mechanicsDefinition['terrainBarrier']['shape']??'')==='thorn-wall';
     if(($damageTargeting['shape']??'')==='thorn-wall'&&!$isWallCast)rejectOnlineCommand($connection,400,'Définition du mur invalide.','terrain_barrier_invalid');
-    if($aimedPoint&&!$isGm&&!$isWallCast&&!onlineAttackTargetVisible($connection,$records,$map,$aimedPoint,$accountId,$sceneId,$targetVisibility))rejectOnlineCommand($connection,403,'Le centre de cette zone doit être visible.','attack_area_point_hidden');
+    if ($aimedPoint && !$isWallCast && ($sourceVision !== null
+        ? !$sourceVision['point']($aimedPoint['x'],$aimedPoint['y']) : !$targetVisible($aimedPoint))) {
+        rejectOnlineCommand($connection,403,'Le centre de cette zone doit être visible par le lanceur.','attack_area_point_hidden');
+    }
     if (validApplicationDamageTargeting($damageTargeting)) {
         if (($damageTargeting['origin'] ?? 'target') === 'caster' && ($target['id'] ?? '') !== ($source['id'] ?? '')) {
             rejectOnlineCommand($connection, 403, $weaponDraw !== null
@@ -471,9 +482,9 @@ if (is_array($deduplicatedAttack)) {
             (float) $damageTargeting['radiusCells'], ($damageTargeting['origin'] ?? 'target') === 'caster')));
         if($singleAreaTarget)$areaTargetCandidates=[];
         $areaTargetCandidates = array_values(array_filter($areaTargetCandidates,
-            static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController, $map, $accountId, $sceneId, $isGm, $isWallCast, $targetVisibility): bool {
+            static function (array $candidate) use ($connection, &$records, $damageTargeting, $source, $sourceController, $isWallCast, $targetVisible): bool {
                 $controller = onlineTokenControllerIdFromRecords($connection, $records, $candidate);
-                return ($isGm || $isWallCast || onlineAttackTargetVisible($connection,$records,$map,$candidate,$accountId,$sceneId,$targetVisibility)) && applicationDamageAreaAffects([...$damageTargeting,'affectAllies'=>!empty($source['friendlyFire'])||($damageTargeting['affectAllies']??true)], (string) $source['id'], $sourceController,
+                return ($isWallCast || $targetVisible($candidate)) && applicationDamageAreaAffects([...$damageTargeting,'affectAllies'=>!empty($source['friendlyFire'])||($damageTargeting['affectAllies']??true)], (string) $source['id'], $sourceController,
                     (string) ($candidate['id'] ?? ''), $controller,unitIdForToken($source),unitIdForToken($candidate));
             }));
         if (count($areaTargetCandidates) > XAR_PENDING_ATTACK_MAXIMUM) {
@@ -521,7 +532,7 @@ if (is_array($deduplicatedAttack)) {
         if ($selectedStatId === '') rejectOnlineCommand($connection, 400, 'Choisissez une statistique d’attaque.', 'attack_stat_required');
         $abilityForAttack['castingStatId'] = $selectedStatId;
     }
-    $approachContext=!empty($mechanicsDefinition['attackApproach'])?['sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'abilityId'=>$mechanicsDefinition['id'],'attackApproach'=>$mechanicsDefinition['attackApproach'],'mountedMovement'=>($mechanicsDefinition['mountedMovement']??false)===true,'approachPoint'=>$arguments['approachPoint']??null,'targetRangeCells'=>applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),$requestedWeaponAttackId),...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[])]:null;
+    $approachContext=!empty($mechanicsDefinition['attackApproach'])?['sceneId'=>$sceneId,'sourceTokenId'=>$source['id'],'targetTokenId'=>$target['id'],'abilityId'=>$mechanicsDefinition['id'],'sourceSight'=>$sourceSight,'attackApproach'=>$mechanicsDefinition['attackApproach'],'mountedMovement'=>($mechanicsDefinition['mountedMovement']??false)===true,'approachPoint'=>$arguments['approachPoint']??null,'targetRangeCells'=>applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),$requestedWeaponAttackId),...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[])]:null;
     if($approachContext!==null)onlineAttackApproachPlan($connection,$records,$pending,$approachContext,$accountId,$isGm);
     $castingPlan = $abilityForAttack !== null ? onlinePrepareAbilityCasting($connection, $abilityForAttack, $source, $sceneId, applicationDomainPayload($records, $initiativeKey), $activity, $selectedStatId, onlineDeviceState($connection,$records,$pending), $singleAreaTarget?0.5:1) : null;
     if($castingPlan!==null&&!empty($abilityForAttack['persistentArea']))$castingPlan['persistentTargetPoint']=$aimedPoint??['x'=>$target['x'],'y'=>$target['y']];
@@ -531,11 +542,11 @@ if (is_array($deduplicatedAttack)) {
     $quotaWeapon=$selectedWeapon!==[]?$selectedWeapon:($attackKind==='weapon'?$mechanicsDefinition:null);
     if($quotaWeapon!==null)try{assertWeaponAttackLimit(onlineWeaponTurnState($records,$pending,$sceneId,$map),$source,$quotaWeapon,['sceneId'=>$sceneId,'requestId'=>$requestId]);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:409,$error->getMessage(),'weapon_turn_limit');}
     if(!empty($abilityForAttack['castGate'])){
-        try{$result=onlineBeginAreaCastGate($connection,$records,$pending,$identity,$arguments,['ability'=>$abilityForAttack,'source'=>$source,'sceneId'=>$sceneId,'layerId'=>$attackLayerId,'map'=>$map,'activity'=>$activity,'receipts'=>$receipts,'castingPlan'=>$castingPlan,'targetPoint'=>$aimedPoint,'targets'=>$liveAreaTargets,'damageComponents'=>$damageComponents,'damageFormula'=>$damageFormula,'damageType'=>$damageType,'isGm'=>$isGm,'visible'=>$sceneId===onlineActiveSceneId($table)&&onlineGmTokenVisibleToPlayers($connection,$records,$table,$source,$sceneId)]);}catch(RuntimeException $error){rejectOnlineCommand($connection,in_array($error->getCode(),[400,403,404,409,429],true)?$error->getCode():400,$error->getMessage(),'area_gate_refused');}
+        try{$result=onlineBeginAreaCastGate($connection,$records,$pending,$identity,$arguments,['ability'=>$abilityForAttack,'source'=>$source,'sceneId'=>$sceneId,'layerId'=>$attackLayerId,'map'=>$map,'activity'=>$activity,'receipts'=>$receipts,'castingPlan'=>$castingPlan,'targetPoint'=>$aimedPoint,'targets'=>$liveAreaTargets,'damageComponents'=>$damageComponents,'damageFormula'=>$damageFormula,'damageType'=>$damageType,'isGm'=>$isGm,'sourceSight'=>$sourceSight,'visible'=>$sceneId===onlineActiveSceneId($table)&&onlineGmTokenVisibleToPlayers($connection,$records,$table,$source,$sceneId)]);}catch(RuntimeException $error){rejectOnlineCommand($connection,in_array($error->getCode(),[400,403,404,409,429],true)?$error->getCode():400,$error->getMessage(),'area_gate_refused');}
     }elseif(!$prepareDefenseOnly&&$defenseApproval===null&&$complexExecutionId===''&&($mechanicsDefinition['noDefensePossible']??false)!==true&&(($damageTargeting['mode']??'')==='area'||(int)($mechanicsDefinition['targetCount']??1)>1||count($weaponTargets)>1)){
         // The isolated records/pending copy prepares one hit; it never commits costs or effects.
         $previewRecords=$records;$previewPending=$pending;$preparedHit=onlinePerformTargetAttack($connection,$previewRecords,$previewPending,$table,$identity,$arguments,$isGm,[...$context,'prepareDefenseOnly'=>true]);
-        try{$result=onlineQueueDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,['definition'=>$mechanicsDefinition,'source'=>$source,'sceneId'=>$sceneId,'map'=>$map,'targets'=>$liveAreaTargets,'targetPoint'=>$aimedPoint,'isGm'=>$isGm,'requestSignature'=>onlineAttackRequestSignature($sceneId,$arguments,$preparedHit['hasStatCheck']),'preparedHit'=>$preparedHit]);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:400,$error->getMessage(),'defense_selection_refused');}
+        try{$result=onlineQueueDeferredDefenseGate($connection,$records,$pending,$identity,$arguments,['definition'=>$mechanicsDefinition,'source'=>$source,'sceneId'=>$sceneId,'map'=>$map,'targets'=>$liveAreaTargets,'targetPoint'=>$aimedPoint,'isGm'=>$isGm,'sourceSight'=>$sourceSight,'requestSignature'=>onlineAttackRequestSignature($sceneId,$arguments,$preparedHit['hasStatCheck']),'preparedHit'=>$preparedHit]);}catch(RuntimeException $error){rejectOnlineCommand($connection,$error->getCode()?:400,$error->getMessage(),'defense_selection_refused');}
     }else{
     if(!$prepareDefenseOnly&&$defenseApproval!==null&&!empty($defenseApproval['gate']['preparedHit'])){$previewRecords=$records;$previewPending=$pending;$rechecked=onlinePerformTargetAttack($connection,$previewRecords,$previewPending,$table,$identity,$arguments,$isGm,[...$context,'prepareDefenseOnly'=>true]);if(canonicalApplicationDomainValue($rechecked['outcomes'])!==canonicalApplicationDomainValue($defenseApproval['gate']['preparedHit']['outcomes']))rejectOnlineCommand($connection,409,'Les conditions du jet ont changé depuis sa préparation.','defense_roll_changed');}
 
@@ -598,7 +609,10 @@ if (is_array($deduplicatedAttack)) {
         if ($fatigue !== null) $hitOutcome['fatigue'] = $fatigue;
     }
     if ($castingPlan === null && $chainGate === null) onlineRecordCharacterLuckD100($connection, $records, $pending, $identity, $characterId, $hitRolled);
-    if ($hitOutcome !== null) $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
+    if ($hitOutcome !== null) {
+        if (($castingPlan['bestStat'] ?? false) === true) $hitOutcome['bestStat'] = true;
+        $hitOutcome['resultCustomized'] = $hitModifierMode === 'result';
+    }
     $sharedWeaponCast=($abilityForAttack['id']??'')===XAR_PRECISION_SERPENTAIRE_ID;
     $weaponOutcomes=[];
     foreach($weaponTargets as $recipient){$id=(string)$recipient['id'];$weaponOutcomes[$id]=$sharedWeaponCast||$joker||!empty($hitOutcome['automatic'])||$id===$target['id']?$hitOutcome:[...$hitOutcome,...classifyOnlineD100Outcome($hitOutcome['raw'],$threshold,($hitOutcome['modifier']??0)+$conditionAttackPenalty-applicationTimedAttackPenalty($passiveState,$source,$id,$sceneId)-$targetPassivePenalty($recipient),($hitOutcome['resultModifier']??0)+(applicationPredatoryResultBonus($source,(string)$target['id'],'attack')+$attackResultBonus)-(applicationPredatoryResultBonus($source,$id,'attack')+$attackResultBonus),true,true,applicationRollCriticalFailureProtected($source,$pending['activity']['payload']??applicationDomainPayload($records,'activity'),$sceneId))];}
@@ -680,6 +694,9 @@ if (is_array($deduplicatedAttack)) {
         'attackName' => substr($attackName, 0, 120),
         'attackKind' => $attackKind,
         ...(onlineWantsTotalOpposition($arguments) ? ['oppositionMode'=>'total'] : []),
+        ...($sourceSight && ($approachContext !== null || $attackKind === 'ability' && $mechanicsApplied === null
+            && !$isWallCast && empty($mechanicsDefinition['persistentArea']))
+            ? ['sourceSight'=>true] : []),
         ...($approachContext!==null?['attackApproach'=>$approachContext['attackApproach'],...(!empty($approachContext['mountedMovement'])?['mountedMovement'=>true]:[]),'approachPoint'=>['x'=>$arguments['approachPoint']['x'],'y'=>$arguments['approachPoint']['y']]]:[]),
         'targetRangeCells'=>$authorizedRangeCells?:($attackKind==='ability'?applicationAbilityRangeCells($mechanicsDefinition,$selectedWeapon!==[]?[$selectedWeapon]:($source['weaponAttacks']??[]),$requestedWeaponAttackId):applicationWeaponRangeCells($mechanicsDefinition)),
         ...(isset($mechanicsDefinition['minimumReach'])?['minimumReach'=>$mechanicsDefinition['minimumReach']]:[]),

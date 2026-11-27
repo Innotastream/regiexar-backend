@@ -64,4 +64,22 @@ specialCheck($r->status===200,'Unavailable pending ally can be skipped: '.json_e
 $r=bodyCommand($db,'prepare-target',['targetTokenId'=>'token-monster']);
 specialCheck($r->status===200&&abs($db->payload('token:scene-one:token-player')['x']-55)<1e-5,'Continues to final contact after skipped ally: '.json_encode($r->body));
 specialCheck($db->payload('token:scene-one:body-ally')['hp']===1000,'Skipped ally HP remains intact');
+foreach ([false,true] as $gm) foreach ([false,true] as $open) {
+    $doorTest=bodyChargeFixture();
+    $door=['id'=>'charge-door','name'=>'Porte','x'=>55,'y'=>50,'hp'=>50,'maxHp'=>50,'size'=>100,
+        'layerId'=>'ground','fixedStructure'=>true,
+        'terrainBarrier'=>['version'=>1,'shape'=>'door','widthCells'=>4,'rotation'=>90,'layout'=>'double','open'=>$open]];
+    $doorTest->put('token:scene-one:charge-door',$door);
+    $index=$doorTest->payload('token-index:scene-one');$index['order'][]='charge-door';$doorTest->put('token-index:scene-one',$index);
+    $selection=['allocations'=>[['tokenId'=>'token-monster','count'=>1]]];
+    $r=runCommand($doorTest,'ability.complex',['action'=>'start','requestId'=>'body-door-'.randomToken(20),
+        'sceneId'=>'scene-one','sourceTokenId'=>'token-player','abilityId'=>BODY_CHARGE,'initialSelection'=>$selection,'chargeSelection'=>$selection],
+        $gm,$gm?'account-gm':'account-player');
+    specialCheck($open ? $r->status===200&&!empty($r->body['pendingAreaGate']) : $r->status===409,
+        'Only the real leaves/jambs can block the ordinary body charge, including from the MJ view: '.json_encode($r->body));
+    if (!$open) continue;
+    $r=fixtureApproveDefenseGate($doorTest,$r);
+    specialCheck($r->status===200&&!empty($r->body['execution']['stepStates']['charge-movement']['attackPlan']),
+        'MJ approval keeps the physically clear approach accepted: '.json_encode($r->body));
+}
 echo json_encode(['ok'=>true,'checks'=>$specialChecks,'productionAccess'=>false],JSON_THROW_ON_ERROR).PHP_EOL;

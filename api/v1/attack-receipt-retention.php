@@ -1,6 +1,19 @@
 <?php
 declare(strict_types=1);
 
+function applicationPendingTotalOppositionParents(array $activity): array
+{
+    $parents = [];
+    foreach ($activity['pendingAbilityCasts'] ?? [] as $entry) {
+        $approval = $entry['_private']['plan']['defenseApproval'] ?? [];
+        $id = $approval['parentAttackId'] ?? null;
+        if (($entry['route'] ?? null) === 'ability.complex' && ($entry['status'] ?? null) === 'pending'
+            && ($approval['gate']['oppositionMode'] ?? null) === 'total' && ($approval['gate']['kind'] ?? null) === 'complex-start'
+            && is_string($id) && $id !== '' && ($entry['requestId'] ?? null) === 'release-' . $id) $parents[$id] = true;
+    }
+    return $parents;
+}
+
 /**
  * Expiration releases resolved records only. Pending attacks and active
  * executions still need their original result and the entire related group.
@@ -19,7 +32,8 @@ function onlineRetainedAttackReceipts(array $activity, int $now, ?string $resolv
     if (!$needsPruning) return array_values($receipts);
 
     $activeExecutions = [];
-    $protected = $resolvingAttackId === null ? [] : [$resolvingAttackId => true];
+    $protected = applicationPendingTotalOppositionParents($activity);
+    if ($resolvingAttackId !== null) $protected[$resolvingAttackId] = true;
     foreach ($activity['abilityExecutions'] ?? [] as $execution) {
         if (($execution['status'] ?? null) !== 'active') continue;
         if (is_string($execution['id'] ?? null) && $execution['id'] !== '') $activeExecutions[$execution['id']] = true;

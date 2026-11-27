@@ -114,27 +114,62 @@ $playerAim = mixtureCommand($hidden, $secretAim);
 requireTactical($playerAim->status === 409 && count($hidden->payload('token:scene-one:token-player')['experimentalMixtureCharges']) === 1,
     'Players cannot select a hidden target and retain the charge');
 $gmAim = mixtureCommand($hidden, $secretAim, true, 'account-gm');
-$secretRolls = $hidden->payload('activity')['rolls'];
-requireTactical($gmAim->status === 200 && $gmAim->body['damage'] > 0
-    && ($secretRolls[array_key_last($secretRolls)]['visibility'] ?? '') === 'gm',
-    'The GM can target a hidden enemy without revealing the roll: '.json_encode($gmAim->body, JSON_UNESCAPED_UNICODE));
+requireTactical($gmAim->status === 409 && count($hidden->payload('token:scene-one:token-player')['experimentalMixtureCharges']) === 1,
+    'Normal GM targeting also rejects a hidden enemy and preserves the stored charge: '.json_encode($gmAim->body, JSON_UNESCAPED_UNICODE));
 
 $hiddenArea = mixtureFixture();
 $hiddenArea->put('token:scene-one:token-monster', [...$secret, 'hidden'=>true]);
 $areaCharge = mixtureSeedPending($hiddenArea, 'caustic-reaction');
 $areaAim = mixtureCommand($hiddenArea, ['action'=>'resolve','mixtureId'=>$areaCharge,'targetPoint'=>['x'=>$secret['x'],'y'=>$secret['y']]], true, 'account-gm');
-requireTactical($areaAim->status === 200 && in_array('Aveuglé',$hiddenArea->payload('token:scene-one:token-monster')['conditions'] ?? [],true),
-    'GM area targeting includes hidden enemies on the chosen level');
+requireTactical($areaAim->status === 200 && !in_array('Aveuglé',$hiddenArea->payload('token:scene-one:token-monster')['conditions'] ?? [],true),
+    'Normal GM area targeting uses the caster sight for the hidden enemy');
+
+foreach ([false,true] as $gm) {
+    $wallTest=mixtureFixture();
+    $account=$gm?'account-gm':'account-player';
+    $map=$wallTest->payload('map:scene-one');
+    $walls=str_repeat("\0",32768);
+    for($row=0;$row<512;$row++) applicationSetMaskBit($walls,$row*512+128,true);
+    $wallTest->put('map:scene-one',[...$map,'vision'=>['enabled'=>true,'shared'=>true,'distance'=>12],
+        'walls'=>['version'=>1,'width'=>512,'height'=>512,'mask'=>rtrim(strtr(base64_encode($walls),'+/','-_'),'=')]]);
+    $behind=$wallTest->payload('token:scene-one:token-monster');
+    $visibleAlly=$wallTest->payload('token:scene-one:token-gohachu');
+    $wallTest->put('token:scene-one:token-monster',[...$behind,'x'=>26,'y'=>50]);
+    $wallTest->put('token:scene-one:token-gohachu',[...$visibleAlly,'x'=>22,'y'=>50]);
+    $fire=mixtureSeedPending($wallTest,'alchemical-blast');
+    $before=$wallTest->domains;
+    $hiddenPoint=mixtureCommand($wallTest,['action'=>'resolve','mixtureId'=>$fire,'targetPoint'=>['x'=>26,'y'=>50]],$gm,$account);
+    requireTactical($hiddenPoint->status===409&&($hiddenPoint->body['code']??'')==='experimental_mixture_aim_invalid'
+        &&$wallTest->domains===$before,'The same hidden centre is refused and the charge retained in both views: '.json_encode($hiddenPoint->body));
+
+    $lightning=mixtureSeedPending($wallTest,'caustic-reaction');
+    $aim=['targetPoint'=>['x'=>22,'y'=>50]];
+    $applied=mixtureCommand($wallTest,['action'=>'resolve','mixtureId'=>$lightning,...$aim],$gm,$account);
+    requireTactical($applied->status===200
+        && in_array('Aveuglé',$wallTest->payload('token:scene-one:token-gohachu')['conditions']??[],true)
+        && !in_array('Aveuglé',$wallTest->payload('token:scene-one:token-monster')['conditions']??[],true),
+        'A visible centre keeps the visible ally but excludes the enemy behind the wall for both callers');
+
+    $priorHp=$wallTest->payload('token:scene-one:token-monster')['hp'];
+    $field=mixtureCommand($wallTest,['action'=>'resolve','mixtureId'=>$fire,...$aim],$gm,$account);
+    requireTactical($field->status===200&&isset($field->body['fieldId'])
+        &&$wallTest->payload('token:scene-one:token-monster')['hp']<$priorHp,
+        'The persistent fire still affects its physical occupants after placing it at the visible centre');
+}
 
 $paused = mixtureFixture();
 $paused->put('table', [...$paused->payload('table'),'tacticalSync'=>['paused'=>true]]);
+$privateCaster=$paused->payload('token:scene-one:token-player');
+$paused->put('token:scene-one:token-player',[...$privateCaster,'hidden'=>true]);
 $lockedCharge = mixtureSeedPending($paused, 'corrosive-catalyst');
 $lockedAim = ['action'=>'resolve','mixtureId'=>$lockedCharge,'targetTokenId'=>$secret['id']];
 requireTactical(mixtureCommand($paused, $recipe)->status === 423 && mixtureCommand($paused, $lockedAim)->status === 423,
     'Players cannot prepare or resolve a Mixture while the table is locked');
 $gmPaused = mixtureCommand($paused, $lockedAim, true, 'account-gm');
-requireTactical($gmPaused->status === 200 && $gmPaused->body['damage'] > 0,
-    'The GM can resolve a Mixture during secret preparation');
+$secretRolls=$paused->payload('activity')['rolls'];
+requireTactical($gmPaused->status === 200 && $gmPaused->body['damage'] > 0
+     && ($secretRolls[array_key_last($secretRolls)]['visibility'] ?? '') === 'gm',
+    'The GM can resolve a Mixture from a hidden caster during preparation and the journal stays private');
 requireTactical(mixtureCommand($paused, $recipe, true, 'account-gm')->status === 200
     && $paused->payload('character:'.MIXTURE_TEST_MANIA)['resources']['mana'] === 30,
     'The GM can prepare a Mixture during secret preparation');

@@ -12,7 +12,9 @@ function counterDefenseFixture(bool $noDefense = false): array {
             'gainAmount' => 1, 'gainTrigger' => 'hp-loss-or-condition', 'gainCondition' => 'Hémorragie', 'radiusCells' => 20,
             'combatPersistent' => true, 'spendOnSourceTurn' => true,
             'spendOptions' => [['id' => 'explosion', 'label' => 'Explosion', 'cost' => 1,
-                'effect' => ['kind' => 'damage', 'formula' => '3', 'damageType' => 'ignore']]]]]]]];
+                'effect' => ['kind' => 'damage', 'formula' => '3', 'damageType' => 'ignore']],
+                ['id'=>'guard', 'label'=>'Protection', 'cost'=>1,
+                    'effect'=>['kind'=>'guard', 'percent'=>25, 'trigger'=>'damage', 'persistAfterEnd'=>true]]]]]]]];
     $db->put('character:character-player', $character);
     $db->put('map:scene-one', ['gridSize' => 50, 'naturalWidth' => 1000, 'naturalHeight' => 1000]);
     $db->put('initiative:scene-one', ['active' => true, 'combatId' => 'counter-defense-combat', 'round' => 1,
@@ -78,6 +80,55 @@ requireTactical($forbidden->status === 400 && $db->payload('activity')['abilityE
 requireTactical($spent->body['chargeEffect']['status'] === 'applied' && $db->payload('activity')['pendingAttacks'] === [], 'An unblockable counter attack needs no manual defense choice.');
 requireTactical($db->payload('character:character-player')['abilities'][0]['restRecharge'] === 'long'
     && $db->payload('character:character-player')['abilities'][0]['usesPerRest'] === 1, 'Counter uses preserve one activation per long rest.');
+
+foreach ([false, true] as $controlled) {
+    [$db, $execution] = counterDefenseFixture();
+    if ($controlled) {
+        $target = $db->payload('token:scene-one:token-monster');
+        $target['controllerPlayerId'] = 'account-other';
+        $db->put('token:scene-one:token-monster', $target);
+    }
+    $body = ['action'=>'command', 'executionId'=>$execution['id'], 'expectedRevision'=>$execution['revision'],
+        'requestId'=>'counter-total-opposition-0001', 'command'=>['action'=>'counter-spend', 'optionId'=>'explosion',
+            'targetTokenId'=>'token-monster', 'opposed'=>true, 'oppositionMode'=>'total']];
+    $original = runCommand($db, 'ability.complex', $body);
+    $attack = $db->payload('activity')['attackReceipts'][0]['attack'];
+    requireTactical($original->status===200 && $attack['oppositionMode']==='total'
+        && $original->body['chargeEffect']['attackId']===$attack['id']
+        && $original->body['chargeEffect']['status']===$attack['status'], 'Total settles the same recorded orb attack.');
+    if ($controlled) {
+        requireTactical($attack['status']==='awaiting-opposition' && !isset($attack['opposition'])
+            && $attack['defenderAccountId']==='account-other' && $original->body['rolls']===[],
+            'A player-controlled defender retains the invitation and their own roll.');
+        $rolled = runCommand($db, 'token.attack.oppose', ['attackId'=>$attack['id'], 'requestId'=>'counter-total-owner-defense',
+            'statId'=>'monster-force', 'decision'=>'roll'], false, 'account-other');
+        requireTactical($rolled->status===200 && !empty($rolled->body['attack']['opposition']['rollId']),
+            'The actual controlling player can roll their retained defense.');
+    } else {
+        requireTactical($attack['status']!=='awaiting-opposition' && ($attack['opposition']['automatic']??false)===true
+            && in_array($attack['opposition']['rollId'], array_column($original->body['rolls'],'id'), true),
+            'The creature rolls exactly one real opposition in the orb-spend transaction.');
+        $logged = array_filter($db->payload('activity')['rolls'], static fn(array $roll): bool => $roll['id']===$attack['opposition']['rollId']);
+        requireTactical(count($logged)===1, 'The automatic defense appears exactly once in the journal.');
+    }
+    $state = [$db->domains, $db->revision];
+    $replay = runCommand($db, 'ability.complex', $body);
+    requireTactical($replay->status===200 && $replay->body['deduplicated']===true
+        && $replay->body['chargeEffect']===$original->body['chargeEffect'] && $replay->body['rolls']===$original->body['rolls']
+        && [$db->domains, $db->revision]===$state, 'The orb and automatic defense are never repeated when the receipt is replayed.');
+}
+
+foreach ([[false, 'guard', true, 'total'], [false, 'explosion', false, 'total'],
+    [false, 'explosion', true, 'forged'], [true, 'explosion', true, 'total']] as [$forbidden, $option, $opposed, $mode]) {
+    [$db, $execution] = counterDefenseFixture($forbidden);
+    $state = [$db->domains, $db->revision];
+    $result = runCommand($db, 'ability.complex', ['action'=>'command', 'executionId'=>$execution['id'],
+        'expectedRevision'=>$execution['revision'], 'requestId'=>'counter-total-invalid-0001',
+        'command'=>['action'=>'counter-spend', 'optionId'=>$option, 'targetTokenId'=>'token-monster',
+            'opposed'=>$opposed, 'oppositionMode'=>$mode]]);
+    requireTactical($result->status===400 && [$db->domains, $db->revision]===$state,
+        'An incompatible mode is rejected before spending a charge or moving the revision.');
+}
 
 $db = fixture(); $character = $db->payload('character:character-player');
 $character['abilities'] = [['id' => 'unblockable', 'name' => 'Inévitable', 'effect' => 'damage', 'formula' => '5', 'damageType' => 'ignore',
