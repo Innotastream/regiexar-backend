@@ -61,7 +61,8 @@ function applicationMapScaleSettings(array $map, ?string $layerId = null): array
     $ownPreset = applicationMapScalePresetValid($layer['unitScalePreset'] ?? null) ? $layer['unitScalePreset'] : null;
     $mapPreset = applicationMapScalePresetValid($map['unitScalePreset'] ?? null) ? $map['unitScalePreset'] : null;
     $preset = $ownPreset ?? ($layerGrid === null ? $mapPreset : null);
-    $grid = $layerGrid ?? XAR_MAP_SCALE_PRESETS[$ownPreset] ?? $mapGrid ?? XAR_MAP_SCALE_PRESETS[$preset] ?? XAR_MAP_SCALE_PRESETS['outdoor'];
+    $grid = $layerGrid ?? XAR_MAP_SCALE_PRESETS[$ownPreset ?? ''] ?? $mapGrid
+        ?? XAR_MAP_SCALE_PRESETS[$preset ?? ''] ?? XAR_MAP_SCALE_PRESETS['outdoor'];
     $grid = round(max(12, min(240, $grid)), 3);
     if ($preset === null) {
         $preset = array_search((int)$grid, XAR_MAP_SCALE_PRESETS, true) ?: 'custom';
